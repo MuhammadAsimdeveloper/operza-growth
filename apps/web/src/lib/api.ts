@@ -69,6 +69,11 @@ export const api = {
     run: (workflowId: string, data: { contactId?: string; payload?: any } = {}) =>
       request(`/api/workflows/${workflowId}/run`, { method: 'POST', body: JSON.stringify(data) }),
   },
+  reviews: {
+    getPublic: (locationId: string) => request(`/api/reviews/public/${locationId}`),
+    submitPublic: (locationId: string, data: { contactName: string; email?: string; rating: number; text: string; source?: string }) =>
+      request(`/api/reviews/submit/${locationId}`, { method: 'POST', body: JSON.stringify(data) }),
+  },
   copilot: {
     stream: (message: string, onDelta: (delta: string) => void, onComplete: () => void) => {
       const eventSource = new EventSource(`/api/copilot/stream?message=${encodeURIComponent(message)}`, {

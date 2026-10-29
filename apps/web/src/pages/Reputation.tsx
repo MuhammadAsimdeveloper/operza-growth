@@ -7,7 +7,7 @@ import { resolveMerge } from '../lib/merge';
 import { fullDate, num, relative, shortDate, timeOf, toDateTimeInput } from '../lib/format';
 import type { ReviewRequest, ReviewRequestChannel } from '../lib/types';
 
-const REVIEW_LINK = 'https://g.page/r/asim-growth/review';
+const REVIEW_LINK = typeof window !== 'undefined' ? `${window.location.origin}/review/main` : '/review/main';
 const DEFAULT_MESSAGE =
   'Hi {{contact.first_name}}, thanks for working with us! Would you leave a quick review? {{custom_values.review_link}}';
 
@@ -104,6 +104,15 @@ export default function Reputation() {
             <button className="btn" onClick={copyReviewLink}>
               <Icon name={linkCopied ? 'check' : 'link'} size={15} /> {linkCopied ? 'Link copied' : 'Review link'}
             </button>
+            <a
+              href="/review/main"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn"
+              style={{ textDecoration: 'none' }}
+            >
+              <Icon name="link" size={15} /> Open Portal
+            </a>
             <button className="btn btn--primary" onClick={() => setRequesting(true)}>
               <Icon name="send" size={15} /> Request reviews
             </button>

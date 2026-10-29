@@ -1,10 +1,16 @@
 // Operza End-to-End System Smoke Test
 
 import { spawn } from 'node:child_process';
+import { rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+// Ensure clean test store for deterministic execution
+try {
+  rmSync(path.join(root, 'apps/api/data/test_store.json'), { force: true });
+} catch {}
 
 console.log('=====================================================');
 console.log('🧪 Starting Operza End-to-End System Verification');
@@ -20,6 +26,9 @@ const api = spawn('node', ['apps/api/server.mjs'], {
     DATA_FILE: './data/test_store.json'
   }
 });
+
+api.stdout.on('data', (d) => process.stdout.write(d));
+api.stderr.on('data', (d) => process.stderr.write(d));
 
 let sessionCookie = '';
 let csrfToken = '';
@@ -252,7 +261,65 @@ async function runTests() {
       console.log(`✅ Workflow executed cleanly with ${runRes.data.execution.steps?.length} steps`);
     }
 
-    console.log('\n🎉 ALL 11 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 12. Inbound Twilio SMS Webhook & Conversations Sync
+    console.log('\n[TEST 12] Inbound Twilio Webhook: POST /api/webhooks/twilio');
+    const twilioRes = await fetch('http://localhost:4005/api/webhooks/twilio', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        MessageSid: 'SM1234567890abcdef',
+        From: '+1 555-0199',
+        To: '+1 800-555-0100',
+        Body: 'Yes, we are ready to proceed with the enterprise onboarding!'
+      })
+    });
+    const twilioXml = await twilioRes.text();
+    console.log(`Twilio Webhook Status: ${twilioRes.status}`, twilioXml.trim());
+    if (twilioRes.status !== 200 || !twilioXml.includes('<Response/>')) {
+      throw new Error(`Twilio webhook failed: status ${twilioRes.status}`);
+    }
+
+    const convs = await request('/api/crm/conversations');
+    const marcusConv = (convs.data.data || []).find(c => c.contactName?.includes('Marcus'));
+    console.log(`Conversations matching Marcus: ${marcusConv ? 'Found' : 'Not found'}`);
+    if (!marcusConv || marcusConv.messages?.length === 0) {
+      throw new Error('Inbound SMS did not create conversation entry');
+    }
+    console.log('✅ Inbound Twilio SMS parsed, contact matched, and conversation logged');
+
+    // 13. Public Review Ingress & Promoter Tagging
+    console.log('\n[TEST 13] Public Review Ingress: GET /api/reviews/public/main & POST /api/reviews/submit/main');
+    const reviewInfo = await request('/api/reviews/public/main');
+    console.log(`Review Portal Info: ${reviewInfo.status}`, reviewInfo.data.locationName);
+    if (reviewInfo.status !== 200 || !reviewInfo.data.prompt) {
+      throw new Error(`Review public lookup failed: ${JSON.stringify(reviewInfo.data)}`);
+    }
+
+    const reviewRes = await request('/api/reviews/submit/main', {
+      method: 'POST',
+      body: JSON.stringify({
+        contactName: 'Marcus Vance',
+        email: 'marcus@example.com',
+        rating: 5,
+        text: 'Outstanding workflow automation and Copilot speed. 10/10 service!',
+        source: 'Client Review Portal'
+      })
+    });
+    console.log(`Review Submit Status: ${reviewRes.status}`, reviewRes.data.review?.id);
+    if (reviewRes.status !== 201 || !reviewRes.data.review?.id) {
+      throw new Error(`Review submission failed: ${JSON.stringify(reviewRes.data)}`);
+    }
+
+    // Verify contact received promoter tag
+    const updatedMarcus = await request('/api/crm/contacts?search=Marcus');
+    const marcusData = updatedMarcus.data.data?.[0];
+    console.log(`Marcus Tags: ${marcusData?.tags?.join(', ')}`);
+    if (!marcusData?.tags?.includes('promoter')) {
+      throw new Error('5-star review did not add promoter tag to contact');
+    }
+    console.log('✅ Public review ingested, 5-star rating registered, and promoter tag applied');
+
+    console.log('\n🎉 ALL 13 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

@@ -6,6 +6,7 @@ import Signup from './pages/Signup';
 import PublicForm from './pages/PublicForm';
 import PublicBooking from './pages/PublicBooking';
 import PublicCheckout from './pages/PublicCheckout';
+import PublicReview from './pages/PublicReview';
 import Dashboard from './pages/Dashboard';
 import Conversations from './pages/Conversations';
 import PhoneSystem from './pages/PhoneSystem';
@@ -57,6 +58,7 @@ export default function App() {
       <Route path="/f/:slug" element={<PublicForm />} />
       <Route path="/book/:id" element={<PublicBooking />} />
       <Route path="/pay/:slug" element={<PublicCheckout />} />
+      <Route path="/review/:id" element={<PublicReview />} />
 
       {/* Protected Agency Workspace Routes */}
       <Route

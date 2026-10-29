@@ -1030,6 +1030,97 @@ const server = createServer(async (req, res) => {
       });
     }
 
+    // Public Review Lookup
+    if (method === 'GET' && pathname.startsWith('/api/reviews/public/')) {
+      const locationId = pathname.replace('/api/reviews/public/', '').trim();
+      const loc = (state.locations || []).find(l => l.id === locationId) || state.locations[0];
+      const agency = loc ? (state.agencies || []).find(a => a.id === loc.agencyId) : state.agencies[0];
+
+      return sendJson(res, 200, {
+        locationId: loc?.id || 'main',
+        locationName: loc?.name || 'Main Workspace',
+        agencyName: agency?.name || 'Operza Agency',
+        prompt: 'How was your recent experience with our team?'
+      });
+    }
+
+    // Public Review Submission Ingress -> Review Record + Tagging (promoter/detractor) + Workflow Trigger
+    if (method === 'POST' && pathname.startsWith('/api/reviews/submit/')) {
+      const locationId = pathname.replace('/api/reviews/submit/', '').trim();
+      const loc = (state.locations || []).find(l => l.id === locationId) || state.locations[0];
+      const agencyId = loc?.agencyId || state.agencies[0]?.id;
+
+      const body = await readBody(req);
+      const { contactName, email, rating, text, source } = body;
+      const numRating = Math.max(1, Math.min(5, Number(rating) || 5));
+
+      const reviewId = randomUUID();
+      const review = {
+        id: reviewId,
+        agencyId,
+        locationId: loc?.id || 'main',
+        contactName: contactName || 'Verified Client',
+        email: email || '',
+        rating: numRating,
+        text: text || '',
+        source: source || 'Direct Client Portal',
+        status: 'new',
+        receivedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString()
+      };
+      state.records.reviews = state.records.reviews || [];
+      state.records.reviews.push(review);
+
+      // Match contact by email or name to apply promoter/detractor tag
+      let contact = null;
+      if (email) {
+        contact = (state.records.contacts || []).find(c => c.agencyId === agencyId && c.email === String(email).toLowerCase().trim());
+      }
+      if (!contact && contactName) {
+        contact = (state.records.contacts || []).find(c => c.agencyId === agencyId && `${c.firstName} ${c.lastName}`.trim().toLowerCase() === contactName.trim().toLowerCase());
+      }
+
+      if (contact) {
+        contact.tags = contact.tags || [];
+        if (numRating >= 4) {
+          if (!contact.tags.includes('promoter')) contact.tags.push('promoter');
+        } else {
+          if (!contact.tags.includes('detractor')) contact.tags.push('detractor');
+          const taskId = randomUUID();
+          state.records.tasks = state.records.tasks || [];
+          state.records.tasks.push({
+            id: taskId,
+            agencyId,
+            locationId: loc?.id || 'main',
+            title: `Urgent: Reach out to ${contact.firstName} ${contact.lastName} regarding ${numRating}-star review`,
+            contactId: contact.id,
+            priority: 'high',
+            status: 'pending',
+            notes: text,
+            createdAt: new Date().toISOString()
+          });
+          broadcast('crm.task.created', { id: taskId, title: `Review resolution for ${contact.firstName}` });
+        }
+      }
+
+      await saveState();
+
+      broadcast('crm.review.created', { id: reviewId, rating: numRating, contactName: review.contactName });
+
+      triggerWorkflowExecution({
+        agencyId,
+        locationId: loc?.id || 'main',
+        triggerType: 'review',
+        triggerContext: { review, contact, rating: numRating }
+      }).catch(err => console.error('Review workflow trigger failed:', err));
+
+      return sendJson(res, 201, {
+        success: true,
+        message: 'Thank you for your review!',
+        review
+      });
+    }
+
     // ═════════════════════════════════════════════════════════════
     // ─── WEBHOOK HANDLERS (public, signature-gated) ─────────────
     // ═════════════════════════════════════════════════════════════
@@ -1111,7 +1202,77 @@ const server = createServer(async (req, res) => {
       auditLog('webhook.twilio', null, { messageType, from: payload.From, to: payload.To });
 
       if (messageType === 'sms_inbound') {
-        broadcast('webhook.twilio.sms_inbound', { from: payload.From, to: payload.To, body: payload.Body });
+        const fromNumber = String(payload.From || '').trim();
+        const textBody = String(payload.Body || '').trim();
+
+        let contact = [...(state.records.contacts || [])].reverse().find(
+          c => c.phone && (c.phone === fromNumber || c.phone.replace(/\D/g, '') === fromNumber.replace(/\D/g, ''))
+        );
+        const agencyId = contact?.agencyId || state.agencies[0]?.id;
+        const locationId = contact?.locationId || state.locations[0]?.id;
+
+        if (!contact && agencyId && locationId) {
+          contact = {
+            id: randomUUID(),
+            agencyId,
+            locationId,
+            firstName: 'SMS',
+            lastName: fromNumber.slice(-4) || 'Lead',
+            phone: fromNumber,
+            email: '',
+            source: 'Inbound SMS',
+            tags: ['inbound-sms'],
+            status: 'lead',
+            createdAt: new Date().toISOString()
+          };
+          state.records.contacts = state.records.contacts || [];
+          state.records.contacts.push(contact);
+        }
+
+        if (contact) {
+          const contactName = `${contact.firstName} ${contact.lastName}`.trim();
+          let conv = (state.records.conversations || []).find(
+            c => c.agencyId === contact.agencyId && c.contactName === contactName
+          );
+          if (!conv) {
+            conv = {
+              id: randomUUID(),
+              agencyId: contact.agencyId,
+              locationId: contact.locationId,
+              contactName,
+              channel: 'sms',
+              subject: 'SMS Conversation',
+              status: 'open',
+              lastMessage: textBody,
+              assignedTo: 'Inbound Queue',
+              messages: [],
+              createdAt: new Date().toISOString()
+            };
+            state.records.conversations = state.records.conversations || [];
+            state.records.conversations.push(conv);
+          }
+          conv.lastMessage = textBody;
+          conv.messages = conv.messages || [];
+          conv.messages.push({
+            id: randomUUID(),
+            author: contactName,
+            channel: 'sms',
+            direction: 'inbound',
+            text: textBody,
+            timestamp: new Date().toISOString()
+          });
+          await saveState();
+
+          broadcast('crm.conversation.updated', { id: conv.id, contactName, message: textBody });
+          broadcast('webhook.twilio.sms_inbound', { from: fromNumber, to: payload.To, body: textBody });
+
+          triggerWorkflowExecution({
+            agencyId: contact.agencyId,
+            locationId: contact.locationId,
+            triggerType: 'sms',
+            triggerContext: { contact, message: textBody, from: fromNumber }
+          }).catch(err => console.error('SMS workflow trigger failed:', err));
+        }
       } else if (messageType === 'call_status') {
         broadcast('webhook.twilio.call_status', { callSid: payload.CallSid, status: payload.CallStatus });
       }
@@ -1144,9 +1305,76 @@ const server = createServer(async (req, res) => {
       const from = payload.from || payload.envelope?.from || 'unknown';
       const to = payload.to || payload.envelope?.to || 'unknown';
       const subject = payload.subject || '(no subject)';
+      const textBody = payload.text || payload.html || payload.subject || '';
       console.log(`[SENDGRID WEBHOOK] Inbound email from: ${from} | to: ${to} | subject: ${subject}`);
       auditLog('webhook.sendgrid', null, { from, to, subject });
-      broadcast('webhook.sendgrid.inbound_email', { from, to, subject });
+
+      const fromEmail = String(from).replace(/.*<(.+)>/, '$1').toLowerCase().trim();
+      let contact = (state.records.contacts || []).find(c => c.email && c.email.toLowerCase().trim() === fromEmail);
+      const agencyId = contact?.agencyId || state.agencies[0]?.id;
+      const locationId = contact?.locationId || state.locations[0]?.id;
+
+      if (!contact && agencyId && locationId) {
+        contact = {
+          id: randomUUID(),
+          agencyId,
+          locationId,
+          firstName: from.split('@')[0] || 'Email',
+          lastName: 'Lead',
+          phone: '',
+          email: fromEmail,
+          source: 'Inbound Email',
+          tags: ['inbound-email'],
+          status: 'lead',
+          createdAt: new Date().toISOString()
+        };
+        state.records.contacts = state.records.contacts || [];
+        state.records.contacts.push(contact);
+      }
+
+      if (contact) {
+        const contactName = `${contact.firstName} ${contact.lastName}`.trim();
+        let conv = (state.records.conversations || []).find(c => c.agencyId === contact.agencyId && c.contactName === contactName);
+        if (!conv) {
+          conv = {
+            id: randomUUID(),
+            agencyId: contact.agencyId,
+            locationId: contact.locationId,
+            contactName,
+            channel: 'email',
+            subject,
+            status: 'open',
+            lastMessage: textBody.slice(0, 100),
+            assignedTo: 'Inbound Queue',
+            messages: [],
+            createdAt: new Date().toISOString()
+          };
+          state.records.conversations = state.records.conversations || [];
+          state.records.conversations.push(conv);
+        }
+        conv.lastMessage = textBody.slice(0, 100);
+        conv.messages = conv.messages || [];
+        conv.messages.push({
+          id: randomUUID(),
+          author: contactName,
+          channel: 'email',
+          direction: 'inbound',
+          subject,
+          text: textBody,
+          timestamp: new Date().toISOString()
+        });
+        await saveState();
+
+        broadcast('crm.conversation.updated', { id: conv.id, contactName, message: textBody });
+        broadcast('webhook.sendgrid.inbound_email', { from, to, subject });
+
+        triggerWorkflowExecution({
+          agencyId: contact.agencyId,
+          locationId: contact.locationId,
+          triggerType: 'email',
+          triggerContext: { contact, subject, message: textBody, from }
+        }).catch(err => console.error('Email workflow trigger failed:', err));
+      }
 
       return sendJson(res, 200, { received: true });
     }
