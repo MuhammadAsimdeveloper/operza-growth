@@ -1,3 +1,4 @@
+import { api } from '../lib/api';
 import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Icon } from '../components/Icon';
@@ -252,6 +253,7 @@ export default function Contacts() {
           onClose={() => setAdding(false)}
           onSave={(contact) => {
             dispatch({ type: 'contact/add', contact });
+            api.crm.create('contacts', contact).catch(() => {});
             setAdding(false);
             navigate(`/contacts/${contact.id}`);
           }}
@@ -399,3 +401,4 @@ export function AddContact({
     </Modal>
   );
 }
+

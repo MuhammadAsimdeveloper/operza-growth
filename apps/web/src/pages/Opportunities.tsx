@@ -1,3 +1,4 @@
+import { api } from '../lib/api';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
@@ -144,6 +145,8 @@ export default function Opportunities() {
           onClose={() => setAdding(null)}
           onSave={(payload) => {
             dispatch({ type: 'opportunity/add', opportunity: payload });
+            const stageName = pipeline.stages.find((s) => s.id === payload.stageId)?.name || payload.stageId;
+            api.crm.create('opportunities', { ...payload, stage: stageName }).catch(() => {});
             setAdding(null);
           }}
         />
@@ -260,3 +263,4 @@ function AddDeal({
     </Modal>
   );
 }
+
