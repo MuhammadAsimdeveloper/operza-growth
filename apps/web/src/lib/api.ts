@@ -131,6 +131,17 @@ export const api = {
     updateStage: (id: string, stage: string, stageId?: string) =>
       request(`/api/crm/opportunities/${id}`, { method: 'PUT', body: JSON.stringify({ stage, stageId }) }),
   },
+  links: {
+    click: (slug: string, contactId?: string) =>
+      request(`/api/links/click/${slug}${contactId ? `?contactId=${encodeURIComponent(contactId)}` : ''}`),
+  },
+  documents: {
+    sign: (id: string, signerName?: string) =>
+      request(`/api/documents/${id}/sign`, { method: 'POST', body: JSON.stringify({ signerName }) }),
+  },
+  subscriptions: {
+    cancel: (id: string) => request(`/api/subscriptions/${id}/cancel`, { method: 'POST' }),
+  },
   copilot: {
     chat: (data: { message: string; sessionId?: string; tools?: any[] }) =>
       request('/api/copilot/chat', { method: 'POST', body: JSON.stringify(data) }),

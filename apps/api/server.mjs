@@ -51,7 +51,11 @@ const collections = Object.freeze({
   reviews: { label: 'Reputation', required: ['contactName'], fields: ['contactName','rating','text','source','status','receivedAt'] },
   courses: { label: 'Memberships', required: ['name'], fields: ['name','status','members','lessons','description'] },
   notes: { label: 'Notes', required: ['text'], fields: ['text','contactId','createdBy'] },
-  socialPosts: { label: 'Social Posts', required: ['body'], fields: ['body','platforms','status','scheduledAt','likes','comments'] }
+  socialPosts: { label: 'Social Posts', required: ['body'], fields: ['body','platforms','status','scheduledAt','likes','comments'] },
+  subscriptions: { label: 'Subscriptions', required: ['plan', 'amount'], fields: ['plan','amount','interval','status','renewsAt','contactId'] },
+  documents: { label: 'Documents', required: ['title'], fields: ['title','kind','value','status','contactId','signedAt','pdfUrl'] },
+  triggerLinks: { label: 'Trigger Links', required: ['name','targetUrl','slug'], fields: ['name','targetUrl','slug','workflowId','clicks','lastClickAt'] },
+  customValues: { label: 'Custom Values', required: ['name','value'], fields: ['name','value'] }
 });
 
 // ─── State Management ─────────────────────────────────────────────────
@@ -2288,6 +2292,101 @@ const server = createServer(async (req, res) => {
       broadcast('social.post.published', { postId, status: 'published' });
 
       return sendJson(res, 200, { success: true, post });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── TRIGGER LINKS CLICK INGRESS & AUTOMATION ────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'GET' && pathname.startsWith('/api/links/click/')) {
+      const slug = pathname.replace('/api/links/click/', '').trim();
+      state.records.triggerLinks = state.records.triggerLinks || [];
+      const link = state.records.triggerLinks.find(l => l.slug === slug);
+      if (!link) return sendJson(res, 404, { error: 'Trigger link not found' });
+
+      link.clicks = (link.clicks || 0) + 1;
+      link.lastClickAt = new Date().toISOString();
+      await saveState();
+
+      const contactId = url.searchParams.get('contactId');
+      let contact = null;
+      if (contactId) {
+        contact = (state.records.contacts || []).find(c => c.id === contactId);
+      }
+
+      if (link.workflowId) {
+        triggerWorkflowExecution({
+          agencyId: link.agencyId || agency?.id,
+          locationId: link.locationId || activeLocation?.id,
+          triggerType: 'trigger_link_clicked',
+          triggerContext: { link, contact, contactId }
+        }).catch(console.error);
+      }
+
+      broadcast('link.clicked', { slug, clicks: link.clicks });
+      return sendJson(res, 200, { success: true, targetUrl: link.targetUrl, clicks: link.clicks });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── DOCUMENTS & CONTRACTS E-SIGNATURE INGRESS ───────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'POST' && pathname.startsWith('/api/documents/') && pathname.endsWith('/sign')) {
+      const docId = pathname.replace('/api/documents/', '').replace('/sign', '').trim();
+      state.records.documents = state.records.documents || [];
+      const doc = state.records.documents.find(
+        d => d.id === docId && d.agencyId === agency.id && d.locationId === activeLocation.id
+      );
+      if (!doc) return sendJson(res, 404, { error: 'Document not found' });
+
+      const body = await readBody(req);
+      doc.status = 'signed';
+      doc.signedAt = new Date().toISOString();
+      doc.signerName = body.signerName || actor.user.name;
+      doc.updatedAt = new Date().toISOString();
+
+      await saveState();
+      auditLog('document.signed', actor, { docId, title: doc.title, signer: doc.signerName });
+      broadcast('crm.document.signed', { docId, title: doc.title });
+
+      triggerWorkflowExecution({
+        agencyId: agency.id,
+        locationId: activeLocation.id,
+        triggerType: 'document_signed',
+        triggerContext: { document: doc }
+      }).catch(console.error);
+
+      return sendJson(res, 200, { success: true, document: doc });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── RECURRING SUBSCRIPTIONS CANCELLATION & DUNNING ──────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'POST' && pathname.startsWith('/api/subscriptions/') && pathname.endsWith('/cancel')) {
+      const subId = pathname.replace('/api/subscriptions/', '').replace('/cancel', '').trim();
+      state.records.subscriptions = state.records.subscriptions || [];
+      const sub = state.records.subscriptions.find(
+        s => s.id === subId && s.agencyId === agency.id && s.locationId === activeLocation.id
+      );
+      if (!sub) return sendJson(res, 404, { error: 'Subscription not found' });
+
+      sub.status = 'canceled';
+      sub.canceledAt = new Date().toISOString();
+      sub.updatedAt = new Date().toISOString();
+
+      await saveState();
+      auditLog('subscription.canceled', actor, { subId, plan: sub.plan });
+      broadcast('crm.subscription.updated', { subId, status: 'canceled' });
+
+      triggerWorkflowExecution({
+        agencyId: agency.id,
+        locationId: activeLocation.id,
+        triggerType: 'subscription_cancelled',
+        triggerContext: { subscription: sub }
+      }).catch(console.error);
+
+      return sendJson(res, 200, { success: true, subscription: sub });
     }
 
     // ═════════════════════════════════════════════════════════════

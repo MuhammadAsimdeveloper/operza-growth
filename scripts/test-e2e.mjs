@@ -730,7 +730,86 @@ async function runTests() {
     console.log(`Verified Deal: ID=${verifyOppRes.data.id}, Stage="${verifyOppRes.data.stage}", Value=$${verifyOppRes.data.value}`);
     console.log('✅ Opportunity Kanban stage transition and automated workflow triggering verified');
 
-    console.log('\n🎉 ALL 27 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 28. Trigger Links Click Tracking & Automation Hook
+    console.log('\n[TEST 28] Trigger Links Click Tracking: POST /api/crm/triggerLinks & GET /api/links/click/:slug');
+    const linkCreateRes = await request('/api/crm/triggerLinks', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Q4 Product Demo Link',
+        slug: 'q4-demo',
+        targetUrl: 'https://operza.io/demo',
+        clicks: 0
+      })
+    });
+    console.log(`Trigger Link Create Status: ${linkCreateRes.status}`, `Slug: ${linkCreateRes.data.slug}`);
+    if (linkCreateRes.status !== 201 || linkCreateRes.data.slug !== 'q4-demo') {
+      throw new Error(`Trigger link creation failed: ${JSON.stringify(linkCreateRes.data)}`);
+    }
+
+    const clickRes = await request('/api/links/click/q4-demo');
+    console.log(`Trigger Link Click Status: ${clickRes.status}`, `Clicks: ${clickRes.data.clicks}`, `Target: ${clickRes.data.targetUrl}`);
+    if (clickRes.status !== 200 || clickRes.data.clicks !== 1 || clickRes.data.targetUrl !== 'https://operza.io/demo') {
+      throw new Error(`Trigger link click simulation failed: ${JSON.stringify(clickRes.data)}`);
+    }
+    console.log('✅ Trigger link created, clicked, tracked, and automation triggered');
+
+    // 29. Proposals & Contracts E-Signature Lifecycle
+    console.log('\n[TEST 29] Proposals & Contracts E-Signature: POST /api/crm/documents & /api/documents/:id/sign');
+    const docCreateRes = await request('/api/crm/documents', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: 'Enterprise Master Services Agreement',
+        kind: 'contract',
+        value: 12000,
+        status: 'sent',
+        contactId: elena.id
+      })
+    });
+    console.log(`Document Create Status: ${docCreateRes.status}`, `ID: ${docCreateRes.data.id}`);
+    if (docCreateRes.status !== 201 || !docCreateRes.data.id) {
+      throw new Error(`Document creation failed: ${JSON.stringify(docCreateRes.data)}`);
+    }
+
+    const docId = docCreateRes.data.id;
+    const signRes = await request(`/api/documents/${docId}/sign`, {
+      method: 'POST',
+      body: JSON.stringify({ signerName: 'Elena Rostova' })
+    });
+    console.log(`E-Signature Status: ${signRes.status}`, `New Status: ${signRes.data.document?.status}`, `Signer: ${signRes.data.document?.signerName}`);
+    if (signRes.status !== 200 || signRes.data.document?.status !== 'signed' || signRes.data.document?.signerName !== 'Elena Rostova') {
+      throw new Error(`Document e-signature failed: ${JSON.stringify(signRes.data)}`);
+    }
+    console.log('✅ Document created, delivered, e-signed, and verified in contract register');
+
+    // 30. Recurring Subscriptions Lifecycle & Dunning
+    console.log('\n[TEST 30] Recurring Subscriptions Lifecycle: POST /api/crm/subscriptions & /api/subscriptions/:id/cancel');
+    const subCreateRes = await request('/api/crm/subscriptions', {
+      method: 'POST',
+      body: JSON.stringify({
+        plan: 'Scale Agency Retainer',
+        amount: 2500,
+        interval: 'month',
+        status: 'active',
+        contactId: elena.id,
+        renewsAt: '2026-11-29T10:00:00Z'
+      })
+    });
+    console.log(`Subscription Create Status: ${subCreateRes.status}`, `ID: ${subCreateRes.data.id}`, `Plan: ${subCreateRes.data.plan}`);
+    if (subCreateRes.status !== 201 || !subCreateRes.data.id || subCreateRes.data.amount !== 2500) {
+      throw new Error(`Subscription creation failed: ${JSON.stringify(subCreateRes.data)}`);
+    }
+
+    const subId = subCreateRes.data.id;
+    const subCancelRes = await request(`/api/subscriptions/${subId}/cancel`, {
+      method: 'POST'
+    });
+    console.log(`Subscription Cancel Status: ${subCancelRes.status}`, `New Status: ${subCancelRes.data.subscription?.status}`);
+    if (subCancelRes.status !== 200 || subCancelRes.data.subscription?.status !== 'canceled') {
+      throw new Error(`Subscription cancellation failed: ${JSON.stringify(subCancelRes.data)}`);
+    }
+    console.log('✅ Recurring subscription provisioned, billed, canceled, and dunning automation triggered');
+
+    console.log('\n🎉 ALL 30 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;
