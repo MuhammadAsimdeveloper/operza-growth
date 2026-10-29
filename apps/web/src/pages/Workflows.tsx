@@ -275,6 +275,7 @@ export default function Workflows() {
     branch?: 'yes' | 'no';
   } | null>(null);
   const [runFor, setRunFor] = useState<Workflow | null>(null);
+  const [showTemplates, setShowTemplates] = useState(false);
   const [viewingRun, setViewingRun] = useState<WorkflowRun | null>(null);
 
   const selected = state.workflows.find((w) => w.id === selectedId) ?? null;
@@ -653,6 +654,26 @@ export default function Workflows() {
               });
             }
             setStepDraft(null);
+          }}
+        />
+      )}
+
+            {showTemplates && (
+        <TemplateGalleryModal
+          onClose={() => setShowTemplates(false)}
+          onInstall={(tpl) => {
+            const newFlow: Workflow = {
+              id: uid('wf'),
+              name: tpl.name,
+              status: 'published',
+              trigger: tpl.trigger,
+              actions: tpl.actions,
+              enrolled: 0,
+              completed: 0,
+            };
+            dispatch({ type: 'workflow/add', workflow: newFlow });
+            setSelectedId(newFlow.id);
+            setShowTemplates(false);
           }}
         />
       )}
@@ -1314,3 +1335,104 @@ function RunResult({
     </Modal>
   );
 }
+
+
+interface TemplateDef {
+  name: string;
+  category: string;
+  description: string;
+  trigger: WorkflowTrigger;
+  actions: WorkflowAction[];
+}
+
+function TemplateGalleryModal({
+  onClose,
+  onInstall,
+}: {
+  onClose: () => void;
+  onInstall: (t: TemplateDef) => void;
+}) {
+  const templates: TemplateDef[] = [
+    {
+      name: 'Instant Lead Capture & SMS Dispatch',
+      category: 'Lead Capture & Nurture',
+      description: 'Ingests new website form submissions, tags the contact, sends a welcome SMS, and creates a follow-up task.',
+      trigger: { kind: 'form', detail: 'Inbound Contact Form' },
+      actions: [
+        { id: uid('act'), kind: 'tag', label: 'Tag hot-inbound', config: { tag: 'hot-inbound' } },
+        { id: uid('act'), kind: 'sms', label: 'Send Welcome SMS', config: {} },
+        { id: uid('act'), kind: 'task', label: 'Create sales follow-up task', config: { title: 'Call new lead' } },
+      ],
+    },
+    {
+      name: 'Opportunity Won - Customer Onboarding & Review',
+      category: 'Sales Pipeline Automation',
+      description: 'Fires when a payment or deal is won. Delivers an onboarding email, waits 24 hours, and creates a client check-in task.',
+      trigger: { kind: 'payment', detail: 'Deal Closed / Paid' },
+      actions: [
+        { id: uid('act'), kind: 'email', label: 'Send Welcome Email', config: {} },
+        { id: uid('act'), kind: 'wait', label: 'Wait 24 hours', delayHours: 24 },
+        { id: uid('act'), kind: 'task', label: 'Check in on onboarding', config: { title: 'Onboarding check-in call' } },
+      ],
+    },
+    {
+      name: 'Inbound Webhook to Pipeline & Slack Dispatch',
+      category: 'Omnichannel & Integrations',
+      description: 'Listens for webhooks from Zapier or n8n, tags the contact, dispatches to an internal webhook, and creates an intake task.',
+      trigger: { kind: 'webhook', detail: 'External Inbound Lead' },
+      actions: [
+        { id: uid('act'), kind: 'tag', label: 'Tag webhook-lead', config: { tag: 'webhook-lead' } },
+        { id: uid('act'), kind: 'webhook', label: 'POST to Slack / Discord', config: { method: 'POST', url: 'https://hooks.slack.com/services/demo' } },
+        { id: uid('act'), kind: 'task', label: 'Review incoming webhook lead', config: { title: 'Qualify lead from external webhook' } },
+      ],
+    },
+  ];
+
+  return (
+    <Modal title="Pre-built Automation Templates" onClose={onClose} wide>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <p style={{ color: 'var(--text-3)', fontSize: 13, margin: 0 }}>
+          Install ready-to-use production workflows with triggers, branching, and actions in one click.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+          {templates.map((tpl) => (
+            <div
+              key={tpl.name}
+              className="card"
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                padding: 16,
+                borderRadius: 10,
+                border: '1px solid var(--border)',
+                background: 'var(--surface-2)',
+              }}
+            >
+              <div>
+                <span className="badge badge--primary" style={{ fontSize: 10.5, marginBottom: 8, display: 'inline-block' }}>
+                  {tpl.category}
+                </span>
+                <h4 style={{ margin: '0 0 6px 0', fontSize: 14, color: 'var(--text-1)' }}>{tpl.name}</h4>
+                <p style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.4, margin: 0 }}>{tpl.description}</p>
+                <div style={{ fontSize: 11.5, color: 'var(--text-2)', marginTop: 10 }}>
+                  <strong>{tpl.actions.length}</strong> automated steps
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn--primary btn--sm"
+                style={{ marginTop: 14, width: '100%' }}
+                onClick={() => onInstall(tpl)}
+              >
+                <Icon name="plus" size={13} /> Install Template
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+

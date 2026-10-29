@@ -3,6 +3,7 @@ import { AppShell } from './components/AppShell';
 import AuthGuard from './components/AuthGuard';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
+import PublicForm from './pages/PublicForm';
 import Dashboard from './pages/Dashboard';
 import Conversations from './pages/Conversations';
 import PhoneSystem from './pages/PhoneSystem';
@@ -51,6 +52,7 @@ export default function App() {
       {/* Public Authentication Routes */}
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
+      <Route path="/f/:slug" element={<PublicForm />} />
 
       {/* Protected Agency Workspace Routes */}
       <Route
