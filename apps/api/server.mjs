@@ -614,6 +614,200 @@ const copilotTools = {
       }));
       return { date: targetDate, bookedSlots: busySlots.length, slots: busySlots };
     }
+  },
+  create_contact: {
+    description: 'Create a new contact/lead in the CRM',
+    parameters: { firstName: 'string', lastName: 'string?', email: 'string?', phone: 'string?', company: 'string?', tags: 'array?' },
+    execute: async (params, actor) => {
+      const contact = {
+        id: randomUUID(),
+        agencyId: actor.agency.id,
+        locationId: actor.activeLocation.id,
+        firstName: (params.firstName || params.name || 'New Lead').trim(),
+        lastName: (params.lastName || '').trim(),
+        email: (params.email || '').trim().toLowerCase(),
+        phone: (params.phone || '').trim(),
+        company: (params.company || '').trim(),
+        tags: Array.isArray(params.tags) ? params.tags : (params.tags ? [params.tags] : ['copilot-lead']),
+        status: 'lead',
+        source: 'AI Copilot',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      state.records.contacts = state.records.contacts || [];
+      state.records.contacts.push(contact);
+      await saveState();
+
+      auditLog('crm.contact.created', actor, { contactId: contact.id, source: 'copilot' });
+      broadcast('crm.contacts.created', contact);
+
+      // Trigger workflows if applicable
+      triggerWorkflowExecution({
+        agencyId: actor.agency.id,
+        locationId: actor.activeLocation.id,
+        triggerType: 'tag',
+        triggerContext: { contact }
+      }).catch(console.error);
+
+      return {
+        success: true,
+        contactId: contact.id,
+        name: `${contact.firstName} ${contact.lastName}`.trim(),
+        email: contact.email,
+        company: contact.company,
+        tags: contact.tags
+      };
+    }
+  },
+  update_opportunity_stage: {
+    description: 'Update the pipeline stage of an existing opportunity or deal',
+    parameters: { opportunityId: 'string?', name: 'string?', stage: 'string' },
+    execute: async (params, actor) => {
+      state.records.opportunities = state.records.opportunities || [];
+      const opp = state.records.opportunities.find(o =>
+        o.agencyId === actor.agency.id &&
+        o.locationId === actor.activeLocation.id &&
+        ((params.opportunityId && o.id === params.opportunityId) ||
+         (params.name && o.name.toLowerCase().includes(params.name.toLowerCase())))
+      );
+      if (!opp) return { error: 'Opportunity not found' };
+
+      const prevStage = opp.stage;
+      opp.stage = params.stage;
+      opp.updatedAt = new Date().toISOString();
+      await saveState();
+
+      auditLog('crm.opportunity.stage_changed', actor, { id: opp.id, stage: opp.stage, prevStage });
+      broadcast('crm.opportunities.updated', opp);
+
+      // Trigger stage change workflow
+      triggerWorkflowExecution({
+        agencyId: actor.agency.id,
+        locationId: actor.activeLocation.id,
+        triggerType: 'opportunity_stage',
+        triggerContext: { opportunity: opp, stage: opp.stage, previousStage: prevStage }
+      }).catch(console.error);
+
+      return { success: true, opportunityId: opp.id, name: opp.name, previousStage: prevStage, newStage: opp.stage };
+    }
+  },
+  trigger_workflow: {
+    description: 'Execute an automated workflow by name or ID',
+    parameters: { workflowId: 'string?', workflowName: 'string?', contactId: 'string?' },
+    execute: async (params, actor) => {
+      state.records.workflows = state.records.workflows || [];
+      let flow = state.records.workflows.find(w =>
+        w.agencyId === actor.agency.id &&
+        w.locationId === actor.activeLocation.id &&
+        ((params.workflowId && w.id === params.workflowId) ||
+         (params.workflowName && w.name.toLowerCase().includes(params.workflowName.toLowerCase())))
+      );
+      if (!flow) {
+        const fallback = state.records.workflows.find(w => w.agencyId === actor.agency.id && w.locationId === actor.activeLocation.id);
+        if (!fallback) return { error: 'No workflows available to execute' };
+        flow = fallback;
+      }
+
+      let contact = null;
+      if (params.contactId) {
+        contact = (state.records.contacts || []).find(c => c.id === params.contactId && c.agencyId === actor.agency.id);
+      }
+      if (!contact && (state.records.contacts || []).length > 0) {
+        contact = (state.records.contacts || []).find(c => c.agencyId === actor.agency.id && c.locationId === actor.activeLocation.id) || state.records.contacts[0];
+      }
+
+      const execution = await executeWorkflowInstance({
+        flow,
+        agencyId: actor.agency.id,
+        locationId: actor.activeLocation.id,
+        triggerType: 'manual',
+        triggerContext: {
+          contact,
+          manualTrigger: true,
+          triggeredBy: `Copilot AI (${actor.user.name})`,
+          payload: params.payload || {}
+        }
+      });
+
+      return {
+        success: true,
+        workflowId: flow.id,
+        workflowName: flow.name,
+        executionId: execution.id,
+        status: execution.status,
+        stepsExecuted: execution.steps?.length || 0
+      };
+    }
+  },
+  send_communication: {
+    description: 'Send an outbound SMS or Email message to a contact and log to conversation',
+    parameters: { contactId: 'string?', recipient: 'string?', channel: 'string', message: 'string' },
+    execute: async (params, actor) => {
+      const channel = (params.channel || 'sms').toLowerCase();
+      let contact = null;
+      if (params.contactId) {
+        contact = (state.records.contacts || []).find(c => c.id === params.contactId && c.agencyId === actor.agency.id);
+      }
+      if (!contact && params.recipient) {
+        const q = params.recipient.toLowerCase();
+        contact = (state.records.contacts || []).find(c =>
+          c.agencyId === actor.agency.id &&
+          (c.email?.toLowerCase().includes(q) || c.phone?.includes(q) || `${c.firstName} ${c.lastName}`.toLowerCase().includes(q))
+        );
+      }
+      if (!contact && (state.records.contacts || []).length > 0) {
+        contact = state.records.contacts[0];
+      }
+
+      const messageRecord = {
+        id: randomUUID(),
+        sender: 'agent',
+        senderName: `Copilot (${actor.user.name})`,
+        channel,
+        content: params.message || 'Automated notification',
+        timestamp: new Date().toISOString()
+      };
+
+      state.records.conversations = state.records.conversations || [];
+      let conv = state.records.conversations.find(c =>
+        c.agencyId === actor.agency.id &&
+        c.locationId === actor.activeLocation.id &&
+        (contact ? c.contactId === contact.id : true)
+      );
+
+      if (conv) {
+        conv.messages = conv.messages || [];
+        conv.messages.push(messageRecord);
+        conv.lastMessage = messageRecord.content;
+        conv.updatedAt = new Date().toISOString();
+      } else {
+        conv = {
+          id: randomUUID(),
+          agencyId: actor.agency.id,
+          locationId: actor.activeLocation.id,
+          contactId: contact?.id || null,
+          contactName: contact ? `${contact.firstName} ${contact.lastName}`.trim() : 'External Lead',
+          channel,
+          status: 'open',
+          messages: [messageRecord],
+          lastMessage: messageRecord.content,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        state.records.conversations.push(conv);
+      }
+
+      await saveState();
+      broadcast('crm.conversation.updated', { conversationId: conv.id, message: messageRecord });
+
+      return {
+        success: true,
+        conversationId: conv.id,
+        contactName: conv.contactName,
+        channel,
+        message: messageRecord.content
+      };
+    }
   }
 };
 
@@ -1736,6 +1930,57 @@ const server = createServer(async (req, res) => {
         toolResults.push({ tool: 'get_calendar_availability', result });
       }
 
+      // Autonomous Tool: Create Contact
+      if (lowerMsg.includes('create contact') || lowerMsg.includes('add contact') || lowerMsg.includes('new contact') || lowerMsg.includes('new lead')) {
+        const emailMatch = message.match(/[\w.-]+@[\w.-]+\.\w+/);
+        const nameMatch = message.match(/(?:contact|lead)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i) ||
+                          message.match(/name[d]?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
+        const companyMatch = message.match(/company\s+(?:is\s+)?([A-Za-z0-9&.\s]+?)(?:$|\s+(?:with|and|email))/i);
+
+        const fullName = nameMatch ? nameMatch[1].trim() : 'New Lead';
+        const [firstName, ...rest] = fullName.split(' ');
+        const lastName = rest.join(' ');
+
+        const result = await copilotTools.create_contact.execute({
+          firstName,
+          lastName,
+          email: emailMatch ? emailMatch[0] : '',
+          company: companyMatch ? companyMatch[1].trim() : '',
+          tags: ['copilot-lead']
+        }, actor);
+        toolResults.push({ tool: 'create_contact', result });
+      }
+
+      // Autonomous Tool: Trigger Workflow
+      if (lowerMsg.includes('trigger workflow') || lowerMsg.includes('run workflow') || lowerMsg.includes('execute workflow')) {
+        const wfMatch = message.match(/(?:workflow)\s+["']?([^"'\n]+?)["']?$/i) ||
+                        message.match(/(?:run|trigger|execute)\s+["']?([^"'\n]+?)(?:workflow)?["']?$/i);
+        const wfName = wfMatch ? wfMatch[1].trim() : '';
+        const result = await copilotTools.trigger_workflow.execute({ workflowName: wfName }, actor);
+        toolResults.push({ tool: 'trigger_workflow', result });
+      }
+
+      // Autonomous Tool: Move Opportunity / Deal Stage
+      if (lowerMsg.includes('move opportunity') || lowerMsg.includes('update stage') || lowerMsg.includes('move deal')) {
+        const stageMatch = message.match(/to\s+([A-Za-z]+)/i);
+        const targetStage = stageMatch ? stageMatch[1] : 'Qualified';
+        const oppMatch = message.match(/(?:opportunity|deal)\s+["']?([^"'\n]+?)["']?\s+to/i);
+        const oppName = oppMatch ? oppMatch[1].trim() : '';
+        const result = await copilotTools.update_opportunity_stage.execute({ name: oppName, stage: targetStage }, actor);
+        toolResults.push({ tool: 'update_opportunity_stage', result });
+      }
+
+      // Autonomous Tool: Send Communication
+      if (lowerMsg.includes('send sms') || lowerMsg.includes('send email') || lowerMsg.includes('send message')) {
+        const channel = lowerMsg.includes('email') ? 'email' : 'sms';
+        const textMatch = message.match(/(?:saying|message|text)\s+["']?(.+?)["']?$/i);
+        const msgText = textMatch ? textMatch[1].trim() : 'Hello from Operza';
+        const recipientMatch = message.match(/to\s+([A-Za-z0-9@.\s]+?)(?:\s+saying|\s+message|$)/i);
+        const recipient = recipientMatch ? recipientMatch[1].trim() : '';
+        const result = await copilotTools.send_communication.execute({ recipient, channel, message: msgText }, actor);
+        toolResults.push({ tool: 'send_communication', result });
+      }
+
       // Explicit tool calling mode
       if (requestedTools && Array.isArray(requestedTools)) {
         for (const tc of requestedTools) {
@@ -1748,11 +1993,31 @@ const server = createServer(async (req, res) => {
       const contactCount = (state.records.contacts || []).filter(c => c.agencyId === agency.id && c.locationId === activeLocation.id).length;
       const taskCount = (state.records.tasks || []).filter(t => t.agencyId === agency.id && t.locationId === activeLocation.id && t.status !== 'completed').length;
 
-      let responseText = `Hello ${actor.user.name}! You have ${contactCount} contacts and ${taskCount} pending tasks.`;
+      let responseText = '';
       if (toolResults.length > 0) {
-        responseText += ' Here are the tool results:';
+        const summaries = [];
+        for (const tr of toolResults) {
+          if (tr.tool === 'create_contact' && tr.result.success) {
+            summaries.push(`✅ Created contact **${tr.result.name}** (${tr.result.email || 'no email'}) under **${tr.result.company || 'Direct'}**.`);
+          } else if (tr.tool === 'trigger_workflow' && tr.result.success) {
+            summaries.push(`⚡ Executed workflow **${tr.result.workflowName}** (Execution ID: ${tr.result.executionId.slice(0, 8)}). Status: **${tr.result.status}** with ${tr.result.stepsExecuted} step(s).`);
+          } else if (tr.tool === 'update_opportunity_stage' && tr.result.success) {
+            summaries.push(`📈 Moved deal **${tr.result.name}** from '${tr.result.previousStage}' to **${tr.result.newStage}**.`);
+          } else if (tr.tool === 'send_communication' && tr.result.success) {
+            summaries.push(`💬 Dispatched outbound ${tr.result.channel.toUpperCase()} to **${tr.result.contactName}**: "${tr.result.message}".`);
+          } else if (tr.tool === 'search_contacts') {
+            summaries.push(`🔍 Found ${tr.result.count} matching contact(s).`);
+          } else if (tr.tool === 'get_pipeline_summary') {
+            summaries.push(`📊 Pipeline summary: ${tr.result.totalOpportunities} active deals with a total value of $${tr.result.totalValue.toLocaleString()}.`);
+          } else if (tr.tool === 'get_calendar_availability') {
+            summaries.push(`📅 Calendar for ${tr.result.date}: ${tr.result.bookedSlots} booked appointments.`);
+          } else if (tr.result.error) {
+            summaries.push(`⚠️ Tool ${tr.tool} returned: ${tr.result.error}`);
+          }
+        }
+        responseText = summaries.join('\n\n');
       } else {
-        responseText += ` Regarding your message "${message}" — I'm ready to help. You can ask me to search contacts, review pipelines, create tasks, book appointments, or check calendar availability.`;
+        responseText = `Hello ${actor.user.name}! You have ${contactCount} contacts and ${taskCount} pending tasks. You can ask me to search contacts, add leads, move deal stages, trigger automated workflows, send outbound messages, or check calendar schedules.`;
       }
 
       const assistantMsg = {

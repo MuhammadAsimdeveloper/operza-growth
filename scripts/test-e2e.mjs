@@ -387,7 +387,48 @@ async function runTests() {
     }
     console.log('✅ Snapshot created and 1-click deployed to client sub-account with deep-cloned assets');
 
-    console.log('\n🎉 ALL 15 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 16. Copilot Autonomous Lead Creation via Intent
+    console.log('\n[TEST 16] Copilot Chat Autonomous Lead Creation: POST /api/copilot/chat');
+    const copilotContactRes = await request('/api/copilot/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'Create contact Sarah Connor with email sarah@skynet-defense.com and company Cyberdyne Systems'
+      })
+    });
+    console.log(`Copilot Chat Status: ${copilotContactRes.status}`);
+    const createToolResult = copilotContactRes.data.message?.toolResults?.find(t => t.tool === 'create_contact');
+    if (!createToolResult || !createToolResult.result?.success || createToolResult.result?.name !== 'Sarah Connor') {
+      throw new Error(`Copilot autonomous contact creation failed: ${JSON.stringify(copilotContactRes.data)}`);
+    }
+    console.log('Copilot Response Text:', copilotContactRes.data.message?.content);
+
+    // Verify contact was persisted to tenant CRM database
+    const sarahVerify = await request('/api/crm/contacts?search=Sarah');
+    const sarah = sarahVerify.data.data?.[0];
+    if (!sarah || sarah.company !== 'Cyberdyne Systems') {
+      throw new Error('Contact created via Copilot was not found in CRM query');
+    }
+    console.log(`Persisted Contact: ID=${sarah.id}, Name="${sarah.firstName} ${sarah.lastName}", Company="${sarah.company}"`);
+    console.log('✅ Copilot autonomous lead creation intent executed and persisted in CRM database');
+
+    // 17. Copilot Autonomous Workflow Triggering via Intent
+    console.log('\n[TEST 17] Copilot Chat Workflow Triggering: POST /api/copilot/chat');
+    const copilotWfRes = await request('/api/copilot/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'Trigger workflow Lead Qualification'
+      })
+    });
+    console.log(`Copilot Workflow Trigger Status: ${copilotWfRes.status}`);
+    const wfToolResult = copilotWfRes.data.message?.toolResults?.find(t => t.tool === 'trigger_workflow');
+    if (!wfToolResult || !wfToolResult.result?.success || !wfToolResult.result?.executionId) {
+      throw new Error(`Copilot autonomous workflow trigger failed: ${JSON.stringify(copilotWfRes.data)}`);
+    }
+    console.log('Copilot Response Text:', copilotWfRes.data.message?.content);
+    console.log(`Workflow Execution Result: Workflow="${wfToolResult.result.workflowName}", ID=${wfToolResult.result.executionId.slice(0, 8)}, Status=${wfToolResult.result.status}`);
+    console.log('✅ Copilot autonomous workflow execution intent dispatched and executed cleanly');
+
+    console.log('\n🎉 ALL 17 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

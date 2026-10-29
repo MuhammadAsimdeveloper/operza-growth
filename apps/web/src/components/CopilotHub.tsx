@@ -46,7 +46,7 @@ export function CopilotHub() {
     return () => clearInterval(interval);
   }, []);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!input.trim() || isStreaming) return;
     const userMsg = input.trim();
     setInput('');
@@ -62,26 +62,31 @@ export function CopilotHub() {
     const assistantMessageObj: Message = {
       id: assistantMessageId,
       sender: 'assistant',
-      text: '',
+      text: 'Analyzing intent...',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
     setMessages((prev) => [...prev, userMessageObj, assistantMessageObj]);
     setIsStreaming(true);
 
-    api.copilot.stream(
-      userMsg,
-      (delta) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMessageId ? { ...m, text: m.text + delta } : m
-          )
-        );
-      },
-      () => {
-        setIsStreaming(false);
-      }
-    );
+    try {
+      const res = await api.copilot.chat({ message: userMsg });
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMessageId
+            ? { ...m, text: res.message?.content || 'Action completed.' }
+            : m
+        )
+      );
+    } catch (err: any) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMessageId ? { ...m, text: `⚠️ ${err.message}` } : m
+        )
+      );
+    } finally {
+      setIsStreaming(false);
+    }
   };
 
   const handleApprove = async (runId: string) => {

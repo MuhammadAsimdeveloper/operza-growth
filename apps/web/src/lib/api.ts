@@ -93,6 +93,8 @@ export const api = {
       request(`/api/agency/snapshots/${id}`, { method: 'DELETE' }),
   },
   copilot: {
+    chat: (data: { message: string; sessionId?: string; tools?: any[] }) =>
+      request('/api/copilot/chat', { method: 'POST', body: JSON.stringify(data) }),
     stream: (message: string, onDelta: (delta: string) => void, onComplete: () => void) => {
       const eventSource = new EventSource(`/api/copilot/stream?message=${encodeURIComponent(message)}`, {
         withCredentials: true
