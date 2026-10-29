@@ -1,15 +1,28 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, PageHeader, StatCard, Switch } from '../components/ui';
 import { currency, num } from '../lib/format';
 import { uid, useStore } from '../lib/store';
+import { api } from '../lib/api';
 import type { Product } from '../lib/types';
 
 export default function Products() {
   const { state, dispatch } = useStore();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Product | null>(null);
+
+  useEffect(() => {
+    api.crm.list<Product>('products').then((res) => {
+      if (res.data && res.data.length > 0) {
+        for (const p of res.data) {
+          if (!state.products.some((x) => x.id === p.id)) {
+            dispatch({ type: 'product/add', product: p });
+          }
+        }
+      }
+    }).catch(() => { /* dev fallback */ });
+  }, []);
 
   const active = state.products.filter((p) => p.active);
   const recurring = active.filter((p) => p.kind === 'recurring');
@@ -112,11 +125,23 @@ export default function Products() {
             setCreating(false);
             setEditing(null);
           }}
-          onSave={(product) => {
+          onSave={async (product) => {
             if (editing) {
+              try {
+                await api.crm.update('products', editing.id, product);
+              } catch { /* dev fallback */ }
               dispatch({ type: 'product/update', id: editing.id, patch: product });
             } else {
-              dispatch({ type: 'product/add', product: { ...product, id: uid('pr') } });
+              const newProd: Product = { ...product, id: uid('pr') };
+              try {
+                await api.crm.create('products', {
+                  name: newProd.name,
+                  price: newProd.price,
+                  sku: newProd.sku,
+                  status: newProd.active ? 'active' : 'draft',
+                });
+              } catch { /* dev fallback */ }
+              dispatch({ type: 'product/add', product: newProd });
             }
             setCreating(false);
             setEditing(null);

@@ -1,14 +1,38 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Avatar, PageHeader, StatCard } from '../components/ui';
 import { useStore } from '../lib/store';
 import { currency, num, shortDate } from '../lib/format';
+import { api } from '../lib/api';
 import type { Order } from '../lib/types';
 
 export default function Orders() {
   const { state, dispatch } = useStore();
   const { orders } = state;
   const [query, setQuery] = useState('');
+
+  useEffect(() => {
+    api.crm.list<any>('orders').then((res) => {
+      if (res.data && res.data.length > 0) {
+        for (const o of res.data) {
+          if (!orders.some((x) => x.id === o.id || x.number === o.orderNumber)) {
+            dispatch({
+              type: 'order/add',
+              order: {
+                id: o.id,
+                number: o.orderNumber || o.number || 'ORD-000',
+                contactId: o.contactId,
+                items: Array.isArray(o.items) ? o.items.length : 1,
+                total: Number(o.amount) || Number(o.total) || 0,
+                status: o.status === 'paid' ? 'paid' : (o.status === 'refunded' ? 'refunded' : 'pending'),
+                at: o.paidAt || o.createdAt || new Date().toISOString()
+              }
+            });
+          }
+        }
+      }
+    }).catch(() => { /* dev fallback */ });
+  }, []);
 
   const paid = orders.filter((o) => o.status === 'paid');
   const revenue = paid.reduce((s, o) => s + o.total, 0);

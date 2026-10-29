@@ -34,7 +34,7 @@ const collections = Object.freeze({
   opportunities: { label: 'Opportunities', required: ['name'], fields: ['name','contactId','pipeline','stage','value','status','owner','closeDate','source','customValues'] },
   pipelines: { label: 'Pipelines', required: ['name'], fields: ['name','stages','status','description'] },
   customFields: { label: 'Custom fields', required: ['name','resource','fieldKey'], fields: ['name','resource','fieldKey','fieldType','options','required','status','description'] },
-  smartLists: { label: 'Smart lists', required: ['name','filterField','operator','value'], fields: ['name','filterField','operator','value','status','description'] },
+  smartLists: { label: 'Smart lists', required: ['name'], fields: ['name','rule','tone','count','filterField','operator','value','status','description'] },
   tasks: { label: 'Tasks', required: ['title'], fields: ['title','contactId','dueDate','priority','status','assignedTo','notes'] },
   conversations: { label: 'Conversations', required: ['contactName'], fields: ['contactName','channel','subject','status','lastMessage','assignedTo','messages'] },
   appointments: { label: 'Appointments', required: ['title','startsAt'], fields: ['title','contactName','calendar','startsAt','endsAt','status','assignedTo','notes'] },
@@ -58,7 +58,8 @@ const collections = Object.freeze({
   customValues: { label: 'Custom Values', required: ['name','value'], fields: ['name','value'] },
   calls: { label: 'Phone System Calls', required: ['from'], fields: ['from','to','durationSec','outcome','direction','contactId','startedAt','recordingUrl','handled','notes','numberId'] },
   enrollments: { label: 'Course Enrollments', required: ['courseId', 'contactId'], fields: ['courseId','contactId','progress','startedAt','status'] },
-  affiliates: { label: 'Affiliates', required: ['name', 'code'], fields: ['name','code','commissionPct','clicks','conversions','payout','status'] }
+  affiliates: { label: 'Affiliates', required: ['name', 'code'], fields: ['name','code','commissionPct','clicks','conversions','payout','status'] },
+  coupons: { label: 'Coupons', required: ['code'], fields: ['code','kind','amount','minSubtotal','maxRedemptions','redemptions','expiresAt','active','description'] }
 });
 
 // ─── State Management ─────────────────────────────────────────────────
@@ -1171,6 +1172,30 @@ const server = createServer(async (req, res) => {
         if (customerPhone && !contact.phone) contact.phone = customerPhone;
       }
 
+      // Dynamic Coupon Discount Application
+      let discountAmount = 0;
+      let appliedCoupon = null;
+      if (body.couponCode) {
+        const cCode = String(body.couponCode).trim().toUpperCase();
+        state.records.coupons = state.records.coupons || [];
+        appliedCoupon = state.records.coupons.find(c =>
+          c.agencyId === link.agencyId && c.code && c.code.toUpperCase() === cCode && c.active !== false
+        );
+        if (appliedCoupon) {
+          const isExpired = appliedCoupon.expiresAt && new Date(appliedCoupon.expiresAt).getTime() < Date.now();
+          const isExhausted = appliedCoupon.maxRedemptions !== null && appliedCoupon.maxRedemptions !== undefined && appliedCoupon.redemptions >= appliedCoupon.maxRedemptions;
+          if (!isExpired && !isExhausted) {
+            if (appliedCoupon.kind === 'percent') {
+              discountAmount = Math.round((link.amount * appliedCoupon.amount) / 100 * 100) / 100;
+            } else {
+              discountAmount = Math.min(appliedCoupon.amount, link.amount);
+            }
+            appliedCoupon.redemptions = (appliedCoupon.redemptions || 0) + 1;
+          }
+        }
+      }
+      const finalAmount = Math.max(0, link.amount - discountAmount);
+
       const orderId = randomUUID();
       const order = {
         id: orderId,
@@ -1179,11 +1204,14 @@ const server = createServer(async (req, res) => {
         orderNumber: `ORD-${Date.now().toString().slice(-6)}`,
         contactId: contact.id,
         contactName: `${firstName} ${lastName}`,
-        amount: link.amount,
+        amount: finalAmount,
+        originalAmount: link.amount,
+        discount: discountAmount,
+        couponCode: appliedCoupon ? appliedCoupon.code : undefined,
         currency: link.currency || 'USD',
         status: 'paid',
         paymentLinkId: link.id,
-        items: [{ name: link.name, amount: link.amount, quantity: 1 }],
+        items: [{ name: link.name, amount: finalAmount, quantity: 1 }],
         paidAt: new Date().toISOString(),
         createdAt: new Date().toISOString()
       };
@@ -1198,10 +1226,10 @@ const server = createServer(async (req, res) => {
         number: `INV-${Date.now().toString().slice(-6)}`,
         contactId: contact.id,
         contactName: `${firstName} ${lastName}`,
-        amount: link.amount,
+        amount: finalAmount,
         status: 'paid',
         dueDate: new Date().toISOString().split('T')[0],
-        description: `Payment for ${link.name}`,
+        description: `Payment for ${link.name}${appliedCoupon ? ` (Discount coupon ${appliedCoupon.code})` : ''}`,
         createdAt: new Date().toISOString()
       };
       state.records.invoices = state.records.invoices || [];
@@ -1234,6 +1262,59 @@ const server = createServer(async (req, res) => {
         order,
         invoice,
         contact
+      });
+    }
+
+    // Public / Checkout Coupon Validation Engine
+    if (method === 'POST' && pathname === '/api/coupons/validate') {
+      const body = await readBody(req);
+      const { code, subtotal, agencyId } = body;
+      if (!code) return sendJson(res, 400, { error: 'Coupon code is required' });
+
+      const targetAgencyId = agencyId || state.agencies[0]?.id;
+      const cCode = String(code).trim().toUpperCase();
+      state.records.coupons = state.records.coupons || [];
+
+      const coupon = state.records.coupons.find(c =>
+        c.agencyId === targetAgencyId && c.code && c.code.toUpperCase() === cCode
+      );
+
+      if (!coupon) {
+        return sendJson(res, 404, { valid: false, error: `Coupon "${cCode}" not found` });
+      }
+      if (coupon.active === false) {
+        return sendJson(res, 400, { valid: false, error: 'Coupon is paused or inactive' });
+      }
+      if (coupon.expiresAt && new Date(coupon.expiresAt).getTime() < Date.now()) {
+        return sendJson(res, 400, { valid: false, error: 'Coupon has expired' });
+      }
+      if (coupon.maxRedemptions !== null && coupon.maxRedemptions !== undefined && (coupon.redemptions || 0) >= coupon.maxRedemptions) {
+        return sendJson(res, 400, { valid: false, error: 'Coupon redemption limit has been reached' });
+      }
+
+      const numSubtotal = Number(subtotal) || 100;
+      if (coupon.minSubtotal && numSubtotal < coupon.minSubtotal) {
+        return sendJson(res, 400, { valid: false, error: `Order must meet minimum subtotal of $${coupon.minSubtotal}` });
+      }
+
+      let discount = 0;
+      if (coupon.kind === 'percent') {
+        discount = Math.round((numSubtotal * coupon.amount) / 100 * 100) / 100;
+      } else {
+        discount = Math.min(coupon.amount, numSubtotal);
+      }
+      const newTotal = Math.max(0, numSubtotal - discount);
+
+      return sendJson(res, 200, {
+        valid: true,
+        coupon: {
+          id: coupon.id,
+          code: coupon.code,
+          kind: coupon.kind,
+          amount: coupon.amount
+        },
+        discount,
+        newTotal
       });
     }
 
@@ -2804,6 +2885,124 @@ const server = createServer(async (req, res) => {
       broadcast('phone.call.handled', { id: callId, handled: call.handled });
 
       return sendJson(res, 200, { success: true, call });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── SMART LISTS DYNAMIC RULE EVALUATION ────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'GET' && pathname.startsWith('/api/crm/smart-lists/') && pathname.endsWith('/evaluate')) {
+      const listId = pathname.split('/')[4];
+      state.records.smartLists = state.records.smartLists || [];
+      const list = state.records.smartLists.find(l => l.id === listId && l.agencyId === agency.id);
+      if (!list) return sendJson(res, 404, { error: 'Smart list not found' });
+
+      state.records.contacts = state.records.contacts || [];
+      const tenantContacts = state.records.contacts.filter(c => c.agencyId === agency.id);
+
+      // Evaluate rule string or filterField
+      let matches = tenantContacts;
+      const rule = (list.rule || '').toLowerCase().trim();
+
+      if (rule) {
+        if (rule.includes('customer')) {
+          matches = tenantContacts.filter(c => c.status === 'customer' || (c.tags || []).includes('customer'));
+        } else if (rule.includes('lead')) {
+          matches = tenantContacts.filter(c => c.status === 'lead' || (c.tags || []).includes('lead'));
+        } else if (rule.startsWith('tag:') || rule.includes('tags contains') || rule.includes('tagged')) {
+          const tagTarget = rule.replace('tag:', '').replace('tags contains', '').replace('tagged', '').replace(/['"]/g, '').trim();
+          matches = tenantContacts.filter(c => (c.tags || []).some(t => t.toLowerCase().includes(tagTarget)));
+        } else if (rule.includes('company')) {
+          matches = tenantContacts.filter(c => Boolean(c.company && c.company.trim()));
+        } else if (rule.includes('promoter')) {
+          matches = tenantContacts.filter(c => (c.tags || []).includes('promoter'));
+        }
+      } else if (list.filterField && list.value) {
+        const field = list.filterField;
+        const val = String(list.value).toLowerCase();
+        matches = tenantContacts.filter(c => {
+          const cVal = String(c[field] || '').toLowerCase();
+          return list.operator === 'equals' ? cVal === val : cVal.includes(val);
+        });
+      }
+
+      list.count = matches.length;
+      await saveState();
+
+      return sendJson(res, 200, {
+        list,
+        count: matches.length,
+        contacts: matches
+      });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── UNIFIED REPORTING & ANALYTICS OVERVIEW ─────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'GET' && pathname === '/api/reporting/overview') {
+      state.records.invoices = state.records.invoices || [];
+      state.records.opportunities = state.records.opportunities || [];
+      state.records.contacts = state.records.contacts || [];
+      state.records.appointments = state.records.appointments || [];
+      state.records.campaigns = state.records.campaigns || [];
+
+      const tenantInvoices = state.records.invoices.filter(i => i.agencyId === agency.id);
+      const tenantOpps = state.records.opportunities.filter(o => o.agencyId === agency.id);
+      const tenantContacts = state.records.contacts.filter(c => c.agencyId === agency.id);
+      const tenantAppointments = state.records.appointments.filter(a => a.agencyId === agency.id);
+
+      const paidInvoices = tenantInvoices.filter(i => i.status === 'paid');
+      const revenue = paidInvoices.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
+
+      const openOpps = tenantOpps.filter(o => o.status === 'open' || o.stage !== 'Lost');
+      const pipelineValue = openOpps.reduce((sum, o) => sum + (Number(o.value) || 0), 0);
+
+      const wonDeals = tenantOpps.filter(o => o.status === 'won' || o.stage === 'Won').length;
+
+      const confirmedAppts = tenantAppointments.filter(a => a.status === 'confirmed' || a.status === 'completed').length;
+      const appointmentShowRate = tenantAppointments.length > 0 ? Math.round((confirmedAppts / tenantAppointments.length) * 100) : 100;
+
+      // Attribution sources breakdown
+      const sources = {};
+      for (const c of tenantContacts) {
+        const src = c.source || 'Direct Web';
+        sources[src] = (sources[src] || 0) + 1;
+      }
+
+      // 6-period timeline trend
+      const now = Date.now();
+      const periodDuration = (30 * 86_400_000) / 6;
+      const timeline = Array.from({ length: 6 }, (_, idx) => {
+        const pStart = now - (6 - idx) * periodDuration;
+        const pEnd = now - (5 - idx) * periodDuration;
+        const pInvoices = paidInvoices.filter(i => {
+          const t = new Date(i.createdAt || i.dueDate).getTime();
+          return t >= pStart && t < pEnd;
+        });
+        const pContacts = tenantContacts.filter(c => {
+          const t = new Date(c.createdAt).getTime();
+          return t >= pStart && t < pEnd;
+        });
+        return {
+          period: `P${idx + 1}`,
+          revenue: pInvoices.reduce((s, i) => s + (Number(i.amount) || 0), 0),
+          contacts: pContacts.length
+        };
+      });
+
+      return sendJson(res, 200, {
+        metrics: {
+          revenue,
+          pipeline: pipelineValue,
+          dealsWon: wonDeals,
+          contacts: tenantContacts.length,
+          appointmentShowRate
+        },
+        sources,
+        timeline,
+        campaignsCount: (state.records.campaigns || []).filter(cp => cp.agencyId === agency.id).length
+      });
     }
 
     // ═════════════════════════════════════════════════════════════

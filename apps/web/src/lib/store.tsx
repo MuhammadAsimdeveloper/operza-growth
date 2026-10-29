@@ -173,6 +173,7 @@ export type Action =
   | { type: 'media/delete'; id: string }
   | { type: 'prospect/status'; id: string; status: 'new' | 'contacted' | 'qualified' | 'skipped' }
   | { type: 'order/status'; id: string; status: 'paid' | 'pending' | 'refunded' }
+  | { type: 'order/add'; order: Order }
   | { type: 'subscription/status'; id: string; status: 'active' | 'past_due' | 'canceled' }
   | { type: 'affiliate/status'; id: string; status: 'active' | 'pending' | 'paused' }
   | { type: 'template/use'; id: string }
@@ -184,6 +185,7 @@ export type Action =
   | { type: 'blog/toggle'; id: string }
   | { type: 'qr/add'; code: QrCode }
   | { type: 'smartList/add'; list: SmartList }
+  | { type: 'smartList/update'; id: string; patch: Partial<SmartList> }
   | { type: 'customField/add'; field: CustomField }
   | { type: 'team/add'; member: TeamMember }
   | { type: 'team/role'; id: string; role: TeamMember['role'] }
@@ -987,6 +989,12 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
         prospects: state.prospects.map((p) => (p.id === action.id ? { ...p, status: action.status } : p)),
       };
 
+    case 'order/add':
+      return {
+        ...state,
+        orders: [action.order, ...state.orders],
+      };
+
     case 'order/status':
       return {
         ...state,
@@ -1059,6 +1067,12 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
 
     case 'smartList/add':
       return { ...state, smartLists: [action.list, ...state.smartLists] };
+
+    case 'smartList/update':
+      return {
+        ...state,
+        smartLists: state.smartLists.map((s) => (s.id === action.id ? { ...s, ...action.patch } : s)),
+      };
 
     case 'customField/add':
       return { ...state, customFields: [...state.customFields, action.field] };

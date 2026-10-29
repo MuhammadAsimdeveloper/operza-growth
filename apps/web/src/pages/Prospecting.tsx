@@ -3,6 +3,7 @@ import { Icon } from '../components/Icon';
 import { Avatar, Badge, EmptyState, PageHeader, StatCard } from '../components/ui';
 import { uid, useStore } from '../lib/store';
 import { num } from '../lib/format';
+import { api } from '../lib/api';
 import type { Prospect } from '../lib/types';
 
 type Filter = 'all' | Prospect['status'];
@@ -35,25 +36,37 @@ export default function Prospecting() {
     [prospects, filter, query],
   );
 
-  function importToContacts(p: Prospect) {
+  async function importToContacts(p: Prospect) {
     const [firstName, ...rest] = p.person.split(' ');
+    const newContact = {
+      id: uid('c'),
+      firstName,
+      lastName: rest.join(' ') || '—',
+      email: p.email,
+      phone: '—',
+      company: p.company,
+      tags: ['prospect', p.industry.toLowerCase()],
+      source: 'Prospecting',
+      status: 'lead' as const,
+      owner: state.team[0]?.name ?? 'Unassigned',
+      createdAt: new Date().toISOString(),
+      notes: [{ id: uid('note'), body: `Imported from prospecting · fit score ${p.score}.`, at: new Date().toISOString(), author: 'System' }],
+      customFields: { Industry: p.industry, Employees: String(p.employees), Location: p.location },
+    };
+    try {
+      await api.crm.create('contacts', {
+        firstName: newContact.firstName,
+        lastName: newContact.lastName,
+        email: newContact.email,
+        company: newContact.company,
+        tags: newContact.tags,
+        source: newContact.source,
+        status: newContact.status
+      });
+    } catch { /* dev fallback */ }
     dispatch({
       type: 'contact/add',
-      contact: {
-        id: uid('c'),
-        firstName,
-        lastName: rest.join(' ') || '—',
-        email: p.email,
-        phone: '—',
-        company: p.company,
-        tags: ['prospect', p.industry.toLowerCase()],
-        source: 'Prospecting',
-        status: 'lead',
-        owner: state.team[0]?.name ?? 'Unassigned',
-        createdAt: new Date().toISOString(),
-        notes: [{ id: uid('note'), body: `Imported from prospecting · fit score ${p.score}.`, at: new Date().toISOString(), author: 'System' }],
-        customFields: { Industry: p.industry, Employees: String(p.employees), Location: p.location },
-      },
+      contact: newContact,
     });
     dispatch({ type: 'prospect/status', id: p.id, status: 'qualified' });
   }

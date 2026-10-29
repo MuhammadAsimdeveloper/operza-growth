@@ -169,6 +169,21 @@ export const api = {
     setHandled: (id: string, handled = true) =>
       request(`/api/calls/handled/${id}`, { method: 'PUT', body: JSON.stringify({ handled }) }),
   },
+  coupons: {
+    validate: (code: string, subtotal?: number, agencyId?: string) =>
+      request<{ valid: boolean; coupon?: any; discount?: number; newTotal?: number; error?: string }>(
+        '/api/coupons/validate',
+        { method: 'POST', body: JSON.stringify({ code, subtotal, agencyId }) }
+      ),
+  },
+  smartLists: {
+    evaluate: (id: string) =>
+      request<{ list: any; count: number; contacts: any[] }>(`/api/crm/smart-lists/${id}/evaluate`),
+  },
+  reporting: {
+    getOverview: () =>
+      request<{ metrics: { revenue: number; pipeline: number; dealsWon: number; contacts: number; appointmentShowRate: number }; sources: Record<string, number>; timeline: any[]; campaignsCount: number }>('/api/reporting/overview'),
+  },
   copilot: {
     chat: (data: { message: string; sessionId?: string; tools?: any[] }) =>
       request('/api/copilot/chat', { method: 'POST', body: JSON.stringify(data) }),

@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, PageHeader, StatCard } from '../components/ui';
 import { BarChart, Donut, LineChart, Spark } from '../components/Chart';
 import { uid, useStore } from '../lib/store';
 import { currency, num, pct } from '../lib/format';
+import { api } from '../lib/api';
 import type {
   DashboardChart,
   DashboardWidget,
@@ -75,6 +76,15 @@ export default function Reporting() {
   const { invoices, opportunities, contacts, campaigns, team, savedReports, dashboardWidgets } = state;
   const [creating, setCreating] = useState(false);
   const [addingWidget, setAddingWidget] = useState(false);
+  const [serverMetrics, setServerMetrics] = useState<{ revenue: number; pipeline: number; dealsWon: number; contacts: number; appointmentShowRate: number } | null>(null);
+
+  useEffect(() => {
+    api.reporting.getOverview().then((res) => {
+      if (res && res.metrics) {
+        setServerMetrics(res.metrics);
+      }
+    }).catch(() => { /* dev fallback */ });
+  }, []);
 
   const collected = invoices.filter((i) => i.status === 'paid').reduce((s, i) => s + i.amount, 0);
   const won = opportunities.filter((o) => o.status === 'won');
@@ -152,10 +162,10 @@ export default function Reporting() {
       />
 
       <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Collected revenue" value={currency(collected)} icon={<Icon name="wallet" size={15} />} trend={{ direction: 'up', value: '12.4%' }} meta="vs. prior period" />
-        <StatCard label="Won value" value={currency(wonValue)} icon={<Icon name="check" size={15} />} trend={{ direction: 'up', value: '6.8%' }} meta={`${won.length} deals`} />
+        <StatCard label="Collected revenue" value={currency(serverMetrics ? serverMetrics.revenue : collected)} icon={<Icon name="wallet" size={15} />} trend={{ direction: 'up', value: '12.4%' }} meta="vs. prior period" />
+        <StatCard label="Pipeline value" value={currency(serverMetrics ? serverMetrics.pipeline : wonValue)} icon={<Icon name="check" size={15} />} trend={{ direction: 'up', value: '6.8%' }} meta={`${serverMetrics ? serverMetrics.dealsWon : won.length} won deals`} />
         <StatCard label="Win rate" value={pct(won.length, closed.length || 1)} icon={<Icon name="chart" size={15} />} meta={`${closed.length} closed deals`} />
-        <StatCard label="Email open rate" value={pct(Math.round(openRate * 100), 100)} icon={<Icon name="mail" size={15} />} meta={`${sent.length} campaigns`} />
+        <StatCard label="Email open rate" value={pct(Math.round(openRate * 100), 100)} icon={<Icon name="mail" size={15} />} meta={`${serverMetrics?.appointmentShowRate ?? 100}% appt show rate`} />
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>

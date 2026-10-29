@@ -1032,7 +1032,127 @@ async function runTests() {
     }
     console.log('✅ Manual call record logged, persisted to CRM database, and marked handled');
 
-    console.log('\n🎉 ALL 36 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 37. Coupons Validation Engine & Discount Checkout Ingress
+    console.log('\n[TEST 37] Coupons Validation Engine & Discount Checkout: POST /api/crm/coupons, /api/coupons/validate & checkout');
+    const couponCreateRes = await request('/api/crm/coupons', {
+      method: 'POST',
+      body: JSON.stringify({
+        code: 'PROMO20',
+        kind: 'percent',
+        amount: 20,
+        minSubtotal: 100,
+        maxRedemptions: 5,
+        redemptions: 0,
+        active: true
+      })
+    });
+    console.log(`Coupon Create Status: ${couponCreateRes.status}`, `Code: ${couponCreateRes.data.code}`);
+    if (couponCreateRes.status !== 201 || couponCreateRes.data.code !== 'PROMO20') {
+      throw new Error(`Coupon creation failed: ${JSON.stringify(couponCreateRes.data)}`);
+    }
+
+    // Validate coupon against $500 subtotal (20% = $100 off, new total = $400)
+    const validateRes = await request('/api/coupons/validate', {
+      method: 'POST',
+      body: JSON.stringify({ code: 'PROMO20', subtotal: 500 })
+    });
+    console.log(`Coupon Validation Status: ${validateRes.status}`, `Valid: ${validateRes.data.valid}`, `Discount: $${validateRes.data.discount}`);
+    if (validateRes.status !== 200 || !validateRes.data.valid || validateRes.data.discount !== 100 || validateRes.data.newTotal !== 400) {
+      throw new Error(`Coupon validation logic failed: ${JSON.stringify(validateRes.data)}`);
+    }
+
+    // Apply coupon to public checkout: Starter Retainer ($1,500 - 20% discount = $1,200)
+    const discountedCheckout = await request('/api/payments/checkout/starter-retainer', {
+      method: 'POST',
+      body: JSON.stringify({
+        customerName: 'Maya Lin',
+        customerEmail: 'maya@lin-arch.io',
+        customerPhone: '+1 555-9090',
+        couponCode: 'PROMO20'
+      })
+    });
+    console.log(`Discounted Checkout Status: ${discountedCheckout.status}`, `Order: $${discountedCheckout.data.order?.amount}`, `Discount: $${discountedCheckout.data.order?.discount}`);
+    if (
+      discountedCheckout.status !== 201 ||
+      discountedCheckout.data.order?.amount !== 1200 ||
+      discountedCheckout.data.order?.discount !== 300 ||
+      discountedCheckout.data.order?.couponCode !== 'PROMO20'
+    ) {
+      throw new Error(`Discounted checkout failed: ${JSON.stringify(discountedCheckout.data)}`);
+    }
+    console.log('✅ Coupon created, validated against subtotal, and applied to checkout with discounted order and invoice');
+
+    // 38. Smart Lists Dynamic Rule Evaluation & Segmentation Engine
+    console.log('\n[TEST 38] Smart Lists Dynamic Segmentation: POST /api/crm/smartLists & GET /api/crm/smart-lists/:id/evaluate');
+    const smartListCreate = await request('/api/crm/smartLists', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Active Customers',
+        rule: "status = 'customer'",
+        tone: 'green',
+        count: 0
+      })
+    });
+    console.log(`Smart List Create Status: ${smartListCreate.status}`, `ID: ${smartListCreate.data.id}`);
+    if (smartListCreate.status !== 201 || !smartListCreate.data.id) {
+      throw new Error(`Smart list creation failed: ${JSON.stringify(smartListCreate.data)}`);
+    }
+
+    const smartListId = smartListCreate.data.id;
+    const evaluateRes = await request(`/api/crm/smart-lists/${smartListId}/evaluate`);
+    console.log(`Evaluation Status: ${evaluateRes.status}`, `Matching Customers Count: ${evaluateRes.data.count}`);
+    if (evaluateRes.status !== 200 || evaluateRes.data.count < 1) {
+      throw new Error(`Smart list evaluation failed: ${JSON.stringify(evaluateRes.data)}`);
+    }
+    const customerMatches = evaluateRes.data.contacts;
+    if (!customerMatches.every(c => c.status === 'customer' || (c.tags || []).includes('customer'))) {
+      throw new Error('Smart list returned contacts that do not match the customer rule');
+    }
+    console.log('✅ Smart list created, evaluated across tenant contacts database, and matching contacts segmented');
+
+    // 39. Unified Reporting & Multi-Touch Attribution Overview
+    console.log('\n[TEST 39] Unified Reporting Overview: GET /api/reporting/overview');
+    const reportingRes = await request('/api/reporting/overview');
+    console.log(`Reporting Status: ${reportingRes.status}`, `Revenue: $${reportingRes.data.metrics?.revenue}`, `Pipeline: $${reportingRes.data.metrics?.pipeline}`, `Deals Won: ${reportingRes.data.metrics?.dealsWon}`);
+    if (
+      reportingRes.status !== 200 ||
+      typeof reportingRes.data.metrics?.revenue !== 'number' ||
+      typeof reportingRes.data.metrics?.pipeline !== 'number' ||
+      !Array.isArray(reportingRes.data.timeline) ||
+      reportingRes.data.timeline.length !== 6
+    ) {
+      throw new Error(`Reporting overview query failed: ${JSON.stringify(reportingRes.data)}`);
+    }
+    console.log('Attribution Sources:', JSON.stringify(reportingRes.data.sources));
+    console.log('✅ Unified reporting overview aggregated across invoices, pipeline deals, contacts, and 6-period timeline');
+
+    // 40. Prospecting CRM Ingestion Pipeline
+    console.log('\n[TEST 40] Prospecting Lead CRM Ingestion: POST /api/crm/contacts (prospect) & timeline');
+    const prospectIngressRes = await request('/api/crm/contacts', {
+      method: 'POST',
+      body: JSON.stringify({
+        firstName: 'Daria',
+        lastName: 'Morgendorffer',
+        email: 'daria@lawndale.io',
+        company: 'Lawndale Creative',
+        tags: ['prospect', 'media-agency', 'high-fit'],
+        source: 'Prospecting',
+        status: 'lead'
+      })
+    });
+    console.log(`Prospect Ingress Status: ${prospectIngressRes.status}`, `ID: ${prospectIngressRes.data.id}`);
+    if (prospectIngressRes.status !== 201 || !prospectIngressRes.data.tags?.includes('prospect')) {
+      throw new Error(`Prospect ingestion failed: ${JSON.stringify(prospectIngressRes.data)}`);
+    }
+
+    const prospectTimeline = await request(`/api/crm/contacts/${prospectIngressRes.data.id}/timeline`);
+    console.log(`Prospect Timeline Status: ${prospectTimeline.status}`, `Events: ${prospectTimeline.data.events?.length}`);
+    if (prospectTimeline.status !== 200 || prospectTimeline.data.events?.length < 1) {
+      throw new Error('Prospect did not register creation event in activity ledger');
+    }
+    console.log('✅ Lookalike prospect converted and ingested into CRM database with source attribution and timeline');
+
+    console.log('\n🎉 ALL 40 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

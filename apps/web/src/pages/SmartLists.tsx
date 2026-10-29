@@ -1,17 +1,47 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, PageHeader, StatCard } from '../components/ui';
 import { uid, useStore } from '../lib/store';
 import { num } from '../lib/format';
+import { api } from '../lib/api';
 import type { SmartList } from '../lib/types';
 
 export default function SmartLists() {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const { smartLists } = state;
   const [adding, setAdding] = useState(false);
+  const [evaluatingId, setEvaluatingId] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    api.crm.list<SmartList>('smartLists').then((res) => {
+      if (res.data && res.data.length > 0) {
+        for (const sl of res.data) {
+          if (!smartLists.some((x) => x.id === sl.id)) {
+            dispatch({ type: 'smartList/add', list: sl });
+          }
+        }
+      }
+    }).catch(() => { /* dev fallback */ });
+  }, []);
+
+  const handleEvaluate = async (list: SmartList) => {
+    setEvaluatingId(list.id);
+    try {
+      const res = await api.smartLists.evaluate(list.id);
+      if (res && typeof res.count === 'number') {
+        dispatch({
+          type: 'smartList/update',
+          id: list.id,
+          patch: { count: res.count }
+        });
+      }
+    } catch { /* dev fallback */ } finally {
+      setEvaluatingId(null);
+    }
+  };
 
   const total = smartLists.reduce((s, l) => s + l.count, 0);
   const largest = [...smartLists].sort((a, b) => b.count - a.count)[0];
@@ -56,7 +86,16 @@ export default function SmartLists() {
               </div>
             </div>
             <div className="card__body row row--between">
-              <span className="cell-sub">Auto-updating</span>
+              <span className="row" style={{ gap: 6 }}>
+                <button
+                  type="button"
+                  className="btn btn--sm"
+                  disabled={evaluatingId === list.id}
+                  onClick={() => handleEvaluate(list)}
+                >
+                  <Icon name="refresh" size={12} /> {evaluatingId === list.id ? 'Evaluating...' : 'Evaluate'}
+                </button>
+              </span>
               <button type="button" className="btn btn--sm" onClick={() => navigate('/contacts')}>
                 View contacts <Icon name="arrow-right" size={12} />
               </button>
@@ -78,11 +117,26 @@ function NewListModal({ onClose }: { onClose: () => void }) {
 
   const canSave = name.trim().length > 1 && rule.trim().length > 2;
 
-  function save() {
+  async function save() {
     if (!canSave) return;
+    const newList: SmartList = {
+      id: uid('sl'),
+      name: name.trim(),
+      rule: rule.trim(),
+      count: 0,
+      tone
+    };
+    try {
+      await api.crm.create('smartLists', {
+        name: newList.name,
+        rule: newList.rule,
+        tone: newList.tone,
+        count: 0
+      });
+    } catch { /* dev fallback */ }
     dispatch({
       type: 'smartList/add',
-      list: { id: uid('sl'), name: name.trim(), rule: rule.trim(), count: 0, tone },
+      list: newList,
     });
     onClose();
   }

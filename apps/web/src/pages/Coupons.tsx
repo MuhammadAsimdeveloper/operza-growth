@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, PageHeader, StatCard, Switch } from '../components/ui';
 import { currency, fullDate, num } from '../lib/format';
 import { uid, useStore } from '../lib/store';
+import { api } from '../lib/api';
 import type { Coupon, CouponKind } from '../lib/types';
 
 type CouponState = 'active' | 'paused' | 'expired' | 'exhausted';
@@ -28,6 +29,38 @@ export default function Coupons() {
   const { state, dispatch } = useStore();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Coupon | null>(null);
+  const [testCode, setTestCode] = useState('');
+  const [testResult, setTestResult] = useState<string | null>(null);
+  const [validating, setValidating] = useState(false);
+
+  useEffect(() => {
+    api.crm.list<Coupon>('coupons').then((res) => {
+      if (res.data && res.data.length > 0) {
+        for (const c of res.data) {
+          if (!state.coupons.some((x) => x.id === c.id)) {
+            dispatch({ type: 'coupon/add', coupon: c });
+          }
+        }
+      }
+    }).catch(() => { /* dev fallback */ });
+  }, []);
+
+  const handleValidateTest = async () => {
+    if (!testCode.trim()) return;
+    setValidating(true);
+    try {
+      const res = await api.coupons.validate(testCode.trim(), 200);
+      if (res.valid) {
+        setTestResult(`✅ Valid! Discount: $${res.discount} (New Subtotal: $${res.newTotal})`);
+      } else {
+        setTestResult(`❌ Invalid: ${res.error}`);
+      }
+    } catch (err: any) {
+      setTestResult(`❌ ${err.message || 'Validation failed'}`);
+    } finally {
+      setValidating(false);
+    }
+  };
 
   const active = state.coupons.filter((c) => stateOf(c) === 'active');
   const redemptions = state.coupons.reduce((sum, c) => sum + c.redemptions, 0);
@@ -143,6 +176,40 @@ export default function Coupons() {
         )}
       </div>
 
+      <div className="card" style={{ marginTop: 16 }}>
+        <div className="card__head">
+          <div>
+            <div className="card__title">Live Promotion Code Tester</div>
+            <div className="card__sub">Verify coupon validity against order subtotals and redemption limits</div>
+          </div>
+        </div>
+        <div className="card__body stack" style={{ gap: 12 }}>
+          <div className="row" style={{ gap: 8 }}>
+            <input
+              type="text"
+              className="input"
+              style={{ maxWidth: 240 }}
+              placeholder="Enter coupon code..."
+              value={testCode}
+              onChange={(e) => setTestCode(e.target.value.toUpperCase())}
+            />
+            <button
+              className="btn btn--primary"
+              type="button"
+              disabled={validating || !testCode.trim()}
+              onClick={handleValidateTest}
+            >
+              <Icon name="check" size={14} /> {validating ? 'Checking...' : 'Validate Code'}
+            </button>
+          </div>
+          {testResult && (
+            <div style={{ padding: 10, borderRadius: 'var(--radius)', background: 'var(--surface-sunken)', border: '1px solid var(--border)', fontSize: 13 }}>
+              {testResult}
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="hint" style={{ marginTop: 10 }}>
         Expiry and redemption limits are evaluated live — toggling a code pauses it without deleting history.
       </div>
@@ -154,18 +221,33 @@ export default function Coupons() {
             setCreating(false);
             setEditing(null);
           }}
-          onSave={(coupon) => {
+          onSave={async (coupon) => {
             if (editing) {
+              try {
+                await api.crm.update('coupons', editing.id, coupon);
+              } catch { /* dev fallback */ }
               dispatch({ type: 'coupon/update', id: editing.id, patch: coupon });
             } else {
+              const newCoupon = {
+                ...coupon,
+                id: uid('cp'),
+                redemptions: 0,
+                createdAt: new Date().toISOString(),
+              };
+              try {
+                await api.crm.create('coupons', {
+                  code: newCoupon.code,
+                  kind: newCoupon.kind,
+                  amount: newCoupon.value,
+                  minSubtotal: newCoupon.minAmount,
+                  maxRedemptions: newCoupon.maxRedemptions,
+                  expiresAt: newCoupon.expiresAt,
+                  active: newCoupon.active
+                });
+              } catch { /* dev fallback */ }
               dispatch({
                 type: 'coupon/add',
-                coupon: {
-                  ...coupon,
-                  id: uid('cp'),
-                  redemptions: 0,
-                  createdAt: new Date().toISOString(),
-                },
+                coupon: newCoupon,
               });
             }
             setCreating(false);

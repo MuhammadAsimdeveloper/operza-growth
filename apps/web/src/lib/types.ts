@@ -133,6 +133,7 @@ export interface Product {
   price: number;
   kind: 'one_time' | 'recurring';
   active: boolean;
+  sku?: string;
 }
 
 export type TaskPriority = 'low' | 'medium' | 'high';
