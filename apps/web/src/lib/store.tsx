@@ -129,6 +129,7 @@ export type Action =
   | { type: 'site/bump/update'; siteId: string; id: string; patch: Partial<OrderBump> }
   | { type: 'site/bump/delete'; siteId: string; id: string }
   | { type: 'site/duplicate'; copy: Site }
+  | { type: 'site/delete'; id: string }
   | { type: 'report/add'; report: SavedReport }
   | { type: 'report/delete'; id: string }
   | { type: 'widget/add'; widget: DashboardWidget }
@@ -655,6 +656,9 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
 
     case 'site/duplicate':
       return { ...state, sites: [action.copy, ...state.sites] };
+
+    case 'site/delete':
+      return { ...state, sites: state.sites.filter((s) => s.id !== action.id) };
 
     case 'report/add':
       return { ...state, savedReports: [action.report, ...state.savedReports] };
@@ -1785,6 +1789,8 @@ function auditMeta(
     }
     case 'site/duplicate':
       return { action: 'Funnel duplicated', entity: 'Funnel', detail: action.copy.name };
+    case 'site/delete':
+      return { action: 'Website deleted', entity: 'Website', detail: `Site ID: ${action.id}` };
     case 'review/status':
       return {
         action: `Review marked ${action.status}`,

@@ -134,15 +134,34 @@ export const api = {
     getActivity: (limit = 20) => request(`/api/dashboard/activity?limit=${limit}`),
   },
   audit: {
-    list: (params?: { q?: string; action?: string; limit?: number }) => {
+    list: (params?: { q?: string; search?: string; action?: string; actor?: string; limit?: number }) => {
       const q = new URLSearchParams();
-      if (params?.q) q.set('q', params.q);
+      if (params?.q || params?.search) q.set('q', params.q || params.search || '');
       if (params?.action) q.set('action', params.action);
+      if (params?.actor) q.set('actor', params.actor);
       if (params?.limit) q.set('limit', String(params.limit));
       const qs = q.toString();
       return request<{ data: any[]; total: number }>(`/api/audit${qs ? `?${qs}` : ''}`);
     },
+    exportUrl: (params?: { q?: string; action?: string; actor?: string }) => {
+      const q = new URLSearchParams();
+      q.set('format', 'csv');
+      if (params?.q) q.set('q', params.q);
+      if (params?.action) q.set('action', params.action);
+      if (params?.actor) q.set('actor', params.actor);
+      return `/api/audit?${q.toString()}`;
+    },
     clear: () => request('/api/audit', { method: 'DELETE' }),
+  },
+  websites: {
+    list: () => request<{ data: any[] }>('/api/crm/websites'),
+    create: (data: any) => request<{ success: boolean; data: any }>('/api/crm/websites', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: any) => request<{ success: boolean; data: any }>(`/api/crm/websites/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    delete: (id: string) => request(`/api/crm/websites/${id}`, { method: 'DELETE' }),
+    publish: (id: string) => request<{ success: boolean; published: boolean; status: string; site: any }>(`/api/websites/${id}/publish`, { method: 'POST' }),
+    addPage: (id: string, page: any) => request<{ success: boolean; page: any; site: any }>(`/api/websites/${id}/pages`, { method: 'POST', body: JSON.stringify(page) }),
+    deletePage: (siteId: string, pageId: string) => request(`/api/websites/${siteId}/pages/${pageId}`, { method: 'DELETE' }),
+    getPublic: (slugOrId: string, pageSlug?: string) => request(`/api/websites/public/${slugOrId}${pageSlug ? `?pageSlug=${encodeURIComponent(pageSlug)}` : ''}`),
   },
   campaigns: {
     send: (id: string) => request(`/api/campaigns/${id}/send`, { method: 'POST' }),

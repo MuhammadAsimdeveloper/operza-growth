@@ -1834,7 +1834,121 @@ async function runTests() {
     }
     console.log('✅ Payment links lifecycle verified: creation, public lookup, state machine pause/resume');
 
-    console.log('\n🎉 ALL 54 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 55. Hosted Websites & Multi-Page CMS Lifecycle
+    console.log('\n[TEST 55] Hosted Websites & Multi-Page CMS Engine: Creation, Publishing, Page CRUD, & Reorder');
+    const websiteCreateRes = await request('/api/crm/websites', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Nexus Strategy Agency',
+        domain: 'nexus-strategy',
+        kind: 'website',
+        published: false,
+        visits: 0,
+        optins: 0,
+        pages: [
+          {
+            id: 'page_home_01',
+            name: 'Home',
+            path: '/',
+            headline: 'Scale Beyond Limits',
+            subhead: 'End-to-end automation and revenue ops.',
+            cta: 'Schedule Consultation',
+            theme: 'plain',
+            visits: 0,
+            optins: 0
+          }
+        ]
+      })
+    });
+    console.log(`Website Create Status: ${websiteCreateRes.status}`, `ID: ${websiteCreateRes.data.id}`, `Domain: ${websiteCreateRes.data.domain}`);
+    if (websiteCreateRes.status !== 201 || !websiteCreateRes.data.id || websiteCreateRes.data.domain !== 'nexus-strategy') {
+      throw new Error(`Website creation failed: ${JSON.stringify(websiteCreateRes.data)}`);
+    }
+    const testSiteId = websiteCreateRes.data.id;
+
+    // Toggle Website Publishing
+    const publishSiteRes = await request(`/api/websites/${testSiteId}/publish`, { method: 'POST' });
+    console.log(`Publish Website Status: ${publishSiteRes.status}`, `Published: ${publishSiteRes.data.published}`, `Status: ${publishSiteRes.data.status}`);
+    if (publishSiteRes.status !== 200 || publishSiteRes.data.published !== true || publishSiteRes.data.status !== 'published') {
+      throw new Error(`Website publishing failed: ${JSON.stringify(publishSiteRes.data)}`);
+    }
+
+    // Public website lookup & visit counter
+    const publicSiteRes = await request('/api/websites/public/nexus-strategy');
+    console.log(`Public Website Lookup Status: ${publicSiteRes.status}`, `Visits: ${publicSiteRes.data.visits}`);
+    if (publicSiteRes.status !== 200 || publicSiteRes.data.visits !== 1) {
+      throw new Error(`Public website lookup failed: ${JSON.stringify(publicSiteRes.data)}`);
+    }
+
+    // Add a secondary page to the website
+    const addPageRes = await request(`/api/websites/${testSiteId}/pages`, {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Case Studies',
+        path: '/case-studies',
+        headline: 'Real Results for High-Growth Firms',
+        subhead: 'Explore how top agencies scaled 10x with Operza.',
+        cta: 'Read Stories',
+        theme: 'gradient'
+      })
+    });
+    console.log(`Add Page Status: ${addPageRes.status}`, `Page Name: "${addPageRes.data.page?.name}"`, `Total Pages: ${addPageRes.data.site?.pages?.length}`);
+    if (addPageRes.status !== 201 || !addPageRes.data.page?.id || addPageRes.data.site?.pages?.length !== 2) {
+      throw new Error(`Adding page to website failed: ${JSON.stringify(addPageRes.data)}`);
+    }
+    const newPageId = addPageRes.data.page.id;
+
+    // Reorder pages
+    const reorderPagesRes = await request(`/api/websites/${testSiteId}/pages/reorder`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        pageIds: [newPageId, 'page_home_01']
+      })
+    });
+    console.log(`Reorder Pages Status: ${reorderPagesRes.status}`, `First Page: "${reorderPagesRes.data.pages?.[0]?.name}"`);
+    if (reorderPagesRes.status !== 200 || reorderPagesRes.data.pages?.[0]?.id !== newPageId) {
+      throw new Error(`Reordering website pages failed: ${JSON.stringify(reorderPagesRes.data)}`);
+    }
+
+    // Delete the added page
+    const deletePageRes = await request(`/api/websites/${testSiteId}/pages/${newPageId}`, { method: 'DELETE' });
+    console.log(`Delete Page Status: ${deletePageRes.status}`, `Remaining: ${deletePageRes.data.remainingPages}`);
+    if (deletePageRes.status !== 200 || deletePageRes.data.remainingPages !== 1) {
+      throw new Error(`Deleting website page failed: ${JSON.stringify(deletePageRes.data)}`);
+    }
+    console.log('✅ Hosted website multi-page CMS lifecycle verified: creation, publish toggle, public lookup, page addition, reorder, and deletion');
+
+    // 56. Multi-Tenant Audit Trail & CSV Export Engine
+    console.log('\n[TEST 56] Multi-Tenant Audit Trail & CSV Export Engine: /api/audit-logs & format=csv');
+    const auditLogsRes = await request('/api/audit-logs?limit=50');
+    console.log(`Audit Logs Status: ${auditLogsRes.status}`, `Count: ${auditLogsRes.data.data?.length}`);
+    if (auditLogsRes.status !== 200 || !Array.isArray(auditLogsRes.data.data) || auditLogsRes.data.data.length === 0) {
+      throw new Error(`Audit log retrieval failed: ${JSON.stringify(auditLogsRes.data)}`);
+    }
+
+    // Filter audit logs by action
+    const filterAuditRes = await request('/api/audit-logs?action=website.published');
+    console.log(`Action-Filtered Audit Status: ${filterAuditRes.status}`, `Matches: ${filterAuditRes.data.data?.length}`);
+    if (filterAuditRes.status !== 200 || !Array.isArray(filterAuditRes.data.data) || filterAuditRes.data.data.length === 0) {
+      throw new Error(`Action-filtered audit query failed: ${JSON.stringify(filterAuditRes.data)}`);
+    }
+
+    // CSV format streaming export
+    const csvExportRes = await fetch('http://localhost:4005/api/audit-logs?format=csv', {
+      headers: {
+        'Cookie': sessionCookie,
+        'x-operza-csrf': csrfToken
+      }
+    });
+    console.log(`CSV Export Status: ${csvExportRes.status}`, `Content-Type: ${csvExportRes.headers.get('content-type')}`);
+    const csvText = await csvExportRes.text();
+    if (csvExportRes.status !== 200 || !csvExportRes.headers.get('content-type')?.includes('text/csv') || !csvText.includes('timestamp') || !csvText.includes('action')) {
+      throw new Error(`Audit CSV export failed: Status ${csvExportRes.status}, Content: ${csvText.slice(0, 100)}`);
+    }
+    console.log(`Exported CSV Header & Snippet: ${csvText.split('\n')[0]}`);
+    console.log('✅ Multi-tenant audit trail query, action filtering, and server-side CSV streaming export verified');
+
+    console.log('\n🎉 ALL 56 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

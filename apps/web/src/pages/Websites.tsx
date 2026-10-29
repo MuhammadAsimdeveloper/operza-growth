@@ -20,7 +20,7 @@ const THEME_BG: Record<PageTheme, string> = {
 };
 
 function siteSlug(site: Site): string {
-  return site.name.toLowerCase().replace(/\s+/g, '-');
+  return site.domain || site.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 }
 
 function slugPath(name: string): string {
@@ -125,10 +125,12 @@ export default function Websites() {
   const [preview, setPreview] = useState<{ siteId: string; pageId: string } | null>(null);
   const [editing, setEditing] = useState<{ siteId: string; pageId: string } | null>(null);
   const [addingSiteId, setAddingSiteId] = useState<string | null>(null);
+  const [newSiteOpen, setNewSiteOpen] = useState(false);
+  const [confirmDeleteSite, setConfirmDeleteSite] = useState<Site | null>(null);
 
   useEffect(() => {
-    api.crm.list<Site>('websites').then((res) => {
-      if (res.data && res.data.length > 0) {
+    api.websites.list().then((res) => {
+      if (res?.data && Array.isArray(res.data) && res.data.length > 0) {
         for (const s of res.data) {
           if (!state.sites.some((x) => x.id === s.id)) {
             dispatch({ type: 'site/duplicate', copy: s });
@@ -149,9 +151,56 @@ export default function Websites() {
   const editingPage = editingSite?.pages.find((p) => p.id === editing?.pageId);
   const addingSite = addingSiteId ? sites.find((s) => s.id === addingSiteId) : undefined;
 
+  const handleTogglePublished = async (site: Site) => {
+    const nextPublished = !site.published;
+    dispatch({ type: 'site/toggle', id: site.id });
+    try {
+      await api.websites.publish(site.id);
+    } catch {
+      await api.websites.update(site.id, {
+        published: nextPublished,
+        status: nextPublished ? 'published' : 'draft',
+      }).catch(() => {});
+    }
+  };
+
+  const handleMovePage = async (site: Site, pageId: string, direction: 'up' | 'down') => {
+    dispatch({ type: 'site/step/move', siteId: site.id, id: pageId, direction });
+    const idx = site.pages.findIndex((p) => p.id === pageId);
+    if (idx < 0) return;
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= site.pages.length) return;
+    const nextPages = [...site.pages];
+    const [moved] = nextPages.splice(idx, 1);
+    nextPages.splice(targetIdx, 0, moved);
+    try {
+      await api.websites.update(site.id, { pages: nextPages });
+    } catch (err) {
+      console.error('Failed to update page order:', err);
+    }
+  };
+
+  const handleDeletePage = async (site: Site, pageId: string) => {
+    dispatch({ type: 'site/step/delete', siteId: site.id, id: pageId });
+    try {
+      await api.websites.deletePage(site.id, pageId);
+    } catch {
+      const nextPages = site.pages.filter((p) => p.id !== pageId);
+      await api.websites.update(site.id, { pages: nextPages }).catch(() => {});
+    }
+  };
+
   return (
     <div className="content">
-      <PageHeader title="Websites" subtitle="Hosted site pages, navigation and lead capture." />
+      <PageHeader
+        title="Websites"
+        subtitle="Hosted site pages, navigation and lead capture."
+        actions={
+          <button className="btn btn--primary" onClick={() => setNewSiteOpen(true)}>
+            <Icon name="plus" size={15} /> New website
+          </button>
+        }
+      />
 
       <div className="grid grid--4" style={{ marginBottom: 16 }}>
         <StatCard label="Websites" value={String(sites.length)} icon={<Icon name="globe" size={15} />} meta="hosted in workspace" />
@@ -178,7 +227,7 @@ export default function Websites() {
                 <div className="cell-sub">agency.test/{siteSlug(site)}</div>
               </div>
               <div className="card__actions">
-                <Switch on={site.published} label={`Toggle ${site.name}`} onChange={() => dispatch({ type: 'site/toggle', id: site.id })} />
+                <Switch on={site.published} label={`Toggle ${site.name}`} onChange={() => handleTogglePublished(site)} />
                 <button className="btn btn--sm" onClick={() => setAddingSiteId(site.id)}>
                   <Icon name="plus" size={14} /> Add page
                 </button>
@@ -188,6 +237,15 @@ export default function Websites() {
                   onClick={() => setPreview({ siteId: site.id, pageId: site.pages[0].id })}
                 >
                   <Icon name="eye" size={14} /> Preview
+                </button>
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`Delete ${site.name}`}
+                  title={`Delete ${site.name}`}
+                  onClick={() => setConfirmDeleteSite(site)}
+                >
+                  <Icon name="trash" size={14} />
                 </button>
               </div>
             </div>
@@ -216,7 +274,7 @@ export default function Websites() {
                             className="icon-btn"
                             aria-label={`Move ${page.name} up`}
                             disabled={index === 0}
-                            onClick={() => dispatch({ type: 'site/step/move', siteId: site.id, id: page.id, direction: 'up' })}
+                            onClick={() => handleMovePage(site, page.id, 'up')}
                           >
                             <Icon name="chevron-up" size={14} />
                           </button>
@@ -225,7 +283,7 @@ export default function Websites() {
                             className="icon-btn"
                             aria-label={`Move ${page.name} down`}
                             disabled={index === site.pages.length - 1}
-                            onClick={() => dispatch({ type: 'site/step/move', siteId: site.id, id: page.id, direction: 'down' })}
+                            onClick={() => handleMovePage(site, page.id, 'down')}
                           >
                             <Icon name="chevron-down" size={14} />
                           </button>
@@ -241,7 +299,7 @@ export default function Websites() {
                             type="button"
                             className="icon-btn"
                             aria-label={`Delete ${page.name}`}
-                            onClick={() => dispatch({ type: 'site/step/delete', siteId: site.id, id: page.id })}
+                            onClick={() => handleDeletePage(site, page.id)}
                           >
                             <Icon name="trash" size={14} />
                           </button>
@@ -309,6 +367,42 @@ export default function Websites() {
       )}
 
       {addingSite && <AddPageModal site={addingSite} onClose={() => setAddingSiteId(null)} />}
+
+      {newSiteOpen && <NewWebsiteModal onClose={() => setNewSiteOpen(false)} />}
+
+      {confirmDeleteSite && (
+        <Modal
+          title={`Delete ${confirmDeleteSite.name}?`}
+          onClose={() => setConfirmDeleteSite(null)}
+          footer={
+            <>
+              <button className="btn" onClick={() => setConfirmDeleteSite(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn--primary"
+                style={{ background: 'var(--red)', borderColor: 'var(--red)' }}
+                onClick={async () => {
+                  const targetId = confirmDeleteSite.id;
+                  dispatch({ type: 'site/delete', id: targetId });
+                  try {
+                    await api.websites.delete(targetId);
+                  } catch (err) {
+                    console.error('Failed to delete website on backend:', err);
+                  }
+                  setConfirmDeleteSite(null);
+                }}
+              >
+                Delete website
+              </button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13, lineHeight: 1.6 }}>
+            Are you sure you want to delete <strong>{confirmDeleteSite.name}</strong>? This will permanently remove its hosted pages and public routing.
+          </p>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -334,21 +428,28 @@ function PageEditor({ site, page, onClose }: { site: Site; page: SitePage; onClo
     theme,
   };
 
-  const save = () => {
+  const save = async () => {
     if (!canSave) return;
+    const patch = {
+      name: name.trim(),
+      path: toPath(path),
+      headline: headline.trim(),
+      subhead: subhead.trim(),
+      cta: cta.trim(),
+      theme,
+    };
     dispatch({
       type: 'site/step/update',
       siteId: site.id,
       id: page.id,
-      patch: {
-        name: name.trim(),
-        path: toPath(path),
-        headline: headline.trim(),
-        subhead: subhead.trim(),
-        cta: cta.trim(),
-        theme,
-      },
+      patch,
     });
+    const updatedPages = site.pages.map((p) => (p.id === page.id ? { ...p, ...patch } : p));
+    try {
+      await api.websites.update(site.id, { pages: updatedPages });
+    } catch (err) {
+      console.error('Failed to sync page edit to backend:', err);
+    }
     onClose();
   };
 
@@ -449,7 +550,7 @@ function AddPageModal({ site, onClose }: { site: Site; onClose: () => void }) {
 
   const canCreate = name.trim().length > 0;
 
-  const create = () => {
+  const create = async () => {
     if (!canCreate) return;
     const trimmed = name.trim();
     const page: SitePage = {
@@ -464,6 +565,12 @@ function AddPageModal({ site, onClose }: { site: Site; onClose: () => void }) {
       theme: 'plain',
     };
     dispatch({ type: 'site/step/add', siteId: site.id, page });
+    try {
+      await api.websites.addPage(site.id, page);
+    } catch {
+      const updatedPages = [...site.pages, page];
+      await api.websites.update(site.id, { pages: updatedPages }).catch(() => {});
+    }
     onClose();
   };
 
@@ -506,6 +613,124 @@ function AddPageModal({ site, onClose }: { site: Site; onClose: () => void }) {
         <div className="hint" style={{ marginTop: 6 }}>
           Leave the path blank to derive it from the page name.
         </div>
+      </div>
+    </Modal>
+  );
+}
+
+function NewWebsiteModal({ onClose }: { onClose: () => void }) {
+  const { dispatch } = useStore();
+  const [name, setName] = useState('');
+  const [domain, setDomain] = useState('');
+  const [theme, setTheme] = useState<PageTheme>('plain');
+  const [loading, setLoading] = useState(false);
+
+  const canCreate = name.trim().length > 0;
+
+  const handleCreate = async () => {
+    if (!canCreate || loading) return;
+    setLoading(true);
+    const siteId = uid('ws');
+    const slug = (domain.trim() || name.trim()).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const homePage: SitePage = {
+      id: uid('wp'),
+      name: 'Home',
+      path: '/',
+      visits: 0,
+      optins: 0,
+      headline: `Welcome to ${name.trim()}`,
+      subhead: 'Grow your business with our tailored solutions.',
+      cta: 'Get started',
+      theme,
+    };
+    const aboutPage: SitePage = {
+      id: uid('wp'),
+      name: 'About',
+      path: '/about',
+      visits: 0,
+      optins: 0,
+      headline: `About ${name.trim()}`,
+      subhead: 'Learn more about our team and mission.',
+      cta: 'Contact us',
+      theme,
+    };
+
+    const newSite: Site = {
+      id: siteId,
+      name: name.trim(),
+      kind: 'website',
+      domain: slug,
+      published: false,
+      visits: 0,
+      optins: 0,
+      pages: [homePage, aboutPage],
+    };
+
+    dispatch({ type: 'site/duplicate', copy: newSite });
+
+    try {
+      await api.websites.create(newSite);
+    } catch (err) {
+      console.error('Failed to create website on backend:', err);
+    }
+    setLoading(false);
+    onClose();
+  };
+
+  return (
+    <Modal
+      title="Create new website"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" type="button" onClick={onClose} disabled={loading}>
+            Cancel
+          </button>
+          <button className="btn btn--primary" type="button" disabled={!canCreate || loading} onClick={handleCreate}>
+            {loading ? 'Creating...' : 'Create website'}
+          </button>
+        </>
+      }
+    >
+      <div className="field">
+        <label htmlFor="new-site-name">Website name</label>
+        <input
+          id="new-site-name"
+          className="input"
+          autoFocus
+          placeholder="e.g. Acme Growth Advisory"
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value);
+            if (!domain) {
+              setDomain(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+            }
+          }}
+        />
+      </div>
+      <div className="field" style={{ marginTop: 12 }}>
+        <label htmlFor="new-site-domain">Domain / Subdomain slug</label>
+        <input
+          id="new-site-domain"
+          className="input"
+          style={{ fontFamily: 'var(--font-mono)' }}
+          placeholder="e.g. acme-growth"
+          value={domain}
+          onChange={(e) => setDomain(e.target.value)}
+        />
+        <div className="hint" style={{ marginTop: 4 }}>
+          Public preview will be accessible at agency.test/{domain || 'acme-growth'}
+        </div>
+      </div>
+      <div className="field" style={{ marginTop: 12 }}>
+        <label htmlFor="new-site-theme">Default theme</label>
+        <select id="new-site-theme" className="select" value={theme} onChange={(e) => setTheme(e.target.value as PageTheme)}>
+          {THEMES.map((t) => (
+            <option key={t.value} value={t.value}>
+              {t.label}
+            </option>
+          ))}
+        </select>
       </div>
     </Modal>
   );

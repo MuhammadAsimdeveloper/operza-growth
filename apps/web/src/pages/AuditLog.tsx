@@ -60,15 +60,43 @@ export default function AuditLog() {
 
   const today = combinedLogs.filter((e) => sameDay(new Date(e.at), new Date())).length;
 
+  const handleExportCsv = () => {
+    const headers = ['Timestamp', 'Actor', 'Action', 'Entity', 'Detail'];
+    const csvRows = [
+      headers.join(','),
+      ...rows.map((r) => [
+        JSON.stringify(r.at),
+        JSON.stringify(r.actor),
+        JSON.stringify(r.action),
+        JSON.stringify(r.entity),
+        JSON.stringify(r.detail || ''),
+      ].join(',')),
+    ];
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `operza-audit-log-${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="content">
       <PageHeader
         title="Audit Log"
         subtitle="A record of the changes made in this workspace, newest first."
         actions={
-          <button className="btn" onClick={() => setConfirmClear(true)} disabled={state.auditLog.length === 0}>
-            <Icon name="trash" size={15} /> Clear log
-          </button>
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn" onClick={handleExportCsv} disabled={rows.length === 0} title="Export audit trail to CSV">
+              <Icon name="download" size={15} /> Export CSV
+            </button>
+            <button className="btn" onClick={() => setConfirmClear(true)} disabled={combinedLogs.length === 0}>
+              <Icon name="trash" size={15} /> Clear log
+            </button>
+          </div>
         }
       />
 

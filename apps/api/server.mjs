@@ -1572,8 +1572,8 @@ const server = createServer(async (req, res) => {
     // ═════════════════════════════════════════════════════════════
 
     // Public Funnel/Site Lookup & Visit Tracker
-    if (method === 'GET' && pathname.startsWith('/api/funnels/public/')) {
-      const slugOrId = pathname.replace('/api/funnels/public/', '').trim();
+    if (method === 'GET' && (pathname.startsWith('/api/funnels/public/') || pathname.startsWith('/api/websites/public/'))) {
+      const slugOrId = pathname.replace(/^\/api\/(funnels|websites)\/public\//, '').trim();
       const pageSlug = url.searchParams.get('pageSlug');
 
       state.records.websites = state.records.websites || [];
@@ -2829,14 +2829,26 @@ const server = createServer(async (req, res) => {
     // ─── AUDIT TRAIL ────────────────────────────────────────────
     // ═════════════════════════════════════════════════════════════
 
-    if (method === 'GET' && pathname === '/api/audit') {
+    if (method === 'GET' && (pathname === '/api/audit' || pathname === '/api/audit-logs')) {
       const q = (url.searchParams.get('q') || url.searchParams.get('search') || '').toLowerCase();
       const actionFilter = url.searchParams.get('action');
-      const limit = Math.min(Number(url.searchParams.get('limit')) || 100, 500);
+      const actorFilter = url.searchParams.get('actor') || url.searchParams.get('userName');
+      const entityFilter = url.searchParams.get('entity');
+      const format = url.searchParams.get('format');
+      const limit = Math.min(Number(url.searchParams.get('limit')) || 100, 1000);
 
       let logs = (state.audit || []).filter(a => a.agencyId === agency.id || a.agencyId === '');
       if (actionFilter) {
         logs = logs.filter(a => a.action === actionFilter);
+      }
+      if (actorFilter) {
+        logs = logs.filter(a => (a.userName || '').toLowerCase() === actorFilter.toLowerCase());
+      }
+      if (entityFilter) {
+        logs = logs.filter(a => {
+          const ent = (a.action || '').split('.')[0] || '';
+          return ent.toLowerCase() === entityFilter.toLowerCase();
+        });
       }
       if (q) {
         logs = logs.filter(a =>
@@ -2847,10 +2859,30 @@ const server = createServer(async (req, res) => {
       }
       logs = logs.slice().reverse().slice(0, limit);
 
+      if (format === 'csv') {
+        const headers = ['id', 'timestamp', 'userName', 'action', 'details'];
+        const csvRows = [headers.join(',')];
+        for (const log of logs) {
+          csvRows.push([
+            JSON.stringify(log.id || ''),
+            JSON.stringify(log.timestamp || ''),
+            JSON.stringify(log.userName || 'System'),
+            JSON.stringify(log.action || ''),
+            JSON.stringify(typeof log.details === 'object' ? JSON.stringify(log.details) : String(log.details || ''))
+          ].join(','));
+        }
+        res.writeHead(200, {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': 'attachment; filename="operza-audit-log.csv"',
+          'Access-Control-Allow-Origin': '*'
+        });
+        return res.end(csvRows.join('\n'));
+      }
+
       return sendJson(res, 200, { data: logs, total: logs.length });
     }
 
-    if (method === 'DELETE' && pathname === '/api/audit') {
+    if (method === 'DELETE' && (pathname === '/api/audit' || pathname === '/api/audit-logs')) {
       state.audit = state.audit.filter(a => a.agencyId !== agency.id);
       await saveState();
       return sendJson(res, 200, { success: true, message: 'Audit log cleared' });
@@ -3218,6 +3250,90 @@ const server = createServer(async (req, res) => {
         return matchesAgency && matchesLocation && matchesForm;
       });
       return sendJson(res, 200, { submissions });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── HOSTED WEBSITES & MULTI-PAGE CMS ───────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    // Toggle Website / Funnel Publishing State
+    if (method === 'POST' && pathname.startsWith('/api/websites/') && pathname.endsWith('/publish')) {
+      const siteId = pathname.replace('/api/websites/', '').replace('/publish', '').trim();
+      state.records.websites = state.records.websites || [];
+      const site = state.records.websites.find(w => w.id === siteId && (w.agencyId === agency.id || !w.agencyId));
+      if (!site) return sendJson(res, 404, { error: 'Website not found' });
+      site.published = !site.published;
+      site.status = site.published ? 'published' : 'draft';
+      site.updatedAt = new Date().toISOString();
+      const actionName = site.published ? 'website.published' : 'website.unpublished';
+      auditLog(actionName, actor, { siteId: site.id, name: site.name, published: site.published });
+      broadcast('crm.website.updated', { siteId: site.id, published: site.published, status: site.status });
+      await saveState();
+      return sendJson(res, 200, { success: true, published: site.published, status: site.status, site });
+    }
+
+    // Add Page to Website / Funnel
+    if (method === 'POST' && pathname.startsWith('/api/websites/') && pathname.endsWith('/pages')) {
+      const siteId = pathname.replace('/api/websites/', '').replace('/pages', '').trim();
+      state.records.websites = state.records.websites || [];
+      const site = state.records.websites.find(w => w.id === siteId && (w.agencyId === agency.id || !w.agencyId));
+      if (!site) return sendJson(res, 404, { error: 'Website not found' });
+      const body = await readBody(req);
+      const newPage = {
+        id: body.id || randomUUID(),
+        name: body.name || 'New Page',
+        path: body.path || `/${(body.name || 'page').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+        headline: body.headline || body.name || 'Welcome',
+        subhead: body.subhead || '',
+        cta: body.cta || 'Get started',
+        theme: body.theme || 'plain',
+        visits: 0,
+        optins: 0,
+        createdAt: new Date().toISOString()
+      };
+      site.pages = Array.isArray(site.pages) ? [...site.pages, newPage] : [newPage];
+      site.updatedAt = new Date().toISOString();
+      auditLog('website.page_created', actor, { siteId: site.id, pageId: newPage.id, pageName: newPage.name });
+      broadcast('crm.website.page_created', { siteId: site.id, page: newPage });
+      await saveState();
+      return sendJson(res, 201, { success: true, page: newPage, site });
+    }
+
+    // Reorder Pages of Website / Funnel
+    if (method === 'PUT' && pathname.startsWith('/api/websites/') && pathname.endsWith('/pages/reorder')) {
+      const siteId = pathname.replace('/api/websites/', '').replace('/pages/reorder', '').trim();
+      state.records.websites = state.records.websites || [];
+      const site = state.records.websites.find(w => w.id === siteId && (w.agencyId === agency.id || !w.agencyId));
+      if (!site) return sendJson(res, 404, { error: 'Website not found' });
+      const body = await readBody(req);
+      if (Array.isArray(body.pages)) {
+        site.pages = body.pages;
+      } else if (Array.isArray(body.pageIds)) {
+        const pageMap = new Map((site.pages || []).map(p => [p.id, p]));
+        site.pages = body.pageIds.map(id => pageMap.get(id)).filter(Boolean);
+      }
+      site.updatedAt = new Date().toISOString();
+      auditLog('website.pages_reordered', actor, { siteId: site.id, pageCount: site.pages.length });
+      broadcast('crm.website.reordered', { siteId: site.id, pages: site.pages });
+      await saveState();
+      return sendJson(res, 200, { success: true, pages: site.pages, site });
+    }
+
+    // Delete Page from Website / Funnel
+    if (method === 'DELETE' && pathname.includes('/api/websites/') && pathname.includes('/pages/')) {
+      const match = pathname.match(/^\/api\/websites\/([^/]+)\/pages\/([^/]+)$/);
+      if (match) {
+        const [, siteId, pageId] = match;
+        state.records.websites = state.records.websites || [];
+        const site = state.records.websites.find(w => w.id === siteId && (w.agencyId === agency.id || !w.agencyId));
+        if (!site) return sendJson(res, 404, { error: 'Website not found' });
+        site.pages = (site.pages || []).filter(p => p.id !== pageId);
+        site.updatedAt = new Date().toISOString();
+        auditLog('website.page_deleted', actor, { siteId: site.id, pageId });
+        broadcast('crm.website.page_deleted', { siteId: site.id, pageId });
+        await saveState();
+        return sendJson(res, 200, { success: true, remainingPages: site.pages.length, site });
+      }
     }
 
     // ═════════════════════════════════════════════════════════════
