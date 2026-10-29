@@ -1,0 +1,30 @@
+{
+  "users": [],
+  "agencies": [],
+  "locations": [],
+  "memberships": [],
+  "invitations": [],
+  "sessions": [],
+  "records": {
+    "contacts": [],
+    "opportunities": [],
+    "pipelines": [],
+    "customFields": [],
+    "smartLists": [],
+    "tasks": [],
+    "conversations": [],
+    "appointments": [],
+    "workflows": [],
+    "forms": [],
+    "formSubmissions": [],
+    "websites": [],
+    "campaigns": [],
+    "products": [],
+    "invoices": [],
+    "reviews": [],
+    "courses": [],
+    "notes": []
+  },
+  "workflowExecutions": [],
+  "audit": []
+}

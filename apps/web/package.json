@@ -1,0 +1,31 @@
+{
+  "name": "operza",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Operza — an original, from-scratch agency CRM workspace that mirrors the module layout of an all-in-one marketing platform. Educational project.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b --noEmit",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.2",
+    "eslint": "^10.13.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.72.1",
+    "vite": "^5.4.9"
+  }
+}

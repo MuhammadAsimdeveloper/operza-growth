@@ -1,0 +1,56 @@
+:root {
+  /* Surfaces */
+  --bg: #f5f6f8;
+  --surface: #ffffff;
+  --surface-2: #fafbfc;
+  --surface-3: #f1f3f6;
+  --sidebar: #ffffff;
+
+  /* Ink */
+  --text: #0f172a;
+  --text-2: #475569;
+  --text-3: #7b8794;
+  --text-inverse: #ffffff;
+
+  /* Lines */
+  --line: #e5e8ee;
+  --line-strong: #d3d9e2;
+
+  /* Brand */
+  --accent: #4f46e5;
+  --accent-hover: #4338ca;
+  --accent-soft: #eef0ff;
+  --accent-ink: #3730a3;
+
+  /* Status */
+  --green: #0f9d6e;
+  --green-soft: #e6f7f1;
+  --amber: #b45309;
+  --amber-soft: #fef4e6;
+  --red: #d92d20;
+  --red-soft: #fdeceb;
+  --blue: #1d6ce0;
+  --blue-soft: #e8f1fd;
+  --violet: #7c3aed;
+  --violet-soft: #f2ecfe;
+
+  /* Type */
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'SFMono-Regular', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+
+  /* Radii */
+  --r-sm: 6px;
+  --r-md: 9px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-pill: 999px;
+
+  /* Elevation */
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08), 0 2px 4px rgba(16, 24, 40, 0.04);
+  --shadow-lg: 0 16px 40px rgba(16, 24, 40, 0.16);
+
+  --sidebar-w: 244px;
+  --topbar-h: 58px;
+}

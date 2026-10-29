@@ -1,0 +1,13 @@
+{
+  "name": "@operza/db",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "lib/database.mjs",
+  "scripts": {
+    "db:migrate": "node scripts/migrate.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.23.1"
+  }
+}
