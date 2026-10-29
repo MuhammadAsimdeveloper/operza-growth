@@ -142,9 +142,20 @@ export default function Forms() {
                     <Switch on={f.published} label={`Toggle ${f.name}`} onChange={() => dispatch({ type: 'form/toggle', id: f.id })} />
                   </td>
                   <td className="cell-right">
-                    <button className="icon-btn" aria-label={`Edit ${f.name}`} onClick={() => setEditingId(f.id)}>
-                      <Icon name="edit" size={15} />
-                    </button>
+                    <span className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
+                      <a
+                        className="icon-btn"
+                        href={`/f/${f.slug || f.id}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={`Open Public Form: /f/${f.slug || f.id}`}
+                      >
+                        <Icon name="share" size={15} />
+                      </a>
+                      <button className="icon-btn" aria-label={`Edit ${f.name}`} onClick={() => setEditingId(f.id)}>
+                        <Icon name="edit" size={15} />
+                      </button>
+                    </span>
                   </td>
                 </tr>
               ))}

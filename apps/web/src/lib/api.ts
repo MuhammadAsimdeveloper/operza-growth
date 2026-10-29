@@ -107,6 +107,9 @@ export const api = {
     },
     clear: () => request('/api/audit', { method: 'DELETE' }),
   },
+  campaigns: {
+    send: (id: string) => request(`/api/campaigns/${id}/send`, { method: 'POST' }),
+  },
   copilot: {
     chat: (data: { message: string; sessionId?: string; tools?: any[] }) =>
       request('/api/copilot/chat', { method: 'POST', body: JSON.stringify(data) }),

@@ -136,6 +136,7 @@ export type Action =
   | { type: 'reviewRequest/send'; id: string }
   | { type: 'reviewRequest/delete'; id: string }
   | { type: 'campaign/add'; campaign: Campaign }
+  | { type: 'campaign/update'; id: string; patch: Partial<Campaign> }
   | { type: 'form/add'; form: FormDef }
   | { type: 'form/update'; id: string; patch: Partial<Pick<FormDef, 'name' | 'kind' | 'completion'>> }
   | { type: 'form/toggle'; id: string }
@@ -705,6 +706,12 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
 
     case 'campaign/add':
       return { ...state, campaigns: [action.campaign, ...state.campaigns] };
+
+    case 'campaign/update':
+      return {
+        ...state,
+        campaigns: state.campaigns.map((c) => (c.id === action.id ? { ...c, ...action.patch } : c)),
+      };
 
     case 'form/add':
       return { ...state, forms: [action.form, ...state.forms] };

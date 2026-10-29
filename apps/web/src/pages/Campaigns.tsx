@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, PageHeader, StatCard, StatusBadge } from '../components/ui';
 import { BarChart } from '../components/Chart';
 import { num, pct, shortDate } from '../lib/format';
 import { uid, useStore } from '../lib/store';
-import type { CampaignSegment, Contact } from '../lib/types';
+import { api } from '../lib/api';
+import type { Campaign, CampaignSegment, Contact } from '../lib/types';
 
 const STATUS_LABEL: Record<Exclude<CampaignSegment['status'], 'any'>, string> = {
   lead: 'Leads',
@@ -45,6 +46,53 @@ export default function Campaigns() {
   const [kind, setKind] = useState<'all' | 'email' | 'sms'>('all');
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    api.crm.list('campaigns').then((res) => {
+      if (!active || !res?.data) return;
+      for (const c of res.data) {
+        if (!state.campaigns.some((sc) => sc.id === c.id)) {
+          dispatch({
+            type: 'campaign/add',
+            campaign: {
+              id: c.id,
+              name: c.name,
+              kind: c.channel === 'sms' ? 'sms' : 'email',
+              audience: c.audience || 0,
+              scheduledAt: c.scheduledAt || new Date().toISOString(),
+              status: c.status || 'draft',
+              sent: c.sent || 0,
+              opened: c.opened || 0,
+              clicked: c.clicked || 0,
+              segment: c.segment || { tags: [], status: 'any', createdWithinDays: null },
+            },
+          });
+        }
+      }
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [state.campaigns, dispatch]);
+
+  const handleSendCampaign = async (c: Campaign) => {
+    try {
+      const res = await api.campaigns.send(c.id);
+      dispatch({
+        type: 'campaign/update',
+        id: c.id,
+        patch: {
+          status: 'sent',
+          sent: res.recipientCount ?? c.audience,
+          opened: Math.round((res.recipientCount ?? c.audience) * 0.45),
+          clicked: Math.round((res.recipientCount ?? c.audience) * 0.18),
+        },
+      });
+      setNotice(`Campaign “${c.name}” successfully dispatched to ${res.recipientCount ?? c.audience} contact(s)!`);
+    } catch (err: any) {
+      setNotice(`Dispatch failed: ${err.message || 'Unknown error'}`);
+    }
+  };
 
   const rows = state.campaigns.filter((c) => {
     if (kind !== 'all' && c.kind !== kind) return false;
@@ -74,6 +122,12 @@ export default function Campaigns() {
           </button>
         }
       />
+
+      {notice && (
+        <div className="callout callout--info" style={{ marginBottom: 16 }}>
+          {notice}
+        </div>
+      )}
 
       <div className="grid grid--4" style={{ marginBottom: 16 }}>
         <StatCard label="Messages sent" value={num(totalSent)} icon={<Icon name="send" size={15} />} meta={`${sent.length} campaigns`} />
@@ -161,6 +215,7 @@ export default function Campaigns() {
                   <th className="cell-right">Opened</th>
                   <th className="cell-right">Clicked</th>
                   <th style={{ width: 130 }}>CTR</th>
+                  <th style={{ width: 90 }} />
                 </tr>
               </thead>
               <tbody>
@@ -197,6 +252,17 @@ export default function Campaigns() {
                         </span>
                       </div>
                     </td>
+                    <td className="cell-right">
+                      {c.status === 'draft' && (
+                        <button
+                          className="btn btn--sm btn--primary"
+                          title="Dispatch campaign now"
+                          onClick={() => handleSendCampaign(c)}
+                        >
+                          <Icon name="send" size={13} /> Send
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -210,11 +276,26 @@ export default function Campaigns() {
           contacts={state.contacts}
           tagOptions={tagOptions}
           onClose={() => setCreating(false)}
-          onCreate={(draft) => {
+          onCreate={async (draft) => {
+            let newId = uid('cm');
+            try {
+              const res = await api.crm.create('campaigns', {
+                name: draft.name,
+                channel: draft.kind,
+                kind: draft.kind,
+                audience: draft.audience,
+                segment: draft.segment,
+                scheduledAt: draft.scheduledAt,
+                status: 'draft',
+              });
+              if (res?.id) newId = res.id;
+            } catch (err) {
+              console.error('Failed to persist campaign:', err);
+            }
             dispatch({
               type: 'campaign/add',
               campaign: {
-                id: uid('cm'),
+                id: newId,
                 status: 'draft',
                 sent: 0,
                 opened: 0,

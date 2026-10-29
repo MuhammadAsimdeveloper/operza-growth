@@ -314,6 +314,7 @@ export interface FormCompletion {
 export interface FormDef {
   id: ID;
   name: string;
+  slug?: string;
   kind: FormKind;
   published: boolean;
   submissions: number;

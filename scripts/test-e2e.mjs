@@ -474,7 +474,53 @@ async function runTests() {
     console.log(`Verified Completed Task in Database: Title="${foundTask.title}", Status="${foundTask.status}"`);
     console.log('✅ Tasks lifecycle state machine (create -> assign -> complete) verified');
 
-    console.log('\n🎉 ALL 19 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 20. Marketing Campaign Lifecycle & Bulk Dispatch: POST /api/crm/campaigns & POST /api/campaigns/:id/send
+    console.log('\n[TEST 20] Marketing Campaign Lifecycle & Bulk Dispatch: POST /api/crm/campaigns & /api/campaigns/:id/send');
+    const campaignCreateRes = await request('/api/crm/campaigns', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Fall Q4 Product Launch',
+        channel: 'email',
+        kind: 'email',
+        audience: 10,
+        content: 'Exclusive 20% early access discount for VIP partners',
+        status: 'draft'
+      })
+    });
+    console.log(`Campaign Create Status: ${campaignCreateRes.status}`, `ID: ${campaignCreateRes.data.id}`);
+    if (campaignCreateRes.status !== 201 || !campaignCreateRes.data.id) {
+      throw new Error(`Campaign creation failed: ${JSON.stringify(campaignCreateRes.data)}`);
+    }
+
+    const campaignId = campaignCreateRes.data.id;
+    const campaignSendRes = await request(`/api/campaigns/${campaignId}/send`, {
+      method: 'POST'
+    });
+    console.log(`Campaign Send Status: ${campaignSendRes.status}`, `Dispatched: ${campaignSendRes.data.sentCount}`);
+    if (campaignSendRes.status !== 200 || !campaignSendRes.data.success || typeof campaignSendRes.data.sentCount !== 'number') {
+      throw new Error(`Campaign dispatch failed: ${JSON.stringify(campaignSendRes.data)}`);
+    }
+
+    // Verify campaign status updated to sent in CRM
+    const campaignsListRes = await request('/api/crm/campaigns');
+    const dispatchedCampaign = (campaignsListRes.data.data || []).find(c => c.id === campaignId);
+    if (!dispatchedCampaign || dispatchedCampaign.status !== 'sent') {
+      throw new Error('Dispatched campaign was not updated to sent status in CRM database');
+    }
+    console.log(`Verified Campaign: Status="${dispatchedCampaign.status}", Sent=${dispatchedCampaign.sent}, Opens=${dispatchedCampaign.opened}`);
+
+    // Verify outbound messages logged in conversations
+    const convRes = await request('/api/crm/conversations');
+    const campaignMessages = (convRes.data.data || []).filter(c =>
+      (c.messages || []).some(m => m.content && m.content.includes('Exclusive 20% early access discount'))
+    );
+    console.log(`Conversations with dispatched campaign messages: ${campaignMessages.length}`);
+    if (campaignMessages.length === 0) {
+      throw new Error('Campaign dispatch failed to generate conversation threads for contacts');
+    }
+    console.log('✅ Marketing campaign dispatch executed: contact segmentation, thread generation, metrics updated');
+
+    console.log('\n🎉 ALL 20 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;
