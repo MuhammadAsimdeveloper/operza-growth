@@ -2097,6 +2097,37 @@ const server = createServer(async (req, res) => {
     }
 
     // ═════════════════════════════════════════════════════════════
+    // ─── AUDIT TRAIL ────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'GET' && pathname === '/api/audit') {
+      const q = (url.searchParams.get('q') || url.searchParams.get('search') || '').toLowerCase();
+      const actionFilter = url.searchParams.get('action');
+      const limit = Math.min(Number(url.searchParams.get('limit')) || 100, 500);
+
+      let logs = (state.audit || []).filter(a => a.agencyId === agency.id || a.agencyId === '');
+      if (actionFilter) {
+        logs = logs.filter(a => a.action === actionFilter);
+      }
+      if (q) {
+        logs = logs.filter(a =>
+          a.action.toLowerCase().includes(q) ||
+          (a.userName && a.userName.toLowerCase().includes(q)) ||
+          JSON.stringify(a.details || {}).toLowerCase().includes(q)
+        );
+      }
+      logs = logs.slice().reverse().slice(0, limit);
+
+      return sendJson(res, 200, { data: logs, total: logs.length });
+    }
+
+    if (method === 'DELETE' && pathname === '/api/audit') {
+      state.audit = state.audit.filter(a => a.agencyId !== agency.id);
+      await saveState();
+      return sendJson(res, 200, { success: true, message: 'Audit log cleared' });
+    }
+
+    // ═════════════════════════════════════════════════════════════
     // ─── WORKFLOW RUNS & APPROVALS ──────────────────────────────
     // ═════════════════════════════════════════════════════════════
 

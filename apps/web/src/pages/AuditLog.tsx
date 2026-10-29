@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, EmptyState, PageHeader, StatCard } from '../components/ui';
 import { fullDate, num, sameDay, timeOf } from '../lib/format';
 import { useStore } from '../lib/store';
+import { api } from '../lib/api';
 
 export default function AuditLog() {
   const { state, dispatch } = useStore();
@@ -11,19 +12,43 @@ export default function AuditLog() {
   const [entity, setEntity] = useState('all');
   const [actor, setActor] = useState('all');
   const [confirmClear, setConfirmClear] = useState(false);
+  const [liveLogs, setLiveLogs] = useState<any[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    api.audit.list({ limit: 150 }).then((res) => {
+      if (!active || !res?.data) return;
+      const formatted = res.data.map((e: any) => ({
+        id: e.id,
+        action: e.action,
+        entity: e.action.split('.')[0] || 'System',
+        detail: typeof e.details === 'object' ? JSON.stringify(e.details) : String(e.details || ''),
+        actor: e.userName || 'System',
+        at: e.timestamp || new Date().toISOString()
+      }));
+      setLiveLogs(formatted);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  const combinedLogs = useMemo(() => {
+    const ids = new Set(liveLogs.map(l => l.id));
+    const localRemaining = state.auditLog.filter(l => !ids.has(l.id));
+    return [...liveLogs, ...localRemaining];
+  }, [liveLogs, state.auditLog]);
 
   const entities = useMemo(
-    () => Array.from(new Set(state.auditLog.map((e) => e.entity))).sort(),
-    [state.auditLog],
+    () => Array.from(new Set(combinedLogs.map((e) => e.entity))).sort(),
+    [combinedLogs],
   );
   const actors = useMemo(
-    () => Array.from(new Set(state.auditLog.map((e) => e.actor))).sort(),
-    [state.auditLog],
+    () => Array.from(new Set(combinedLogs.map((e) => e.actor))).sort(),
+    [combinedLogs],
   );
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return state.auditLog
+    return combinedLogs
       .filter((entry) => {
         if (entity !== 'all' && entry.entity !== entity) return false;
         if (actor !== 'all' && entry.actor !== actor) return false;
@@ -31,9 +56,9 @@ export default function AuditLog() {
         return `${entry.action} ${entry.entity} ${entry.detail ?? ''} ${entry.actor}`.toLowerCase().includes(q);
       })
       .sort((a, b) => b.at.localeCompare(a.at));
-  }, [state.auditLog, entity, actor, query]);
+  }, [combinedLogs, entity, actor, query]);
 
-  const today = state.auditLog.filter((e) => sameDay(new Date(e.at), new Date())).length;
+  const today = combinedLogs.filter((e) => sameDay(new Date(e.at), new Date())).length;
 
   return (
     <div className="content">
@@ -158,7 +183,13 @@ export default function AuditLog() {
               <button
                 className="btn btn--primary"
                 style={{ background: 'var(--red)', borderColor: 'var(--red)' }}
-                onClick={() => {
+                onClick={async () => {
+                  try {
+                    await api.audit.clear();
+                  } catch (err) {
+                    console.error('Failed to clear audit log on server:', err);
+                  }
+                  setLiveLogs([]);
                   dispatch({ type: 'audit/clear' });
                   setConfirmClear(false);
                 }}

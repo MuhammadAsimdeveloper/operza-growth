@@ -1,19 +1,31 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Avatar, Badge, EmptyState, PageHeader, StatCard, StatusBadge } from '../components/ui';
 import { Donut, LineChart } from '../components/Chart';
 import { useStore } from '../lib/store';
 import { currency, num, pct, relative, sameDay, timeOf } from '../lib/format';
+import { api } from '../lib/api';
 
 export default function Dashboard() {
   const { state } = useStore();
+  const [liveStats, setLiveStats] = useState<any>(null);
+
+  useEffect(() => {
+    let active = true;
+    api.dashboard.getStats().then((res) => {
+      if (active && res) setLiveStats(res);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, []);
+
   const { contacts, opportunities, invoices, appointments, conversations, pipelines } = state;
 
-  const paid = invoices.filter((i) => i.status === 'paid').reduce((s, i) => s + i.amount, 0);
-  const openValue = opportunities
+  const paid = liveStats?.invoices?.totalInvoiced ?? invoices.filter((i) => i.status === 'paid').reduce((s, i) => s + i.amount, 0);
+  const openValue = liveStats?.opportunities?.totalValue ?? opportunities
     .filter((o) => o.status === 'open')
     .reduce((s, o) => s + o.value, 0);
-  const newLeads = contacts.filter(
+  const newLeads = liveStats?.contacts?.total ?? contacts.filter(
     (c) => Date.now() - new Date(c.createdAt).getTime() < 30 * 86_400_000,
   ).length;
   const todayAppointments = appointments

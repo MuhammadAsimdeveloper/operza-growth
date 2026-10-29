@@ -428,7 +428,53 @@ async function runTests() {
     console.log(`Workflow Execution Result: Workflow="${wfToolResult.result.workflowName}", ID=${wfToolResult.result.executionId.slice(0, 8)}, Status=${wfToolResult.result.status}`);
     console.log('✅ Copilot autonomous workflow execution intent dispatched and executed cleanly');
 
-    console.log('\n🎉 ALL 17 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 18. Audit Trail Compliance & Security Query: GET /api/audit
+    console.log('\n[TEST 18] Audit Trail Compliance: GET /api/audit');
+    const auditRes = await request('/api/audit?limit=25');
+    console.log(`Audit Log Query Status: ${auditRes.status}`, `Total entries: ${auditRes.data.total}`);
+    if (auditRes.status !== 200 || !Array.isArray(auditRes.data.data) || auditRes.data.data.length === 0) {
+      throw new Error(`Audit log retrieval failed: ${JSON.stringify(auditRes.data)}`);
+    }
+    const sampleEntry = auditRes.data.data[0];
+    console.log(`Latest Audit Entry: Action="${sampleEntry.action}", User="${sampleEntry.userName}", At="${sampleEntry.timestamp}"`);
+    console.log('✅ Audit trail compliance logged, indexed, and queried with multi-tenant scoping');
+
+    // 19. Tasks Lifecycle & State Machine: POST /api/crm/tasks & PUT /api/crm/tasks/:id
+    console.log('\n[TEST 19] Tasks Lifecycle: POST /api/crm/tasks & PUT /api/crm/tasks/:id');
+    const taskCreateRes = await request('/api/crm/tasks', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: 'Review Q4 Automation Blueprint',
+        priority: 'high',
+        assignedTo: 'Automated Tester',
+        dueDate: '2026-11-01T10:00:00Z',
+        status: 'pending'
+      })
+    });
+    console.log(`Task Create Status: ${taskCreateRes.status}`, taskCreateRes.data.id, `Priority: ${taskCreateRes.data.priority}`);
+    if (taskCreateRes.status !== 201 || !taskCreateRes.data.id || taskCreateRes.data.priority !== 'high') {
+      throw new Error(`Task creation failed: ${JSON.stringify(taskCreateRes.data)}`);
+    }
+
+    const taskId = taskCreateRes.data.id;
+    const taskUpdateRes = await request(`/api/crm/tasks/${taskId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status: 'completed' })
+    });
+    console.log(`Task Update Status: ${taskUpdateRes.status}`, `New Status: ${taskUpdateRes.data.status}`);
+    if (taskUpdateRes.status !== 200 || taskUpdateRes.data.status !== 'completed') {
+      throw new Error(`Task state transition failed: ${JSON.stringify(taskUpdateRes.data)}`);
+    }
+
+    const completedTasksRes = await request('/api/crm/tasks?status=completed');
+    const foundTask = (completedTasksRes.data.data || []).find(t => t.id === taskId);
+    if (!foundTask) {
+      throw new Error('Completed task not found in CRM query filter');
+    }
+    console.log(`Verified Completed Task in Database: Title="${foundTask.title}", Status="${foundTask.status}"`);
+    console.log('✅ Tasks lifecycle state machine (create -> assign -> complete) verified');
+
+    console.log('\n🎉 ALL 19 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

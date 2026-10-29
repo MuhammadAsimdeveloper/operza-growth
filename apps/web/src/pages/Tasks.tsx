@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, EmptyState, PageHeader, StatCard } from '../components/ui';
 import { uid, useStore } from '../lib/store';
 import { shortDate, timeOf, toDateTimeInput } from '../lib/format';
+import { api } from '../lib/api';
 import type { Task, TaskPriority } from '../lib/types';
 
 const PRIORITY: Record<TaskPriority, { label: string; tone: 'default' | 'amber' | 'red' }> = {
@@ -16,10 +17,37 @@ const PRIORITY: Record<TaskPriority, { label: string; tone: 'default' | 'amber' 
 type Filter = 'open' | 'done' | 'all';
 
 export default function Tasks() {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const [filter, setFilter] = useState<Filter>('open');
   const [query, setQuery] = useState('');
   const [adding, setAdding] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    api.crm.list('tasks').then((res) => {
+      if (!active || !res?.data) return;
+      for (const t of res.data) {
+        if (!state.tasks.some((st) => st.id === t.id)) {
+          dispatch({
+            type: 'task/add',
+            task: {
+              id: t.id,
+              title: t.title || 'Follow-up Task',
+              contactId: t.contactId,
+              assignee: t.assignedTo || 'Current User',
+              dueAt: t.dueDate || new Date(Date.now() + 86400000).toISOString(),
+              priority: (t.priority === 'high' ? 'high' : t.priority === 'low' ? 'low' : 'medium') as TaskPriority,
+              done: t.status === 'completed',
+              createdAt: t.createdAt || new Date().toISOString(),
+            },
+          });
+        }
+      }
+    }).catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [state.tasks, dispatch]);
 
   const now = Date.now();
   const contactName = (id?: string) => {
@@ -168,7 +196,15 @@ function TaskRow({ task }: { task: Task }) {
         role="checkbox"
         aria-checked={task.done}
         aria-label={task.done ? `Reopen ${task.title}` : `Complete ${task.title}`}
-        onClick={() => dispatch({ type: 'task/toggle', id: task.id })}
+        onClick={async () => {
+          const nextDone = !task.done;
+          try {
+            await api.crm.update('tasks', task.id, { status: nextDone ? 'completed' : 'pending' });
+          } catch (err) {
+            console.error('Failed to toggle task in backend:', err);
+          }
+          dispatch({ type: 'task/toggle', id: task.id });
+        }}
       >
         {task.done && <Icon name="check" size={13} />}
       </button>
@@ -193,7 +229,14 @@ function TaskRow({ task }: { task: Task }) {
         type="button"
         className="icon-btn"
         aria-label={`Delete ${task.title}`}
-        onClick={() => dispatch({ type: 'task/delete', id: task.id })}
+        onClick={async () => {
+          try {
+            await api.crm.delete('tasks', task.id);
+          } catch (err) {
+            console.error('Failed to delete task in backend:', err);
+          }
+          dispatch({ type: 'task/delete', id: task.id });
+        }}
       >
         <Icon name="trash" size={15} />
       </button>
@@ -216,12 +259,26 @@ function NewTask({ onClose }: { onClose: () => void }) {
 
   const canSave = title.trim().length > 1 && !!due;
 
-  const save = () => {
+  const save = async () => {
     if (!canSave) return;
+    let newId = uid('tk');
+    try {
+      const res = await api.crm.create('tasks', {
+        title: title.trim(),
+        contactId: contactId || undefined,
+        assignedTo: assignee.trim(),
+        dueDate: new Date(due).toISOString(),
+        priority,
+        status: 'pending'
+      });
+      if (res?.id) newId = res.id;
+    } catch (err) {
+      console.error('Failed to create task in backend:', err);
+    }
     dispatch({
       type: 'task/add',
       task: {
-        id: uid('tk'),
+        id: newId,
         title: title.trim(),
         contactId: contactId || undefined,
         assignee,

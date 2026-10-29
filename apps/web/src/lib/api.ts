@@ -92,6 +92,21 @@ export const api = {
     deleteSnapshot: (id: string) =>
       request(`/api/agency/snapshots/${id}`, { method: 'DELETE' }),
   },
+  dashboard: {
+    getStats: () => request('/api/dashboard/stats'),
+    getActivity: (limit = 20) => request(`/api/dashboard/activity?limit=${limit}`),
+  },
+  audit: {
+    list: (params?: { q?: string; action?: string; limit?: number }) => {
+      const q = new URLSearchParams();
+      if (params?.q) q.set('q', params.q);
+      if (params?.action) q.set('action', params.action);
+      if (params?.limit) q.set('limit', String(params.limit));
+      const qs = q.toString();
+      return request<{ data: any[]; total: number }>(`/api/audit${qs ? `?${qs}` : ''}`);
+    },
+    clear: () => request('/api/audit', { method: 'DELETE' }),
+  },
   copilot: {
     chat: (data: { message: string; sessionId?: string; tools?: any[] }) =>
       request('/api/copilot/chat', { method: 'POST', body: JSON.stringify(data) }),
