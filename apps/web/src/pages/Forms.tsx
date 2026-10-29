@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, PageHeader, StatCard, StatusBadge, Switch } from '../components/ui';
 import { useStore, uid } from '../lib/store';
-import { num, pct } from '../lib/format';
+import { num, pct, shortDate } from '../lib/format';
+import { api } from '../lib/api';
 import type { FormCompletion, FormDef, FormField, FormFieldType, FormKind } from '../lib/types';
 
 const TABS: Array<{ value: 'all' | FormKind; label: string }> = [
@@ -49,11 +50,38 @@ export default function Forms() {
   const [tab, setTab] = useState<'all' | FormKind>('all');
   const [creating, setCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [viewingSubmissionsId, setViewingSubmissionsId] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.crm.list<FormDef>('forms').then((res) => {
+      if (res.data && res.data.length > 0) {
+        for (const f of res.data) {
+          if (!state.forms.some((x) => x.id === f.id)) {
+            dispatch({ type: 'form/add', form: f });
+          }
+        }
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleTogglePublished = async (f: FormDef) => {
+    const nextPublished = !f.published;
+    dispatch({ type: 'form/toggle', id: f.id });
+    try {
+      await api.forms.publish(f.id, nextPublished);
+    } catch {
+      await api.crm.update('forms', f.id, {
+        published: nextPublished,
+        status: nextPublished ? 'published' : 'draft',
+      }).catch(() => {});
+    }
+  };
 
   const rows = state.forms.filter((f) => tab === 'all' || f.kind === tab);
   const submissions = state.forms.reduce((s, f) => s + f.submissions, 0);
   const published = state.forms.filter((f) => f.published).length;
   const editing = state.forms.find((f) => f.id === editingId) ?? null;
+  const viewingForm = state.forms.find((f) => f.id === viewingSubmissionsId) ?? null;
   const embedForm = state.forms[0];
 
   return (
@@ -109,7 +137,7 @@ export default function Forms() {
                 <th className="cell-right">Submissions</th>
                 <th>Status</th>
                 <th style={{ width: 60 }}>Live</th>
-                <th style={{ width: 52 }} />
+                <th style={{ width: 80 }} />
               </tr>
             </thead>
             <tbody>
@@ -139,7 +167,7 @@ export default function Forms() {
                     <StatusBadge status={f.published ? 'published' : 'draft'} />
                   </td>
                   <td>
-                    <Switch on={f.published} label={`Toggle ${f.name}`} onChange={() => dispatch({ type: 'form/toggle', id: f.id })} />
+                    <Switch on={f.published} label={`Toggle ${f.name}`} onChange={() => handleTogglePublished(f)} />
                   </td>
                   <td className="cell-right">
                     <span className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
@@ -152,7 +180,15 @@ export default function Forms() {
                       >
                         <Icon name="share" size={15} />
                       </a>
-                      <button className="icon-btn" aria-label={`Edit ${f.name}`} onClick={() => setEditingId(f.id)}>
+                      <button
+                        className="icon-btn"
+                        aria-label={`View Submissions for ${f.name}`}
+                        title={`View Submissions (${f.submissions})`}
+                        onClick={() => setViewingSubmissionsId(f.id)}
+                      >
+                        <Icon name="clipboard" size={15} />
+                      </button>
+                      <button className="icon-btn" aria-label={`Edit ${f.name}`} title="Edit Form" onClick={() => setEditingId(f.id)}>
                         <Icon name="edit" size={15} />
                       </button>
                     </span>
@@ -216,21 +252,31 @@ export default function Forms() {
         <NewFormModal
           defaultKind={tab === 'survey' ? 'survey' : 'form'}
           onClose={() => setCreating(false)}
-          onCreate={(name, kind) => {
+          onCreate={async (name, kind) => {
             const id = uid('fm');
+            const slug = slugify(name);
+            const newForm: FormDef = {
+              id,
+              name,
+              slug,
+              kind,
+              published: false,
+              submissions: 0,
+              fields: [
+                { id: uid('ff'), label: 'Full name', type: 'text', required: true, options: [] },
+                { id: uid('ff'), label: 'Email', type: 'email', required: true, options: [] },
+              ],
+            };
+            try {
+              await api.crm.create('forms', {
+                ...newForm,
+                publicSlug: slug,
+                status: 'draft',
+              });
+            } catch { /* dev fallback */ }
             dispatch({
               type: 'form/add',
-              form: {
-                id,
-                name,
-                kind,
-                published: false,
-                submissions: 0,
-                fields: [
-                  { id: uid('ff'), label: 'Full name', type: 'text', required: true, options: [] },
-                  { id: uid('ff'), label: 'Email', type: 'email', required: true, options: [] },
-                ],
-              },
+              form: newForm,
             });
             setCreating(false);
             setEditingId(id);
@@ -239,6 +285,10 @@ export default function Forms() {
       )}
 
       {editing && <FormEditor form={editing} onClose={() => setEditingId(null)} />}
+
+      {viewingForm && (
+        <FormSubmissionsModal form={viewingForm} onClose={() => setViewingSubmissionsId(null)} />
+      )}
     </div>
   );
 }
@@ -367,6 +417,7 @@ function FormEditor({ form, onClose }: { form: FormDef; onClose: () => void }) {
       passingScore: passingScore !== undefined && Number.isFinite(passingScore) ? passingScore : undefined,
     };
     dispatch({ type: 'form/update', id: form.id, patch: { completion } });
+    api.crm.update('forms', form.id, { completion }).catch(() => {});
   };
 
   const resetFieldForm = () => {
@@ -410,20 +461,24 @@ function FormEditor({ form, onClose }: { form: FormDef; onClose: () => void }) {
     };
     if (fieldId) {
       dispatch({ type: 'form/field/update', formId: form.id, id: fieldId, patch });
+      const updatedFields = form.fields.map((f) => (f.id === fieldId ? { ...f, ...patch } : f));
+      api.crm.update('forms', form.id, { fields: updatedFields }).catch(() => {});
     } else {
+      const newField: FormField = {
+        id: uid('ff'),
+        label: patch.label ?? '',
+        type,
+        required,
+        options: patch.options ?? [],
+        points: patch.points,
+        showIf: patch.showIf,
+      };
       dispatch({
         type: 'form/field/add',
         formId: form.id,
-        field: {
-          id: uid('ff'),
-          label: patch.label ?? '',
-          type,
-          required,
-          options: patch.options ?? [],
-          points: patch.points,
-          showIf: patch.showIf,
-        },
+        field: newField,
       });
+      api.crm.update('forms', form.id, { fields: [...form.fields, newField] }).catch(() => {});
     }
     resetFieldForm();
   };
@@ -454,7 +509,11 @@ function FormEditor({ form, onClose }: { form: FormDef; onClose: () => void }) {
                 className="btn btn--sm"
                 type="button"
                 disabled={!canRename}
-                onClick={() => dispatch({ type: 'form/update', id: form.id, patch: { name: name.trim() } })}
+                onClick={() => {
+                  const newName = name.trim();
+                  dispatch({ type: 'form/update', id: form.id, patch: { name: newName } });
+                  api.crm.update('forms', form.id, { name: newName }).catch(() => {});
+                }}
               >
                 Rename
               </button>
@@ -516,7 +575,10 @@ function FormEditor({ form, onClose }: { form: FormDef; onClose: () => void }) {
                   <button
                     className="icon-btn"
                     aria-label={`Delete ${field.label}`}
-                    onClick={() => dispatch({ type: 'form/field/delete', formId: form.id, id: field.id })}
+                    onClick={() => {
+                      dispatch({ type: 'form/field/delete', formId: form.id, id: field.id });
+                      api.crm.update('forms', form.id, { fields: form.fields.filter((f) => f.id !== field.id) }).catch(() => {});
+                    }}
                   >
                     <Icon name="trash" size={13} />
                   </button>
@@ -832,6 +894,105 @@ function FormEditor({ form, onClose }: { form: FormDef; onClose: () => void }) {
           </div>
         </div>
       </div>
+    </Modal>
+  );
+}
+
+function FormSubmissionsModal({
+  form,
+  onClose,
+}: {
+  form: FormDef;
+  onClose: () => void;
+}) {
+  const [submissions, setSubmissions] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.forms.getSubmissions(form.id)
+      .then((res) => {
+        setSubmissions(res.submissions || []);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [form.id]);
+
+  return (
+    <Modal
+      title={`${form.name} — Submissions (${submissions.length})`}
+      wide
+      onClose={onClose}
+      footer={
+        <button className="btn" type="button" onClick={onClose}>
+          Close
+        </button>
+      }
+    >
+      {loading ? (
+        <div style={{ padding: 24, textAlign: 'center' }}>Loading form responses...</div>
+      ) : submissions.length === 0 ? (
+        <div className="card__body" style={{ textAlign: 'center', padding: '32px 16px' }}>
+          <span className="avatar avatar--lg" style={{ background: 'var(--surface-3)', margin: '0 auto 12px' }}>
+            <Icon name="clipboard" size={24} />
+          </span>
+          <div style={{ fontWeight: 650, fontSize: 15, marginBottom: 4 }}>No Submissions Yet</div>
+          <div className="hint" style={{ maxWidth: 440, margin: '0 auto 16px' }}>
+            When visitors submit this {form.kind}, their answers and contact details will be captured here in real-time.
+          </div>
+          <a
+            className="btn btn--sm"
+            href={`/f/${form.slug || form.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            <Icon name="share" size={13} /> View Public Form Link
+          </a>
+        </div>
+      ) : (
+        <div className="stack" style={{ gap: 12 }}>
+          {submissions.map((s, idx) => (
+            <div key={s.id || idx} className="card" style={{ padding: 14 }}>
+              <div className="row row--between" style={{ marginBottom: 10 }}>
+                <div className="row" style={{ gap: 8 }}>
+                  <span className="avatar avatar--sm" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>
+                    <Icon name="user" size={13} />
+                  </span>
+                  <div>
+                    <strong style={{ fontSize: 13.5 }}>{s.contactName || 'Anonymous Respondent'}</strong>
+                    <div className="cell-sub">{s.email || 'No email provided'} {s.phone ? `· ${s.phone}` : ''}</div>
+                  </div>
+                </div>
+                <div className="row" style={{ gap: 8 }}>
+                  <span className="hint" style={{ fontSize: 12 }}>
+                    {shortDate(s.submittedAt || s.createdAt || new Date().toISOString())}
+                  </span>
+                  <Badge tone="blue">{s.source || 'web'}</Badge>
+                </div>
+              </div>
+              <div
+                style={{
+                  background: 'var(--surface-2)',
+                  borderRadius: 6,
+                  padding: '8px 12px',
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                  gap: 8,
+                  fontSize: 12.5,
+                }}
+              >
+                {Object.entries(s.answers || {}).map(([key, val]) => (
+                  <div key={key}>
+                    <span className="cell-sub" style={{ textTransform: 'capitalize', display: 'block', fontSize: 11 }}>
+                      {key.replace(/([A-Z])/g, ' $1')}
+                    </span>
+                    <span style={{ fontWeight: 550 }}>{String(val)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </Modal>
   );
 }

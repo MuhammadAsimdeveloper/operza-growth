@@ -57,9 +57,19 @@ export const api = {
       request(`/api/crm/contacts/${id}/timeline`),
   },
   forms: {
-    getPublic: (slug: string) => request(`/api/forms/public/${slug}`),
-    submitPublic: (slug: string, answers: Record<string, any>) =>
-      request(`/api/forms/submit/${slug}`, { method: 'POST', body: JSON.stringify({ answers }) }),
+    getPublic: (slug: string) => request<any>(`/api/forms/public/${slug}`),
+    submitPublic: (slug: string, answers: Record<string, any>, source?: string) =>
+      request<{ success: boolean; contactId: string; submissionId?: string }>(`/api/forms/submit/${slug}`, {
+        method: 'POST',
+        body: JSON.stringify({ answers, source }),
+      }),
+    publish: (id: string, published?: boolean) =>
+      request<{ success: boolean; form: any }>(`/api/forms/${id}/publish`, {
+        method: 'POST',
+        body: JSON.stringify({ published }),
+      }),
+    getSubmissions: (formId?: string) =>
+      request<{ submissions: any[] }>(formId ? `/api/forms/${formId}/submissions` : '/api/forms/submissions'),
   },
   calendars: {
     getPublic: (idOrSlug: string, date?: string) =>
@@ -157,7 +167,11 @@ export const api = {
       request(`/api/documents/${id}/sign`, { method: 'POST', body: JSON.stringify({ signerName }) }),
   },
   subscriptions: {
-    cancel: (id: string) => request(`/api/subscriptions/${id}/cancel`, { method: 'POST' }),
+    list: () => request<{ data: any[] }>('/api/subscriptions'),
+    create: (data: { contactId: string; plan: string; amount: number; interval?: 'month' | 'year'; status?: string; renewsAt?: string }) =>
+      request<{ success: boolean; subscription: any }>('/api/subscriptions', { method: 'POST', body: JSON.stringify(data) }),
+    cancel: (id: string) => request<{ success: boolean; subscription: any }>(`/api/subscriptions/${id}/cancel`, { method: 'POST' }),
+    resume: (id: string) => request<{ success: boolean; subscription: any }>(`/api/subscriptions/${id}/resume`, { method: 'POST' }),
   },
   memberships: {
     enroll: (courseId: string, contactId: string) =>

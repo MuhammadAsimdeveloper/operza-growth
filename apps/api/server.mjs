@@ -1009,15 +1009,27 @@ const server = createServer(async (req, res) => {
     // Public Form Lookup
     if (method === 'GET' && pathname.startsWith('/api/forms/public/')) {
       const slug = pathname.replace('/api/forms/public/', '').trim();
-      const form = (state.records.forms || []).find(f => f.publicSlug === slug && f.status === 'published');
+      const form = (state.records.forms || []).find(
+        f => (f.publicSlug === slug || f.slug === slug || f.id === slug) &&
+             (f.status === 'published' || f.published === true)
+      );
       if (!form) return sendJson(res, 404, { error: 'Form not found or unpublished' });
-      return sendJson(res, 200, { id: form.id, name: form.name, fields: form.fields, description: form.description });
+      return sendJson(res, 200, {
+        id: form.id,
+        name: form.name,
+        fields: form.fields,
+        description: form.description,
+        completion: form.completion
+      });
     }
 
     // Public Form Submission Ingress -> Lead capture + Trigger Workflow
     if (method === 'POST' && pathname.startsWith('/api/forms/submit/')) {
       const slug = pathname.replace('/api/forms/submit/', '').trim();
-      const form = (state.records.forms || []).find(f => f.publicSlug === slug && f.status === 'published');
+      const form = (state.records.forms || []).find(
+        f => (f.publicSlug === slug || f.slug === slug || f.id === slug) &&
+             (f.status === 'published' || f.published === true)
+      );
       if (!form) return sendJson(res, 404, { error: 'Form not found or unpublished' });
 
       const body = await readBody(req);
@@ -1029,20 +1041,57 @@ const server = createServer(async (req, res) => {
       const phone = answers.phone || '';
       const company = answers.company || '';
 
-      const contactId = randomUUID();
-      const contact = {
-        id: contactId,
+      state.records.contacts = state.records.contacts || [];
+      let contact = email ? state.records.contacts.find(c => c.email === email && c.agencyId === form.agencyId) : null;
+      let contactId = contact?.id;
+
+      if (!contact) {
+        contactId = randomUUID();
+        contact = {
+          id: contactId,
+          agencyId: form.agencyId,
+          locationId: form.locationId,
+          firstName, lastName, email, phone, company,
+          source: `Form: ${form.name}`,
+          tags: ['web-lead', form.name],
+          status: 'lead',
+          customValues: answers,
+          createdAt: new Date().toISOString()
+        };
+        state.records.contacts.push(contact);
+        broadcast('crm.contact.created', { id: contactId, firstName, lastName, source: 'form' });
+      } else {
+        if (!contact.tags) contact.tags = [];
+        if (!contact.tags.includes('web-lead')) contact.tags.push('web-lead');
+        if (!contact.tags.includes(form.name)) contact.tags.push(form.name);
+        contact.customValues = { ...(contact.customValues || {}), ...answers };
+        contact.updatedAt = new Date().toISOString();
+        broadcast('crm.contact.updated', { id: contactId, firstName: contact.firstName, lastName: contact.lastName });
+      }
+
+      form.submissions = (form.submissions || 0) + 1;
+
+      // Persist submission record
+      state.records.formSubmissions = state.records.formSubmissions || [];
+      const submissionId = randomUUID();
+      const submission = {
+        id: submissionId,
         agencyId: form.agencyId,
         locationId: form.locationId,
-        firstName, lastName, email, phone, company,
-        source: `Form: ${form.name}`,
-        tags: ['web-lead', form.name],
-        status: 'lead',
-        customValues: answers,
+        formId: form.id,
+        formName: form.name,
+        contactId,
+        contactName: `${firstName} ${lastName}`.trim(),
+        email,
+        phone,
+        company,
+        answers,
+        source: body.source || 'web_form',
+        status: 'new',
+        submittedAt: new Date().toISOString(),
         createdAt: new Date().toISOString()
       };
-      state.records.contacts.push(contact);
-      form.submissions = (form.submissions || 0) + 1;
+      state.records.formSubmissions.push(submission);
 
       const oppId = randomUUID();
       const opportunity = {
@@ -1058,20 +1107,21 @@ const server = createServer(async (req, res) => {
         source: form.name,
         createdAt: new Date().toISOString()
       };
+      state.records.opportunities = state.records.opportunities || [];
       state.records.opportunities.push(opportunity);
 
       await saveState();
-      broadcast('crm.contact.created', { id: contactId, firstName, lastName, source: 'form' });
+      broadcast('crm.form.submission_received', { formId: form.id, submissionId, contactName: submission.contactName });
       broadcast('crm.opportunity.created', { id: oppId, name: opportunity.name });
 
       triggerWorkflowExecution({
         agencyId: form.agencyId,
         locationId: form.locationId,
         triggerType: 'form',
-        triggerContext: { form, contact, opportunity, answers }
+        triggerContext: { form, contact, opportunity, answers, submission }
       }).catch(err => console.error('Workflow trigger failed:', err));
 
-      return sendJson(res, 200, { success: true, message: 'Thank you! Submission received.', contactId });
+      return sendJson(res, 200, { success: true, message: 'Thank you! Submission received.', contactId, submissionId });
     }
 
     // Public Calendar Lookup
@@ -3033,8 +3083,56 @@ const server = createServer(async (req, res) => {
     }
 
     // ═════════════════════════════════════════════════════════════
-    // ─── RECURRING SUBSCRIPTIONS CANCELLATION & DUNNING ──────────
+    // ─── RECURRING SUBSCRIPTIONS ENGINE ──────────────────────────
     // ═════════════════════════════════════════════════════════════
+
+    if (method === 'GET' && pathname === '/api/subscriptions') {
+      state.records.subscriptions = state.records.subscriptions || [];
+      const list = state.records.subscriptions.filter(
+        s => s.agencyId === agency.id && (!activeLocation || s.locationId === activeLocation.id)
+      );
+      return sendJson(res, 200, { data: list });
+    }
+
+    if (method === 'POST' && pathname === '/api/subscriptions') {
+      const body = await readBody(req);
+      const { plan, amount, contactId, interval = 'month', status = 'active', renewsAt } = body;
+      if (!plan || amount === undefined || !contactId) {
+        return sendJson(res, 400, { error: 'plan, amount, and contactId are required' });
+      }
+
+      state.records.subscriptions = state.records.subscriptions || [];
+      const contact = (state.records.contacts || []).find(c => c.id === contactId && c.agencyId === agency.id);
+
+      const calculatedRenewsAt = renewsAt || new Date(Date.now() + (interval === 'year' ? 365 : 30) * 86400000).toISOString();
+      const subId = randomUUID();
+      const newSub = {
+        id: subId,
+        agencyId: agency.id,
+        locationId: activeLocation.id,
+        contactId,
+        plan,
+        amount: Number(amount),
+        interval,
+        status,
+        renewsAt: calculatedRenewsAt,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      state.records.subscriptions.push(newSub);
+      await saveState();
+
+      auditLog('subscription.created', actor, {
+        subId,
+        plan,
+        amount: newSub.amount,
+        contactName: contact ? `${contact.firstName} ${contact.lastName}`.trim() : contactId
+      });
+      broadcast('crm.subscription.created', newSub);
+
+      return sendJson(res, 201, { success: true, subscription: newSub });
+    }
 
     if (method === 'POST' && pathname.startsWith('/api/subscriptions/') && pathname.endsWith('/cancel')) {
       const subId = pathname.replace('/api/subscriptions/', '').replace('/cancel', '').trim();
@@ -3060,6 +3158,65 @@ const server = createServer(async (req, res) => {
       }).catch(console.error);
 
       return sendJson(res, 200, { success: true, subscription: sub });
+    }
+
+    if (method === 'POST' && pathname.startsWith('/api/subscriptions/') && pathname.endsWith('/resume')) {
+      const subId = pathname.replace('/api/subscriptions/', '').replace('/resume', '').trim();
+      state.records.subscriptions = state.records.subscriptions || [];
+      const sub = state.records.subscriptions.find(
+        s => s.id === subId && s.agencyId === agency.id && s.locationId === activeLocation.id
+      );
+      if (!sub) return sendJson(res, 404, { error: 'Subscription not found' });
+
+      sub.status = 'active';
+      delete sub.canceledAt;
+      sub.updatedAt = new Date().toISOString();
+
+      await saveState();
+      auditLog('subscription.resumed', actor, { subId, plan: sub.plan });
+      broadcast('crm.subscription.updated', { subId, status: 'active' });
+
+      return sendJson(res, 200, { success: true, subscription: sub });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── FORMS & SURVEYS ENGINE ──────────────────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    // Toggle Form Published State
+    if (method === 'POST' && pathname.startsWith('/api/forms/') && pathname.endsWith('/publish')) {
+      const formId = pathname.replace('/api/forms/', '').replace('/publish', '').trim();
+      const body = await readBody(req);
+      state.records.forms = state.records.forms || [];
+      const form = state.records.forms.find(f => f.id === formId && f.agencyId === agency.id);
+      if (!form) return sendJson(res, 404, { error: 'Form not found' });
+
+      const isPublished = body.published !== undefined ? Boolean(body.published) : !form.published;
+      form.published = isPublished;
+      form.status = isPublished ? 'published' : 'draft';
+      form.updatedAt = new Date().toISOString();
+
+      await saveState();
+      auditLog(isPublished ? 'form.published' : 'form.unpublished', actor, { formId, name: form.name });
+      broadcast('crm.form.updated', { id: formId, published: isPublished, status: form.status });
+
+      return sendJson(res, 200, { success: true, form });
+    }
+
+    // Get Form Submissions
+    if (method === 'GET' && (pathname === '/api/forms/submissions' || (pathname.startsWith('/api/forms/') && pathname.endsWith('/submissions')))) {
+      state.records.formSubmissions = state.records.formSubmissions || [];
+      let formId = url.searchParams.get('formId');
+      if (pathname.startsWith('/api/forms/') && pathname.endsWith('/submissions') && pathname !== '/api/forms/submissions') {
+        formId = pathname.replace('/api/forms/', '').replace('/submissions', '').trim();
+      }
+      const submissions = state.records.formSubmissions.filter(s => {
+        const matchesAgency = s.agencyId === agency.id;
+        const matchesLocation = !activeLocation || s.locationId === activeLocation.id;
+        const matchesForm = !formId || s.formId === formId;
+        return matchesAgency && matchesLocation && matchesForm;
+      });
+      return sendJson(res, 200, { submissions });
     }
 
     // ═════════════════════════════════════════════════════════════

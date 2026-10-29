@@ -48,6 +48,7 @@ import type {
   SmartList,
   Snapshot,
   Snippet,
+  Subscription,
   SocialPost,
   SubAccount,
   Task,
@@ -179,6 +180,7 @@ export type Action =
   | { type: 'order/status'; id: string; status: 'paid' | 'pending' | 'refunded' }
   | { type: 'order/add'; order: Order }
   | { type: 'subscription/status'; id: string; status: 'active' | 'past_due' | 'canceled' }
+  | { type: 'subscription/add'; subscription: Subscription }
   | { type: 'affiliate/status'; id: string; status: 'active' | 'pending' | 'paused' }
   | { type: 'affiliate/add'; affiliate: Affiliate }
   | { type: 'affiliate/payout'; id: string; amount?: number }
@@ -1024,6 +1026,12 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
         ),
       };
 
+    case 'subscription/add':
+      return {
+        ...state,
+        subscriptions: [action.subscription, ...state.subscriptions.filter((s) => s.id !== action.subscription.id)],
+      };
+
     case 'affiliate/status':
       return {
         ...state,
@@ -1657,6 +1665,12 @@ function auditMeta(
         action: 'Store checkout completed',
         entity: 'Store',
         detail: `${action.order.number} · $${action.order.total.toLocaleString('en-US')}${action.order.gateway ? ` · ${action.order.gateway}` : ''}`,
+      };
+    case 'subscription/add':
+      return {
+        action: 'Subscription created',
+        entity: 'Subscription',
+        detail: `${action.subscription.plan} · $${action.subscription.amount}/${action.subscription.interval}`,
       };
     case 'template/add':
       return { action: 'Template created', entity: 'Template', detail: action.template.name };

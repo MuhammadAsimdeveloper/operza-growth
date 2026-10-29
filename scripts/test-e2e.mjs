@@ -1613,7 +1613,132 @@ async function runTests() {
     }
     console.log('✅ Affiliate partner created, referral tracked, commission settled, and payout report verified');
 
-    console.log('\n🎉 ALL 50 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 51. Forms & Surveys Engine: Field authoring, publishing, public submission, & submissions viewer
+    console.log('\n[TEST 51] Forms & Surveys Engine: Authoring, Publishing, Submission, & Submissions Query');
+    const surveyFormRes = await request('/api/crm/forms', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Executive Agency Scaling Survey',
+        kind: 'survey',
+        slug: 'executive-scaling-survey',
+        publicSlug: 'executive-scaling-survey',
+        status: 'draft',
+        published: false,
+        submissions: 0,
+        fields: [
+          { id: 'f-1', label: 'Company Name', type: 'text', required: true },
+          { id: 'f-2', label: 'Work Email', type: 'email', required: true },
+          { id: 'f-3', label: 'Team Size', type: 'select', required: true, options: ['1-10', '11-50', '50+'] },
+          { id: 'f-4', label: 'Monthly Growth Budget', type: 'select', required: true, options: ['$2k-$5k', '$5k-$15k', '$15k+'] }
+        ]
+      })
+    });
+    console.log(`Survey Create Status: ${surveyFormRes.status}`, `ID: ${surveyFormRes.data.id}`);
+    if (surveyFormRes.status !== 201 || !surveyFormRes.data.id) {
+      throw new Error(`Survey form creation failed: ${JSON.stringify(surveyFormRes.data)}`);
+    }
+
+    const surveyFormId = surveyFormRes.data.id;
+
+    // Publish the survey
+    const publishFormRes = await request(`/api/forms/${surveyFormId}/publish`, {
+      method: 'POST',
+      body: JSON.stringify({ published: true })
+    });
+    console.log(`Publish Form Status: ${publishFormRes.status}`, `Published: ${publishFormRes.data.form?.published}`);
+    if (publishFormRes.status !== 200 || !publishFormRes.data.form?.published) {
+      throw new Error(`Publish form failed: ${JSON.stringify(publishFormRes.data)}`);
+    }
+
+    // Verify lookup via public route
+    const surveyPublicRes = await request('/api/forms/public/executive-scaling-survey');
+    console.log(`Public Form Lookup Status: ${surveyPublicRes.status}`, `Fields: ${surveyPublicRes.data.fields?.length}`);
+    if (surveyPublicRes.status !== 200 || surveyPublicRes.data.fields?.length !== 4) {
+      throw new Error(`Public form lookup failed: ${JSON.stringify(surveyPublicRes.data)}`);
+    }
+
+    // Submit response as public visitor
+    const surveySubmitRes = await request('/api/forms/submit/executive-scaling-survey', {
+      method: 'POST',
+      body: JSON.stringify({
+        source: 'linkedin_campaign',
+        answers: {
+          name: 'Harrison Sterling',
+          email: 'harrison@sterlingventures.io',
+          phone: '+1 555-0922',
+          company: 'Sterling Ventures',
+          teamSize: '11-50',
+          growthBudget: '$15k+'
+        }
+      })
+    });
+    console.log(`Survey Submit Status: ${surveySubmitRes.status}`, `Submission ID: ${surveySubmitRes.data.submissionId}`, `Contact ID: ${surveySubmitRes.data.contactId}`);
+    if (surveySubmitRes.status !== 200 || !surveySubmitRes.data.submissionId || !surveySubmitRes.data.contactId) {
+      throw new Error(`Survey public submission failed: ${JSON.stringify(surveySubmitRes.data)}`);
+    }
+
+    // Query submissions for this specific form
+    const formSubmissionsRes = await request(`/api/forms/${surveyFormId}/submissions`);
+    console.log(`Form Submissions Query Status: ${formSubmissionsRes.status}`, `Submissions Count: ${formSubmissionsRes.data.submissions?.length}`);
+    if (
+      formSubmissionsRes.status !== 200 ||
+      !formSubmissionsRes.data.submissions?.length ||
+      formSubmissionsRes.data.submissions[0].answers?.teamSize !== '11-50' ||
+      formSubmissionsRes.data.submissions[0].source !== 'linkedin_campaign'
+    ) {
+      throw new Error(`Form submissions query failed: ${JSON.stringify(formSubmissionsRes.data)}`);
+    }
+
+    // Query global submissions endpoint
+    const allSubmissionsRes = await request('/api/forms/submissions');
+    if (allSubmissionsRes.status !== 200 || !allSubmissionsRes.data.submissions?.length) {
+      throw new Error(`Global submissions query failed: ${JSON.stringify(allSubmissionsRes.data)}`);
+    }
+    console.log('✅ Forms & Surveys authoring, publishing, public submission, and submissions query verified');
+
+    // 52. Recurring Subscriptions Management: Provisioning, Cancellation & Resumption
+    console.log('\n[TEST 52] Recurring Subscriptions Engine: Provision, List, Cancel, & Resume');
+    const newSubscriptionRes = await request('/api/subscriptions', {
+      method: 'POST',
+      body: JSON.stringify({
+        contactId: testContactId,
+        plan: 'AI Enterprise Growth Retainer',
+        amount: 2500,
+        interval: 'month',
+        status: 'active'
+      })
+    });
+    console.log(`Create Subscription Status: ${newSubscriptionRes.status}`, `Plan: "${newSubscriptionRes.data.subscription?.plan}"`, `Amount: $${newSubscriptionRes.data.subscription?.amount}`);
+    if (newSubscriptionRes.status !== 201 || !newSubscriptionRes.data.subscription?.id || newSubscriptionRes.data.subscription.amount !== 2500) {
+      throw new Error(`Subscription creation failed: ${JSON.stringify(newSubscriptionRes.data)}`);
+    }
+
+    const testSubId = newSubscriptionRes.data.subscription.id;
+
+    // Verify listed in tenant subscriptions
+    const listSubsRes = await request('/api/subscriptions');
+    console.log(`List Subscriptions Status: ${listSubsRes.status}`, `Count: ${listSubsRes.data.data?.length}`);
+    const foundSub = listSubsRes.data.data?.find(s => s.id === testSubId);
+    if (!foundSub || foundSub.status !== 'active') {
+      throw new Error(`Subscription listing verification failed: ${JSON.stringify(listSubsRes.data)}`);
+    }
+
+    // Cancel subscription
+    const cancelSubRes = await request(`/api/subscriptions/${testSubId}/cancel`, { method: 'POST' });
+    console.log(`Cancel Subscription Status: ${cancelSubRes.status}`, `New Status: ${cancelSubRes.data.subscription?.status}`);
+    if (cancelSubRes.status !== 200 || cancelSubRes.data.subscription?.status !== 'canceled' || !cancelSubRes.data.subscription?.canceledAt) {
+      throw new Error(`Subscription cancellation failed: ${JSON.stringify(cancelSubRes.data)}`);
+    }
+
+    // Resume subscription
+    const resumeSubRes = await request(`/api/subscriptions/${testSubId}/resume`, { method: 'POST' });
+    console.log(`Resume Subscription Status: ${resumeSubRes.status}`, `New Status: ${resumeSubRes.data.subscription?.status}`);
+    if (resumeSubRes.status !== 200 || resumeSubRes.data.subscription?.status !== 'active') {
+      throw new Error(`Subscription resumption failed: ${JSON.stringify(resumeSubRes.data)}`);
+    }
+    console.log('✅ Recurring subscription provisioned, listed, canceled, and resumed cleanly');
+
+    console.log('\n🎉 ALL 52 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

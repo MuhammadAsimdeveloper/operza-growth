@@ -1,28 +1,36 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
+import { Modal } from '../components/Modal';
 import { Avatar, PageHeader, StatCard, StatusBadge } from '../components/ui';
-import { useStore } from '../lib/store';
+import { useStore, uid } from '../lib/store';
 import { currency, num, shortDate } from '../lib/format';
 import { api } from '../lib/api';
-import type { Subscription } from '../lib/types';
+import type { Subscription, SubscriptionStatus } from '../lib/types';
 
 export default function Subscriptions() {
   const { state, dispatch } = useStore();
   const { subscriptions } = state;
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    api.crm.list<Subscription>('subscriptions').then((res) => {
+    api.subscriptions.list().then((res) => {
       if (res.data && res.data.length > 0) {
         for (const sub of res.data) {
-          if (!subscriptions.some((x) => x.id === sub.id)) {
-            dispatch({ type: 'subscription/status', id: sub.id, status: sub.status });
-          }
+          dispatch({ type: 'subscription/add', subscription: sub });
         }
       }
-    }).catch(() => { /* dev fallback */ });
+    }).catch(() => {
+      api.crm.list<Subscription>('subscriptions').then((res) => {
+        if (res.data && res.data.length > 0) {
+          for (const sub of res.data) {
+            dispatch({ type: 'subscription/add', subscription: sub });
+          }
+        }
+      }).catch(() => { /* dev fallback */ });
+    });
   }, []);
 
-  const handleStatusChange = async (s: Subscription, newStatus: Subscription['status']) => {
+  const handleStatusChange = async (s: Subscription, newStatus: SubscriptionStatus) => {
     dispatch({
       type: 'subscription/status',
       id: s.id,
@@ -31,6 +39,8 @@ export default function Subscriptions() {
     try {
       if (newStatus === 'canceled') {
         await api.subscriptions.cancel(s.id);
+      } else if (newStatus === 'active') {
+        await api.subscriptions.resume(s.id);
       } else {
         await api.crm.update('subscriptions', s.id, { status: newStatus });
       }
@@ -57,11 +67,11 @@ export default function Subscriptions() {
         subtitle="Recurring revenue, renewals and dunning in one list."
         actions={
           <>
-            <button className="btn">
-              <Icon name="repeat" size={15} /> Billing settings
+            <button className="btn" type="button" onClick={() => window.location.reload()}>
+              <Icon name="repeat" size={15} /> Refresh
             </button>
-            <button className="btn btn--primary">
-              <Icon name="plus" size={15} /> New plan
+            <button className="btn btn--primary" type="button" onClick={() => setCreating(true)}>
+              <Icon name="plus" size={15} /> New subscription
             </button>
           </>
         }
@@ -118,7 +128,7 @@ export default function Subscriptions() {
                         className="select select--sm"
                         value={s.status}
                         aria-label={`Status for ${s.plan}`}
-                        onChange={(e) => handleStatusChange(s, e.target.value as Subscription['status'])}
+                        onChange={(e) => handleStatusChange(s, e.target.value as SubscriptionStatus)}
                       >
                         <option value="active">Active</option>
                         <option value="past_due">Past due</option>
@@ -132,6 +142,183 @@ export default function Subscriptions() {
           </table>
         </div>
       </div>
+
+      {creating && (
+        <NewSubscriptionModal
+          contacts={state.contacts}
+          onClose={() => setCreating(false)}
+          onCreate={async (subData) => {
+            try {
+              const res = await api.subscriptions.create(subData);
+              if (res.subscription) {
+                dispatch({ type: 'subscription/add', subscription: res.subscription });
+              }
+            } catch {
+              // Dev store fallback
+              const fallbackSub: Subscription = {
+                id: uid('sub'),
+                contactId: subData.contactId,
+                plan: subData.plan,
+                amount: subData.amount,
+                interval: subData.interval,
+                status: subData.status,
+                renewsAt: subData.renewsAt || new Date(Date.now() + 30 * 86400000).toISOString(),
+              };
+              dispatch({ type: 'subscription/add', subscription: fallbackSub });
+            }
+            setCreating(false);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function NewSubscriptionModal({
+  contacts,
+  onClose,
+  onCreate,
+}: {
+  contacts: any[];
+  onClose: () => void;
+  onCreate: (data: {
+    contactId: string;
+    plan: string;
+    amount: number;
+    interval: 'month' | 'year';
+    status: SubscriptionStatus;
+    renewsAt?: string;
+  }) => void;
+}) {
+  const [contactId, setContactId] = useState(contacts[0]?.id || '');
+  const [plan, setPlan] = useState('Growth Accelerator Retainer');
+  const [amount, setAmount] = useState('1500');
+  const [interval, setInterval] = useState<'month' | 'year'>('month');
+  const [status, setStatus] = useState<SubscriptionStatus>('active');
+  const [renewsDays, setRenewsDays] = useState('30');
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!contactId || !plan.trim() || Number(amount) <= 0) return;
+    setSaving(true);
+    const renewsAt = new Date(Date.now() + (Number(renewsDays) || 30) * 86400000).toISOString();
+    await onCreate({
+      contactId,
+      plan: plan.trim(),
+      amount: Number(amount),
+      interval,
+      status,
+      renewsAt,
+    });
+    setSaving(false);
+  };
+
+  return (
+    <Modal
+      title="Create New Subscription"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" type="button" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button
+            className="btn btn--primary"
+            type="button"
+            disabled={saving || !contactId || !plan.trim() || Number(amount) <= 0}
+            onClick={handleSubmit}
+          >
+            {saving ? 'Creating...' : 'Provision Subscription'}
+          </button>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="stack" style={{ gap: 14 }}>
+        <div className="field">
+          <label htmlFor="sub-contact">Client / Account</label>
+          <select
+            id="sub-contact"
+            className="select"
+            value={contactId}
+            onChange={(e) => setContactId(e.target.value)}
+            required
+          >
+            {contacts.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.firstName} {c.lastName} {c.company ? `(${c.company})` : ''} — {c.email || 'No email'}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="grid grid--2" style={{ gap: 12 }}>
+          <div className="field">
+            <label htmlFor="sub-plan">Plan Name</label>
+            <input
+              id="sub-plan"
+              className="input"
+              value={plan}
+              onChange={(e) => setPlan(e.target.value)}
+              placeholder="e.g. AI Growth Accelerator"
+              required
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="sub-amount">Amount ($)</label>
+            <input
+              id="sub-amount"
+              type="number"
+              min="1"
+              step="1"
+              className="input"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              required
+            />
+          </div>
+        </div>
+
+        <div className="grid grid--3" style={{ gap: 12 }}>
+          <div className="field">
+            <label htmlFor="sub-interval">Billing Interval</label>
+            <select
+              id="sub-interval"
+              className="select"
+              value={interval}
+              onChange={(e) => setInterval(e.target.value as 'month' | 'year')}
+            >
+              <option value="month">Monthly</option>
+              <option value="year">Annually</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="sub-status">Initial Status</label>
+            <select
+              id="sub-status"
+              className="select"
+              value={status}
+              onChange={(e) => setStatus(e.target.value as SubscriptionStatus)}
+            >
+              <option value="active">Active</option>
+              <option value="past_due">Past Due</option>
+              <option value="canceled">Canceled</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="sub-days">Renews In (Days)</label>
+            <input
+              id="sub-days"
+              type="number"
+              min="1"
+              max="365"
+              className="input"
+              value={renewsDays}
+              onChange={(e) => setRenewsDays(e.target.value)}
+            />
+          </div>
+        </div>
+      </form>
+    </Modal>
   );
 }
