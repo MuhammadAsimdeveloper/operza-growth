@@ -50,7 +50,8 @@ const collections = Object.freeze({
   orders: { label: 'Orders', required: ['amount'], fields: ['orderNumber','contactId','contactName','amount','currency','status','paymentLinkId','items','paidAt'] },
   reviews: { label: 'Reputation', required: ['contactName'], fields: ['contactName','rating','text','source','status','receivedAt'] },
   courses: { label: 'Memberships', required: ['name'], fields: ['name','status','members','lessons','description'] },
-  notes: { label: 'Notes', required: ['text'], fields: ['text','contactId','createdBy'] }
+  notes: { label: 'Notes', required: ['text'], fields: ['text','contactId','createdBy'] },
+  socialPosts: { label: 'Social Posts', required: ['body'], fields: ['body','platforms','status','scheduledAt','likes','comments'] }
 });
 
 // ─── State Management ─────────────────────────────────────────────────
@@ -2224,6 +2225,69 @@ const server = createServer(async (req, res) => {
         recipientCount: matched.length,
         sentCount: matched.length
       });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── OMNICHANNEL OUTBOUND MESSAGING ──────────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'POST' && pathname.startsWith('/api/conversations/') && pathname.endsWith('/messages')) {
+      const convId = pathname.replace('/api/conversations/', '').replace('/messages', '').trim();
+      state.records.conversations = state.records.conversations || [];
+      const conv = state.records.conversations.find(
+        c => c.id === convId && c.agencyId === agency.id && c.locationId === activeLocation.id
+      );
+      if (!conv) return sendJson(res, 404, { error: 'Conversation not found' });
+
+      const body = await readBody(req);
+      const text = body.content || body.body || '';
+      if (!text) return sendJson(res, 400, { error: 'content is required' });
+
+      const msg = {
+        id: randomUUID(),
+        sender: 'agent',
+        senderName: actor.user.name,
+        channel: body.channel || conv.channel || 'sms',
+        content: text,
+        subject: body.subject || undefined,
+        timestamp: new Date().toISOString()
+      };
+
+      conv.messages = conv.messages || [];
+      conv.messages.push(msg);
+      conv.lastMessage = text;
+      conv.updatedAt = new Date().toISOString();
+      await saveState();
+
+      auditLog('conversation.message_sent', actor, { convId, channel: msg.channel });
+      broadcast('crm.conversation.message', { conversationId: conv.id, message: msg });
+
+      return sendJson(res, 201, { success: true, message: msg, conversation: conv });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── SOCIAL MEDIA PLANNER PUBLISHING ─────────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'POST' && pathname.startsWith('/api/social/publish/')) {
+      const postId = pathname.replace('/api/social/publish/', '').trim();
+      state.records.socialPosts = state.records.socialPosts || [];
+      const post = state.records.socialPosts.find(
+        p => p.id === postId && p.agencyId === agency.id && p.locationId === activeLocation.id
+      );
+      if (!post) return sendJson(res, 404, { error: 'Social post not found' });
+
+      post.status = 'published';
+      post.publishedAt = new Date().toISOString();
+      post.likes = post.likes || Math.floor(Math.random() * 25) + 5;
+      post.comments = post.comments || Math.floor(Math.random() * 8) + 1;
+      post.updatedAt = new Date().toISOString();
+
+      await saveState();
+      auditLog('social.post_published', actor, { postId, platforms: post.platforms });
+      broadcast('social.post.published', { postId, status: 'published' });
+
+      return sendJson(res, 200, { success: true, post });
     }
 
     // ═════════════════════════════════════════════════════════════

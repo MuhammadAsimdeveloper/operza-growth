@@ -115,12 +115,19 @@ export default function Conversations() {
   const send = () => {
     if (!selected || !draft.trim()) return;
     if (selected.channel === 'whatsapp' && draft.trim().length > 1024) return;
+    const bodyText = draft.trim();
+    const subj = selected.channel === 'email' && subject.trim() ? subject.trim() : undefined;
     dispatch({
       type: 'conversation/send',
       id: selected.id,
-      body: draft.trim(),
-      subject: selected.channel === 'email' && subject.trim() ? subject.trim() : undefined,
+      body: bodyText,
+      subject: subj,
     });
+    api.conversations.sendMessage(selected.id, {
+      content: bodyText,
+      channel: selected.channel,
+      subject: subj,
+    }).catch((err) => console.error('Failed to sync outbound message:', err));
     setDraft('');
     setSubject('');
   };

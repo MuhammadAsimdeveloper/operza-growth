@@ -28,8 +28,16 @@ export default function Opportunities() {
 
   const contactOf = (id: string) => state.contacts.find((c) => c.id === id);
 
-  const drop = (stageId: string) => {
-    if (dragId) dispatch({ type: 'opportunity/move', id: dragId, stageId });
+  const drop = async (stageId: string) => {
+    if (dragId) {
+      dispatch({ type: 'opportunity/move', id: dragId, stageId });
+      const stageName = pipeline.stages.find((s) => s.id === stageId)?.name || stageId;
+      try {
+        await api.opportunities.updateStage(dragId, stageName, stageId);
+      } catch (err) {
+        console.error('Failed to sync stage transition:', err);
+      }
+    }
     setDragId(null);
     setOverStage(null);
   };

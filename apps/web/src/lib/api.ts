@@ -120,6 +120,17 @@ export const api = {
   campaigns: {
     send: (id: string) => request(`/api/campaigns/${id}/send`, { method: 'POST' }),
   },
+  conversations: {
+    sendMessage: (id: string, data: { content: string; channel?: string; subject?: string }) =>
+      request(`/api/conversations/${id}/messages`, { method: 'POST', body: JSON.stringify(data) }),
+  },
+  social: {
+    publish: (id: string) => request(`/api/social/publish/${id}`, { method: 'POST' }),
+  },
+  opportunities: {
+    updateStage: (id: string, stage: string, stageId?: string) =>
+      request(`/api/crm/opportunities/${id}`, { method: 'PUT', body: JSON.stringify({ stage, stageId }) }),
+  },
   copilot: {
     chat: (data: { message: string; sessionId?: string; tools?: any[] }) =>
       request('/api/copilot/chat', { method: 'POST', body: JSON.stringify(data) }),
