@@ -29,7 +29,9 @@ export default function Conversations() {
   useEffect(() => {
     let ws: WebSocket | null = null;
     try {
-      ws = new WebSocket('ws://localhost:4000/ws');
+      const protocol = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const host = typeof window !== 'undefined' && window.location.host ? window.location.host : 'localhost:4005';
+      ws = new WebSocket(`${protocol}//${host}/ws`);
       ws.onopen = () => setWsConnected(true);
       ws.onclose = () => setWsConnected(false);
       ws.onmessage = (event) => {

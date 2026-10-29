@@ -48,8 +48,9 @@ const collections = Object.freeze({
   calendars: { label: 'Calendars', required: ['name'], fields: ['name','slug','color','durationMin','availability','roundRobin','description','status'] },
   paymentLinks: { label: 'Payment links', required: ['name'], fields: ['name','slug','amount','currency','productIds','visits','conversions','active','description'] },
   orders: { label: 'Orders', required: ['amount'], fields: ['orderNumber','contactId','contactName','amount','currency','status','paymentLinkId','items','paidAt','bumpAccepted','bumpAmount'] },
-  reviews: { label: 'Reputation', required: ['contactName'], fields: ['contactName','rating','text','source','status','receivedAt'] },
-  courses: { label: 'Memberships', required: ['name'], fields: ['name','status','members','lessons','description','price','published','curriculum','kind'] },
+  reviews: { label: 'Reputation', required: ['contactName'], fields: ['contactName','rating','text','source','status','receivedAt','reply','repliedAt'] },
+  reviewRequests: { label: 'Review Requests', required: ['contactId'], fields: ['contactId','channel','message','scheduledAt','sentAt','status','createdAt'] },
+  courses: { label: 'Memberships', required: ['name'], fields: ['name','title','status','members','lessons','description','price','published','curriculum','kind'] },
   notes: { label: 'Notes', required: ['text'], fields: ['text','contactId','createdBy'] },
   socialPosts: { label: 'Social Posts', required: ['body'], fields: ['body','platforms','status','scheduledAt','likes','comments'] },
   subscriptions: { label: 'Subscriptions', required: ['plan', 'amount'], fields: ['plan','amount','interval','status','renewsAt','contactId'] },
@@ -1840,10 +1841,12 @@ const server = createServer(async (req, res) => {
         const course = state.records.courses.find(c => c.id === e.courseId);
         return {
           courseId: e.courseId,
-          name: course?.name || 'Enrolled Course',
+          name: course?.name || course?.title || 'Enrolled Course',
           progress: e.progress || 0,
           startedAt: e.startedAt,
-          status: e.status
+          status: e.status,
+          lessonsCount: Array.isArray(course?.curriculum) ? course.curriculum.length : (course?.lessons || 0),
+          curriculum: course?.curriculum || []
         };
       });
 
@@ -3227,6 +3230,217 @@ const server = createServer(async (req, res) => {
         resolvedSubject: resSubject.resolvedText,
         tokensResolved: resBody.tokensResolved + resSubject.tokensResolved
       });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── REPUTATION: REVIEW REPLIES & REQUEST DISPATCH ──────────
+    // ═════════════════════════════════════════════════════════════
+
+    // Reply to Review
+    if (method === 'POST' && pathname.startsWith('/api/reviews/') && pathname.endsWith('/reply')) {
+      const reviewId = pathname.replace('/api/reviews/', '').replace('/reply', '').trim();
+      state.records.reviews = state.records.reviews || [];
+      const review = state.records.reviews.find(r => r.id === reviewId && r.agencyId === agency.id);
+      if (!review) return sendJson(res, 404, { error: 'Review not found' });
+
+      const body = await readBody(req);
+      const reply = (body.reply || '').trim();
+      if (!reply) return sendJson(res, 400, { error: 'Reply text is required' });
+
+      review.reply = reply;
+      review.status = 'replied';
+      review.repliedAt = new Date().toISOString();
+      await saveState();
+
+      auditLog('review.replied', actor, { reviewId, contactName: review.contactName });
+      broadcast('review.replied', { id: review.id, reply, status: review.status, repliedAt: review.repliedAt });
+
+      return sendJson(res, 200, { success: true, review });
+    }
+
+    // Create & Dispatch Review Request
+    if (method === 'POST' && pathname === '/api/reviews/request') {
+      const body = await readBody(req);
+      const { contactId, channel, message, scheduledAt, sendNow } = body;
+      if (!contactId) return sendJson(res, 400, { error: 'contactId is required' });
+
+      state.records.contacts = state.records.contacts || [];
+      const contact = state.records.contacts.find(c => c.id === contactId && c.agencyId === agency.id);
+      if (!contact) return sendJson(res, 404, { error: 'Contact not found' });
+
+      const reqId = randomUUID();
+      const isSendNow = Boolean(sendNow) || !scheduledAt || new Date(scheduledAt).getTime() <= Date.now();
+      const sentAt = isSendNow ? new Date().toISOString() : null;
+
+      const reviewReq = {
+        id: reqId,
+        agencyId: agency.id,
+        locationId: activeLocation.id,
+        contactId,
+        channel: channel || 'email',
+        message: (message || '').trim(),
+        scheduledAt: scheduledAt || new Date().toISOString(),
+        status: isSendNow ? 'sent' : 'scheduled',
+        sentAt,
+        createdAt: new Date().toISOString()
+      };
+
+      state.records.reviewRequests = state.records.reviewRequests || [];
+      state.records.reviewRequests.push(reviewReq);
+
+      if (isSendNow) {
+        state.records.conversations = state.records.conversations || [];
+        let conv = state.records.conversations.find(c => c.contactId === contactId && c.channel === reviewReq.channel);
+        if (!conv) {
+          conv = {
+            id: randomUUID(),
+            agencyId: agency.id,
+            locationId: activeLocation.id,
+            contactId,
+            channel: reviewReq.channel,
+            status: 'open',
+            messages: [],
+            createdAt: new Date().toISOString()
+          };
+          state.records.conversations.push(conv);
+        }
+        conv.messages = conv.messages || [];
+        conv.messages.push({
+          id: randomUUID(),
+          sender: 'agent',
+          body: reviewReq.message,
+          sentAt,
+          at: sentAt
+        });
+      }
+
+      await saveState();
+      auditLog('review.requested', actor, { requestId: reqId, contactId, channel: reviewReq.channel, sendNow: isSendNow });
+      broadcast('review.requested', { request: reviewReq });
+
+      return sendJson(res, 201, { success: true, request: reviewReq });
+    }
+
+    // Send Scheduled Review Request Immediately
+    if (method === 'POST' && pathname.startsWith('/api/reviews/requests/') && pathname.endsWith('/send')) {
+      const reqId = pathname.replace('/api/reviews/requests/', '').replace('/send', '').trim();
+      state.records.reviewRequests = state.records.reviewRequests || [];
+      const reviewReq = state.records.reviewRequests.find(r => r.id === reqId && r.agencyId === agency.id);
+      if (!reviewReq) return sendJson(res, 404, { error: 'Review request not found' });
+
+      reviewReq.status = 'sent';
+      reviewReq.sentAt = new Date().toISOString();
+
+      state.records.conversations = state.records.conversations || [];
+      let conv = state.records.conversations.find(c => c.contactId === reviewReq.contactId && c.channel === reviewReq.channel);
+      if (!conv) {
+        conv = {
+          id: randomUUID(),
+          agencyId: agency.id,
+          locationId: activeLocation.id,
+          contactId: reviewReq.contactId,
+          channel: reviewReq.channel,
+          status: 'open',
+          messages: [],
+          createdAt: new Date().toISOString()
+        };
+        state.records.conversations.push(conv);
+      }
+      conv.messages = conv.messages || [];
+      conv.messages.push({
+        id: randomUUID(),
+        sender: 'agent',
+        body: reviewReq.message,
+        sentAt: reviewReq.sentAt,
+        at: reviewReq.sentAt
+      });
+
+      await saveState();
+      auditLog('review.request_sent', actor, { requestId: reqId, contactId: reviewReq.contactId });
+      broadcast('review.requested', { request: reviewReq });
+
+      return sendJson(res, 200, { success: true, request: reviewReq });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── COURSES / LMS CURRICULUM & LESSONS ─────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    // Add Lesson to Course
+    if (method === 'POST' && pathname.startsWith('/api/courses/') && pathname.endsWith('/lessons')) {
+      const courseId = pathname.replace('/api/courses/', '').replace('/lessons', '').trim();
+      state.records.courses = state.records.courses || [];
+      const course = state.records.courses.find(c => c.id === courseId && c.agencyId === agency.id);
+      if (!course) return sendJson(res, 404, { error: 'Course not found' });
+
+      const body = await readBody(req);
+      const title = (body.title || '').trim();
+      if (!title) return sendJson(res, 400, { error: 'Lesson title is required' });
+
+      const lesson = {
+        id: randomUUID(),
+        title,
+        durationMin: Number(body.durationMin) || 15,
+        dripDays: Math.max(0, Number(body.dripDays) || 0),
+        createdAt: new Date().toISOString()
+      };
+
+      course.curriculum = Array.isArray(course.curriculum) ? course.curriculum : [];
+      course.curriculum.push(lesson);
+      course.lessons = course.curriculum.length;
+      course.updatedAt = new Date().toISOString();
+
+      await saveState();
+      auditLog('course.lesson_added', actor, { courseId, lessonId: lesson.id, title });
+      broadcast('course.lesson_added', { courseId, lesson });
+
+      return sendJson(res, 201, { success: true, lesson, course });
+    }
+
+    // Replace / Update Curriculum
+    if (method === 'PUT' && pathname.startsWith('/api/courses/') && pathname.endsWith('/curriculum')) {
+      const courseId = pathname.replace('/api/courses/', '').replace('/curriculum', '').trim();
+      state.records.courses = state.records.courses || [];
+      const course = state.records.courses.find(c => c.id === courseId && c.agencyId === agency.id);
+      if (!course) return sendJson(res, 404, { error: 'Course not found' });
+
+      const body = await readBody(req);
+      if (!Array.isArray(body.curriculum)) return sendJson(res, 400, { error: 'curriculum array is required' });
+
+      course.curriculum = body.curriculum.map(l => ({
+        id: l.id || randomUUID(),
+        title: String(l.title || 'Untitled Lesson').trim(),
+        durationMin: Number(l.durationMin) || 15,
+        dripDays: Math.max(0, Number(l.dripDays) || 0)
+      }));
+      course.lessons = course.curriculum.length;
+      course.updatedAt = new Date().toISOString();
+
+      await saveState();
+      auditLog('course.curriculum_updated', actor, { courseId, lessonCount: course.lessons });
+      broadcast('course.curriculum_updated', { courseId, curriculum: course.curriculum });
+
+      return sendJson(res, 200, { success: true, course });
+    }
+
+    // Publish / Unpublish Course
+    if (method === 'PUT' && pathname.startsWith('/api/courses/') && pathname.endsWith('/publish')) {
+      const courseId = pathname.replace('/api/courses/', '').replace('/publish', '').trim();
+      state.records.courses = state.records.courses || [];
+      const course = state.records.courses.find(c => c.id === courseId && c.agencyId === agency.id);
+      if (!course) return sendJson(res, 404, { error: 'Course not found' });
+
+      const body = await readBody(req);
+      const isPublished = body.published !== undefined ? Boolean(body.published) : !course.published;
+      course.published = isPublished;
+      course.status = isPublished ? 'published' : 'draft';
+      course.updatedAt = new Date().toISOString();
+
+      await saveState();
+      auditLog('course.published_updated', actor, { courseId, published: isPublished });
+      broadcast('course.published_updated', { courseId, published: isPublished });
+
+      return sendJson(res, 200, { success: true, course });
     }
 
     // Upload Media Asset

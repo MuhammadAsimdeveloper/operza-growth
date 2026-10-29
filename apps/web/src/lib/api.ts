@@ -83,6 +83,20 @@ export const api = {
     getPublic: (locationId: string) => request(`/api/reviews/public/${locationId}`),
     submitPublic: (locationId: string, data: { contactName: string; email?: string; rating: number; text: string; source?: string }) =>
       request(`/api/reviews/submit/${locationId}`, { method: 'POST', body: JSON.stringify(data) }),
+    reply: (id: string, reply: string) =>
+      request<{ success: boolean; review: any }>(`/api/reviews/${id}/reply`, { method: 'POST', body: JSON.stringify({ reply }) }),
+    request: (data: { contactId: string; channel?: string; message?: string; scheduledAt?: string; sendNow?: boolean }) =>
+      request<{ success: boolean; request: any }>('/api/reviews/request', { method: 'POST', body: JSON.stringify(data) }),
+    sendRequest: (id: string) =>
+      request<{ success: boolean; request: any }>(`/api/reviews/requests/${id}/send`, { method: 'POST' }),
+  },
+  courses: {
+    addLesson: (id: string, lesson: { title: string; durationMin?: number; dripDays?: number }) =>
+      request<{ success: boolean; lesson: any; course: any }>(`/api/courses/${id}/lessons`, { method: 'POST', body: JSON.stringify(lesson) }),
+    updateCurriculum: (id: string, curriculum: any[]) =>
+      request<{ success: boolean; course: any }>(`/api/courses/${id}/curriculum`, { method: 'PUT', body: JSON.stringify({ curriculum }) }),
+    publish: (id: string, published: boolean) =>
+      request<{ success: boolean; course: any }>(`/api/courses/${id}/publish`, { method: 'PUT', body: JSON.stringify({ published }) }),
   },
   agency: {
     getProfile: () => request<{ name: string; email: string; phone: string; website: string; timezone: string; currency: string }>('/api/agency/profile'),

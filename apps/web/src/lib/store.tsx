@@ -38,6 +38,7 @@ import type {
   PhoneNumber,
   Product,
   QrCode,
+  Review,
   ReviewRequest,
   SaasPlan,
   SavedReport,
@@ -156,6 +157,7 @@ export type Action =
   | { type: 'integration/toggle'; id: string }
   | { type: 'review/reply'; id: string; reply: string }
   | { type: 'review/status'; id: string; status: 'new' | 'flagged' }
+  | { type: 'review/add'; review: Review }
   | { type: 'listing/toggle'; id: string }
   | { type: 'course/toggle'; id: string }
   | { type: 'course/add'; course: Course }
@@ -886,6 +888,12 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
       return {
         ...state,
         reviews: state.reviews.map((r) => (r.id === action.id ? { ...r, status: action.status } : r)),
+      };
+
+    case 'review/add':
+      return {
+        ...state,
+        reviews: [action.review, ...state.reviews.filter((r) => r.id !== action.review.id)],
       };
 
     case 'listing/toggle':

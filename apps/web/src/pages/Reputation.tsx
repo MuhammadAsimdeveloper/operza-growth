@@ -1,11 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, EmptyState, PageHeader, StatCard, Switch } from '../components/ui';
 import { useStore, uid } from '../lib/store';
 import { resolveMerge } from '../lib/merge';
 import { fullDate, num, relative, shortDate, timeOf, toDateTimeInput } from '../lib/format';
-import type { ReviewRequest, ReviewRequestChannel } from '../lib/types';
+import { api } from '../lib/api';
+import type { Review, ReviewRequest, ReviewRequestChannel } from '../lib/types';
 
 const REVIEW_LINK = typeof window !== 'undefined' ? `${window.location.origin}/review/main` : '/review/main';
 const DEFAULT_MESSAGE =
@@ -86,13 +87,82 @@ export default function Reputation() {
     return c ? `${c.firstName} ${c.lastName}` : 'Unknown contact';
   };
 
-  function submitReply(id: string) {
+  useEffect(() => {
+    let active = true;
+    api.crm.list('reviews').then((res) => {
+      if (!active || !res?.data || !Array.isArray(res.data)) return;
+      for (const r of res.data) {
+        if (!reviews.some((x) => x.id === r.id)) {
+          dispatch({
+            type: 'review/add',
+            review: {
+              id: r.id,
+              contactId: r.contactId || '',
+              rating: (r.rating as any) || 5,
+              body: r.text || r.body || '',
+              source: (r.source as any) || 'google',
+              at: r.receivedAt || r.createdAt || new Date().toISOString(),
+              status: (r.status as any) || 'new',
+              reply: r.reply,
+            },
+          });
+        }
+      }
+    }).catch(() => {});
+
+    api.crm.list('reviewRequests').then((res) => {
+      if (!active || !res?.data || !Array.isArray(res.data)) return;
+      for (const req of res.data) {
+        if (!reviewRequests.some((x) => x.id === req.id)) {
+          dispatch({
+            type: 'reviewRequest/add',
+            request: {
+              id: req.id,
+              contactId: req.contactId,
+              channel: (req.channel as any) || 'email',
+              message: req.message,
+              scheduledAt: req.scheduledAt || req.createdAt || new Date().toISOString(),
+              sentAt: req.sentAt,
+            },
+          });
+        }
+      }
+    }).catch(() => {});
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function submitReply(id: string) {
     const body = draft.trim();
     if (!body) return;
     dispatch({ type: 'review/reply', id, reply: body });
+    try {
+      await api.reviews.reply(id, body);
+    } catch { /* dev fallback */ }
     setReplyingTo(null);
     setDraft('');
   }
+
+  const handleSendRequest = async (id: string) => {
+    dispatch({ type: 'reviewRequest/send', id });
+    try {
+      await api.reviews.sendRequest(id);
+    } catch { /* dev fallback */ }
+  };
+
+  const handleToggleStatus = async (review: Review) => {
+    const newStatus = review.status === 'flagged' ? 'new' : 'flagged';
+    dispatch({
+      type: 'review/status',
+      id: review.id,
+      status: newStatus,
+    });
+    try {
+      await api.crm.update('reviews', review.id, { status: newStatus });
+    } catch { /* dev fallback */ }
+  };
 
   return (
     <div className="content">
@@ -298,7 +368,7 @@ export default function Reputation() {
                               <button
                                 type="button"
                                 className="btn btn--ghost btn--sm"
-                                onClick={() => dispatch({ type: 'reviewRequest/send', id: request.id })}
+                                onClick={() => handleSendRequest(request.id)}
                               >
                                 <Icon name="send" size={13} /> Send now
                               </button>
@@ -375,13 +445,7 @@ export default function Reputation() {
                   <button
                     type="button"
                     className="btn btn--ghost btn--sm"
-                    onClick={() =>
-                      dispatch({
-                        type: 'review/status',
-                        id: review.id,
-                        status: review.status === 'flagged' ? 'new' : 'flagged',
-                      })
-                    }
+                    onClick={() => handleToggleStatus(review)}
                   >
                     <Icon name={review.status === 'flagged' ? 'refresh' : 'x'} size={14} />
                     {review.status === 'flagged' ? 'Unflag' : 'Flag'}
@@ -467,7 +531,7 @@ function RequestModal({ onClose }: { onClose: () => void }) {
   const scheduleValid = timing === 'now' || !Number.isNaN(new Date(when).getTime());
   const canSend = Boolean(contact) && message.trim().length > 0 && scheduleValid;
 
-  const submit = () => {
+  const submit = async () => {
     if (!canSend) return;
     const request: ReviewRequest = {
       id: uid('rr'),
@@ -475,7 +539,20 @@ function RequestModal({ onClose }: { onClose: () => void }) {
       channel,
       message: message.trim(),
       scheduledAt: timing === 'now' ? new Date().toISOString() : new Date(when).toISOString(),
+      sentAt: timing === 'now' ? new Date().toISOString() : undefined,
     };
+    try {
+      const res = await api.reviews.request({
+        contactId,
+        channel,
+        message: message.trim(),
+        scheduledAt: request.scheduledAt,
+        sendNow: timing === 'now',
+      });
+      if (res?.request?.id) {
+        request.id = res.request.id;
+      }
+    } catch { /* dev fallback */ }
     dispatch({ type: 'reviewRequest/add', request });
     if (timing === 'now') dispatch({ type: 'reviewRequest/send', id: request.id });
     onClose();

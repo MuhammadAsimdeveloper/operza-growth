@@ -1388,7 +1388,170 @@ async function runTests() {
     }
     console.log('✅ Agency business profile query, modification, and persistence verified');
 
-    console.log('\n🎉 ALL 46 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 47. Reputation: Review Reply & Status Lifecycle
+    console.log('\n[TEST 47] Review Reply Engine: POST /api/reviews/:id/reply & CRM sync');
+    const existingReviewsRes = await request('/api/crm/reviews');
+    console.log(`Existing Reviews Status: ${existingReviewsRes.status}`, `Count: ${existingReviewsRes.data.total}`);
+    if (existingReviewsRes.status !== 200 || !existingReviewsRes.data.data?.length) {
+      throw new Error(`Failed to list reviews: ${JSON.stringify(existingReviewsRes.data)}`);
+    }
+
+    const targetReview = existingReviewsRes.data.data[0];
+    const replyText = 'Thank you for your fantastic feedback, Marcus! Delighted to partner with Vance Media.';
+    const replyRes = await request(`/api/reviews/${targetReview.id}/reply`, {
+      method: 'POST',
+      body: JSON.stringify({ reply: replyText })
+    });
+    console.log(`Reply Status: ${replyRes.status}`, `New Status: ${replyRes.data.review?.status}`, `Reply: "${replyRes.data.review?.reply}"`);
+    if (
+      replyRes.status !== 200 ||
+      replyRes.data.review?.status !== 'replied' ||
+      replyRes.data.review?.reply !== replyText ||
+      !replyRes.data.review?.repliedAt
+    ) {
+      throw new Error(`Review reply failed: ${JSON.stringify(replyRes.data)}`);
+    }
+    console.log('✅ Public review reply submitted, status transitioned to replied, and repliedAt timestamped');
+
+    // 48. Review Requests Creation & Dispatch Engine
+    console.log('\n[TEST 48] Review Requests Engine: POST /api/reviews/request & immediate dispatch');
+    const scheduledReqRes = await request('/api/reviews/request', {
+      method: 'POST',
+      body: JSON.stringify({
+        contactId: testContactId,
+        channel: 'sms',
+        message: 'Hi Marcus, how was your experience? Leave a review: https://operza.io/review/main',
+        scheduledAt: '2026-12-15T09:00:00Z',
+        sendNow: false
+      })
+    });
+    console.log(`Scheduled Request Status: ${scheduledReqRes.status}`, `ID: ${scheduledReqRes.data.request?.id}`, `Status: ${scheduledReqRes.data.request?.status}`);
+    if (
+      scheduledReqRes.status !== 201 ||
+      !scheduledReqRes.data.request?.id ||
+      scheduledReqRes.data.request?.status !== 'scheduled' ||
+      scheduledReqRes.data.request?.sentAt !== null
+    ) {
+      throw new Error(`Scheduled review request creation failed: ${JSON.stringify(scheduledReqRes.data)}`);
+    }
+
+    const scheduledReqId = scheduledReqRes.data.request.id;
+    const sendScheduledRes = await request(`/api/reviews/requests/${scheduledReqId}/send`, {
+      method: 'POST'
+    });
+    console.log(`Send Scheduled Status: ${sendScheduledRes.status}`, `New Status: ${sendScheduledRes.data.request?.status}`, `SentAt: ${sendScheduledRes.data.request?.sentAt}`);
+    if (
+      sendScheduledRes.status !== 200 ||
+      sendScheduledRes.data.request?.status !== 'sent' ||
+      !sendScheduledRes.data.request?.sentAt
+    ) {
+      throw new Error(`Immediate dispatch of scheduled review request failed: ${JSON.stringify(sendScheduledRes.data)}`);
+    }
+
+    // Direct immediate review request
+    const immediateReqRes = await request('/api/reviews/request', {
+      method: 'POST',
+      body: JSON.stringify({
+        contactId: testContactId,
+        channel: 'email',
+        message: 'Marcus, would you mind rating your experience with our team?',
+        sendNow: true
+      })
+    });
+    console.log(`Immediate Request Status: ${immediateReqRes.status}`, `Status: ${immediateReqRes.data.request?.status}`, `SentAt: ${immediateReqRes.data.request?.sentAt}`);
+    if (
+      immediateReqRes.status !== 201 ||
+      immediateReqRes.data.request?.status !== 'sent' ||
+      !immediateReqRes.data.request?.sentAt
+    ) {
+      throw new Error(`Immediate review request creation failed: ${JSON.stringify(immediateReqRes.data)}`);
+    }
+    console.log('✅ Review requests created, scheduled, and dispatched with conversation messaging');
+
+    // 49. LMS Course Lessons Authoring, Curriculum Sync & Client Portal Ingress
+    console.log('\n[TEST 49] LMS Lessons & Curriculum Engine: /api/courses/:id/lessons & Portal Ingress');
+    const lmsCourseCreateRes = await request('/api/crm/courses', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Agency Growth & Automation Masterclass',
+        kind: 'course',
+        price: 1497,
+        published: false,
+        members: 0,
+        status: 'draft'
+      })
+    });
+    console.log(`Course Create Status: ${lmsCourseCreateRes.status}`, `ID: ${lmsCourseCreateRes.data.id}`);
+    if (lmsCourseCreateRes.status !== 201 || !lmsCourseCreateRes.data.id) {
+      throw new Error(`Course creation failed: ${JSON.stringify(lmsCourseCreateRes.data)}`);
+    }
+
+    const testCourseId = lmsCourseCreateRes.data.id;
+    const lesson1Res = await request(`/api/courses/${testCourseId}/lessons`, {
+      method: 'POST',
+      body: JSON.stringify({
+        title: 'Module 1: High-Converting CRM Pipeline Architecture',
+        durationMin: 30,
+        dripDays: 0
+      })
+    });
+    console.log(`Lesson 1 Status: ${lesson1Res.status}`, `Title: "${lesson1Res.data.lesson?.title}"`, `Total Lessons: ${lesson1Res.data.course?.lessons}`);
+    if (lesson1Res.status !== 201 || !lesson1Res.data.lesson?.id || lesson1Res.data.course?.lessons !== 1) {
+      throw new Error(`Lesson 1 creation failed: ${JSON.stringify(lesson1Res.data)}`);
+    }
+
+    const lesson2Res = await request(`/api/courses/${testCourseId}/lessons`, {
+      method: 'POST',
+      body: JSON.stringify({
+        title: 'Module 2: Autonomous AI Copilot Lead Qualification Engine',
+        durationMin: 45,
+        dripDays: 7
+      })
+    });
+    console.log(`Lesson 2 Status: ${lesson2Res.status}`, `Title: "${lesson2Res.data.lesson?.title}"`, `Total Lessons: ${lesson2Res.data.course?.lessons}`);
+    if (lesson2Res.status !== 201 || lesson2Res.data.course?.lessons !== 2) {
+      throw new Error(`Lesson 2 creation failed: ${JSON.stringify(lesson2Res.data)}`);
+    }
+
+    // Publish course
+    const coursePublishRes = await request(`/api/courses/${testCourseId}/publish`, {
+      method: 'PUT',
+      body: JSON.stringify({ published: true })
+    });
+    console.log(`Course Publish Status: ${coursePublishRes.status}`, `Published: ${coursePublishRes.data.course?.published}`, `Status: ${coursePublishRes.data.course?.status}`);
+    if (
+      coursePublishRes.status !== 200 ||
+      coursePublishRes.data.course?.published !== true ||
+      coursePublishRes.data.course?.status !== 'published'
+    ) {
+      throw new Error(`Course publish failed: ${JSON.stringify(coursePublishRes.data)}`);
+    }
+
+    // Enroll contact and verify portal summary exposes complete curriculum
+    const lmsEnrollRes = await request('/api/crm/enrollments', {
+      method: 'POST',
+      body: JSON.stringify({
+        courseId: testCourseId,
+        contactId: testContactId,
+        progress: 50,
+        startedAt: new Date().toISOString(),
+        status: 'active'
+      })
+    });
+    console.log(`Enrollment Status: ${lmsEnrollRes.status}`, `ID: ${lmsEnrollRes.data.id}`);
+    if (lmsEnrollRes.status !== 201) {
+      throw new Error(`Course enrollment failed: ${JSON.stringify(lmsEnrollRes.data)}`);
+    }
+
+    const updatedPortalRes = await request(`/api/portal/summary/${testContactId}`);
+    const enrolledCourse = updatedPortalRes.data.courses?.find(c => c.courseId === testCourseId);
+    console.log(`Portal Enrolled Course: "${enrolledCourse?.name}"`, `LessonsCount: ${enrolledCourse?.lessonsCount}`, `Curriculum: ${enrolledCourse?.curriculum?.length}`);
+    if (!enrolledCourse || enrolledCourse.lessonsCount !== 2 || enrolledCourse.curriculum?.length !== 2) {
+      throw new Error(`Client portal did not receive full curriculum and lesson count: ${JSON.stringify(updatedPortalRes.data)}`);
+    }
+    console.log('✅ LMS course authoring, lesson additions, publishing, and portal curriculum ingress verified');
+
+    console.log('\n🎉 ALL 49 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

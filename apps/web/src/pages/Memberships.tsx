@@ -180,7 +180,12 @@ export default function Memberships() {
                       <Switch
                         on={course.published}
                         label={`Publish ${course.title}`}
-                        onChange={() => dispatch({ type: 'course/toggle', id: course.id })}
+                        onChange={async () => {
+                          dispatch({ type: 'course/toggle', id: course.id });
+                          try {
+                            await api.courses.publish(course.id, !course.published);
+                          } catch { /* dev fallback */ }
+                        }}
                       />
                     </span>
                   </div>
@@ -316,13 +321,24 @@ function CourseDetailModal({ course, onClose }: { course: Course; onClose: () =>
     Number.isFinite(drip) &&
     drip >= 0;
 
-  const addLesson = () => {
+  const addLesson = async () => {
     if (!canAdd) return;
+    const lesson = { id: uid('ls'), title: title.trim(), durationMin: duration, dripDays: drip };
     dispatch({
       type: 'lesson/add',
       courseId: course.id,
-      lesson: { id: uid('ls'), title: title.trim(), durationMin: duration, dripDays: drip },
+      lesson,
     });
+    try {
+      const res = await api.courses.addLesson(course.id, {
+        title: lesson.title,
+        durationMin: lesson.durationMin,
+        dripDays: lesson.dripDays,
+      });
+      if (res?.lesson?.id) {
+        lesson.id = res.lesson.id;
+      }
+    } catch { /* dev fallback */ }
     setTitle('');
     setMinutes('15');
     setDripDays('0');
@@ -358,7 +374,12 @@ function CourseDetailModal({ course, onClose }: { course: Course; onClose: () =>
           <Switch
             on={course.published}
             label={`Publish ${course.title}`}
-            onChange={() => dispatch({ type: 'course/toggle', id: course.id })}
+            onChange={async () => {
+              dispatch({ type: 'course/toggle', id: course.id });
+              try {
+                await api.courses.publish(course.id, !course.published);
+              } catch { /* dev fallback */ }
+            }}
           />
         </div>
       </div>
@@ -386,22 +407,33 @@ function CourseDetailModal({ course, onClose }: { course: Course; onClose: () =>
                 aria-label={`Drip days for ${lesson.title}`}
                 title="Days after enrollment before this lesson unlocks"
                 value={lesson.dripDays}
-                onChange={(e) =>
+                onChange={async (e) => {
+                  const newDrip = Math.max(0, Number(e.target.value) || 0);
                   dispatch({
                     type: 'lesson/update',
                     courseId: course.id,
                     id: lesson.id,
-                    patch: { dripDays: Math.max(0, Number(e.target.value) || 0) },
-                  })
-                }
+                    patch: { dripDays: newDrip },
+                  });
+                  const updated = course.curriculum.map((l) =>
+                    l.id === lesson.id ? { ...l, dripDays: newDrip } : l
+                  );
+                  try {
+                    await api.courses.updateCurriculum(course.id, updated);
+                  } catch { /* dev fallback */ }
+                }}
                 style={{ width: 66 }}
               />
               <button
                 className="icon-btn"
                 aria-label={`Remove ${lesson.title}`}
-                onClick={() =>
-                  dispatch({ type: 'lesson/delete', courseId: course.id, id: lesson.id })
-                }
+                onClick={async () => {
+                  dispatch({ type: 'lesson/delete', courseId: course.id, id: lesson.id });
+                  const updated = course.curriculum.filter((l) => l.id !== lesson.id);
+                  try {
+                    await api.courses.updateCurriculum(course.id, updated);
+                  } catch { /* dev fallback */ }
+                }}
               >
                 <Icon name="trash" size={15} />
               </button>
