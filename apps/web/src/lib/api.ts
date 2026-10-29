@@ -38,11 +38,11 @@ export const api = {
     logout: () => request('/api/auth/logout', { method: 'POST' }),
   },
   crm: {
-    list: (collection: string) => request(`/api/crm/${collection}`),
-    create: (collection: string, data: any) =>
-      request(`/api/crm/${collection}`, { method: 'POST', body: JSON.stringify(data) }),
-    update: (collection: string, id: string, data: any) =>
-      request(`/api/crm/${collection}/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    list: <T = any>(collection: string) => request<{ data: T[]; total?: number }>(`/api/crm/${collection}`),
+    create: <T = any>(collection: string, data: any) =>
+      request<T>(`/api/crm/${collection}`, { method: 'POST', body: JSON.stringify(data) }),
+    update: <T = any>(collection: string, id: string, data: any) =>
+      request<T>(`/api/crm/${collection}/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     delete: (collection: string, id: string) =>
       request(`/api/crm/${collection}/${id}`, { method: 'DELETE' }),
   },
@@ -149,6 +149,25 @@ export const api = {
   affiliates: {
     track: (code: string, amount: number) =>
       request(`/api/affiliates/track/${code}`, { method: 'POST', body: JSON.stringify({ amount }) }),
+  },
+  funnels: {
+    getPublic: (slugOrId: string, pageSlug?: string) =>
+      request<{ id: string; name: string; kind: string; published: boolean; visits: number; optins: number; pages: any[]; checkout: any }>(
+        `/api/funnels/public/${slugOrId}${pageSlug ? `?pageSlug=${encodeURIComponent(pageSlug)}` : ''}`
+      ),
+    optin: (slugOrId: string, data: { firstName?: string; lastName?: string; email?: string; phone?: string; company?: string; pageSlug?: string; bumpAccepted?: boolean }) =>
+      request(`/api/funnels/optin/${slugOrId}`, { method: 'POST', body: JSON.stringify(data) }),
+  },
+  customValues: {
+    resolve: (text: string, contactId?: string) =>
+      request<{ resolvedText: string; tokensResolved: number }>('/api/custom-values/resolve', {
+        method: 'POST',
+        body: JSON.stringify({ text, contactId })
+      }),
+  },
+  calls: {
+    setHandled: (id: string, handled = true) =>
+      request(`/api/calls/handled/${id}`, { method: 'PUT', body: JSON.stringify({ handled }) }),
   },
   copilot: {
     chat: (data: { message: string; sessionId?: string; tools?: any[] }) =>

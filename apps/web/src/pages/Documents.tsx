@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, EmptyState, PageHeader, StatCard } from '../components/ui';
 import { uid, useStore } from '../lib/store';
 import { currency, num, relative, shortDate } from '../lib/format';
+import { api } from '../lib/api';
 import type { ContractDoc } from '../lib/types';
 
 const KIND_META = {
@@ -26,6 +27,31 @@ export default function Documents() {
   const { documents } = state;
   const [filter, setFilter] = useState<Filter>('all');
   const [adding, setAdding] = useState(false);
+
+  useEffect(() => {
+    api.crm.list<ContractDoc>('documents').then((res) => {
+      if (res.data && res.data.length > 0) {
+        for (const doc of res.data) {
+          if (!documents.some((x) => x.id === doc.id)) {
+            dispatch({ type: 'document/add', document: doc });
+          }
+        }
+      }
+    }).catch(() => { /* dev fallback */ });
+  }, []);
+
+  const handleStatusChange = async (doc: ContractDoc, newStatus: ContractDoc['status']) => {
+    dispatch({ type: 'document/status', id: doc.id, status: newStatus });
+    try {
+      if (newStatus === 'signed') {
+        const contact = state.contacts.find((c) => c.id === doc.contactId);
+        const signerName = contact ? `${contact.firstName} ${contact.lastName}` : 'Client Signer';
+        await api.documents.sign(doc.id, signerName);
+      } else {
+        await api.crm.update('documents', doc.id, { status: newStatus });
+      }
+    } catch { /* dev fallback */ }
+  };
 
   const signedValue = documents.filter((d) => d.status === 'signed').reduce((s, d) => s + d.value, 0);
   const pendingValue = documents.filter((d) => d.status === 'sent').reduce((s, d) => s + d.value, 0);
@@ -132,13 +158,7 @@ export default function Documents() {
                         className="select select--sm"
                         value={doc.status}
                         aria-label={`Status for ${doc.name}`}
-                        onChange={(e) =>
-                          dispatch({
-                            type: 'document/status',
-                            id: doc.id,
-                            status: e.target.value as ContractDoc['status'],
-                          })
-                        }
+                        onChange={(e) => handleStatusChange(doc, e.target.value as ContractDoc['status'])}
                       >
                         <option value="draft">Draft</option>
                         <option value="sent">Sent</option>
@@ -198,19 +218,29 @@ function NewDocumentModal({ onClose }: { onClose: () => void }) {
 
   const canSave = name.trim().length > 1 && contactId;
 
-  function save() {
+  async function save() {
     if (!canSave) return;
+    const newDoc: ContractDoc = {
+      id: uid('doc'),
+      name: name.trim(),
+      kind,
+      contactId,
+      value: Number(value) || 0,
+      status: 'draft',
+      updatedAt: new Date().toISOString(),
+    };
+    try {
+      await api.crm.create('documents', {
+        name: newDoc.name,
+        kind: newDoc.kind,
+        value: newDoc.value,
+        status: newDoc.status,
+        contactId: newDoc.contactId,
+      });
+    } catch { /* dev fallback */ }
     dispatch({
       type: 'document/add',
-      document: {
-        id: uid('doc'),
-        name: name.trim(),
-        kind,
-        contactId,
-        value: Number(value) || 0,
-        status: 'draft',
-        updatedAt: new Date().toISOString(),
-      },
+      document: newDoc,
     });
     onClose();
   }

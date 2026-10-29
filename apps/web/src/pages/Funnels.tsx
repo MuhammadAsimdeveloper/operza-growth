@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, PageHeader, StatCard, StatusBadge, Switch } from '../components/ui';
 import { uid, useStore } from '../lib/store';
 import { currency, num, pct } from '../lib/format';
+import { api } from '../lib/api';
 import type { Order, OrderBump, Site, SitePage } from '../lib/types';
 
 const BANNERS = [
@@ -35,6 +36,39 @@ export default function Funnels() {
   const { state, dispatch } = useStore();
   const [filter, setFilter] = useState<'all' | 'published' | 'draft'>('all');
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.crm.list<Site>('websites').then((res) => {
+      if (res.data && res.data.length > 0) {
+        for (const s of res.data) {
+          if (!state.sites.some((x) => x.id === s.id)) {
+            dispatch({ type: 'site/duplicate', copy: s });
+          }
+        }
+      }
+    }).catch(() => { /* dev fallback */ });
+  }, []);
+
+  const handleTestOptin = async (funnel: Site) => {
+    try {
+      await api.funnels.optin(funnel.id, {
+        firstName: 'Taylor',
+        lastName: 'Swift',
+        email: 'taylor@growthagency.io',
+        bumpAccepted: Boolean(funnel.checkout?.bumps?.some(b => b.enabled))
+      });
+    } catch { /* dev fallback */ }
+  };
+
+  const handleCopyLink = async (funnel: Site) => {
+    const url = `${window.location.origin}/api/funnels/public/${funnel.domain || funnel.id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedId(funnel.id);
+      window.setTimeout(() => setCopiedId((c) => (c === funnel.id ? null : c)), 1600);
+    } catch { /* clipboard unavailable */ }
+  };
 
   const funnels = state.sites.filter((s) => s.kind === 'funnel');
   const rows = funnels.filter((f) => {
@@ -132,6 +166,12 @@ export default function Funnels() {
                 <div className="row" style={{ gap: 8, marginTop: 14 }}>
                   <button className="btn btn--sm" onClick={() => setEditingId(funnel.id)}>
                     <Icon name="sliders" size={14} /> Open builder
+                  </button>
+                  <button className="btn btn--sm" onClick={() => handleCopyLink(funnel)}>
+                    <Icon name={copiedId === funnel.id ? 'check' : 'link'} size={14} /> {copiedId === funnel.id ? 'Copied' : 'Share link'}
+                  </button>
+                  <button className="btn btn--sm" onClick={() => handleTestOptin(funnel)}>
+                    <Icon name="play" size={14} /> Test opt-in
                   </button>
                   <button className="btn btn--sm" onClick={() => duplicate(funnel)}>
                     <Icon name="copy" size={14} /> Duplicate

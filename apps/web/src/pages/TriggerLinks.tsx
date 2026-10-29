@@ -1,12 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { PageHeader, StatCard } from '../components/ui';
 import { uid, useStore } from '../lib/store';
 import { num, relative } from '../lib/format';
+import { api } from '../lib/api';
 import type { TriggerLink } from '../lib/types';
-
-const BASE = 'https://links.operza.test/t';
 
 export default function TriggerLinks() {
   const { state, dispatch } = useStore();
@@ -14,10 +13,22 @@ export default function TriggerLinks() {
   const [adding, setAdding] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
+  useEffect(() => {
+    api.crm.list<TriggerLink>('triggerLinks').then((res) => {
+      if (res.data && res.data.length > 0) {
+        for (const tl of res.data) {
+          if (!triggerLinks.some((x) => x.id === tl.id)) {
+            dispatch({ type: 'triggerLink/add', link: tl });
+          }
+        }
+      }
+    }).catch(() => { /* dev fallback */ });
+  }, []);
+
   const clicks = triggerLinks.reduce((s, l) => s + l.clicks, 0);
   const best = [...triggerLinks].sort((a, b) => b.clicks - a.clicks)[0];
 
-  const url = (l: TriggerLink) => `${BASE}/${l.slug}`;
+  const url = (l: TriggerLink) => `${window.location.origin}/api/links/click/${l.slug}`;
 
   async function copy(l: TriggerLink) {
     try {
@@ -27,6 +38,13 @@ export default function TriggerLinks() {
     }
     setCopied(l.id);
     window.setTimeout(() => setCopied((cur) => (cur === l.id ? null : cur)), 1600);
+  }
+
+  async function handleTestClick(l: TriggerLink) {
+    dispatch({ type: 'triggerLink/click', id: l.id });
+    try {
+      await api.links.click(l.slug, state.contacts[0]?.id);
+    } catch { /* dev fallback */ }
   }
 
   return (
@@ -91,7 +109,7 @@ export default function TriggerLinks() {
                       <button
                         type="button"
                         className="btn btn--sm"
-                        onClick={() => dispatch({ type: 'triggerLink/click', id: l.id })}
+                        onClick={() => handleTestClick(l)}
                       >
                         <Icon name="play" size={13} /> Test
                       </button>
@@ -117,17 +135,26 @@ function NewLinkModal({ onClose }: { onClose: () => void }) {
   const derived = slug || name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   const canSave = name.trim().length > 1 && derived.length > 1;
 
-  function save() {
+  async function save() {
     if (!canSave) return;
+    const newLink: TriggerLink = {
+      id: uid('tl'),
+      name: name.trim(),
+      slug: derived,
+      clicks: 0,
+      lastClickAt: new Date().toISOString(),
+    };
+    try {
+      await api.crm.create('triggerLinks', {
+        name: newLink.name,
+        slug: newLink.slug,
+        targetUrl: 'https://operza.io',
+        clicks: 0
+      });
+    } catch { /* dev fallback */ }
     dispatch({
       type: 'triggerLink/add',
-      link: {
-        id: uid('tl'),
-        name: name.trim(),
-        slug: derived,
-        clicks: 0,
-        lastClickAt: new Date().toISOString(),
-      },
+      link: newLink,
     });
     onClose();
   }
@@ -168,7 +195,7 @@ function NewLinkModal({ onClose }: { onClose: () => void }) {
           onChange={(e) => setSlug(e.target.value)}
         />
         <div className="cell-sub" style={{ marginTop: 4 }}>
-          Final URL: {BASE}/{derived || '…'}
+          Final URL: {window.location.origin}/api/links/click/{derived || '…'}
         </div>
       </div>
     </Modal>

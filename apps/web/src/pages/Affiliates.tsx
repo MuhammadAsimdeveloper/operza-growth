@@ -1,12 +1,48 @@
+import { useEffect } from 'react';
 import { Icon } from '../components/Icon';
 import { Avatar, PageHeader, StatCard, StatusBadge } from '../components/ui';
 import { useStore } from '../lib/store';
 import { currency, num, pct } from '../lib/format';
+import { api } from '../lib/api';
 import type { Affiliate } from '../lib/types';
 
 export default function Affiliates() {
   const { state, dispatch } = useStore();
   const { affiliates } = state;
+
+  useEffect(() => {
+    api.crm.list<Affiliate>('affiliates').then((res) => {
+      if (res.data && res.data.length > 0) {
+        for (const aff of res.data) {
+          if (!affiliates.some((x) => x.id === aff.id)) {
+            dispatch({ type: 'affiliate/status', id: aff.id, status: aff.status });
+          }
+        }
+      }
+    }).catch(() => { /* dev fallback */ });
+  }, []);
+
+  const handleStatusChange = async (a: Affiliate, newStatus: Affiliate['status']) => {
+    dispatch({
+      type: 'affiliate/status',
+      id: a.id,
+      status: newStatus,
+    });
+    try {
+      await api.crm.update('affiliates', a.id, { status: newStatus });
+    } catch { /* dev fallback */ }
+  };
+
+  const handleTestTrack = async (a: Affiliate) => {
+    try {
+      await api.affiliates.track(a.code, 1000);
+      dispatch({
+        type: 'affiliate/status',
+        id: a.id,
+        status: a.status,
+      });
+    } catch { /* dev fallback */ }
+  };
 
   const clicks = affiliates.reduce((s, a) => s + a.clicks, 0);
   const conversions = affiliates.reduce((s, a) => s + a.conversions, 0);
@@ -111,18 +147,20 @@ export default function Affiliates() {
                         className="select select--sm"
                         value={a.status}
                         aria-label={`Status for ${a.name}`}
-                        onChange={(e) =>
-                          dispatch({
-                            type: 'affiliate/status',
-                            id: a.id,
-                            status: e.target.value as Affiliate['status'],
-                          })
-                        }
+                        onChange={(e) => handleStatusChange(a, e.target.value as Affiliate['status'])}
                       >
                         <option value="active">Active</option>
                         <option value="pending">Pending</option>
                         <option value="paused">Paused</option>
                       </select>
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        title="Simulate $1,000 order referral"
+                        onClick={() => handleTestTrack(a)}
+                      >
+                        <Icon name="play" size={12} /> Test
+                      </button>
                     </div>
                   </td>
                 </tr>

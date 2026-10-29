@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, EmptyState, PageHeader, StatCard, Switch } from '../components/ui';
 import { relative, sameDay, toDateTimeInput } from '../lib/format';
 import { uid, useStore } from '../lib/store';
-import type { CallDirection, CallOutcome } from '../lib/types';
+import { api } from '../lib/api';
+import type { CallDirection, CallOutcome, CallRecord } from '../lib/types';
 
 const OUTCOME_META: Record<CallOutcome, { label: string; tone: 'green' | 'amber' | 'red' }> = {
   completed: { label: 'Completed', tone: 'green' },
@@ -28,6 +29,25 @@ export default function PhoneSystem() {
   const [outcome, setOutcome] = useState<'all' | CallOutcome>('all');
   const [query, setQuery] = useState('');
   const [logging, setLogging] = useState(false);
+
+  useEffect(() => {
+    api.crm.list<CallRecord>('calls').then((res) => {
+      if (res.data && res.data.length > 0) {
+        for (const call of res.data) {
+          if (!state.calls.some((x) => x.id === call.id)) {
+            dispatch({ type: 'call/log', call });
+          }
+        }
+      }
+    }).catch(() => { /* dev fallback */ });
+  }, []);
+
+  const handleToggleHandled = async (id: string, currentlyHandled = false) => {
+    dispatch({ type: 'call/handled', id });
+    try {
+      await api.calls.setHandled(id, !currentlyHandled);
+    } catch { /* dev fallback */ }
+  };
 
   const contactOf = (id: string) => state.contacts.find((c) => c.id === id);
   const nameOf = (id: string) => {
@@ -309,7 +329,7 @@ export default function PhoneSystem() {
                         ) : (
                           <button
                             className="btn btn--sm"
-                            onClick={() => dispatch({ type: 'call/handled', id: call.id })}
+                            onClick={() => handleToggleHandled(call.id, call.handled)}
                           >
                             Mark handled
                           </button>
@@ -360,20 +380,36 @@ function LogCallModal({ onClose }: { onClose: () => void }) {
   const startOk = !Number.isNaN(new Date(startedAt).getTime());
   const canSave = Boolean(contactId && numberId && durationOk && startOk);
 
-  const save = () => {
+  const save = async () => {
+    const newCall: CallRecord = {
+      id: uid('call'),
+      contactId,
+      numberId,
+      direction,
+      outcome,
+      startedAt: new Date(startedAt).toISOString(),
+      durationSec: outcome === 'missed' ? 0 : mins * 60 + secs,
+      notes: notes.trim() || undefined,
+      handled: outcome === 'completed',
+    };
+    try {
+      const contact = state.contacts.find((c) => c.id === contactId);
+      await api.crm.create('calls', {
+        from: direction === 'inbound' ? (contact?.phone || '+1 555-0100') : '+1 800-555-0100',
+        to: direction === 'inbound' ? '+1 800-555-0100' : (contact?.phone || '+1 555-0100'),
+        durationSec: newCall.durationSec,
+        outcome: newCall.outcome,
+        direction: newCall.direction,
+        contactId: newCall.contactId,
+        startedAt: newCall.startedAt,
+        handled: newCall.handled,
+        notes: newCall.notes,
+        numberId: newCall.numberId
+      });
+    } catch { /* dev fallback */ }
     dispatch({
       type: 'call/log',
-      call: {
-        id: uid('call'),
-        contactId,
-        numberId,
-        direction,
-        outcome,
-        startedAt: new Date(startedAt).toISOString(),
-        durationSec: outcome === 'missed' ? 0 : mins * 60 + secs,
-        notes: notes.trim() || undefined,
-        handled: outcome === 'completed',
-      },
+      call: newCall,
     });
     onClose();
   };

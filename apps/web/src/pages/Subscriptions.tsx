@@ -1,12 +1,41 @@
+import { useEffect } from 'react';
 import { Icon } from '../components/Icon';
 import { Avatar, PageHeader, StatCard, StatusBadge } from '../components/ui';
 import { useStore } from '../lib/store';
 import { currency, num, shortDate } from '../lib/format';
+import { api } from '../lib/api';
 import type { Subscription } from '../lib/types';
 
 export default function Subscriptions() {
   const { state, dispatch } = useStore();
   const { subscriptions } = state;
+
+  useEffect(() => {
+    api.crm.list<Subscription>('subscriptions').then((res) => {
+      if (res.data && res.data.length > 0) {
+        for (const sub of res.data) {
+          if (!subscriptions.some((x) => x.id === sub.id)) {
+            dispatch({ type: 'subscription/status', id: sub.id, status: sub.status });
+          }
+        }
+      }
+    }).catch(() => { /* dev fallback */ });
+  }, []);
+
+  const handleStatusChange = async (s: Subscription, newStatus: Subscription['status']) => {
+    dispatch({
+      type: 'subscription/status',
+      id: s.id,
+      status: newStatus,
+    });
+    try {
+      if (newStatus === 'canceled') {
+        await api.subscriptions.cancel(s.id);
+      } else {
+        await api.crm.update('subscriptions', s.id, { status: newStatus });
+      }
+    } catch { /* dev fallback */ }
+  };
 
   const active = subscriptions.filter((s) => s.status === 'active');
   const mrr = active.reduce((s, sub) => s + (sub.interval === 'year' ? sub.amount / 12 : sub.amount), 0);
@@ -89,13 +118,7 @@ export default function Subscriptions() {
                         className="select select--sm"
                         value={s.status}
                         aria-label={`Status for ${s.plan}`}
-                        onChange={(e) =>
-                          dispatch({
-                            type: 'subscription/status',
-                            id: s.id,
-                            status: e.target.value as Subscription['status'],
-                          })
-                        }
+                        onChange={(e) => handleStatusChange(s, e.target.value as Subscription['status'])}
                       >
                         <option value="active">Active</option>
                         <option value="past_due">Past due</option>

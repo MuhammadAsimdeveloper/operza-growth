@@ -271,6 +271,7 @@ export interface Site {
   id: ID;
   name: string;
   kind: 'funnel' | 'website';
+  domain?: string;
   published: boolean;
   visits: number;
   optins: number;

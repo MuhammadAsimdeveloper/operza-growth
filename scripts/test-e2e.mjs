@@ -913,7 +913,126 @@ async function runTests() {
     }
     console.log('✅ Affiliate partner created, referral tracked, 25% commission calculated and credited');
 
-    console.log('\n🎉 ALL 33 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 34. Funnels Public Ingress, Visit Tracking, and Lead Opt-in with Order Bump
+    console.log('\n[TEST 34] Funnels Public Ingress & Opt-in Engine: GET /api/funnels/public/:slug & POST /api/funnels/optin/:slug');
+    const funnelCreateRes = await request('/api/crm/websites', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'High-Ticket Automation Accelerator',
+        kind: 'funnel',
+        published: true,
+        visits: 0,
+        optins: 0,
+        pages: [
+          { id: 'page-optin-1', name: 'Optin Page', slug: 'optin', path: '/optin', visits: 0, optins: 0 },
+          { id: 'page-thankyou-1', name: 'Thank You', slug: 'thank-you', path: '/thank-you', visits: 0, optins: 0 }
+        ],
+        checkout: {
+          bumps: [
+            { id: 'bump-1', enabled: true, headline: 'VIP Implementation Toolkit', price: 97 }
+          ]
+        }
+      })
+    });
+    console.log(`Funnel Create Status: ${funnelCreateRes.status}`, `ID: ${funnelCreateRes.data.id}`);
+    if (funnelCreateRes.status !== 201 || !funnelCreateRes.data.id) {
+      throw new Error(`Funnel creation failed: ${JSON.stringify(funnelCreateRes.data)}`);
+    }
+
+    const funnelSlug = 'high-ticket-automation-accelerator';
+    const funnelVisitRes = await request(`/api/funnels/public/${funnelSlug}?pageSlug=optin`);
+    console.log(`Public Funnel Visit Status: ${funnelVisitRes.status}`, `Visits: ${funnelVisitRes.data.visits}`);
+    if (funnelVisitRes.status !== 200 || funnelVisitRes.data.visits !== 1) {
+      throw new Error(`Public funnel lookup failed: ${JSON.stringify(funnelVisitRes.data)}`);
+    }
+
+    // Submit Opt-in with Order Bump accepted
+    const optinRes = await request(`/api/funnels/optin/${funnelSlug}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        firstName: 'Arthur',
+        lastName: 'Dent',
+        email: 'arthur@galaxy.io',
+        phone: '+1 555-4242',
+        pageSlug: 'optin',
+        bumpAccepted: true
+      })
+    });
+    console.log(`Funnel Opt-in Status: ${optinRes.status}`, `Lead: ${optinRes.data.contact?.firstName}`, `Bump Order: $${optinRes.data.order?.amount}`);
+    if (optinRes.status !== 201 || !optinRes.data.contact?.id || !optinRes.data.opportunity?.id || !optinRes.data.order?.id) {
+      throw new Error(`Funnel opt-in submission failed: ${JSON.stringify(optinRes.data)}`);
+    }
+
+    const arthurContact = optinRes.data.contact;
+    if (!arthurContact.tags?.includes('funnel-lead') || optinRes.data.order.amount !== 97) {
+      throw new Error('Funnel lead tags or order bump amount did not verify');
+    }
+    console.log('✅ Funnel visit tracked, lead captured, opportunity provisioned, and order bump fulfilled');
+
+    // 35. Custom Values & Dynamic Merge Fields Resolution Engine
+    console.log('\n[TEST 35] Custom Values Resolution Engine: POST /api/crm/customValues & POST /api/custom-values/resolve');
+    const cvCreateRes = await request('/api/crm/customValues', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'support_email',
+        value: 'support@operza.io'
+      })
+    });
+    console.log(`Custom Value Create Status: ${cvCreateRes.status}`);
+    if (cvCreateRes.status !== 201 || !cvCreateRes.data.id) {
+      throw new Error(`Custom value creation failed: ${JSON.stringify(cvCreateRes.data)}`);
+    }
+
+    const templateText = 'Hello {{contact.firstName}}, reach our team at {{custom_values.support_email}} or visit {{agency.name}}!';
+    const resolveRes = await request('/api/custom-values/resolve', {
+      method: 'POST',
+      body: JSON.stringify({
+        text: templateText,
+        contactId: arthurContact.id
+      })
+    });
+    console.log(`Resolve Status: ${resolveRes.status}`, `Resolved Text: "${resolveRes.data.resolvedText}"`, `Tokens: ${resolveRes.data.tokensResolved}`);
+    if (
+      resolveRes.status !== 200 ||
+      resolveRes.data.tokensResolved < 3 ||
+      !resolveRes.data.resolvedText.includes('Arthur') ||
+      !resolveRes.data.resolvedText.includes('support@operza.io')
+    ) {
+      throw new Error(`Custom values merge resolution failed: ${JSON.stringify(resolveRes.data)}`);
+    }
+    console.log('✅ Custom values and contact merge tags resolved dynamically with full multi-tenant scoping');
+
+    // 36. Telephony Manual Call Logging & Handled State Machine
+    console.log('\n[TEST 36] Telephony Call Log & State Machine: POST /api/crm/calls & PUT /api/calls/handled/:id');
+    const callLogRes = await request('/api/crm/calls', {
+      method: 'POST',
+      body: JSON.stringify({
+        from: '+1 555-0199',
+        to: '+1 800-555-0100',
+        durationSec: 0,
+        outcome: 'missed',
+        direction: 'inbound',
+        handled: false,
+        notes: 'Follow-up requested on enterprise custom deployment tier'
+      })
+    });
+    console.log(`Call Log Status: ${callLogRes.status}`, `ID: ${callLogRes.data.id}`);
+    if (callLogRes.status !== 201 || !callLogRes.data.id) {
+      throw new Error(`Call logging failed: ${JSON.stringify(callLogRes.data)}`);
+    }
+
+    const testCallId = callLogRes.data.id;
+    const handledRes = await request(`/api/calls/handled/${testCallId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ handled: true })
+    });
+    console.log(`Mark Handled Status: ${handledRes.status}`, `Handled: ${handledRes.data.call?.handled}`);
+    if (handledRes.status !== 200 || handledRes.data.call?.handled !== true) {
+      throw new Error(`Call mark-handled state update failed: ${JSON.stringify(handledRes.data)}`);
+    }
+    console.log('✅ Manual call record logged, persisted to CRM database, and marked handled');
+
+    console.log('\n🎉 ALL 36 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

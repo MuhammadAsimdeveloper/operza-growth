@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, EmptyState, PageHeader, StatCard, Switch } from '../components/ui';
 import { currency, num, shortDate } from '../lib/format';
 import { uid, useStore } from '../lib/store';
+import { api } from '../lib/api';
 import type { Course, CourseKind, Enrollment } from '../lib/types';
 
 type Filter = 'all' | 'published' | 'draft';
@@ -24,6 +25,18 @@ export default function Memberships() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [membersOpen, setMembersOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    api.crm.list<Course>('courses').then((res) => {
+      if (res.data && res.data.length > 0) {
+        for (const c of res.data) {
+          if (!courses.some((x) => x.id === c.id)) {
+            dispatch({ type: 'course/add', course: c });
+          }
+        }
+      }
+    }).catch(() => { /* dev fallback */ });
+  }, []);
 
   const totalEnrollments = courses.reduce((s, c) => s + c.enrollments, 0);
   const revenue = courses.reduce((s, c) => {
@@ -455,19 +468,30 @@ function NewOfferModal({ onClose }: { onClose: () => void }) {
   const amount = Number(price);
   const canSave = title.trim().length > 0 && Number.isFinite(amount) && amount >= 0;
 
-  const save = () => {
+  const save = async () => {
     if (!canSave) return;
+    const newCourse: Course = {
+      id: uid('co'),
+      title: title.trim(),
+      kind,
+      curriculum: [],
+      enrollments: 0,
+      price: amount,
+      published,
+    };
+    try {
+      await api.crm.create('courses', {
+        name: newCourse.title,
+        price: newCourse.price,
+        kind: newCourse.kind,
+        published: newCourse.published,
+        members: 0,
+        status: newCourse.published ? 'published' : 'draft',
+      });
+    } catch { /* dev fallback */ }
     dispatch({
       type: 'course/add',
-      course: {
-        id: uid('co'),
-        title: title.trim(),
-        kind,
-        curriculum: [],
-        enrollments: 0,
-        price: amount,
-        published,
-      },
+      course: newCourse,
     });
     onClose();
   };

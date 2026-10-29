@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, PageHeader, StatCard, StatusBadge, Switch } from '../components/ui';
 import { useStore, uid } from '../lib/store';
 import { num, pct } from '../lib/format';
+import { api } from '../lib/api';
 import type { PageTheme, Site, SitePage } from '../lib/types';
 
 const THEMES: Array<{ value: PageTheme; label: string }> = [
@@ -124,6 +125,18 @@ export default function Websites() {
   const [preview, setPreview] = useState<{ siteId: string; pageId: string } | null>(null);
   const [editing, setEditing] = useState<{ siteId: string; pageId: string } | null>(null);
   const [addingSiteId, setAddingSiteId] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.crm.list<Site>('websites').then((res) => {
+      if (res.data && res.data.length > 0) {
+        for (const s of res.data) {
+          if (!state.sites.some((x) => x.id === s.id)) {
+            dispatch({ type: 'site/duplicate', copy: s });
+          }
+        }
+      }
+    }).catch(() => { /* dev fallback */ });
+  }, []);
 
   const sites = state.sites.filter((s) => s.kind === 'website');
   const visits = sites.reduce((s, x) => s + x.visits, 0);

@@ -41,22 +41,22 @@ const collections = Object.freeze({
   workflows: { label: 'Workflows', required: ['name'], fields: ['name','triggerType','triggerConfig','nodes','status','description','lastRunAt','lastRunSummary'] },
   forms: { label: 'Forms', required: ['name'], fields: ['name','fields','status','submissions','description','publicSlug'] },
   formSubmissions: { label: 'Form submissions', required: ['formId'], fields: ['formId','formName','contactName','answers','status','submittedAt','source'] },
-  websites: { label: 'Sites & funnels', required: ['name'], fields: ['name','type','status','domain','updatedAt','description'] },
+  websites: { label: 'Sites & funnels', required: ['name'], fields: ['name','type','kind','status','domain','published','pages','visits','optins','checkout','theme','updatedAt','description'] },
   campaigns: { label: 'Campaigns', required: ['name'], fields: ['name','channel','status','audience','scheduledAt','description'] },
   products: { label: 'Products', required: ['name'], fields: ['name','sku','price','status','description'] },
   invoices: { label: 'Invoices', required: ['number'], fields: ['number','contactName','amount','status','dueDate','description'] },
   calendars: { label: 'Calendars', required: ['name'], fields: ['name','slug','color','durationMin','availability','roundRobin','description','status'] },
   paymentLinks: { label: 'Payment links', required: ['name'], fields: ['name','slug','amount','currency','productIds','visits','conversions','active','description'] },
-  orders: { label: 'Orders', required: ['amount'], fields: ['orderNumber','contactId','contactName','amount','currency','status','paymentLinkId','items','paidAt'] },
+  orders: { label: 'Orders', required: ['amount'], fields: ['orderNumber','contactId','contactName','amount','currency','status','paymentLinkId','items','paidAt','bumpAccepted','bumpAmount'] },
   reviews: { label: 'Reputation', required: ['contactName'], fields: ['contactName','rating','text','source','status','receivedAt'] },
-  courses: { label: 'Memberships', required: ['name'], fields: ['name','status','members','lessons','description'] },
+  courses: { label: 'Memberships', required: ['name'], fields: ['name','status','members','lessons','description','price','published','curriculum','kind'] },
   notes: { label: 'Notes', required: ['text'], fields: ['text','contactId','createdBy'] },
   socialPosts: { label: 'Social Posts', required: ['body'], fields: ['body','platforms','status','scheduledAt','likes','comments'] },
   subscriptions: { label: 'Subscriptions', required: ['plan', 'amount'], fields: ['plan','amount','interval','status','renewsAt','contactId'] },
-  documents: { label: 'Documents', required: ['title'], fields: ['title','kind','value','status','contactId','signedAt','pdfUrl'] },
+  documents: { label: 'Documents', required: ['name'], fields: ['name','title','kind','value','status','contactId','signedAt','signerName','pdfUrl','updatedAt'] },
   triggerLinks: { label: 'Trigger Links', required: ['name','targetUrl','slug'], fields: ['name','targetUrl','slug','workflowId','clicks','lastClickAt'] },
   customValues: { label: 'Custom Values', required: ['name','value'], fields: ['name','value'] },
-  calls: { label: 'Phone System Calls', required: ['from', 'to'], fields: ['from','to','durationSec','outcome','direction','contactId','startedAt','recordingUrl','handled'] },
+  calls: { label: 'Phone System Calls', required: ['from'], fields: ['from','to','durationSec','outcome','direction','contactId','startedAt','recordingUrl','handled','notes','numberId'] },
   enrollments: { label: 'Course Enrollments', required: ['courseId', 'contactId'], fields: ['courseId','contactId','progress','startedAt','status'] },
   affiliates: { label: 'Affiliates', required: ['name', 'code'], fields: ['name','code','commissionPct','clicks','conversions','payout','status'] }
 });
@@ -1329,6 +1329,188 @@ const server = createServer(async (req, res) => {
     }
 
     // ═════════════════════════════════════════════════════════════
+    // ─── FUNNELS & SITES PUBLIC INGRESS ─────────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    // Public Funnel/Site Lookup & Visit Tracker
+    if (method === 'GET' && pathname.startsWith('/api/funnels/public/')) {
+      const slugOrId = pathname.replace('/api/funnels/public/', '').trim();
+      const pageSlug = url.searchParams.get('pageSlug');
+
+      state.records.websites = state.records.websites || [];
+      const site = state.records.websites.find(w =>
+        w.id === slugOrId ||
+        (w.domain && w.domain.toLowerCase() === slugOrId.toLowerCase()) ||
+        w.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') === slugOrId.toLowerCase()
+      );
+
+      if (!site) {
+        return sendJson(res, 404, { error: 'Funnel or website not found' });
+      }
+
+      // Track visit
+      site.visits = (site.visits || 0) + 1;
+      if (Array.isArray(site.pages)) {
+        if (pageSlug) {
+          const targetPage = site.pages.find(p => p.slug === pageSlug || p.path === pageSlug || p.path === `/${pageSlug}`);
+          if (targetPage) targetPage.visits = (targetPage.visits || 0) + 1;
+        } else if (site.pages[0]) {
+          site.pages[0].visits = (site.pages[0].visits || 0) + 1;
+        }
+      }
+      await saveState();
+
+      return sendJson(res, 200, {
+        id: site.id,
+        name: site.name,
+        kind: site.kind || 'funnel',
+        published: site.published,
+        visits: site.visits,
+        optins: site.optins || 0,
+        pages: site.pages || [],
+        checkout: site.checkout || null
+      });
+    }
+
+    // Public Funnel Opt-in Lead & Order Bump Ingress
+    if (method === 'POST' && pathname.startsWith('/api/funnels/optin/')) {
+      const slugOrId = pathname.replace('/api/funnels/optin/', '').trim();
+      state.records.websites = state.records.websites || [];
+      const site = state.records.websites.find(w =>
+        w.id === slugOrId ||
+        (w.domain && w.domain.toLowerCase() === slugOrId.toLowerCase()) ||
+        w.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') === slugOrId.toLowerCase()
+      );
+
+      if (!site) {
+        return sendJson(res, 404, { error: 'Funnel or website not found' });
+      }
+
+      const body = await readBody(req);
+      const { firstName, lastName, email, phone, company, pageSlug, bumpAccepted } = body;
+      if (!firstName && !email) {
+        return sendJson(res, 400, { error: 'First name or email is required' });
+      }
+
+      site.optins = (site.optins || 0) + 1;
+      if (Array.isArray(site.pages) && pageSlug) {
+        const targetPage = site.pages.find(p => p.slug === pageSlug || p.path === pageSlug || p.path === `/${pageSlug}`);
+        if (targetPage) targetPage.optins = (targetPage.optins || 0) + 1;
+      }
+
+      const agencyId = site.agencyId || state.agencies[0]?.id;
+      const locationId = site.locationId || state.locations[0]?.id;
+
+      // Upsert contact
+      state.records.contacts = state.records.contacts || [];
+      let contact = email
+        ? state.records.contacts.find(c => c.agencyId === agencyId && c.email && c.email.toLowerCase() === email.toLowerCase())
+        : null;
+
+      if (!contact) {
+        contact = {
+          id: randomUUID(),
+          agencyId,
+          locationId,
+          firstName: firstName || 'Lead',
+          lastName: lastName || '',
+          email: (email || '').toLowerCase().trim(),
+          phone: phone || '',
+          company: company || '',
+          source: `Funnel: ${site.name}`,
+          tags: ['funnel-lead', site.name],
+          status: 'lead',
+          createdAt: new Date().toISOString()
+        };
+        state.records.contacts.push(contact);
+      } else {
+        if (firstName) contact.firstName = firstName;
+        if (lastName) contact.lastName = lastName;
+        if (phone) contact.phone = phone;
+        contact.tags = Array.from(new Set([...(contact.tags || []), 'funnel-lead', site.name]));
+      }
+
+      // Provision Deal Opportunity
+      const oppId = randomUUID();
+      const oppValue = bumpAccepted && site.checkout?.bumps?.[0]?.price ? site.checkout.bumps[0].price : 1000;
+      const opp = {
+        id: oppId,
+        agencyId,
+        locationId,
+        name: `${contact.firstName} ${contact.lastName || ''} - ${site.name}`.trim(),
+        contactId: contact.id,
+        stage: 'New Inbound Lead',
+        value: oppValue,
+        status: 'open',
+        source: `Funnel: ${site.name}`,
+        createdAt: new Date().toISOString()
+      };
+      state.records.opportunities = state.records.opportunities || [];
+      state.records.opportunities.push(opp);
+
+      // Order Bump fulfillment
+      let order = null;
+      if (bumpAccepted && site.checkout?.bumps?.length) {
+        const bump = site.checkout.bumps.find(b => b.enabled) || site.checkout.bumps[0];
+        const orderId = randomUUID();
+        const invoiceId = randomUUID();
+        const orderNum = `ORD-${Math.floor(100000 + Math.random() * 900000)}`;
+        order = {
+          id: orderId,
+          agencyId,
+          locationId,
+          orderNumber: orderNum,
+          contactId: contact.id,
+          contactName: `${contact.firstName} ${contact.lastName}`.trim(),
+          amount: bump.price,
+          currency: 'USD',
+          status: 'completed',
+          items: [{ name: bump.headline || 'Order Bump', price: bump.price, quantity: 1 }],
+          bumpAccepted: true,
+          bumpAmount: bump.price,
+          paidAt: new Date().toISOString(),
+          createdAt: new Date().toISOString()
+        };
+        state.records.orders = state.records.orders || [];
+        state.records.orders.push(order);
+
+        const invoice = {
+          id: invoiceId,
+          agencyId,
+          locationId,
+          number: `INV-${orderNum.replace('ORD-', '')}`,
+          contactName: `${contact.firstName} ${contact.lastName}`.trim(),
+          amount: bump.price,
+          status: 'paid',
+          dueDate: new Date().toISOString().slice(0, 10),
+          createdAt: new Date().toISOString()
+        };
+        state.records.invoices = state.records.invoices || [];
+        state.records.invoices.push(invoice);
+      }
+
+      await saveState();
+
+      broadcast('funnel.optin.received', { siteId: site.id, contactId: contact.id, siteName: site.name });
+      auditLog('funnel.optin', null, { siteId: site.id, siteName: site.name, contactId: contact.id });
+
+      triggerWorkflowExecution({
+        agencyId,
+        locationId,
+        triggerType: 'funnel_optin',
+        triggerContext: { site, contact, opportunity: opp, order }
+      }).catch(console.error);
+
+      return sendJson(res, 201, {
+        success: true,
+        siteId: site.id,
+        contact,
+        opportunity: opp,
+        order
+      });
+    }
+
+    // ═════════════════════════════════════════════════════════════
     // ─── WEBHOOK HANDLERS (public, signature-gated) ─────────────
     // ═════════════════════════════════════════════════════════════
 
@@ -2531,6 +2713,97 @@ const server = createServer(async (req, res) => {
       }).catch(console.error);
 
       return sendJson(res, 200, { success: true, affiliate, commissionEarned });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── CUSTOM VALUES RESOLUTION & MERGE ENGINE ────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'POST' && pathname === '/api/custom-values/resolve') {
+      const body = await readBody(req);
+      const { text, contactId } = body;
+      if (typeof text !== 'string') {
+        return sendJson(res, 400, { error: 'Text string is required' });
+      }
+
+      state.records.customValues = state.records.customValues || [];
+      const cvList = state.records.customValues.filter(v => v.agencyId === agency.id);
+
+      let contact = null;
+      if (contactId) {
+        contact = (state.records.contacts || []).find(c => c.id === contactId && c.agencyId === agency.id);
+      }
+
+      let tokensResolved = 0;
+      let resolvedText = text;
+
+      // 1. Resolve custom values: {{custom_values.key}} or {{custom_value.key}}
+      for (const cv of cvList) {
+        const keySlug = cv.name.toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+        const pattern = new RegExp(`\\{\\{\\s*custom_values?\\.${keySlug}\\s*\\}\\}`, 'gi');
+        const patternExact = new RegExp(`\\{\\{\\s*custom_values?\\.${cv.name.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\s*\\}\\}`, 'gi');
+        if (pattern.test(resolvedText)) {
+          resolvedText = resolvedText.replace(pattern, () => { tokensResolved++; return cv.value; });
+        }
+        if (patternExact.test(resolvedText)) {
+          resolvedText = resolvedText.replace(patternExact, () => { tokensResolved++; return cv.value; });
+        }
+      }
+
+      // 2. Resolve contact fields if contact provided
+      if (contact) {
+        const contactMap = {
+          'contact.first_name': contact.firstName,
+          'contact.firstName': contact.firstName,
+          'contact.last_name': contact.lastName,
+          'contact.lastName': contact.lastName,
+          'contact.name': `${contact.firstName} ${contact.lastName}`.trim(),
+          'contact.email': contact.email,
+          'contact.phone': contact.phone,
+          'contact.company': contact.company
+        };
+        for (const [tag, val] of Object.entries(contactMap)) {
+          const re = new RegExp(`\\{\\{\\s*${tag}\\s*\\}\\}`, 'gi');
+          if (re.test(resolvedText)) {
+            resolvedText = resolvedText.replace(re, () => { tokensResolved++; return val || ''; });
+          }
+        }
+      }
+
+      // 3. Resolve agency fields
+      const agencyMap = {
+        'agency.name': agency.name,
+        'agency.email': actor.user?.email || 'agency@operza.io'
+      };
+      for (const [tag, val] of Object.entries(agencyMap)) {
+        const re = new RegExp(`\\{\\{\\s*${tag}\\s*\\}\\}`, 'gi');
+        if (re.test(resolvedText)) {
+          resolvedText = resolvedText.replace(re, () => { tokensResolved++; return val || ''; });
+        }
+      }
+
+      return sendJson(res, 200, { resolvedText, tokensResolved });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── TELEPHONY CALL STATUS & HANDLED TOGGLE ─────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'PUT' && pathname.startsWith('/api/calls/handled/')) {
+      const callId = pathname.replace('/api/calls/handled/', '').trim();
+      state.records.calls = state.records.calls || [];
+      const call = state.records.calls.find(c => c.id === callId && c.agencyId === agency.id);
+      if (!call) return sendJson(res, 404, { error: 'Call record not found' });
+
+      const body = await readBody(req);
+      call.handled = body.handled !== undefined ? Boolean(body.handled) : true;
+      call.updatedAt = new Date().toISOString();
+      await saveState();
+
+      auditLog('phone.call.handled', actor, { callId, handled: call.handled });
+      broadcast('phone.call.handled', { id: callId, handled: call.handled });
+
+      return sendJson(res, 200, { success: true, call });
     }
 
     // ═════════════════════════════════════════════════════════════
