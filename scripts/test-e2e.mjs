@@ -219,7 +219,40 @@ async function runTests() {
     }
     console.log('✅ Public payment checkout verified (Order, Invoice, and Customer promotion completed)');
 
-    console.log('\n🎉 ALL 10 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 11. On-Demand Workflow Execution & Human Approval Gate
+    console.log('\n[TEST 11] On-Demand Workflow Execution & Approval Gate: POST /api/workflows/:id/run');
+    const workflowsList = await request('/api/crm/workflows');
+    console.log(`Workflows available: ${workflowsList.data.data?.length}`);
+    const flowToRun = (workflowsList.data.data || []).find(w => w.status === 'published') || workflowsList.data.data?.[0];
+    if (!flowToRun) {
+      throw new Error('No published workflow found to execute');
+    }
+
+    const runRes = await request(`/api/workflows/${flowToRun.id}/run`, {
+      method: 'POST',
+      body: JSON.stringify({ contactId: contact.data.id })
+    });
+    console.log(`Execution Status: ${runRes.status}`, runRes.data.execution?.id, `Status: ${runRes.data.execution?.status}`);
+    if (runRes.status !== 201 || !runRes.data.execution?.id) {
+      throw new Error(`Workflow execution failed: ${JSON.stringify(runRes.data)}`);
+    }
+
+    const executionId = runRes.data.execution.id;
+    if (runRes.data.execution.status === 'waiting_approval') {
+      console.log('Workflow reached approval gate. Approving execution...');
+      const approveRes = await request(`/api/workflows/runs/${executionId}/approve`, {
+        method: 'POST'
+      });
+      console.log(`Approval Status: ${approveRes.status}`, approveRes.data.run?.status);
+      if (approveRes.status !== 200 || approveRes.data.run?.status !== 'completed') {
+        throw new Error(`Workflow approval failed: ${JSON.stringify(approveRes.data)}`);
+      }
+      console.log('✅ Workflow human approval gate cleared and resumed to completion');
+    } else {
+      console.log(`✅ Workflow executed cleanly with ${runRes.data.execution.steps?.length} steps`);
+    }
+
+    console.log('\n🎉 ALL 11 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

@@ -66,6 +66,8 @@ export const api = {
     getRuns: () => request('/api/workflows/runs'),
     approveRun: (runId: string) =>
       request(`/api/workflows/runs/${runId}/approve`, { method: 'POST' }),
+    run: (workflowId: string, data: { contactId?: string; payload?: any } = {}) =>
+      request(`/api/workflows/${workflowId}/run`, { method: 'POST', body: JSON.stringify(data) }),
   },
   copilot: {
     stream: (message: string, onDelta: (delta: string) => void, onComplete: () => void) => {

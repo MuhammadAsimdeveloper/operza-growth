@@ -181,7 +181,7 @@ export default function Conversations() {
               {CHANNELS.map((ch) => (
                 <option key={ch} value={ch}>
                   {CHANNEL_META[ch].label}
-                  {channelUnread[ch] ? ` · ${channelUnread[ch]} unread` : ''}
+                  {channelUnread[ch] ? ` Â· ${channelUnread[ch]} unread` : ''}
                 </option>
               ))}
             </select>
@@ -252,7 +252,7 @@ export default function Conversations() {
                   {selectedContact.firstName} {selectedContact.lastName}
                 </div>
                 <div className="cell-sub">
-                  {CHANNEL_META[selected.channel].label} ·{' '}
+                  {CHANNEL_META[selected.channel].label} Â·{' '}
                   {selected.channel === 'email'
                     ? selectedContact.email
                     : selected.channel === 'sms' || selected.channel === 'whatsapp'
@@ -285,7 +285,7 @@ export default function Conversations() {
                   {m.subject && <div className="bubble__subject">{m.subject}</div>}
                   {m.body}
                   <div className="bubble__meta">
-                    {m.direction === 'out' ? 'Asim R. · ' : ''}
+                    {m.direction === 'out' ? 'Asim R. Â· ' : ''}
                     {timeOf(m.at)}
                   </div>
                 </div>
@@ -298,7 +298,7 @@ export default function Conversations() {
               {selected.channel === 'email' && (
                 <input
                   className="composer__subject"
-                  placeholder="Subject line…"
+                  placeholder="Subject lineâ€¦"
                   aria-label="Email subject"
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
@@ -357,7 +357,7 @@ export default function Conversations() {
                 )}
               </div>
               <textarea
-                placeholder={`Reply via ${CHANNEL_META[selected.channel].label}…`}
+                placeholder={`Reply via ${CHANNEL_META[selected.channel].label}â€¦`}
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
@@ -369,7 +369,7 @@ export default function Conversations() {
                 rows={1}
               />
               <button type="button" className="btn btn--secondary" onClick={askAiDraft} disabled={aiDrafting} title="Use Operza AI Copilot to draft a response" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <Icon name="sparkles" size={14} /> {aiDrafting ? "Drafting�" : "AI Draft"}
+                <Icon name="sparkles" size={14} /> {aiDrafting ? "Drafting…" : "AI Draft"}
               </button>
               <button
                 className="btn btn--primary"
@@ -475,12 +475,12 @@ function NewConversation({
             onChange={(e) => setContactId(e.target.value)}
           >
             <option value="" disabled>
-              Choose a contact…
+              Choose a contactâ€¦
             </option>
             {contacts.map((contact) => (
               <option key={contact.id} value={contact.id}>
                 {contact.firstName} {contact.lastName}
-                {contact.company ? ` — ${contact.company}` : ''}
+                {contact.company ? ` â€” ${contact.company}` : ''}
               </option>
             ))}
           </select>
@@ -521,13 +521,13 @@ function NewConversation({
           rows={4}
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          placeholder="Write the opening message…"
+          placeholder="Write the opening messageâ€¦"
         />
       </div>
       {existing && (
         <div className="callout">
           This contact already has {channel === 'sms' ? 'an SMS' : `a ${CHANNEL_META[channel].label}`} thread
-          — the message will be added to it instead of starting a new one.
+          â€” the message will be added to it instead of starting a new one.
         </div>
       )}
     </Modal>

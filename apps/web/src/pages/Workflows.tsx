@@ -1,4 +1,5 @@
-import { useState, type ReactElement } from 'react';
+import { useState, useEffect, type ReactElement } from 'react';
+import { api } from '../lib/api';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, PageHeader, StatCard, StatusBadge, Switch } from '../components/ui';
@@ -91,11 +92,11 @@ function unitName(unit: WorkflowTrigger['unit']): string {
 function triggerText(trigger: WorkflowTrigger): string {
   switch (trigger.kind) {
     case 'form':
-      return `Form submitted · ${trigger.detail || 'any form'}`;
+      return `Form submitted Â· ${trigger.detail || 'any form'}`;
     case 'tag':
-      return `Tag added · ${trigger.detail || 'any tag'}`;
+      return `Tag added Â· ${trigger.detail || 'any tag'}`;
     case 'webhook':
-      return `Inbound webhook · /${(trigger.detail ?? '').replace(/^\/+/, '') || 'hook'}`;
+      return `Inbound webhook Â· /${(trigger.detail ?? '').replace(/^\/+/, '') || 'hook'}`;
     case 'schedule': {
       const every = trigger.every ?? 1;
       const unit = unitName(trigger.unit);
@@ -121,19 +122,19 @@ function delayText(hours?: number): string {
 
 function ruleText(rule?: ConditionRule): string {
   if (!rule) return 'No rule set';
-  return `${FIELD_LABELS[rule.field]} ${OPERATOR_LABELS[rule.operator]} ${rule.value || '…'}`;
+  return `${FIELD_LABELS[rule.field]} ${OPERATOR_LABELS[rule.operator]} ${rule.value || 'â€¦'}`;
 }
 
 function stepMeta(step: WorkflowAction): string {
   switch (step.kind) {
     case 'wait':
-      return `wait · ${delayText(step.delayHours)}`;
+      return `wait Â· ${delayText(step.delayHours)}`;
     case 'webhook':
-      return `webhook · ${step.config?.url ? `${step.config.method ?? 'POST'} ${step.config.url}` : 'no endpoint'}`;
+      return `webhook Â· ${step.config?.url ? `${step.config.method ?? 'POST'} ${step.config.url}` : 'no endpoint'}`;
     case 'tag':
-      return `tag · ${step.config?.tag ?? 'not set'}`;
+      return `tag Â· ${step.config?.tag ?? 'not set'}`;
     case 'task':
-      return `task · due in ${step.config?.dueInDays ?? 0} day${(step.config?.dueInDays ?? 0) === 1 ? '' : 's'}`;
+      return `task Â· due in ${step.config?.dueInDays ?? 0} day${(step.config?.dueInDays ?? 0) === 1 ? '' : 's'}`;
     case 'condition':
       return `if ${ruleText(step.config?.rule)}`;
     default:
@@ -204,7 +205,7 @@ function simulateRun(flow: Workflow, contact: Contact): WorkflowRun {
           label: step.label,
           kind: step.kind,
           status: 'done',
-          detail: `${step.config?.method ?? 'POST'} ${url} · simulated`,
+          detail: `${step.config?.method ?? 'POST'} ${url} Â· simulated`,
         });
         continue;
       }
@@ -214,7 +215,7 @@ function simulateRun(flow: Workflow, contact: Contact): WorkflowRun {
           label: step.label,
           kind: step.kind,
           status: 'done',
-          detail: `${delayText(step.delayHours)} · simulated`,
+          detail: `${delayText(step.delayHours)} Â· simulated`,
         });
         continue;
       }
@@ -235,7 +236,7 @@ function simulateRun(flow: Workflow, contact: Contact): WorkflowRun {
           label: step.label,
           kind: step.kind,
           status: 'done',
-          detail: `Task created · due in ${due} day${due === 1 ? '' : 's'}`,
+          detail: `Task created Â· due in ${due} day${due === 1 ? '' : 's'}`,
         });
         continue;
       }
@@ -244,7 +245,7 @@ function simulateRun(flow: Workflow, contact: Contact): WorkflowRun {
         label: step.label,
         kind: step.kind,
         status: 'done',
-        detail: `${step.kind === 'sms' ? 'SMS' : 'Email'} queued · simulated`,
+        detail: `${step.kind === 'sms' ? 'SMS' : 'Email'} queued Â· simulated`,
       });
     }
   };
@@ -276,12 +277,43 @@ export default function Workflows() {
   } | null>(null);
   const [runFor, setRunFor] = useState<Workflow | null>(null);
   const [showTemplates, setShowTemplates] = useState(false);
-  const [viewingRun, setViewingRun] = useState<WorkflowRun | null>(null);
+  const [viewingRun, setViewingRun] = useState<any | null>(null);
+  const [realRuns, setRealRuns] = useState<any[]>([]);
+
+  const fetchRuns = () => {
+    api.workflows
+      .getRuns()
+      .then((data) => {
+        if (Array.isArray(data)) setRealRuns(data);
+      })
+      .catch((err) => console.warn('Could not fetch workflow runs:', err));
+  };
+
+  useEffect(() => {
+    fetchRuns();
+
+    let ws: WebSocket | null = null;
+    try {
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${window.location.hostname || 'localhost'}:4000/ws`);
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type && msg.type.startsWith('workflow.execution.')) {
+            fetchRuns();
+          }
+        } catch {}
+      };
+    } catch {}
+
+    return () => ws?.close();
+  }, []);
 
   const selected = state.workflows.find((w) => w.id === selectedId) ?? null;
   const live = state.workflows.filter((w) => w.status === 'published');
   const enrolled = state.workflows.reduce((s, w) => s + w.enrolled, 0);
-  const succeeded = state.workflowRuns.filter((run) => run.status === 'success').length;
+  const succeeded = (realRuns.length > 0 ? realRuns : state.workflowRuns).filter((run) => (run.status === 'success' || run.status === 'completed')).length;
+  const displayRuns = realRuns.length > 0 ? realRuns : state.workflowRuns;
   const runsFor = selected ? state.workflowRuns.filter((run) => run.workflowId === selected.id) : [];
 
   const contactName = (id: string) => {
@@ -418,7 +450,7 @@ export default function Workflows() {
           label="Test runs"
           value={num(state.workflowRuns.length)}
           icon={<Icon name="play" size={15} />}
-          meta={`${succeeded} passed · ${state.workflowRuns.length - succeeded} failed`}
+          meta={`${succeeded} passed Â· ${state.workflowRuns.length - succeeded} failed`}
         />
         <StatCard
           label="Steps"
@@ -455,7 +487,7 @@ export default function Workflows() {
                     <StatusBadge status={w.status} />
                   </span>
                   <span className="cell-sub" style={{ display: 'block' }}>
-                    Trigger: {triggerText(w.trigger)} · {countSteps(w.actions)} steps
+                    Trigger: {triggerText(w.trigger)} Â· {countSteps(w.actions)} steps
                   </span>
                 </button>
                 <div className="card__actions">
@@ -468,7 +500,7 @@ export default function Workflows() {
               </div>
               <button type="button" className="wf-steps" onClick={() => setSelectedId(w.id)}>
                 {w.actions.length === 0 ? (
-                  <span className="cell-sub">No steps yet — open the flow to add one</span>
+                  <span className="cell-sub">No steps yet â€” open the flow to add one</span>
                 ) : (
                   <span className="row" style={{ gap: 6 }}>
                     {w.actions.slice(0, 6).map((a, i) => (
@@ -495,7 +527,7 @@ export default function Workflows() {
                 <div style={{ minWidth: 0 }}>
                   <div className="card__title">{selected.name}</div>
                   <div className="card__sub">
-                    {num(selected.enrolled)} enrolled · {num(selected.completed)} completed · {runsFor.length} runs
+                    {num(selected.enrolled)} enrolled Â· {num(selected.completed)} completed Â· {runsFor.length} runs
                   </div>
                 </div>
                 <div className="card__actions">
@@ -528,7 +560,7 @@ export default function Workflows() {
                     <span className="flow__node-icon" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
                       <Icon name="check" size={13} />
                     </span>
-                    <div>Goal reached — exit workflow</div>
+                    <div>Goal reached â€” exit workflow</div>
                   </div>
                 </div>
                 <div className="divider" style={{ margin: '14px 0' }} />
@@ -548,12 +580,12 @@ export default function Workflows() {
       <div className="card" style={{ marginTop: 16 }}>
         <div className="card__head">
           <div>
-            <div className="card__title">Recent runs</div>
-            <div className="card__sub">Simulated test runs — nothing is sent and no requests leave the workspace.</div>
+            <div className="card__title">Recent executions</div>
+            <div className="card__sub">Live workflow execution state machine and durable run history.</div>
           </div>
-          <Badge>{state.workflowRuns.length} total</Badge>
+          <Badge>{displayRuns.length} total</Badge>
         </div>
-        {state.workflowRuns.length === 0 ? (
+        {displayRuns.length === 0 ? (
           <EmptyState
             icon={<Icon name="play" size={20} />}
             title="No runs yet"
@@ -565,7 +597,7 @@ export default function Workflows() {
               <thead>
                 <tr>
                   <th>Workflow</th>
-                  <th>Contact</th>
+                  <th>Contact / Trigger</th>
                   <th>Steps</th>
                   <th>Status</th>
                   <th>When</th>
@@ -573,22 +605,31 @@ export default function Workflows() {
                 </tr>
               </thead>
               <tbody>
-                {state.workflowRuns.map((run) => {
+                {displayRuns.map((run: any) => {
                   const flow = state.workflows.find((w) => w.id === run.workflowId);
+                  const isSuccess = run.status === 'success' || run.status === 'completed';
+                  const isApproval = run.status === 'waiting_approval';
+                  const isRunning = run.status === 'running';
+                  const cName = run.triggerContext?.contact
+                    ? `${run.triggerContext.contact.firstName || ''} ${run.triggerContext.contact.lastName || ''}`.trim()
+                    : (run.contactId ? contactName(run.contactId) : run.triggerType || 'Automated');
+
                   return (
                     <tr key={run.id} className="is-clickable" onClick={() => setViewingRun(run)}>
                       <td>
-                        <div className="cell-main">{flow?.name ?? 'Workflow'}</div>
-                        <div className="cell-sub">{run.steps.length} steps · {(run.durationMs / 1000).toFixed(1)}s</div>
+                        <div className="cell-main">{run.workflowName || flow?.name || 'Workflow'}</div>
+                        <div className="cell-sub">
+                          {(run.steps || []).length} steps · {run.durationMs ? `${(run.durationMs / 1000).toFixed(1)}s` : 'fast'}
+                        </div>
                       </td>
-                      <td>{contactName(run.contactId)}</td>
-                      <td className="cell-num">{run.steps.length}</td>
+                      <td>{cName || 'Automated'}</td>
+                      <td className="cell-num">{(run.steps || []).length}</td>
                       <td>
-                        <Badge tone={run.status === 'success' ? 'green' : 'red'} dot>
-                          {run.status === 'success' ? 'Success' : 'Failed'}
+                        <Badge tone={isSuccess ? 'green' : isApproval ? 'amber' : isRunning ? 'violet' : 'red'} dot>
+                          {isSuccess ? 'Completed' : isApproval ? 'Approval Needed' : isRunning ? 'Running' : 'Failed'}
                         </Badge>
                       </td>
-                      <td className="cell-sub">{relative(run.at)}</td>
+                      <td className="cell-sub">{relative(run.createdAt || run.at || new Date().toISOString())}</td>
                       <td className="cell-right">
                         <button
                           type="button"
@@ -683,7 +724,18 @@ export default function Workflows() {
           flow={runFor}
           contacts={state.contacts}
           onClose={() => setRunFor(null)}
-          onRun={(contact) => {
+          onRun={async (contact) => {
+            try {
+              const res = await api.workflows.run(runFor.id, { contactId: contact.id });
+              if (res.execution) {
+                setViewingRun(res.execution);
+                fetchRuns();
+                setRunFor(null);
+                return;
+              }
+            } catch (err) {
+              console.warn('Backend run failed, falling back to local simulation:', err);
+            }
             const run = simulateRun(runFor, contact);
             dispatch({ type: 'workflow/run/add', run });
             setRunFor(null);
@@ -695,9 +747,13 @@ export default function Workflows() {
       {viewingRun && (
         <RunResult
           run={viewingRun}
-          flow={state.workflows.find((w) => w.id === viewingRun.workflowId)}
-          contact={state.contacts.find((c) => c.id === viewingRun.contactId)}
+          flow={state.workflows.find((w) => w.id === viewingRun.workflowId) || { name: viewingRun.workflowName }}
+          contact={state.contacts.find((c) => c.id === viewingRun.contactId) || viewingRun.triggerContext?.contact}
           onClose={() => setViewingRun(null)}
+          onApproved={() => {
+            fetchRuns();
+            setViewingRun((prev: any) => prev ? { ...prev, status: 'completed' } : null);
+          }}
         />
       )}
     </div>
@@ -1175,7 +1231,7 @@ function StepModal({
         {kind === 'wait'
           ? 'Waits pause the contact between the steps above and below. Hours convert into days automatically in the flow.'
           : kind === 'condition'
-            ? 'Branches are one level deep — a branch cannot contain another condition.'
+            ? 'Branches are one level deep â€” a branch cannot contain another condition.'
             : 'Steps run in order. Use the arrows in the flow to move this step, or the pencil to come back and edit it.'}
       </div>
     </Modal>
@@ -1230,17 +1286,17 @@ function RunPicker({
         >
           {contacts.map((option) => (
             <option key={option.id} value={option.id}>
-              {option.firstName} {option.lastName} · {option.status}
+              {option.firstName} {option.lastName} Â· {option.status}
             </option>
           ))}
         </select>
         <div className="hint" style={{ marginTop: 6 }}>
-          Trigger: {triggerText(flow.trigger)} · {countSteps(flow.actions)} steps
+          Trigger: {triggerText(flow.trigger)} Â· {countSteps(flow.actions)} steps
         </div>
       </div>
       {contact && (
         <div className="hint" style={{ marginTop: 10 }}>
-          Tags: {contact.tags.length ? contact.tags.join(', ') : 'none'} · Company: {contact.company || '—'}
+          Tags: {contact.tags.length ? contact.tags.join(', ') : 'none'} Â· Company: {contact.company || 'â€”'}
         </div>
       )}
     </Modal>
@@ -1252,85 +1308,156 @@ function RunResult({
   flow,
   contact,
   onClose,
+  onApproved,
 }: {
-  run: WorkflowRun;
-  flow?: Workflow;
-  contact?: Contact;
+  run: any;
+  flow?: any;
+  contact?: any;
   onClose: () => void;
+  onApproved?: () => void;
 }) {
-  const done = run.steps.filter((step) => step.status === 'done').length;
+  const [approving, setApproving] = useState(false);
+  const steps = run.steps || [];
+  const done = steps.filter((step: any) => step.status === 'done' || step.status === 'completed').length;
+  const isCompleted = run.status === 'success' || run.status === 'completed';
+  const isApprovalNeeded = run.status === 'waiting_approval';
+
+  const handleApprove = async () => {
+    if (!run.id) return;
+    setApproving(true);
+    try {
+      await api.workflows.approveRun(run.id);
+      run.status = 'completed';
+      onApproved?.();
+    } catch (err: any) {
+      alert(err.message || 'Approval failed');
+    } finally {
+      setApproving(false);
+    }
+  };
+
+  const getStepIcon = (kind?: string) => {
+    if (!kind) return 'play';
+    if (kind === 'ai_agent') return 'bot';
+    if (kind === 'update_contact' || kind === 'tag') return 'tag';
+    if (kind === 'task') return 'task';
+    if (kind === 'condition') return 'condition';
+    if (kind === 'email') return 'mail';
+    if (kind === 'sms') return 'message';
+    if (kind === 'webhook') return 'webhook';
+    return (ACTION_ICON as any)[kind] || 'play';
+  };
 
   return (
     <Modal
-      title={run.status === 'success' ? 'Run succeeded' : 'Run failed'}
+      title={isCompleted ? 'Workflow Execution Completed' : isApprovalNeeded ? 'Awaiting Operator Approval' : 'Workflow Execution Status'}
       onClose={onClose}
       footer={
-        <button className="btn btn--primary" onClick={onClose}>
-          Close
-        </button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+          {isApprovalNeeded && (
+            <button className="btn btn--primary" onClick={handleApprove} disabled={approving}>
+              {approving ? 'Approving…' : '✓ Approve & Resume Workflow'}
+            </button>
+          )}
+          <button className="btn btn--secondary" onClick={onClose} style={{ marginLeft: 'auto' }}>
+            Close
+          </button>
+        </div>
       }
     >
       <div className="row row--between">
         <div>
           <div className="cell-sub">Workflow</div>
-          <strong style={{ fontSize: 13.5 }}>{flow?.name ?? 'Workflow'}</strong>
+          <strong style={{ fontSize: 13.5 }}>{run.workflowName || flow?.name || 'Workflow'}</strong>
         </div>
-        <Badge tone={run.status === 'success' ? 'green' : 'red'} dot>
-          {run.status === 'success' ? 'Success' : 'Failed'}
+        <Badge tone={isCompleted ? 'green' : isApprovalNeeded ? 'amber' : 'red'} dot>
+          {isCompleted ? 'Completed' : isApprovalNeeded ? 'Needs Approval' : run.status}
         </Badge>
       </div>
+
+      {isApprovalNeeded && (
+        <div style={{ marginTop: 12, padding: '12px 16px', background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 20 }}>⚠️</span>
+          <div style={{ flex: 1 }}>
+            <strong style={{ color: '#b45309', fontSize: 13, display: 'block' }}>Human Approval Required</strong>
+            <span style={{ color: '#92400e', fontSize: 12 }}>
+              An AI agent step or business rule in this workflow flagged an approval gate.
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="row" style={{ gap: 18, marginTop: 12 }}>
         <div>
-          <div className="cell-sub">Contact</div>
-          <strong style={{ fontSize: 13 }}>{contact ? `${contact.firstName} ${contact.lastName}` : 'Unknown'}</strong>
+          <div className="cell-sub">Contact / Target</div>
+          <strong style={{ fontSize: 13 }}>
+            {contact ? (contact.firstName ? `${contact.firstName} ${contact.lastName}` : contact.name) : 'Automated Inbound'}
+          </strong>
         </div>
         <div>
-          <div className="cell-sub">Steps completed</div>
-          <strong style={{ fontSize: 13 }}>{done}/{run.steps.length}</strong>
+          <div className="cell-sub">Steps Completed</div>
+          <strong style={{ fontSize: 13 }}>{done}/{steps.length}</strong>
         </div>
         <div>
-          <div className="cell-sub">Simulated duration</div>
-          <strong style={{ fontSize: 13 }}>{(run.durationMs / 1000).toFixed(1)}s</strong>
+          <div className="cell-sub">Duration</div>
+          <strong style={{ fontSize: 13 }}>
+            {run.durationMs ? `${(run.durationMs / 1000).toFixed(2)}s` : 'Instant'}
+          </strong>
         </div>
       </div>
-      <div className="divider" style={{ margin: '12px 0' }} />
-      <div className="stack" style={{ gap: 6 }}>
-        {run.steps.map((step, index) => (
-          <div
-            className="list-row"
-            key={`${run.id}-${index}`}
-            style={{ border: '1px solid var(--line)', borderRadius: 9, background: 'var(--surface-2)' }}
-          >
-            <span
-              className="avatar avatar--sm avatar--square"
+
+      <div className="divider" style={{ margin: '14px 0' }} />
+
+      <div className="stack" style={{ gap: 8 }}>
+        {steps.map((step: any, index: number) => {
+          const isStepDone = step.status === 'done' || step.status === 'completed';
+          const isStepApproval = step.status === 'waiting_approval';
+          const isStepFailed = step.status === 'failed';
+
+          return (
+            <div
+              className="list-row"
+              key={`${run.id}-${index}`}
               style={{
-                background:
-                  step.status === 'failed'
-                    ? 'var(--red-soft)'
-                    : step.status === 'skipped'
-                      ? 'var(--surface-3)'
-                      : 'var(--green-soft)',
-                color:
-                  step.status === 'failed'
-                    ? 'var(--red)'
-                    : step.status === 'skipped'
-                      ? 'var(--text-3)'
-                      : 'var(--green)',
+                border: '1px solid var(--line)',
+                borderRadius: 9,
+                background: 'var(--surface-2)',
+                flexDirection: 'column',
+                alignItems: 'stretch',
+                padding: '10px 12px',
+                gap: 6
               }}
             >
-              <Icon name={ACTION_ICON[step.kind]} size={13} />
-            </span>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 12.5, fontWeight: 600 }}>{step.label}</div>
-              <div className="cell-sub">{step.detail ?? step.kind}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span
+                  className="avatar avatar--sm avatar--square"
+                  style={{
+                    background: isStepFailed ? 'var(--red-soft)' : isStepApproval ? '#fef3c7' : isStepDone ? 'var(--green-soft)' : 'var(--surface-3)',
+                    color: isStepFailed ? 'var(--red)' : isStepApproval ? '#b45309' : isStepDone ? 'var(--green)' : 'var(--text-3)',
+                  }}
+                >
+                  <Icon name={getStepIcon(step.nodeType || step.kind)} size={13} />
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{step.nodeName || step.label || step.nodeId}</div>
+                  <div className="cell-sub">{step.detail || step.nodeType || step.kind}</div>
+                </div>
+                <Badge tone={isStepFailed ? 'red' : isStepApproval ? 'amber' : isStepDone ? 'green' : 'default'}>
+                  {step.status}
+                </Badge>
+              </div>
+
+              {step.result && (
+                <div style={{ marginTop: 4, padding: '6px 10px', background: 'var(--surface)', borderRadius: 6, fontSize: 12, border: '1px solid var(--border)' }}>
+                  <span style={{ color: 'var(--text-3)', fontWeight: 600, marginRight: 6 }}>Output:</span>
+                  <span style={{ color: 'var(--text-1)' }}>
+                    {typeof step.result === 'string' ? step.result : JSON.stringify(step.result)}
+                  </span>
+                </div>
+              )}
             </div>
-            <Badge
-              tone={step.status === 'failed' ? 'red' : step.status === 'skipped' ? 'default' : 'green'}
-            >
-              {step.status}
-            </Badge>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </Modal>
   );

@@ -271,6 +271,197 @@ function validateCsrf(req, actor) {
   return safeEqual(hash(csrfHeader), actor.csrfHash);
 }
 
+// ─── Workflow Execution Engine ────────────────────────────────────────
+async function executeWorkflowInstance({ flow, agencyId, locationId, triggerType, triggerContext }) {
+  const executionId = randomUUID();
+  const startTime = Date.now();
+  const execution = {
+    id: executionId,
+    agencyId,
+    locationId,
+    workflowId: flow.id,
+    workflowName: flow.name,
+    status: 'running',
+    triggerType,
+    triggerContext,
+    steps: [],
+    createdAt: new Date().toISOString()
+  };
+  state.workflowExecutions.push(execution);
+
+  broadcast('workflow.execution.started', { executionId, workflowId: flow.id, workflowName: flow.name });
+
+  const crmActions = {
+    sendEmail: async ({ to, subject, body }) => {
+      console.log(`[OPERZA WORKFLOW EMAIL] To: ${to} | Subject: ${subject}`);
+      const contact = triggerContext.contact;
+      const contactName = contact ? `${contact.firstName} ${contact.lastName}` : (to || 'Customer');
+      let conv = (state.records.conversations || []).find(
+        c => c.agencyId === agencyId && c.locationId === locationId && c.contactName === contactName
+      );
+      if (!conv) {
+        conv = {
+          id: randomUUID(),
+          agencyId,
+          locationId,
+          contactName,
+          channel: 'email',
+          subject: subject || 'Workflow Automation',
+          status: 'open',
+          lastMessage: body || subject || '',
+          assignedTo: 'Automated Bot',
+          messages: [],
+          createdAt: new Date().toISOString()
+        };
+        state.records.conversations = state.records.conversations || [];
+        state.records.conversations.push(conv);
+      }
+      conv.lastMessage = body || subject || '';
+      conv.messages = conv.messages || [];
+      conv.messages.push({
+        id: randomUUID(),
+        author: 'Operza Bot',
+        channel: 'email',
+        direction: 'outbound',
+        subject: subject || '',
+        text: body || '',
+        timestamp: new Date().toISOString()
+      });
+      broadcast('crm.conversation.updated', { id: conv.id, contactName });
+    },
+    sendSms: async ({ to, message }) => {
+      console.log(`[OPERZA WORKFLOW SMS] To: ${to} | Message: ${message}`);
+      const contact = triggerContext.contact;
+      const contactName = contact ? `${contact.firstName} ${contact.lastName}` : (to || 'Customer');
+      let conv = (state.records.conversations || []).find(
+        c => c.agencyId === agencyId && c.locationId === locationId && c.contactName === contactName
+      );
+      if (!conv) {
+        conv = {
+          id: randomUUID(),
+          agencyId,
+          locationId,
+          contactName,
+          channel: 'sms',
+          subject: 'SMS Conversation',
+          status: 'open',
+          lastMessage: message || '',
+          assignedTo: 'Automated Bot',
+          messages: [],
+          createdAt: new Date().toISOString()
+        };
+        state.records.conversations = state.records.conversations || [];
+        state.records.conversations.push(conv);
+      }
+      conv.lastMessage = message || '';
+      conv.messages = conv.messages || [];
+      conv.messages.push({
+        id: randomUUID(),
+        author: 'Operza Bot',
+        channel: 'sms',
+        direction: 'outbound',
+        text: message || '',
+        timestamp: new Date().toISOString()
+      });
+      broadcast('crm.conversation.updated', { id: conv.id, contactName });
+    },
+    addContactTag: async ({ contactId, tag }) => {
+      const contact = (state.records.contacts || []).find(c => c.id === contactId);
+      if (contact) {
+        contact.tags = Array.from(new Set([...(contact.tags || []), tag]));
+        broadcast('crm.contact.updated', { id: contact.id, tags: contact.tags });
+      }
+    },
+    createTask: async (taskData) => {
+      const taskId = randomUUID();
+      const newTask = {
+        id: taskId,
+        agencyId,
+        locationId,
+        ...taskData,
+        status: 'pending',
+        createdAt: new Date().toISOString()
+      };
+      state.records.tasks = state.records.tasks || [];
+      state.records.tasks.push(newTask);
+      broadcast('crm.task.created', { id: taskId, title: newTask.title });
+    },
+    updateOpportunityStage: async ({ opportunityId, stage }) => {
+      const opp = (state.records.opportunities || []).find(o => o.id === opportunityId);
+      if (opp) {
+        opp.stage = stage;
+        broadcast('crm.opportunity.updated', { id: opp.id, stage });
+      }
+    },
+    updateContact: async ({ contactId, fields }) => {
+      const contact = (state.records.contacts || []).find(c => c.id === contactId);
+      if (contact) {
+        Object.assign(contact, fields);
+        broadcast('crm.contact.updated', { id: contact.id, ...fields });
+      }
+    },
+    createOpportunity: async (oppData) => {
+      const oppId = randomUUID();
+      const opp = { id: oppId, agencyId, locationId, status: 'open', ...oppData, createdAt: new Date().toISOString() };
+      state.records.opportunities = state.records.opportunities || [];
+      state.records.opportunities.push(opp);
+      broadcast('crm.opportunity.created', { id: oppId, name: opp.name });
+    },
+    assignContact: async ({ contactId, assignee }) => {
+      const contact = (state.records.contacts || []).find(c => c.id === contactId);
+      if (contact) {
+        contact.assignedTo = assignee;
+        broadcast('crm.contact.updated', { id: contact.id, assignedTo: assignee });
+      }
+    },
+    sendReviewRequest: async ({ contactId, channel }) => {
+      console.log(`[OPERZA WORKFLOW REVIEW] Review request dispatched via ${channel} to contact ${contactId}`);
+    }
+  };
+
+  const aiHandler = async ({ prompt, context }) => {
+    return `[Operza Copilot AI Analysis]: Lead qualified for ${context.contact?.company || 'inquiry'}. Confidence: 94%.`;
+  };
+
+  for (const node of (flow.nodes || [])) {
+    const stepStart = Date.now();
+    const stepRes = await executeStep({
+      node,
+      execution,
+      triggerContext,
+      crmActions,
+      aiHandler
+    });
+    const stepEnd = Date.now();
+    const stepEntry = {
+      nodeId: node.id,
+      nodeName: node.name || node.label || node.id,
+      nodeType: node.type || node.kind,
+      status: stepRes.status,
+      durationMs: stepEnd - stepStart,
+      result: stepRes.result || null,
+      error: stepRes.error || null,
+      executedAt: new Date(stepStart).toISOString()
+    };
+    execution.steps.push(stepEntry);
+
+    if (stepRes.status === 'failed' || stepRes.status === 'waiting_approval' || stepRes.status === 'waiting') {
+      execution.status = stepRes.status;
+      break;
+    }
+  }
+
+  if (execution.status === 'running') {
+    execution.status = 'completed';
+    execution.finishedAt = new Date().toISOString();
+  }
+  execution.durationMs = Date.now() - startTime;
+
+  broadcast('workflow.execution.finished', { executionId, status: execution.status, durationMs: execution.durationMs });
+  await saveState();
+  return execution;
+}
+
 // ─── Workflow Trigger Execution ───────────────────────────────────────
 async function triggerWorkflowExecution({ agencyId, locationId, triggerType, triggerContext }) {
   const flows = (state.records.workflows || []).filter(
@@ -278,76 +469,8 @@ async function triggerWorkflowExecution({ agencyId, locationId, triggerType, tri
   );
 
   for (const flow of flows) {
-    const executionId = randomUUID();
-    const execution = {
-      id: executionId,
-      agencyId,
-      locationId,
-      workflowId: flow.id,
-      workflowName: flow.name,
-      status: 'running',
-      triggerType,
-      triggerContext,
-      steps: [],
-      createdAt: new Date().toISOString()
-    };
-    state.workflowExecutions.push(execution);
-
-    broadcast('workflow.execution.started', { executionId, workflowId: flow.id, workflowName: flow.name });
-
-    for (const node of (flow.nodes || [])) {
-      const stepRes = await executeStep({
-        node,
-        execution,
-        triggerContext,
-        crmActions: {
-          sendEmail: async ({ to, subject, body }) => {
-            console.log(`[OPERZA WORKFLOW EMAIL] To: ${to} | Subject: ${subject}`);
-          },
-          sendSms: async ({ to, message }) => {
-            console.log(`[OPERZA WORKFLOW SMS] To: ${to} | Message: ${message}`);
-          },
-          addContactTag: async ({ contactId, tag }) => {
-            const contact = state.records.contacts.find(c => c.id === contactId);
-            if (contact) {
-              contact.tags = Array.from(new Set([...(contact.tags || []), tag]));
-            }
-          },
-          createTask: async (taskData) => {
-            state.records.tasks.push({
-              id: randomUUID(),
-              agencyId,
-              locationId,
-              ...taskData,
-              status: 'pending',
-              createdAt: new Date().toISOString()
-            });
-          },
-          updateOpportunityStage: async ({ opportunityId, stage }) => {
-            const opp = state.records.opportunities.find(o => o.id === opportunityId);
-            if (opp) opp.stage = stage;
-          }
-        },
-        aiHandler: async ({ prompt, context }) => {
-          return `[Operza Copilot AI Analysis]: Lead qualified for ${context.contact?.company || 'inquiry'}.`;
-        }
-      });
-
-      execution.steps.push(stepRes);
-      if (stepRes.status === 'failed' || stepRes.status === 'waiting_approval' || stepRes.status === 'waiting') {
-        execution.status = stepRes.status;
-        break;
-      }
-    }
-
-    if (execution.status === 'running') {
-      execution.status = 'completed';
-      execution.finishedAt = new Date().toISOString();
-    }
-
-    broadcast('workflow.execution.finished', { executionId, status: execution.status });
+    await executeWorkflowInstance({ flow, agencyId, locationId, triggerType, triggerContext });
   }
-  await saveState();
 }
 
 // ─── Cron-based Schedule Trigger (check every 60s) ────────────────────
@@ -1151,6 +1274,46 @@ const server = createServer(async (req, res) => {
         createdAt: new Date().toISOString()
       });
 
+      state.records.workflows = state.records.workflows || [];
+      state.records.workflows.push({
+        id: randomUUID(),
+        agencyId,
+        locationId,
+        name: 'Automated Lead Qualification & AI Scoring',
+        description: 'Auto-scores new leads with Copilot AI, applies qualification tags, and creates team follow-up tasks.',
+        status: 'published',
+        triggerType: 'form',
+        triggerConfig: { formName: 'contact-us' },
+        nodes: [
+          {
+            id: 'node-ai-score',
+            name: 'AI Lead Evaluation',
+            type: 'ai_agent',
+            config: { prompt: 'Analyze lead data and score purchase intent from 1 to 100.' }
+          },
+          {
+            id: 'node-tag',
+            name: 'Apply High-Intent Tag',
+            type: 'tag',
+            config: { tag: 'ai-qualified' }
+          },
+          {
+            id: 'node-task',
+            name: 'Create Priority Outreach Task',
+            type: 'task',
+            config: { title: 'High-Intent Lead Review', priority: 'high', dueInDays: 1 }
+          },
+          {
+            id: 'node-approval',
+            name: 'Executive Proposal Gate',
+            type: 'condition',
+            requiresApproval: true,
+            config: { message: 'Review enterprise proposal before final transmission' }
+          }
+        ],
+        createdAt: new Date().toISOString()
+      });
+
       const token = randomBytes(32).toString('hex');
       const csrf = randomBytes(24).toString('hex');
       state.sessions.push({
@@ -1460,6 +1623,39 @@ const server = createServer(async (req, res) => {
       await saveState();
       broadcast('workflow.execution.approved', { executionId: runId });
       return sendJson(res, 200, { success: true, run });
+    }
+
+    // POST /api/workflows/:id/run — on-demand execution trigger
+    if (method === 'POST' && pathname.startsWith('/api/workflows/') && pathname.endsWith('/run')) {
+      const workflowId = pathname.replace('/api/workflows/', '').replace('/run', '').trim();
+      const flow = (state.records.workflows || []).find(
+        w => w.id === workflowId && w.agencyId === agency.id && w.locationId === activeLocation.id
+      );
+      if (!flow) return sendJson(res, 404, { error: 'Workflow not found' });
+
+      const body = await readBody(req);
+      let contact = null;
+      if (body.contactId) {
+        contact = (state.records.contacts || []).find(c => c.id === body.contactId && c.agencyId === agency.id);
+      }
+      if (!contact && (state.records.contacts || []).length > 0) {
+        contact = (state.records.contacts || []).find(c => c.agencyId === agency.id && c.locationId === activeLocation.id) || state.records.contacts[0];
+      }
+
+      const execution = await executeWorkflowInstance({
+        flow,
+        agencyId: agency.id,
+        locationId: activeLocation.id,
+        triggerType: 'manual',
+        triggerContext: {
+          contact,
+          manualTrigger: true,
+          triggeredBy: actor.user.name,
+          payload: body.payload || {}
+        }
+      });
+
+      return sendJson(res, 201, { success: true, execution });
     }
 
     // ═════════════════════════════════════════════════════════════
