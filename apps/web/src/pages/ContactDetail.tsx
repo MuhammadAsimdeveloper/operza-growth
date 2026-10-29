@@ -66,6 +66,7 @@ export default function ContactDetail() {
 
   const addNote = () => {
     if (!noteDraft.trim()) return;
+    api.crm.create('notes', { text: noteDraft.trim(), contactId: contact.id, createdBy: 'Asim R.' }).catch(() => {});
     dispatch({ type: 'contact/note', id: contact.id, body: noteDraft.trim(), author: 'Asim R.' });
     setNoteDraft('');
   };
@@ -79,18 +80,27 @@ export default function ContactDetail() {
     const due = new Date();
     due.setDate(due.getDate() + 1);
     due.setHours(9, 0, 0, 0);
+    const taskPayload = {
+      id: uid('tk'),
+      title: taskDraft.trim(),
+      contactId: contact.id,
+      assignee: contact.owner,
+      dueAt: due.toISOString(),
+      priority: 'medium' as const,
+      done: false,
+      createdAt: new Date().toISOString(),
+    };
+    api.crm.create('tasks', {
+      title: taskDraft.trim(),
+      contactId: contact.id,
+      priority: 'medium',
+      status: 'pending',
+      assignedTo: contact.owner,
+      dueDate: due.toISOString().slice(0, 10),
+    }).catch(() => {});
     dispatch({
       type: 'task/add',
-      task: {
-        id: uid('tk'),
-        title: taskDraft.trim(),
-        contactId: contact.id,
-        assignee: contact.owner,
-        dueAt: due.toISOString(),
-        priority: 'medium',
-        done: false,
-        createdAt: new Date().toISOString(),
-      },
+      task: taskPayload,
     });
     setTaskDraft('');
   };
@@ -510,6 +520,7 @@ export default function ContactDetail() {
           contact={contact}
           onClose={() => setEditing(false)}
           onSave={(patch) => {
+            api.crm.update('contacts', contact.id, patch).catch(() => {});
             dispatch({ type: 'contact/update', id: contact.id, patch });
             setEditing(false);
           }}
@@ -529,6 +540,7 @@ export default function ContactDetail() {
                 className="btn btn--primary"
                 style={{ background: 'var(--red)', borderColor: 'var(--red)' }}
                 onClick={() => {
+                  api.crm.delete('contacts', contact.id).catch(() => {});
                   dispatch({ type: 'contact/delete', id: contact.id });
                   navigate('/contacts');
                 }}

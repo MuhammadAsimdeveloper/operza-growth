@@ -3692,6 +3692,47 @@ const server = createServer(async (req, res) => {
     }
 
     // ═════════════════════════════════════════════════════════════
+    // ─── AGENCY: BUSINESS PROFILE ───────────────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'GET' && pathname === '/api/agency/profile') {
+      return sendJson(res, 200, {
+        name: agency.name,
+        email: agency.email || actor.user?.email || 'support@operza.io',
+        phone: agency.phone || '+1 800-555-0100',
+        website: agency.website || 'https://operza.io',
+        timezone: agency.timezone || 'America/Los_Angeles',
+        currency: agency.currency || 'USD'
+      });
+    }
+
+    if (method === 'PUT' && pathname === '/api/agency/profile') {
+      const body = await readBody(req);
+      if (body.name) agency.name = body.name.trim();
+      if (body.email) agency.email = body.email.trim();
+      if (body.phone) agency.phone = body.phone.trim();
+      if (body.website) agency.website = body.website.trim();
+      if (body.timezone) agency.timezone = body.timezone.trim();
+      if (body.currency) agency.currency = body.currency.trim();
+
+      await saveState();
+      broadcast('agency.profile.updated', { agencyId: agency.id, name: agency.name });
+      auditLog('agency.profile.updated', actor, { agencyId: agency.id, name: agency.name });
+
+      return sendJson(res, 200, {
+        success: true,
+        profile: {
+          name: agency.name,
+          email: agency.email,
+          phone: agency.phone,
+          website: agency.website,
+          timezone: agency.timezone,
+          currency: agency.currency
+        }
+      });
+    }
+
+    // ═════════════════════════════════════════════════════════════
     // ─── AGENCY: SUB-ACCOUNTS / LOCATIONS ───────────────────────
     // ═════════════════════════════════════════════════════════════
 

@@ -1355,7 +1355,40 @@ async function runTests() {
     }
     console.log('✅ Snippets and Templates live merge token resolution and usage tracking verified');
 
-    console.log('\n🎉 ALL 45 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 46. Agency Business Profile Query & Live Mutating Lifecycle
+    console.log('\n[TEST 46] Agency Business Profile: GET & PUT /api/agency/profile');
+    const profileGetRes = await request('/api/agency/profile');
+    console.log(`Profile Get Status: ${profileGetRes.status}`, `Agency Name: ${profileGetRes.data.name}`, `Timezone: ${profileGetRes.data.timezone}`);
+    if (profileGetRes.status !== 200 || !profileGetRes.data.name) {
+      throw new Error(`Agency profile fetch failed: ${JSON.stringify(profileGetRes.data)}`);
+    }
+
+    const profileUpdateRes = await request('/api/agency/profile', {
+      method: 'PUT',
+      body: JSON.stringify({
+        name: 'Operza Enterprise Agency',
+        phone: '+1 888-555-0199',
+        website: 'https://operza.io/enterprise',
+        timezone: 'America/New_York',
+        currency: 'USD'
+      })
+    });
+    console.log(`Profile Update Status: ${profileUpdateRes.status}`, `New Name: ${profileUpdateRes.data.profile?.name}`, `New Timezone: ${profileUpdateRes.data.profile?.timezone}`);
+    if (
+      profileUpdateRes.status !== 200 ||
+      profileUpdateRes.data.profile?.name !== 'Operza Enterprise Agency' ||
+      profileUpdateRes.data.profile?.timezone !== 'America/New_York'
+    ) {
+      throw new Error(`Agency profile update failed: ${JSON.stringify(profileUpdateRes.data)}`);
+    }
+
+    const profileVerifyRes = await request('/api/agency/profile');
+    if (profileVerifyRes.data.name !== 'Operza Enterprise Agency') {
+      throw new Error('Updated agency profile did not persist in database');
+    }
+    console.log('✅ Agency business profile query, modification, and persistence verified');
+
+    console.log('\n🎉 ALL 46 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

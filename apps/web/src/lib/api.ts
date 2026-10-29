@@ -85,6 +85,9 @@ export const api = {
       request(`/api/reviews/submit/${locationId}`, { method: 'POST', body: JSON.stringify(data) }),
   },
   agency: {
+    getProfile: () => request<{ name: string; email: string; phone: string; website: string; timezone: string; currency: string }>('/api/agency/profile'),
+    updateProfile: (data: { name?: string; email?: string; phone?: string; website?: string; timezone?: string; currency?: string }) =>
+      request<{ success: boolean; profile: any }>('/api/agency/profile', { method: 'PUT', body: JSON.stringify(data) }),
     getLocations: () => request<{ locations: any[] }>('/api/agency/locations'),
     createLocation: (data: { name: string; address?: string; phone?: string; timezone?: string; industry?: string; ownerEmail?: string; planId?: string; seats?: number; status?: string }) =>
       request('/api/agency/locations', { method: 'POST', body: JSON.stringify(data) }),

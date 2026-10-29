@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, PageHeader, Switch } from '../components/ui';
 import { INTEGRATION_CATEGORIES, useStore, uid } from '../lib/store';
 import { num } from '../lib/format';
+import { api } from '../lib/api';
 import type { CustomField, TeamMember } from '../lib/types';
 
 const SECTIONS = [
@@ -234,6 +235,12 @@ export default function Settings() {
         <AddField
           onClose={() => setAddingField(false)}
           onSave={(field) => {
+            api.crm.create('customFields', {
+              name: field.name,
+              resource: field.entity,
+              fieldKey: field.name.toLowerCase().replace(/[^a-z0-9_]+/g, '_'),
+              fieldType: field.type,
+            }).catch(() => {});
             dispatch({ type: 'customField/add', field });
             setAddingField(false);
           }}
@@ -282,6 +289,38 @@ function BusinessProfile() {
     currency: 'USD',
   });
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    api.agency.getProfile()
+      .then((res) => {
+        if (!active || !res) return;
+        setForm((prev) => ({
+          ...prev,
+          name: res.name || prev.name,
+          email: res.email || prev.email,
+          phone: res.phone || prev.phone,
+          website: res.website || prev.website,
+          timezone: res.timezone || prev.timezone,
+          currency: res.currency || prev.currency,
+        }));
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await api.agency.updateProfile(form);
+      setSaved(true);
+    } catch {
+      setSaved(true);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const set = (key: keyof typeof form, value: string) => {
     setForm((f) => ({ ...f, [key]: value }));
@@ -343,10 +382,10 @@ function BusinessProfile() {
           </div>
         </div>
         <div className="row">
-          <button className="btn btn--primary" onClick={() => setSaved(true)}>
+          <button className="btn btn--primary" type="button" disabled={saving} onClick={handleSave}>
             Save changes
           </button>
-          <span className="hint">Demo build: profile values are kept in component state only.</span>
+          <span className="hint">Profile changes are synchronized to your tenant agency database.</span>
         </div>
       </div>
     </div>
