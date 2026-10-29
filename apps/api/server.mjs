@@ -63,6 +63,7 @@ const emptyState = () => ({
   sessions: [],
   records: Object.fromEntries(Object.keys(collections).map(key => [key, []])),
   workflowExecutions: [],
+  snapshots: [],
   audit: []
 });
 
@@ -204,7 +205,7 @@ async function loadState() {
   try {
     const raw = await readFile(dataFile, 'utf8');
     const parsed = JSON.parse(raw);
-    state = { ...emptyState(), ...parsed, records: { ...emptyState().records, ...(parsed.records || {}) } };
+    state = { ...emptyState(), ...parsed, records: { ...emptyState().records, ...(parsed.records || {}) }, snapshots: parsed.snapshots || [] };
   } catch (err) {
     if (err.code !== 'ENOENT') console.error('Error loading state:', err);
     state = emptyState();
@@ -2041,6 +2042,395 @@ const server = createServer(async (req, res) => {
       timeline.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
 
       return sendJson(res, 200, { contactId, name: `${contact.firstName} ${contact.lastName}`, timeline });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── AGENCY: SUB-ACCOUNTS / LOCATIONS ───────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    // GET /api/agency/locations — list client workspaces with metrics
+    if (method === 'GET' && pathname === '/api/agency/locations') {
+      const agencyLocs = (state.locations || []).filter(l => l.agencyId === agency.id && l.status !== 'deleted');
+      const enriched = agencyLocs.map(loc => {
+        const contactsCount = (state.records.contacts || []).filter(c => c.agencyId === agency.id && c.locationId === loc.id).length;
+        const opportunitiesCount = (state.records.opportunities || []).filter(o => o.agencyId === agency.id && o.locationId === loc.id).length;
+        const appointmentsCount = (state.records.appointments || []).filter(a => a.agencyId === agency.id && a.locationId === loc.id).length;
+        const workflowsCount = (state.records.workflows || []).filter(w => w.agencyId === agency.id && w.locationId === loc.id).length;
+
+        return {
+          id: loc.id,
+          agencyId: loc.agencyId,
+          name: loc.name,
+          address: loc.address || '',
+          phone: loc.phone || '',
+          timezone: loc.timezone || 'UTC',
+          industry: loc.industry || 'General',
+          ownerEmail: loc.ownerEmail || '',
+          planId: loc.planId || 'growth',
+          seats: loc.seats || 1,
+          status: loc.status || 'active',
+          createdAt: loc.createdAt || new Date().toISOString(),
+          contactsCount,
+          opportunitiesCount,
+          appointmentsCount,
+          workflowsCount
+        };
+      });
+
+      return sendJson(res, 200, { locations: enriched });
+    }
+
+    // POST /api/agency/locations — provision a new client sub-account
+    if (method === 'POST' && pathname === '/api/agency/locations') {
+      const body = await readBody(req);
+      if (!body.name || !body.name.trim()) {
+        return sendJson(res, 400, { error: 'Location name is required' });
+      }
+
+      const newLocId = randomUUID();
+      const newLocation = {
+        id: newLocId,
+        agencyId: agency.id,
+        name: body.name.trim(),
+        address: body.address ? String(body.address).trim() : '',
+        phone: body.phone ? String(body.phone).trim() : '',
+        timezone: body.timezone ? String(body.timezone).trim() : 'UTC',
+        industry: body.industry ? String(body.industry).trim() : 'General',
+        ownerEmail: body.ownerEmail ? String(body.ownerEmail).trim() : '',
+        planId: body.planId || 'growth',
+        seats: Number(body.seats) || 1,
+        status: body.status || 'trial',
+        createdAt: new Date().toISOString()
+      };
+
+      state.locations.push(newLocation);
+
+      // Seed initial default pipeline for the sub-account
+      state.records.pipelines = state.records.pipelines || [];
+      state.records.pipelines.push({
+        id: randomUUID(),
+        agencyId: agency.id,
+        locationId: newLocId,
+        name: `${newLocation.name} Sales Pipeline`,
+        stages: ['Lead', 'Contacted', 'Qualified', 'Proposal', 'Won', 'Lost'],
+        status: 'active',
+        createdAt: new Date().toISOString()
+      });
+
+      await saveState();
+      auditLog('agency.location.created', actor, { locationId: newLocId, name: newLocation.name });
+      broadcast('agency.location.created', newLocation);
+
+      return sendJson(res, 201, newLocation);
+    }
+
+    // PUT /api/agency/locations/:id — update sub-account details / status
+    if (method === 'PUT' && pathname.startsWith('/api/agency/locations/')) {
+      const locId = pathname.replace('/api/agency/locations/', '').trim();
+      const loc = (state.locations || []).find(l => l.id === locId && l.agencyId === agency.id);
+      if (!loc) return sendJson(res, 404, { error: 'Location not found' });
+
+      const body = await readBody(req);
+      if (body.name) loc.name = body.name.trim();
+      if (body.address !== undefined) loc.address = String(body.address).trim();
+      if (body.phone !== undefined) loc.phone = String(body.phone).trim();
+      if (body.timezone) loc.timezone = String(body.timezone).trim();
+      if (body.industry) loc.industry = String(body.industry).trim();
+      if (body.ownerEmail !== undefined) loc.ownerEmail = String(body.ownerEmail).trim();
+      if (body.planId) loc.planId = body.planId;
+      if (body.seats !== undefined) loc.seats = Number(body.seats) || 1;
+      if (body.status) loc.status = body.status;
+      loc.updatedAt = new Date().toISOString();
+
+      await saveState();
+      auditLog('agency.location.updated', actor, { locationId: locId, updates: Object.keys(body) });
+      broadcast('agency.location.updated', loc);
+
+      return sendJson(res, 200, loc);
+    }
+
+    // DELETE /api/agency/locations/:id — deactivate client sub-account
+    if (method === 'DELETE' && pathname.startsWith('/api/agency/locations/')) {
+      const locId = pathname.replace('/api/agency/locations/', '').trim();
+      const loc = (state.locations || []).find(l => l.id === locId && l.agencyId === agency.id);
+      if (!loc) return sendJson(res, 404, { error: 'Location not found' });
+
+      const activeCount = (state.locations || []).filter(l => l.agencyId === agency.id && l.status === 'active').length;
+      if (activeCount <= 1 && loc.status === 'active') {
+        return sendJson(res, 400, { error: 'Cannot deactivate the sole active workspace' });
+      }
+
+      loc.status = 'deleted';
+      loc.updatedAt = new Date().toISOString();
+      await saveState();
+
+      auditLog('agency.location.deleted', actor, { locationId: locId });
+      broadcast('agency.location.deleted', { locationId: locId });
+
+      return sendJson(res, 200, { success: true, deletedId: locId });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── AGENCY: SNAPSHOTS ENGINE ───────────────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    // GET /api/agency/snapshots — list snapshot templates for agency
+    if (method === 'GET' && pathname === '/api/agency/snapshots') {
+      const snapshots = (state.snapshots || [])
+        .filter(s => s.agencyId === agency.id)
+        .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        .map(s => ({
+          id: s.id,
+          agencyId: s.agencyId,
+          sourceLocationId: s.sourceLocationId,
+          name: s.name,
+          description: s.description || '',
+          industry: s.industry || 'General',
+          counts: s.counts || {
+            workflows: (s.data?.workflows || []).length,
+            pipelines: (s.data?.pipelines || []).length,
+            calendars: (s.data?.calendars || []).length,
+            forms: (s.data?.forms || []).length,
+            paymentLinks: (s.data?.paymentLinks || []).length,
+            contacts: (s.data?.contacts || []).length
+          },
+          createdAt: s.createdAt
+        }));
+
+      return sendJson(res, 200, { snapshots });
+    }
+
+    // POST /api/agency/snapshots — create new snapshot from workspace
+    if (method === 'POST' && pathname === '/api/agency/snapshots') {
+      const body = await readBody(req);
+      const sourceLocId = body.sourceLocationId || activeLocation.id;
+      const sourceLoc = (state.locations || []).find(l => l.id === sourceLocId && l.agencyId === agency.id);
+      if (!sourceLoc) return sendJson(res, 404, { error: 'Source workspace not found' });
+
+      const workflows = (state.records.workflows || []).filter(w => w.agencyId === agency.id && w.locationId === sourceLocId);
+      const pipelines = (state.records.pipelines || []).filter(p => p.agencyId === agency.id && p.locationId === sourceLocId);
+      const calendars = (state.records.calendars || []).filter(c => c.agencyId === agency.id && c.locationId === sourceLocId);
+      const forms = (state.records.forms || []).filter(f => f.agencyId === agency.id && f.locationId === sourceLocId);
+      const paymentLinks = (state.records.paymentLinks || []).filter(p => p.agencyId === agency.id && p.locationId === sourceLocId);
+      const contacts = body.includeContacts
+        ? (state.records.contacts || []).filter(c => c.agencyId === agency.id && c.locationId === sourceLocId)
+        : [];
+
+      const newSnapshot = {
+        id: randomUUID(),
+        agencyId: agency.id,
+        sourceLocationId: sourceLocId,
+        name: (body.name || `Snapshot — ${new Date().toLocaleDateString()}`).trim(),
+        description: (body.description || '').trim(),
+        industry: (body.industry || sourceLoc.industry || 'General').trim(),
+        counts: {
+          workflows: workflows.length,
+          pipelines: pipelines.length,
+          calendars: calendars.length,
+          forms: forms.length,
+          paymentLinks: paymentLinks.length,
+          contacts: contacts.length
+        },
+        data: {
+          workflows: workflows.map(w => ({ ...w })),
+          pipelines: pipelines.map(p => ({ ...p })),
+          calendars: calendars.map(c => ({ ...c })),
+          forms: forms.map(f => ({ ...f })),
+          paymentLinks: paymentLinks.map(p => ({ ...p })),
+          contacts: contacts.map(c => ({ ...c }))
+        },
+        createdAt: new Date().toISOString()
+      };
+
+      state.snapshots = state.snapshots || [];
+      state.snapshots.unshift(newSnapshot);
+
+      // Keep up to 10 snapshots per agency
+      const agencySnaps = state.snapshots.filter(s => s.agencyId === agency.id);
+      if (agencySnaps.length > 10) {
+        const oldest = agencySnaps[agencySnaps.length - 1];
+        state.snapshots = state.snapshots.filter(s => s.id !== oldest.id);
+      }
+
+      await saveState();
+      auditLog('agency.snapshot.created', actor, { snapshotId: newSnapshot.id, name: newSnapshot.name });
+      broadcast('agency.snapshot.created', { id: newSnapshot.id, name: newSnapshot.name });
+
+      return sendJson(res, 201, newSnapshot);
+    }
+
+    // POST /api/agency/snapshots/:id/deploy — deep-clone snapshot into target client sub-account
+    if (method === 'POST' && pathname.startsWith('/api/agency/snapshots/') && pathname.endsWith('/deploy')) {
+      const snapshotId = pathname.replace('/api/agency/snapshots/', '').replace('/deploy', '').trim();
+      const snapshot = (state.snapshots || []).find(s => s.id === snapshotId && s.agencyId === agency.id);
+      if (!snapshot) return sendJson(res, 404, { error: 'Snapshot not found' });
+
+      const body = await readBody(req);
+      const targetLocId = body.targetLocationId;
+      if (!targetLocId) return sendJson(res, 400, { error: 'targetLocationId is required' });
+
+      const targetLoc = (state.locations || []).find(l => l.id === targetLocId && l.agencyId === agency.id);
+      if (!targetLoc) return sendJson(res, 404, { error: 'Target workspace not found' });
+
+      const deployed = {
+        workflows: 0,
+        pipelines: 0,
+        calendars: 0,
+        forms: 0,
+        paymentLinks: 0,
+        contacts: 0
+      };
+
+      // Clone workflows
+      for (const w of (snapshot.data.workflows || [])) {
+        state.records.workflows = state.records.workflows || [];
+        state.records.workflows.push({
+          ...w,
+          id: randomUUID(),
+          agencyId: agency.id,
+          locationId: targetLocId,
+          status: 'active',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+        deployed.workflows++;
+      }
+
+      // Clone pipelines
+      for (const p of (snapshot.data.pipelines || [])) {
+        state.records.pipelines = state.records.pipelines || [];
+        state.records.pipelines.push({
+          ...p,
+          id: randomUUID(),
+          agencyId: agency.id,
+          locationId: targetLocId,
+          createdAt: new Date().toISOString()
+        });
+        deployed.pipelines++;
+      }
+
+      // Clone calendars
+      for (const c of (snapshot.data.calendars || [])) {
+        state.records.calendars = state.records.calendars || [];
+        state.records.calendars.push({
+          ...c,
+          id: randomUUID(),
+          agencyId: agency.id,
+          locationId: targetLocId,
+          slug: `${c.slug}-${randomBytes(3).toString('hex')}`,
+          createdAt: new Date().toISOString()
+        });
+        deployed.calendars++;
+      }
+
+      // Clone forms
+      for (const f of (snapshot.data.forms || [])) {
+        state.records.forms = state.records.forms || [];
+        state.records.forms.push({
+          ...f,
+          id: randomUUID(),
+          agencyId: agency.id,
+          locationId: targetLocId,
+          slug: `${f.slug}-${randomBytes(3).toString('hex')}`,
+          createdAt: new Date().toISOString()
+        });
+        deployed.forms++;
+      }
+
+      // Clone payment links
+      for (const pl of (snapshot.data.paymentLinks || [])) {
+        state.records.paymentLinks = state.records.paymentLinks || [];
+        state.records.paymentLinks.push({
+          ...pl,
+          id: randomUUID(),
+          agencyId: agency.id,
+          locationId: targetLocId,
+          slug: `${pl.slug}-${randomBytes(3).toString('hex')}`,
+          createdAt: new Date().toISOString()
+        });
+        deployed.paymentLinks++;
+      }
+
+      // Clone contacts if requested
+      if (body.includeContacts && Array.isArray(snapshot.data.contacts)) {
+        for (const ct of snapshot.data.contacts) {
+          state.records.contacts = state.records.contacts || [];
+          state.records.contacts.push({
+            ...ct,
+            id: randomUUID(),
+            agencyId: agency.id,
+            locationId: targetLocId,
+            createdAt: new Date().toISOString()
+          });
+          deployed.contacts++;
+        }
+      }
+
+      await saveState();
+      auditLog('agency.snapshot.deployed', actor, { snapshotId, targetLocationId: targetLocId, deployed });
+      broadcast('agency.snapshot.deployed', { snapshotId, targetLocationId: targetLocId, deployed });
+
+      return sendJson(res, 200, {
+        success: true,
+        snapshotId,
+        targetLocationId: targetLocId,
+        targetLocationName: targetLoc.name,
+        deployed
+      });
+    }
+
+    // POST /api/agency/snapshots/:id/restore — restore active workspace to snapshot state
+    if (method === 'POST' && pathname.startsWith('/api/agency/snapshots/') && pathname.endsWith('/restore')) {
+      const snapshotId = pathname.replace('/api/agency/snapshots/', '').replace('/restore', '').trim();
+      const snapshot = (state.snapshots || []).find(s => s.id === snapshotId && s.agencyId === agency.id);
+      if (!snapshot) return sendJson(res, 404, { error: 'Snapshot not found' });
+
+      const targetLocId = activeLocation.id;
+
+      // Remove current records for this location in restored collections
+      const collectionsToRestore = ['workflows', 'pipelines', 'calendars', 'forms', 'paymentLinks'];
+      for (const col of collectionsToRestore) {
+        if (state.records[col]) {
+          state.records[col] = state.records[col].filter(r => !(r.agencyId === agency.id && r.locationId === targetLocId));
+        }
+      }
+
+      // Restore from snapshot
+      for (const w of (snapshot.data.workflows || [])) {
+        state.records.workflows.push({ ...w, id: randomUUID(), agencyId: agency.id, locationId: targetLocId });
+      }
+      for (const p of (snapshot.data.pipelines || [])) {
+        state.records.pipelines.push({ ...p, id: randomUUID(), agencyId: agency.id, locationId: targetLocId });
+      }
+      for (const c of (snapshot.data.calendars || [])) {
+        state.records.calendars.push({ ...c, id: randomUUID(), agencyId: agency.id, locationId: targetLocId });
+      }
+      for (const f of (snapshot.data.forms || [])) {
+        state.records.forms.push({ ...f, id: randomUUID(), agencyId: agency.id, locationId: targetLocId });
+      }
+      for (const pl of (snapshot.data.paymentLinks || [])) {
+        state.records.paymentLinks.push({ ...pl, id: randomUUID(), agencyId: agency.id, locationId: targetLocId });
+      }
+
+      await saveState();
+      auditLog('agency.snapshot.restored', actor, { snapshotId, locationId: targetLocId });
+      broadcast('agency.snapshot.restored', { snapshotId, locationId: targetLocId });
+
+      return sendJson(res, 200, { success: true, restoredAt: new Date().toISOString() });
+    }
+
+    // DELETE /api/agency/snapshots/:id — delete a snapshot
+    if (method === 'DELETE' && pathname.startsWith('/api/agency/snapshots/')) {
+      const snapshotId = pathname.replace('/api/agency/snapshots/', '').trim();
+      const idx = (state.snapshots || []).findIndex(s => s.id === snapshotId && s.agencyId === agency.id);
+      if (idx === -1) return sendJson(res, 404, { error: 'Snapshot not found' });
+
+      state.snapshots.splice(idx, 1);
+      await saveState();
+      auditLog('agency.snapshot.deleted', actor, { snapshotId });
+      broadcast('agency.snapshot.deleted', { snapshotId });
+
+      return sendJson(res, 200, { success: true, deletedId: snapshotId });
     }
 
     // ═════════════════════════════════════════════════════════════

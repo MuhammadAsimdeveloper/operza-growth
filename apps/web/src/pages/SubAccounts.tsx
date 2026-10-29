@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, PageHeader, StatCard } from '../components/ui';
 import { currency, num, shortDate } from '../lib/format';
 import { uid, useStore } from '../lib/store';
+import { api } from '../lib/api';
 import type { SaasPlan, SubAccount, SubAccountStatus } from '../lib/types';
 
 type Filter = 'all' | SubAccountStatus;
@@ -21,6 +22,34 @@ export default function SubAccounts() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<SubAccount | null>(null);
   const [editingPlan, setEditingPlan] = useState<SaasPlan | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    api.agency.getLocations().then((res) => {
+      if (!active || !res?.locations) return;
+      for (const loc of res.locations) {
+        if (!state.subAccounts.some((a) => a.id === loc.id)) {
+          dispatch({
+            type: 'subAccount/add',
+            account: {
+              id: loc.id,
+              name: loc.name,
+              industry: loc.industry || 'General',
+              ownerEmail: loc.ownerEmail || 'admin@' + (loc.name.toLowerCase().replace(/[^a-z0-9]/g, '') || 'workspace') + '.com',
+              planId: loc.planId || 'growth',
+              seats: loc.seats || 2,
+              contacts: loc.contactsCount || 0,
+              status: (loc.status === 'paused' ? 'paused' : loc.status === 'trial' ? 'trial' : 'active') as SubAccountStatus,
+              createdAt: loc.createdAt || new Date().toISOString(),
+            },
+          });
+        }
+      }
+    }).catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [state.subAccounts, dispatch]);
 
   const planOf = (id: string) => state.saasPlans.find((p) => p.id === id);
   const planTone = (id: string): 'default' | 'blue' | 'violet' => {
@@ -194,13 +223,19 @@ export default function SubAccounts() {
                               <button
                                 className="icon-btn"
                                 aria-label={`${account.status === 'paused' ? 'Resume' : 'Pause'} ${account.name}`}
-                                onClick={() =>
+                                onClick={async () => {
+                                  const nextStatus = account.status === 'paused' ? 'active' : 'paused';
+                                  try {
+                                    await api.agency.updateLocation(account.id, { status: nextStatus });
+                                  } catch (err) {
+                                    console.error('Failed to update status on server:', err);
+                                  }
                                   dispatch({
                                     type: 'subAccount/status',
                                     id: account.id,
-                                    status: account.status === 'paused' ? 'active' : 'paused',
-                                  })
-                                }
+                                    status: nextStatus,
+                                  });
+                                }}
                               >
                                 <Icon name={account.status === 'paused' ? 'play' : 'pause'} size={15} />
                               </button>
@@ -214,7 +249,14 @@ export default function SubAccounts() {
                               <button
                                 className="icon-btn"
                                 aria-label={`Delete ${account.name}`}
-                                onClick={() => dispatch({ type: 'subAccount/delete', id: account.id })}
+                                onClick={async () => {
+                                  try {
+                                    await api.agency.deleteLocation(account.id);
+                                  } catch (err) {
+                                    console.error('Failed to delete location on server:', err);
+                                  }
+                                  dispatch({ type: 'subAccount/delete', id: account.id });
+                                }}
                               >
                                 <Icon name="trash" size={15} />
                               </button>
@@ -311,13 +353,32 @@ export default function SubAccounts() {
             setCreating(false);
             setEditing(null);
           }}
-          onSave={(draft) => {
+          onSave={async (draft) => {
             if (editing) {
+              try {
+                await api.agency.updateLocation(editing.id, draft);
+              } catch (err) {
+                console.error('Failed to update subaccount:', err);
+              }
               dispatch({ type: 'subAccount/update', id: editing.id, patch: draft });
             } else {
+              let newId = uid('sa');
+              try {
+                const res = await api.agency.createLocation({
+                  name: draft.name,
+                  industry: draft.industry,
+                  ownerEmail: draft.ownerEmail,
+                  planId: draft.planId,
+                  seats: draft.seats,
+                  status: draft.status
+                });
+                if (res?.id) newId = res.id;
+              } catch (err) {
+                console.error('Failed to create subaccount in backend:', err);
+              }
               dispatch({
                 type: 'subAccount/add',
-                account: { ...draft, id: uid('sa'), contacts: 0, createdAt: new Date().toISOString() },
+                account: { ...draft, id: newId, contacts: 0, createdAt: new Date().toISOString() },
               });
             }
             setCreating(false);

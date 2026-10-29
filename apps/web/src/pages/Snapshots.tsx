@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, PageHeader, StatCard } from '../components/ui';
 import { fullDate, num, relative, timeOf } from '../lib/format';
 import { uid, useStore } from '../lib/store';
+import { api } from '../lib/api';
 import type { Snapshot } from '../lib/types';
 
 const LIMIT = 5;
@@ -44,8 +45,22 @@ function exportSnapshot(snapshot: Snapshot) {
 export default function Snapshots() {
   const { state, dispatch } = useStore();
   const [creating, setCreating] = useState(false);
+  const [deploying, setDeploying] = useState<Snapshot | null>(null);
+  const [locations, setLocations] = useState<{ id: string; name: string }[]>([]);
   const [confirm, setConfirm] = useState<{ kind: 'restore' | 'delete'; snapshot: Snapshot } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    api.agency.getLocations().then((res) => {
+      if (active && res?.locations) {
+        setLocations(res.locations.map((l: any) => ({ id: l.id, name: l.name })));
+      }
+    }).catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const totalSize = state.snapshots.reduce((sum, snapshot) => sum + sizeOf(snapshot), 0);
   const latest = state.snapshots[0];
@@ -149,6 +164,16 @@ export default function Snapshots() {
                     <td className="cell-right">
                       <span className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
                         <button
+                          className="btn btn--sm btn--primary"
+                          title="Deploy blueprint to another client workspace"
+                          onClick={() => {
+                            setNotice(null);
+                            setDeploying(snapshot);
+                          }}
+                        >
+                          <Icon name="send" size={13} /> Deploy
+                        </button>
+                        <button
                           className="btn btn--sm"
                           onClick={() => {
                             setNotice(null);
@@ -188,10 +213,34 @@ export default function Snapshots() {
         <CreateSnapshotModal
           atLimit={state.snapshots.length >= LIMIT}
           onClose={() => setCreating(false)}
-          onCreate={(name) => {
+          onCreate={async (name) => {
+            try {
+              await api.agency.createSnapshot({ name, includeContacts: true });
+            } catch (err) {
+              console.error('Failed to create snapshot in backend:', err);
+            }
             dispatch({ type: 'snapshot/create', id: uid('snap'), name });
             setCreating(false);
             setNotice(null);
+          }}
+        />
+      )}
+
+      {deploying && (
+        <DeploySnapshotModal
+          snapshot={deploying}
+          locations={locations}
+          onClose={() => setDeploying(null)}
+          onDeploy={async (targetLocationId, includeContacts) => {
+            try {
+              const res = await api.agency.deploySnapshot(deploying.id, targetLocationId, { includeContacts });
+              setNotice(
+                `Blueprint “${deploying.name}” successfully deployed to ${res.targetLocationName || 'workspace'}! Provisioned ${res.deployed?.workflows ?? 0} workflows, ${res.deployed?.pipelines ?? 0} pipelines, and ${res.deployed?.calendars ?? 0} calendars.`,
+              );
+            } catch (err: any) {
+              setNotice(`Deployment failed: ${err.message || 'Unknown error'}`);
+            }
+            setDeploying(null);
           }}
         />
       )}
@@ -208,8 +257,13 @@ export default function Snapshots() {
               <button
                 className={`btn ${confirm.kind === 'delete' ? 'btn--danger' : 'btn--primary'}`}
                 type="button"
-                onClick={() => {
+                onClick={async () => {
                   if (confirm.kind === 'restore') {
+                    try {
+                      await api.agency.restoreSnapshot(confirm.snapshot.id);
+                    } catch (err) {
+                      console.error('Failed to restore snapshot on backend:', err);
+                    }
                     dispatch({ type: 'snapshot/restore', id: confirm.snapshot.id });
                     setNotice(
                       `Workspace restored from “${confirm.snapshot.name}”. Changes made after ${fullDate(
@@ -217,6 +271,11 @@ export default function Snapshots() {
                       )} at ${timeOf(confirm.snapshot.createdAt)} were rolled back.`,
                     );
                   } else {
+                    try {
+                      await api.agency.deleteSnapshot(confirm.snapshot.id);
+                    } catch (err) {
+                      console.error('Failed to delete snapshot on backend:', err);
+                    }
                     dispatch({ type: 'snapshot/delete', id: confirm.snapshot.id });
                     setNotice(null);
                   }
@@ -301,6 +360,95 @@ function CreateSnapshotModal({
         Captures {num(state.contacts.length)} contacts, {num(state.opportunities.length)} deals,{' '}
         {num(state.orders.length)} orders and every other record in the workspace.
         {atLimit && ' The oldest snapshot will be removed to stay within the five-slot limit.'}
+      </div>
+    </Modal>
+  );
+}
+
+function DeploySnapshotModal({
+  snapshot,
+  locations,
+  onClose,
+  onDeploy,
+}: {
+  snapshot: Snapshot;
+  locations: { id: string; name: string }[];
+  onClose: () => void;
+  onDeploy: (targetLocationId: string, includeContacts: boolean) => Promise<void>;
+}) {
+  const [targetId, setTargetId] = useState(locations[0]?.id || '');
+  const [includeContacts, setIncludeContacts] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!targetId) return;
+    setIsSubmitting(true);
+    try {
+      await onDeploy(targetId, includeContacts);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Deploy Blueprint “${snapshot.name}”`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" type="button" onClick={onClose} disabled={isSubmitting}>
+            Cancel
+          </button>
+          <button
+            className="btn btn--primary"
+            type="button"
+            disabled={!targetId || isSubmitting}
+            onClick={handleSubmit}
+          >
+            {isSubmitting ? 'Deploying...' : 'Deploy to Sub-account'}
+          </button>
+        </>
+      }
+    >
+      <p style={{ marginTop: 0 }}>
+        Clone this blueprint configuration into a client workspace. Workflows, pipelines, forms, and calendars will be provisioned directly into the target sub-account.
+      </p>
+
+      {locations.length === 0 ? (
+        <div className="callout callout--warn">
+          No sub-accounts found. Create a client sub-account under Sub-accounts first.
+        </div>
+      ) : (
+        <div className="field">
+          <label htmlFor="target-location">Target Sub-account</label>
+          <select
+            id="target-location"
+            className="select"
+            value={targetId}
+            onChange={(e) => setTargetId(e.target.value)}
+          >
+            {locations.map((loc) => (
+              <option key={loc.id} value={loc.id}>
+                {loc.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      <div className="field" style={{ marginTop: 12 }}>
+        <label className="row" style={{ gap: 8, cursor: 'pointer', fontSize: 13 }}>
+          <input
+            type="checkbox"
+            checked={includeContacts}
+            onChange={(e) => setIncludeContacts(e.target.checked)}
+          />
+          Include demo contacts in deployment
+        </label>
+      </div>
+
+      <div className="callout" style={{ marginTop: 14 }}>
+        This will deep-clone and scope all snapshot assets into the selected workspace without modifying other sub-accounts.
       </div>
     </Modal>
   );

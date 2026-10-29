@@ -74,6 +74,24 @@ export const api = {
     submitPublic: (locationId: string, data: { contactName: string; email?: string; rating: number; text: string; source?: string }) =>
       request(`/api/reviews/submit/${locationId}`, { method: 'POST', body: JSON.stringify(data) }),
   },
+  agency: {
+    getLocations: () => request<{ locations: any[] }>('/api/agency/locations'),
+    createLocation: (data: { name: string; address?: string; phone?: string; timezone?: string; industry?: string; ownerEmail?: string; planId?: string; seats?: number; status?: string }) =>
+      request('/api/agency/locations', { method: 'POST', body: JSON.stringify(data) }),
+    updateLocation: (id: string, data: any) =>
+      request(`/api/agency/locations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    deleteLocation: (id: string) =>
+      request(`/api/agency/locations/${id}`, { method: 'DELETE' }),
+    getSnapshots: () => request<{ snapshots: any[] }>('/api/agency/snapshots'),
+    createSnapshot: (data: { name: string; description?: string; industry?: string; sourceLocationId?: string; includeContacts?: boolean }) =>
+      request('/api/agency/snapshots', { method: 'POST', body: JSON.stringify(data) }),
+    deploySnapshot: (id: string, targetLocationId: string, options?: { includeContacts?: boolean }) =>
+      request(`/api/agency/snapshots/${id}/deploy`, { method: 'POST', body: JSON.stringify({ targetLocationId, ...options }) }),
+    restoreSnapshot: (id: string) =>
+      request(`/api/agency/snapshots/${id}/restore`, { method: 'POST' }),
+    deleteSnapshot: (id: string) =>
+      request(`/api/agency/snapshots/${id}`, { method: 'DELETE' }),
+  },
   copilot: {
     stream: (message: string, onDelta: (delta: string) => void, onComplete: () => void) => {
       const eventSource = new EventSource(`/api/copilot/stream?message=${encodeURIComponent(message)}`, {

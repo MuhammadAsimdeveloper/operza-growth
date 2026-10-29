@@ -319,7 +319,75 @@ async function runTests() {
     }
     console.log('✅ Public review ingested, 5-star rating registered, and promoter tag applied');
 
-    console.log('\n🎉 ALL 13 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 14. Agency Sub-Accounts & Location Provisioning
+    console.log('\n[TEST 14] Agency Sub-Accounts: POST /api/agency/locations & GET /api/agency/locations');
+    const newLocRes = await request('/api/agency/locations', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Northwind Growth Lab',
+        industry: 'E-commerce',
+        ownerEmail: 'growth@northwind.io',
+        planId: 'scale',
+        seats: 5,
+        timezone: 'America/New_York',
+        status: 'active'
+      })
+    });
+    console.log(`Sub-Account Creation Status: ${newLocRes.status}`, newLocRes.data.id, newLocRes.data.name);
+    if (newLocRes.status !== 201 || !newLocRes.data.id || newLocRes.data.name !== 'Northwind Growth Lab') {
+      throw new Error(`Sub-account creation failed: ${JSON.stringify(newLocRes.data)}`);
+    }
+
+    const northwindLocId = newLocRes.data.id;
+    const locationsRes = await request('/api/agency/locations');
+    console.log(`Agency Locations Count: ${locationsRes.status}`, locationsRes.data.locations?.length);
+    const foundNorthwind = locationsRes.data.locations?.find(l => l.id === northwindLocId);
+    if (!foundNorthwind || foundNorthwind.industry !== 'E-commerce') {
+      throw new Error(`Could not find newly created location in /api/agency/locations`);
+    }
+    console.log(`Northwind Location Details: Name="${foundNorthwind.name}", Industry="${foundNorthwind.industry}", WorkflowsCount=${foundNorthwind.workflowsCount}`);
+    console.log('✅ Sub-account provisioned and queried via multi-tenant agency locations API');
+
+    // 15. Agency Snapshots Engine & 1-Click Client Deployment
+    console.log('\n[TEST 15] Agency Snapshots: POST /api/agency/snapshots & POST /api/agency/snapshots/:id/deploy');
+    const snapRes = await request('/api/agency/snapshots', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'E-commerce Growth Engine Blueprint',
+        description: 'Prebuilt onboarding flow, discovery calendar, and retainers',
+        industry: 'E-commerce',
+        includeContacts: true
+      })
+    });
+    console.log(`Snapshot Creation Status: ${snapRes.status}`, snapRes.data.id, snapRes.data.name);
+    if (snapRes.status !== 201 || !snapRes.data.id || snapRes.data.counts?.workflows === 0) {
+      throw new Error(`Snapshot creation failed: ${JSON.stringify(snapRes.data)}`);
+    }
+    console.log('Snapshot Blueprint Counts:', snapRes.data.counts);
+
+    // Deploy blueprint to Northwind Growth Lab sub-account
+    const deployRes = await request(`/api/agency/snapshots/${snapRes.data.id}/deploy`, {
+      method: 'POST',
+      body: JSON.stringify({
+        targetLocationId: northwindLocId,
+        includeContacts: true
+      })
+    });
+    console.log(`Snapshot Deploy Status: ${deployRes.status}`, deployRes.data.targetLocationName, deployRes.data.deployed);
+    if (deployRes.status !== 200 || !deployRes.data.success || deployRes.data.deployed?.workflows < 1) {
+      throw new Error(`Snapshot deployment failed: ${JSON.stringify(deployRes.data)}`);
+    }
+
+    // Verify Northwind location now has deployed workflows
+    const updatedLocsRes = await request('/api/agency/locations');
+    const updatedNorthwind = updatedLocsRes.data.locations?.find(l => l.id === northwindLocId);
+    console.log(`Northwind Workflows after deployment: ${updatedNorthwind?.workflowsCount}`);
+    if (!updatedNorthwind || updatedNorthwind.workflowsCount < 1) {
+      throw new Error('Deployed snapshot workflows not reflected in target sub-account');
+    }
+    console.log('✅ Snapshot created and 1-click deployed to client sub-account with deep-cloned assets');
+
+    console.log('\n🎉 ALL 15 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;
