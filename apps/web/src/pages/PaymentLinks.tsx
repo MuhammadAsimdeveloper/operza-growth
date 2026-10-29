@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, PageHeader, StatCard, Switch } from '../components/ui';
 import { currency, num, pct } from '../lib/format';
 import { uid, useStore } from '../lib/store';
+import { api } from '../lib/api';
 import type { PaymentLink } from '../lib/types';
 
 const urlFor = (slug: string) => `${typeof window !== 'undefined' ? window.location.origin : ''}/pay/${slug}`;
@@ -20,6 +21,40 @@ export default function PaymentLinks() {
   const { state, dispatch } = useStore();
   const [creating, setCreating] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.crm.list<PaymentLink>('paymentLinks').then((res) => {
+      if (res.data && res.data.length > 0) {
+        for (const link of res.data) {
+          if (!state.paymentLinks.some((x) => x.id === link.id)) {
+            dispatch({ type: 'paymentLink/add', link });
+          }
+        }
+      }
+    }).catch(() => {});
+  }, []);
+
+  const handleToggle = async (link: PaymentLink) => {
+    const nextActive = !link.active;
+    dispatch({ type: 'paymentLink/toggle', id: link.id });
+    try {
+      await api.crm.update('paymentLinks', link.id, { active: nextActive });
+    } catch { /* dev fallback */ }
+  };
+
+  const handleTestVisit = async (link: PaymentLink) => {
+    dispatch({ type: 'paymentLink/visit', id: link.id });
+    try {
+      await api.payments.getPublic(link.slug || link.id);
+    } catch { /* dev fallback */ }
+  };
+
+  const handleDelete = async (link: PaymentLink) => {
+    dispatch({ type: 'paymentLink/delete', id: link.id });
+    try {
+      await api.crm.delete('paymentLinks', link.id);
+    } catch { /* dev fallback */ }
+  };
 
   const visits = state.paymentLinks.reduce((sum, link) => sum + link.visits, 0);
   const conversions = state.paymentLinks.reduce((sum, link) => sum + link.conversions, 0);
@@ -86,7 +121,7 @@ export default function PaymentLinks() {
                     <Switch
                       on={link.active}
                       label={`Toggle ${link.name}`}
-                      onChange={() => dispatch({ type: 'paymentLink/toggle', id: link.id })}
+                      onChange={() => handleToggle(link)}
                     />
                   </div>
                 </div>
@@ -126,9 +161,18 @@ export default function PaymentLinks() {
                     <button
                       type="button"
                       className="btn btn--sm"
-                      onClick={() => dispatch({ type: 'paymentLink/visit', id: link.id })}
+                      onClick={() => handleTestVisit(link)}
                     >
                       <Icon name="eye" size={12} /> Test
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--sm"
+                      aria-label={`Delete ${link.name}`}
+                      title={`Delete ${link.name}`}
+                      onClick={() => handleDelete(link)}
+                    >
+                      <Icon name="trash" size={12} />
                     </button>
                   </div>
                 </div>
@@ -160,21 +204,25 @@ function NewLink({ onClose }: { onClose: () => void }) {
       current.includes(id) ? current.filter((x) => x !== id) : [...current, id],
     );
 
-  const save = () => {
+  const save = async () => {
     if (!canSave) return;
+    const newLink: PaymentLink = {
+      id: uid('pl'),
+      name: name.trim(),
+      productIds: selected,
+      amount,
+      slug: slug.trim(),
+      visits: 0,
+      conversions: 0,
+      active: true,
+      createdAt: new Date().toISOString(),
+    };
+    try {
+      await api.crm.create('paymentLinks', newLink);
+    } catch { /* dev fallback */ }
     dispatch({
       type: 'paymentLink/add',
-      link: {
-        id: uid('pl'),
-        name: name.trim(),
-        productIds: selected,
-        amount,
-        slug: slug.trim(),
-        visits: 0,
-        conversions: 0,
-        active: true,
-        createdAt: new Date().toISOString(),
-      },
+      link: newLink,
     });
     onClose();
   };

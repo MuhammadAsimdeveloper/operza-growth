@@ -24,6 +24,34 @@ export default function Settings() {
   const [addingField, setAddingField] = useState(false);
   const [resetting, setResetting] = useState(false);
 
+  useEffect(() => {
+    if (section === 'team') {
+      api.team.list().then((res) => {
+        if (res.team && res.team.length > 0) {
+          for (const m of res.team) {
+            if (!state.team.some((x) => x.id === m.id)) {
+              dispatch({ type: 'team/add', member: m });
+            }
+          }
+        }
+      }).catch(() => {});
+    }
+  }, [section]);
+
+  const handleRoleChange = async (m: TeamMember, newRole: TeamMember['role']) => {
+    dispatch({ type: 'team/role', id: m.id, role: newRole });
+    try {
+      await api.team.updateRole(m.id, newRole);
+    } catch { /* dev fallback */ }
+  };
+
+  const handleRemoveMember = async (m: TeamMember) => {
+    dispatch({ type: 'team/remove', id: m.id });
+    try {
+      await api.team.delete(m.id);
+    } catch { /* dev fallback */ }
+  };
+
   return (
     <div className="content">
       <PageHeader title="Settings" subtitle="Workspace configuration, team access and connected apps." />
@@ -70,15 +98,27 @@ export default function Settings() {
                       </div>
                       <div className="cell-sub">{m.email}</div>
                     </div>
-                    <select
-                      className="select"
-                      style={{ width: 110, height: 30, fontSize: 12 }}
-                      value={m.role}
-                      onChange={(e) => dispatch({ type: 'team/role', id: m.id, role: e.target.value as TeamMember['role'] })}
-                    >
-                      <option value="admin">Admin</option>
-                      <option value="user">User</option>
-                    </select>
+                    <div className="row" style={{ gap: 8 }}>
+                      <select
+                        className="select"
+                        style={{ width: 110, height: 30, fontSize: 12 }}
+                        value={m.role}
+                        aria-label={`Role for ${m.name}`}
+                        onChange={(e) => handleRoleChange(m, e.target.value as TeamMember['role'])}
+                      >
+                        <option value="admin">Admin</option>
+                        <option value="user">User</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        aria-label={`Remove ${m.name}`}
+                        title={`Remove ${m.name}`}
+                        onClick={() => handleRemoveMember(m)}
+                      >
+                        <Icon name="trash" size={13} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -224,7 +264,15 @@ export default function Settings() {
       {inviting && (
         <InviteMember
           onClose={() => setInviting(false)}
-          onSave={(member) => {
+          onSave={async (member) => {
+            try {
+              const res = await api.team.invite({ name: member.name, email: member.email, role: member.role });
+              if (res?.member) {
+                dispatch({ type: 'team/add', member: res.member });
+                setInviting(false);
+                return;
+              }
+            } catch { /* dev fallback */ }
             dispatch({ type: 'team/add', member });
             setInviting(false);
           }}

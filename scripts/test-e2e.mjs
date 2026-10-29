@@ -1738,7 +1738,103 @@ async function runTests() {
     }
     console.log('✅ Recurring subscription provisioned, listed, canceled, and resumed cleanly');
 
-    console.log('\n🎉 ALL 52 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 53. Agency Team Access Governance & Invitation Lifecycle
+    console.log('\n[TEST 53] Agency Team Access Governance: GET, Invite, Role Update & Removal');
+    const teamGetRes = await request('/api/agency/team');
+    console.log(`Team List Status: ${teamGetRes.status}`, `Initial Members: ${teamGetRes.data.team?.length}`);
+    if (teamGetRes.status !== 200 || !Array.isArray(teamGetRes.data.team)) {
+      throw new Error(`Failed to list agency team: ${JSON.stringify(teamGetRes.data)}`);
+    }
+
+    const inviteMemberRes = await request('/api/agency/team/invite', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Jordan Belfort',
+        email: 'jordan@strattongrowth.io',
+        role: 'user'
+      })
+    });
+    console.log(`Invite Member Status: ${inviteMemberRes.status}`, `ID: ${inviteMemberRes.data.member?.id}`, `Role: ${inviteMemberRes.data.member?.role}`);
+    if (inviteMemberRes.status !== 201 || !inviteMemberRes.data.member?.id || inviteMemberRes.data.member.role !== 'user') {
+      throw new Error(`Team member invitation failed: ${JSON.stringify(inviteMemberRes.data)}`);
+    }
+
+    const newMemberId = inviteMemberRes.data.member.id;
+
+    // Promote to admin
+    const updateRoleRes = await request(`/api/agency/team/${newMemberId}/role`, {
+      method: 'PUT',
+      body: JSON.stringify({ role: 'admin' })
+    });
+    console.log(`Role Update Status: ${updateRoleRes.status}`, `New Role: ${updateRoleRes.data.member?.role}`);
+    if (updateRoleRes.status !== 200 || updateRoleRes.data.member?.role !== 'admin') {
+      throw new Error(`Team role update failed: ${JSON.stringify(updateRoleRes.data)}`);
+    }
+
+    // Remove team member
+    const removeMemberRes = await request(`/api/agency/team/${newMemberId}`, { method: 'DELETE' });
+    console.log(`Remove Member Status: ${removeMemberRes.status}`, `Removed: ${removeMemberRes.data.member?.name}`);
+    if (removeMemberRes.status !== 200 || removeMemberRes.data.member?.id !== newMemberId) {
+      throw new Error(`Team member removal failed: ${JSON.stringify(removeMemberRes.data)}`);
+    }
+    console.log('✅ Agency team governance verified: list, invitation, role transition, and clean deprovisioning');
+
+    // 54. Payment Links Lifecycle & Public Ingress
+    console.log('\n[TEST 54] Payment Links Engine: Creation, Public Lookup, Pausing, & Reactivation');
+    const newPaymentLinkRes = await request('/api/crm/paymentLinks', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Executive AI Automation Retainer',
+        slug: 'executive-ai-retainer',
+        amount: 4500,
+        currency: 'USD',
+        active: true,
+        visits: 0,
+        conversions: 0
+      })
+    });
+    console.log(`Create Payment Link Status: ${newPaymentLinkRes.status}`, `ID: ${newPaymentLinkRes.data.id}`, `Slug: ${newPaymentLinkRes.data.slug}`);
+    if (newPaymentLinkRes.status !== 201 || !newPaymentLinkRes.data.id || newPaymentLinkRes.data.slug !== 'executive-ai-retainer') {
+      throw new Error(`Payment link creation failed: ${JSON.stringify(newPaymentLinkRes.data)}`);
+    }
+
+    const testLinkId = newPaymentLinkRes.data.id;
+
+    // Public lookup & visit increment
+    const publicLinkRes = await request('/api/payments/public/executive-ai-retainer');
+    console.log(`Public Link Lookup Status: ${publicLinkRes.status}`, `Visits: ${publicLinkRes.data.visits}`);
+    if (publicLinkRes.status !== 200 || publicLinkRes.data.visits !== 1 || publicLinkRes.data.amount !== 4500) {
+      throw new Error(`Public payment link lookup failed: ${JSON.stringify(publicLinkRes.data)}`);
+    }
+
+    // Pause payment link
+    const pauseLinkRes = await request(`/api/crm/paymentLinks/${testLinkId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ active: false })
+    });
+    console.log(`Pause Link Status: ${pauseLinkRes.status}`, `Active: ${pauseLinkRes.data.active}`);
+    if (pauseLinkRes.status !== 200 || pauseLinkRes.data.active !== false) {
+      throw new Error(`Payment link pause failed: ${JSON.stringify(pauseLinkRes.data)}`);
+    }
+
+    // Verify public route rejects inactive link
+    const inactiveLookupRes = await request('/api/payments/public/executive-ai-retainer');
+    console.log(`Inactive Link Public Status: ${inactiveLookupRes.status}`);
+    if (inactiveLookupRes.status !== 404) {
+      throw new Error(`Expected 404 for paused payment link, got ${inactiveLookupRes.status}`);
+    }
+
+    // Reactivate payment link
+    const reactivateLinkRes = await request(`/api/crm/paymentLinks/${testLinkId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ active: true })
+    });
+    if (reactivateLinkRes.status !== 200 || reactivateLinkRes.data.active !== true) {
+      throw new Error(`Payment link reactivation failed: ${JSON.stringify(reactivateLinkRes.data)}`);
+    }
+    console.log('✅ Payment links lifecycle verified: creation, public lookup, state machine pause/resume');
+
+    console.log('\n🎉 ALL 54 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

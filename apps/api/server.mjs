@@ -65,7 +65,8 @@ const collections = Object.freeze({
   blogs: { label: 'Blogs', required: ['title'], fields: ['title','slug','author','content','views','status','publishedAt','category','coverImage'] },
   qrCodes: { label: 'QR Codes', required: ['name','target'], fields: ['name','target','scans','createdAt','lastScannedAt'] },
   snippets: { label: 'Snippets', required: ['label','body'], fields: ['label','subject','body','channel','uses'] },
-  templates: { label: 'Templates', required: ['name','subject'], fields: ['name','category','subject','body','uses','updatedAt'] }
+  templates: { label: 'Templates', required: ['name','subject'], fields: ['name','category','subject','body','uses','updatedAt'] },
+  team: { label: 'Team Members', required: ['name'], fields: ['name','email','role','online','phone','avatar','status','createdAt'] }
 });
 
 // ─── State Management ─────────────────────────────────────────────────
@@ -4178,6 +4179,105 @@ const server = createServer(async (req, res) => {
           currency: agency.currency
         }
       });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── AGENCY: TEAM ACCESS & ROLE GOVERNANCE ───────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    // GET /api/agency/team — list team members for agency
+    if (method === 'GET' && pathname === '/api/agency/team') {
+      state.records.team = state.records.team || [];
+      let agencyTeam = state.records.team.filter(m => m.agencyId === agency.id);
+      if (agencyTeam.length === 0) {
+        const defaultOwner = {
+          id: randomUUID(),
+          agencyId: agency.id,
+          name: actor.user?.name || 'Agency Owner',
+          email: actor.user?.email || 'owner@operza.io',
+          role: 'admin',
+          online: true,
+          status: 'active',
+          createdAt: new Date().toISOString()
+        };
+        state.records.team.push(defaultOwner);
+        agencyTeam = [defaultOwner];
+        await saveState();
+      }
+      return sendJson(res, 200, { team: agencyTeam });
+    }
+
+    // POST /api/agency/team/invite — invite / create team member
+    if (method === 'POST' && pathname === '/api/agency/team/invite') {
+      const body = await readBody(req);
+      const name = (body.name || '').trim();
+      const email = (body.email || '').toLowerCase().trim();
+      const role = body.role === 'admin' ? 'admin' : 'user';
+      if (!name || !email) {
+        return sendJson(res, 400, { error: 'Name and email are required' });
+      }
+
+      state.records.team = state.records.team || [];
+      const existing = state.records.team.find(m => m.email === email && m.agencyId === agency.id);
+      if (existing) {
+        return sendJson(res, 409, { error: 'A team member with this email already exists' });
+      }
+
+      const memberId = randomUUID();
+      const member = {
+        id: memberId,
+        agencyId: agency.id,
+        name,
+        email,
+        role,
+        online: false,
+        status: 'active',
+        createdAt: new Date().toISOString()
+      };
+
+      state.records.team.push(member);
+      await saveState();
+
+      auditLog('team.member_invited', actor, { memberId, name, email, role });
+      broadcast('agency.team.member_invited', { member });
+
+      return sendJson(res, 201, { success: true, member });
+    }
+
+    // PUT /api/agency/team/:id/role — update team member role
+    if (method === 'PUT' && pathname.startsWith('/api/agency/team/') && pathname.endsWith('/role')) {
+      const memberId = pathname.replace('/api/agency/team/', '').replace('/role', '').trim();
+      const body = await readBody(req);
+      const role = body.role === 'admin' ? 'admin' : 'user';
+
+      state.records.team = state.records.team || [];
+      const member = state.records.team.find(m => m.id === memberId && m.agencyId === agency.id);
+      if (!member) return sendJson(res, 404, { error: 'Team member not found' });
+
+      member.role = role;
+      member.updatedAt = new Date().toISOString();
+      await saveState();
+
+      auditLog('team.role_updated', actor, { memberId, name: member.name, role });
+      broadcast('agency.team.role_updated', { memberId, role });
+
+      return sendJson(res, 200, { success: true, member });
+    }
+
+    // DELETE /api/agency/team/:id — remove team member
+    if (method === 'DELETE' && pathname.startsWith('/api/agency/team/')) {
+      const memberId = pathname.replace('/api/agency/team/', '').trim();
+      state.records.team = state.records.team || [];
+      const idx = state.records.team.findIndex(m => m.id === memberId && m.agencyId === agency.id);
+      if (idx === -1) return sendJson(res, 404, { error: 'Team member not found' });
+
+      const removed = state.records.team.splice(idx, 1)[0];
+      await saveState();
+
+      auditLog('team.member_removed', actor, { memberId, name: removed.name });
+      broadcast('agency.team.member_removed', { memberId });
+
+      return sendJson(res, 200, { success: true, member: removed });
     }
 
     // ═════════════════════════════════════════════════════════════

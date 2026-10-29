@@ -266,6 +266,15 @@ export const api = {
         { method: 'PUT', body: JSON.stringify({ portalAccess }) }
       ),
   },
+  team: {
+    list: () => request<{ team: any[] }>('/api/agency/team'),
+    invite: (data: { name: string; email: string; role?: 'admin' | 'user'; phone?: string }) =>
+      request<{ success: boolean; member: any }>('/api/agency/team/invite', { method: 'POST', body: JSON.stringify(data) }),
+    updateRole: (id: string, role: 'admin' | 'user') =>
+      request<{ success: boolean; member: any }>(`/api/agency/team/${id}/role`, { method: 'PUT', body: JSON.stringify({ role }) }),
+    delete: (id: string) =>
+      request<{ success: boolean; member?: any; id?: string }>(`/api/agency/team/${id}`, { method: 'DELETE' }),
+  },
   copilot: {
     chat: (data: { message: string; sessionId?: string; tools?: any[] }) =>
       request('/api/copilot/chat', { method: 'POST', body: JSON.stringify(data) }),

@@ -101,6 +101,7 @@ export type Action =
   | { type: 'paymentLink/add'; link: PaymentLink }
   | { type: 'paymentLink/toggle'; id: string }
   | { type: 'paymentLink/visit'; id: string }
+  | { type: 'paymentLink/delete'; id: string }
   | { type: 'task/add'; task: Task }
   | { type: 'task/toggle'; id: string }
   | { type: 'task/delete'; id: string }
@@ -200,6 +201,7 @@ export type Action =
   | { type: 'customField/add'; field: CustomField }
   | { type: 'team/add'; member: TeamMember }
   | { type: 'team/role'; id: string; role: TeamMember['role'] }
+  | { type: 'team/remove'; id: string }
   | { type: 'call/log'; call: CallRecord }
   | { type: 'call/handled'; id: string }
   | { type: 'call/delete'; id: string }
@@ -466,6 +468,12 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
         paymentLinks: state.paymentLinks.map((l) =>
           l.id === action.id ? { ...l, visits: l.visits + 1 } : l,
         ),
+      };
+
+    case 'paymentLink/delete':
+      return {
+        ...state,
+        paymentLinks: state.paymentLinks.filter((l) => l.id !== action.id),
       };
 
     case 'task/add':
@@ -1143,6 +1151,12 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
         team: state.team.map((m) => (m.id === action.id ? { ...m, role: action.role } : m)),
       };
 
+    case 'team/remove':
+      return {
+        ...state,
+        team: state.team.filter((m) => m.id !== action.id),
+      };
+
     case 'notifications/readAll':
       return { ...state, notifications: state.notifications.map((n) => ({ ...n, read: true })) };
 
@@ -1318,6 +1332,12 @@ function auditMeta(
         detail: link?.name,
       };
     }
+    case 'paymentLink/delete':
+      return {
+        action: 'Payment link deleted',
+        entity: 'Payment Link',
+        detail: byId(state.paymentLinks, action.id)?.name,
+      };
 
     case 'task/add':
       return { action: 'Task created', entity: 'Task', detail: action.task.title };
@@ -1585,6 +1605,12 @@ function auditMeta(
         detail: member ? `${member.name} → ${action.role}` : `→ ${action.role}`,
       };
     }
+    case 'team/remove':
+      return {
+        action: 'Team member removed',
+        entity: 'Team',
+        detail: byId(state.team, action.id)?.name,
+      };
     case 'integration/toggle': {
       const integration = byId(state.integrations, action.id);
       return {
