@@ -45,6 +45,9 @@ const collections = Object.freeze({
   campaigns: { label: 'Campaigns', required: ['name'], fields: ['name','channel','status','audience','scheduledAt','description'] },
   products: { label: 'Products', required: ['name'], fields: ['name','sku','price','status','description'] },
   invoices: { label: 'Invoices', required: ['number'], fields: ['number','contactName','amount','status','dueDate','description'] },
+  calendars: { label: 'Calendars', required: ['name'], fields: ['name','slug','color','durationMin','availability','roundRobin','description','status'] },
+  paymentLinks: { label: 'Payment links', required: ['name'], fields: ['name','slug','amount','currency','productIds','visits','conversions','active','description'] },
+  orders: { label: 'Orders', required: ['amount'], fields: ['orderNumber','contactId','contactName','amount','currency','status','paymentLinkId','items','paidAt'] },
   reviews: { label: 'Reputation', required: ['contactName'], fields: ['contactName','rating','text','source','status','receivedAt'] },
   courses: { label: 'Memberships', required: ['name'], fields: ['name','status','members','lessons','description'] },
   notes: { label: 'Notes', required: ['text'], fields: ['text','contactId','createdBy'] }
@@ -633,6 +636,277 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, message: 'Thank you! Submission received.', contactId });
     }
 
+    // Public Calendar Lookup
+    if (method === 'GET' && pathname.startsWith('/api/calendars/public/')) {
+      const idOrSlug = pathname.replace('/api/calendars/public/', '').trim();
+      const calendars = state.records.calendars || [];
+      const cal = calendars.find(c => (c.id === idOrSlug || c.slug === idOrSlug) && c.status !== 'inactive');
+      if (!cal) return sendJson(res, 404, { error: 'Calendar not found or inactive' });
+
+      // Generate standard slots if query date is provided
+      const dateParam = url.searchParams.get('date');
+      let slots = ['09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30'];
+      if (dateParam) {
+        const bookedStarts = (state.records.appointments || [])
+          .filter(a => a.calendarId === cal.id && a.startsAt && a.startsAt.startsWith(dateParam) && a.status !== 'cancelled')
+          .map(a => a.startsAt.split('T')[1]?.slice(0, 5));
+        slots = slots.filter(s => !bookedStarts.includes(s));
+      }
+
+      return sendJson(res, 200, {
+        id: cal.id,
+        name: cal.name,
+        slug: cal.slug,
+        color: cal.color || '#6366f1',
+        durationMin: cal.durationMin || 30,
+        description: cal.description || '',
+        availability: cal.availability || [],
+        availableSlots: slots
+      });
+    }
+
+    // Public Calendar Booking Ingress -> Create Appointment + Contact + Prep Task + Trigger Workflow
+    if (method === 'POST' && pathname.startsWith('/api/calendars/book/')) {
+      const idOrSlug = pathname.replace('/api/calendars/book/', '').trim();
+      const calendars = state.records.calendars || [];
+      const cal = calendars.find(c => (c.id === idOrSlug || c.slug === idOrSlug) && c.status !== 'inactive');
+      if (!cal) return sendJson(res, 404, { error: 'Calendar not found or inactive' });
+
+      const body = await readBody(req);
+      const { name, email, phone, date, timeSlot, notes } = body;
+      if (!name || !email || !date || !timeSlot) {
+        return sendJson(res, 400, { error: 'Name, email, date, and timeSlot are required.' });
+      }
+
+      const emailKey = String(email).toLowerCase().trim();
+      const nameParts = String(name).trim().split(/\s+/);
+      const firstName = nameParts[0] || 'Valued';
+      const lastName = nameParts.slice(1).join(' ') || 'Client';
+
+      let contact = (state.records.contacts || []).find(
+        c => c.agencyId === cal.agencyId && c.locationId === cal.locationId && c.email === emailKey
+      );
+
+      if (!contact) {
+        contact = {
+          id: randomUUID(),
+          agencyId: cal.agencyId,
+          locationId: cal.locationId,
+          firstName,
+          lastName,
+          email: emailKey,
+          phone: phone || '',
+          source: `Calendar: ${cal.name}`,
+          tags: ['booked-call', cal.slug || 'discovery'],
+          status: 'lead',
+          createdAt: new Date().toISOString()
+        };
+        state.records.contacts = state.records.contacts || [];
+        state.records.contacts.push(contact);
+      } else {
+        contact.tags = contact.tags || [];
+        if (!contact.tags.includes('booked-call')) contact.tags.push('booked-call');
+        if (phone && !contact.phone) contact.phone = phone;
+      }
+
+      const apptId = randomUUID();
+      const startTime = `${date}T${timeSlot}:00.000Z`;
+      const durationMin = cal.durationMin || 30;
+      const endTime = new Date(new Date(startTime).getTime() + durationMin * 60000).toISOString();
+      const appointment = {
+        id: apptId,
+        agencyId: cal.agencyId,
+        locationId: cal.locationId,
+        calendarId: cal.id,
+        contactId: contact.id,
+        title: `${cal.name} with ${firstName} ${lastName}`,
+        contactName: `${firstName} ${lastName}`,
+        calendar: cal.name,
+        startsAt: startTime,
+        endsAt: endTime,
+        status: 'confirmed',
+        assignedTo: cal.roundRobin ? 'Growth Lead' : 'Lead Specialist',
+        notes: notes || '',
+        createdAt: new Date().toISOString()
+      };
+      state.records.appointments = state.records.appointments || [];
+      state.records.appointments.push(appointment);
+
+      const taskId = randomUUID();
+      const prepTask = {
+        id: taskId,
+        agencyId: cal.agencyId,
+        locationId: cal.locationId,
+        title: `Prepare discovery notes for ${firstName} ${lastName}`,
+        contactId: contact.id,
+        dueDate: startTime,
+        priority: 'high',
+        status: 'pending',
+        assignedTo: appointment.assignedTo,
+        notes: `Automated booking prep task. Meeting scheduled for ${date} at ${timeSlot}. Attendee notes: ${notes || 'None'}`,
+        createdAt: new Date().toISOString()
+      };
+      state.records.tasks = state.records.tasks || [];
+      state.records.tasks.push(prepTask);
+
+      await saveState();
+
+      broadcast('crm.appointment.created', { id: apptId, title: appointment.title, startsAt: startTime, contactId: contact.id });
+      broadcast('crm.task.created', { id: taskId, title: prepTask.title });
+
+      triggerWorkflowExecution({
+        agencyId: cal.agencyId,
+        locationId: cal.locationId,
+        triggerType: 'appointment',
+        triggerContext: { calendar: cal, appointment, contact, prepTask }
+      }).catch(err => console.error('Appointment workflow trigger failed:', err));
+
+      return sendJson(res, 201, {
+        success: true,
+        message: 'Appointment successfully confirmed.',
+        appointment,
+        contact,
+        prepTask
+      });
+    }
+
+    // Public Payment Link Lookup
+    if (method === 'GET' && pathname.startsWith('/api/payments/public/')) {
+      const slugOrId = pathname.replace('/api/payments/public/', '').trim();
+      const links = state.records.paymentLinks || [];
+      const link = links.find(l => (l.slug === slugOrId || l.id === slugOrId) && l.active !== false);
+      if (!link) return sendJson(res, 404, { error: 'Payment link not found or inactive' });
+
+      link.visits = (link.visits || 0) + 1;
+      await saveState();
+
+      const products = (state.records.products || []).filter(p => (link.productIds || []).includes(p.id));
+
+      return sendJson(res, 200, {
+        id: link.id,
+        name: link.name,
+        slug: link.slug,
+        amount: link.amount,
+        currency: link.currency || 'USD',
+        description: link.description || '',
+        active: link.active,
+        visits: link.visits,
+        products
+      });
+    }
+
+    // Public Checkout Ingress -> Order + Invoice + Contact + Opportunity Won + Trigger Workflow
+    if (method === 'POST' && pathname.startsWith('/api/payments/checkout/')) {
+      const slugOrId = pathname.replace('/api/payments/checkout/', '').trim();
+      const links = state.records.paymentLinks || [];
+      const link = links.find(l => (l.slug === slugOrId || l.id === slugOrId) && l.active !== false);
+      if (!link) return sendJson(res, 404, { error: 'Payment link not found or inactive' });
+
+      const body = await readBody(req);
+      const { customerName, customerEmail, customerPhone } = body;
+      if (!customerName || !customerEmail) {
+        return sendJson(res, 400, { error: 'Customer name and email are required.' });
+      }
+
+      const emailKey = String(customerEmail).toLowerCase().trim();
+      const nameParts = String(customerName).trim().split(/\s+/);
+      const firstName = nameParts[0] || 'Valued';
+      const lastName = nameParts.slice(1).join(' ') || 'Customer';
+
+      let contact = (state.records.contacts || []).find(
+        c => c.agencyId === link.agencyId && c.locationId === link.locationId && c.email === emailKey
+      );
+
+      if (!contact) {
+        contact = {
+          id: randomUUID(),
+          agencyId: link.agencyId,
+          locationId: link.locationId,
+          firstName,
+          lastName,
+          email: emailKey,
+          phone: customerPhone || '',
+          source: `Checkout: ${link.name}`,
+          tags: ['customer', 'paid-checkout', link.slug || 'checkout'],
+          status: 'customer',
+          createdAt: new Date().toISOString()
+        };
+        state.records.contacts = state.records.contacts || [];
+        state.records.contacts.push(contact);
+      } else {
+        contact.status = 'customer';
+        contact.tags = contact.tags || [];
+        if (!contact.tags.includes('customer')) contact.tags.push('customer');
+        if (!contact.tags.includes('paid-checkout')) contact.tags.push('paid-checkout');
+        if (customerPhone && !contact.phone) contact.phone = customerPhone;
+      }
+
+      const orderId = randomUUID();
+      const order = {
+        id: orderId,
+        agencyId: link.agencyId,
+        locationId: link.locationId,
+        orderNumber: `ORD-${Date.now().toString().slice(-6)}`,
+        contactId: contact.id,
+        contactName: `${firstName} ${lastName}`,
+        amount: link.amount,
+        currency: link.currency || 'USD',
+        status: 'paid',
+        paymentLinkId: link.id,
+        items: [{ name: link.name, amount: link.amount, quantity: 1 }],
+        paidAt: new Date().toISOString(),
+        createdAt: new Date().toISOString()
+      };
+      state.records.orders = state.records.orders || [];
+      state.records.orders.push(order);
+
+      const invoiceId = randomUUID();
+      const invoice = {
+        id: invoiceId,
+        agencyId: link.agencyId,
+        locationId: link.locationId,
+        number: `INV-${Date.now().toString().slice(-6)}`,
+        contactId: contact.id,
+        contactName: `${firstName} ${lastName}`,
+        amount: link.amount,
+        status: 'paid',
+        dueDate: new Date().toISOString().split('T')[0],
+        description: `Payment for ${link.name}`,
+        createdAt: new Date().toISOString()
+      };
+      state.records.invoices = state.records.invoices || [];
+      state.records.invoices.push(invoice);
+
+      const opp = (state.records.opportunities || []).find(o => o.contactId === contact.id && o.status === 'open');
+      if (opp) {
+        opp.stage = 'Won';
+        opp.status = 'won';
+        opp.value = (opp.value || 0) + link.amount;
+        broadcast('crm.opportunity.updated', { id: opp.id, stage: 'Won', status: 'won', value: opp.value });
+      }
+
+      link.conversions = (link.conversions || 0) + 1;
+      await saveState();
+
+      broadcast('crm.order.created', { id: orderId, amount: order.amount, customerName: order.contactName });
+      broadcast('crm.invoice.created', { id: invoiceId, number: invoice.number, amount: invoice.amount, status: 'paid' });
+
+      triggerWorkflowExecution({
+        agencyId: link.agencyId,
+        locationId: link.locationId,
+        triggerType: 'payment',
+        triggerContext: { link, order, invoice, contact }
+      }).catch(err => console.error('Payment workflow trigger failed:', err));
+
+      return sendJson(res, 201, {
+        success: true,
+        message: 'Payment processed successfully.',
+        order,
+        invoice,
+        contact
+      });
+    }
+
     // ═════════════════════════════════════════════════════════════
     // ─── WEBHOOK HANDLERS (public, signature-gated) ─────────────
     // ═════════════════════════════════════════════════════════════
@@ -809,6 +1083,73 @@ const server = createServer(async (req, res) => {
       state.agencies.push(agency);
       state.locations.push(location);
       state.memberships.push(membership);
+
+      // Seed tenant defaults (Calendar, Payment Link, Public Form, Pipeline)
+      state.records.calendars = state.records.calendars || [];
+      const defaultCalId = randomUUID();
+      state.records.calendars.push({
+        id: defaultCalId,
+        agencyId,
+        locationId,
+        name: 'Discovery & Strategy Session',
+        slug: 'discovery-strategy',
+        color: '#6366f1',
+        durationMin: 30,
+        description: '30-minute discovery call to evaluate automation requirements and team fit.',
+        status: 'active',
+        roundRobin: true,
+        availability: [
+          { weekday: 1, start: '09:00', end: '17:00' },
+          { weekday: 2, start: '09:00', end: '17:00' },
+          { weekday: 3, start: '09:00', end: '17:00' },
+          { weekday: 4, start: '09:00', end: '17:00' },
+          { weekday: 5, start: '09:00', end: '17:00' }
+        ],
+        createdAt: new Date().toISOString()
+      });
+
+      state.records.paymentLinks = state.records.paymentLinks || [];
+      state.records.paymentLinks.push({
+        id: randomUUID(),
+        agencyId,
+        locationId,
+        name: 'Growth Retainer - Starter Pack',
+        slug: 'starter-retainer',
+        amount: 1500,
+        currency: 'USD',
+        productIds: [],
+        visits: 0,
+        conversions: 0,
+        active: true,
+        description: 'Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.',
+        createdAt: new Date().toISOString()
+      });
+
+      state.records.forms = state.records.forms || [];
+      state.records.forms.push({
+        id: randomUUID(),
+        agencyId,
+        locationId,
+        name: 'Inbound Consultation Request',
+        publicSlug: 'contact-us',
+        fields: ['firstName', 'lastName', 'email', 'phone', 'company', 'projectDetails'],
+        status: 'published',
+        submissions: 0,
+        description: 'Book your strategy consultation with our growth engineering team.',
+        createdAt: new Date().toISOString()
+      });
+
+      state.records.pipelines = state.records.pipelines || [];
+      state.records.pipelines.push({
+        id: randomUUID(),
+        agencyId,
+        locationId,
+        name: 'Lead Pipeline',
+        stages: ['New Inbound Lead', 'Discovery Call Booked', 'Proposal Sent', 'Won', 'Lost'],
+        status: 'active',
+        description: 'Primary customer acquisition pipeline',
+        createdAt: new Date().toISOString()
+      });
 
       const token = randomBytes(32).toString('hex');
       const csrf = randomBytes(24).toString('hex');

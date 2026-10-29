@@ -176,6 +176,9 @@ export default function Calendars() {
                     <span style={{ width: 9, height: 9, borderRadius: 3, background: cal.color }} />
                     <span style={{ fontSize: 13, fontWeight: 550, flex: 1 }}>{cal.name}</span>
                     {cal.roundRobin && <Badge tone="violet">Round-robin</Badge>}
+                    <a href={`/book/${cal.id}`} target="_blank" rel="noopener noreferrer" className="btn btn--sm" style={{ textDecoration: 'none' }} title="Open public booking page">
+                      <Icon name="link" size={12} /> Book
+                    </a>
                     <button className="btn btn--sm" onClick={() => setManaging(cal.id)}>
                       Hours
                     </button>

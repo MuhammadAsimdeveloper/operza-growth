@@ -6,7 +6,7 @@ import { currency, num, pct } from '../lib/format';
 import { uid, useStore } from '../lib/store';
 import type { PaymentLink } from '../lib/types';
 
-const urlFor = (slug: string) => `https://go.operza.test/l/${slug}`;
+const urlFor = (slug: string) => `${typeof window !== 'undefined' ? window.location.origin : ''}/pay/${slug}`;
 
 function slugify(value: string): string {
   return value
@@ -104,6 +104,9 @@ export default function PaymentLinks() {
                   </div>
                   <div className="link-url">
                     <span className="mono-cell">{urlFor(link.slug)}</span>
+                    <a href={urlFor(link.slug)} target="_blank" rel="noopener noreferrer" className="btn btn--sm" style={{ textDecoration: 'none' }}>
+                      <Icon name="link" size={12} /> Open
+                    </a>
                     <button type="button" className="btn btn--sm" onClick={() => copy(link)}>
                       <Icon name={copied === link.id ? 'check' : 'copy'} size={12} />
                       {copied === link.id ? 'Copied' : 'Copy'}

@@ -169,7 +169,57 @@ async function runTests() {
     console.log(`Received ${streamChunks} SSE streaming delta chunks`);
     console.log('✅ Copilot SSE real-time token streaming verified');
 
-    console.log('\n🎉 ALL 8 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 9. Public Calendar Ingress & Booking
+    console.log('\n[TEST 9] Public Calendar Ingress: GET /api/calendars/public/discovery-strategy & POST /api/calendars/book/discovery-strategy');
+    const calLookup = await request('/api/calendars/public/discovery-strategy');
+    console.log(`Calendar Lookup Status: ${calLookup.status}`, calLookup.data.name);
+    if (calLookup.status !== 200 || !calLookup.data.name) {
+      throw new Error(`Calendar public lookup failed: ${JSON.stringify(calLookup.data)}`);
+    }
+
+    const booking = await request('/api/calendars/book/discovery-strategy', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Elena Vance',
+        email: 'elena@vance.io',
+        phone: '+1 555-0144',
+        date: '2026-11-05',
+        timeSlot: '10:00',
+        notes: 'Seeking enterprise workflow orchestration consultation'
+      })
+    });
+    console.log(`Booking Status: ${booking.status}`, booking.data.appointment?.id);
+    if (booking.status !== 201 || !booking.data.appointment?.id || !booking.data.prepTask?.id) {
+      throw new Error(`Booking submission failed: ${JSON.stringify(booking.data)}`);
+    }
+    console.log('✅ Public calendar booking verified (Appointment, Contact, & Prep Task generated)');
+
+    // 10. Public Payment Ingress & Checkout
+    console.log('\n[TEST 10] Public Payment Ingress: GET /api/payments/public/starter-retainer & POST /api/payments/checkout/starter-retainer');
+    const payLookup = await request('/api/payments/public/starter-retainer');
+    console.log(`Payment Link Status: ${payLookup.status}`, payLookup.data.name, `$${payLookup.data.amount}`);
+    if (payLookup.status !== 200 || !payLookup.data.amount) {
+      throw new Error(`Payment link lookup failed: ${JSON.stringify(payLookup.data)}`);
+    }
+
+    const checkout = await request('/api/payments/checkout/starter-retainer', {
+      method: 'POST',
+      body: JSON.stringify({
+        customerName: 'Elena Vance',
+        customerEmail: 'elena@vance.io',
+        customerPhone: '+1 555-0144',
+        cardNumber: '4242 4242 4242 4242',
+        expiry: '12/28',
+        cvc: '123'
+      })
+    });
+    console.log(`Checkout Status: ${checkout.status}`, checkout.data.order?.orderNumber, checkout.data.invoice?.number);
+    if (checkout.status !== 201 || !checkout.data.order?.id || !checkout.data.invoice?.id || checkout.data.contact?.status !== 'customer') {
+      throw new Error(`Checkout submission failed: ${JSON.stringify(checkout.data)}`);
+    }
+    console.log('✅ Public payment checkout verified (Order, Invoice, and Customer promotion completed)');
+
+    console.log('\n🎉 ALL 10 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

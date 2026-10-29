@@ -51,6 +51,17 @@ export const api = {
     submitPublic: (slug: string, answers: Record<string, any>) =>
       request(`/api/forms/submit/${slug}`, { method: 'POST', body: JSON.stringify({ answers }) }),
   },
+  calendars: {
+    getPublic: (idOrSlug: string, date?: string) =>
+      request(`/api/calendars/public/${idOrSlug}${date ? `?date=${encodeURIComponent(date)}` : ''}`),
+    bookPublic: (idOrSlug: string, data: { name: string; email: string; phone?: string; date: string; timeSlot: string; notes?: string }) =>
+      request(`/api/calendars/book/${idOrSlug}`, { method: 'POST', body: JSON.stringify(data) }),
+  },
+  payments: {
+    getPublic: (slugOrId: string) => request(`/api/payments/public/${slugOrId}`),
+    checkoutPublic: (slugOrId: string, data: { customerName: string; customerEmail: string; customerPhone?: string; billingAddress?: any }) =>
+      request(`/api/payments/checkout/${slugOrId}`, { method: 'POST', body: JSON.stringify(data) }),
+  },
   workflows: {
     getRuns: () => request('/api/workflows/runs'),
     approveRun: (runId: string) =>
