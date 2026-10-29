@@ -1,13 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, EmptyState, StatusBadge } from '../components/ui';
 import { useStore, CHANNEL_META, uid } from '../lib/store';
 import { currency, fullDate, relative, shortDate, timeOf } from '../lib/format';
+import { api } from '../lib/api';
 import type { Contact, ContactStatus } from '../lib/types';
 
-const TABS = ['overview', 'notes', 'tasks', 'deals', 'inbox'] as const;
+const TABS = ['overview', 'timeline', 'notes', 'tasks', 'deals', 'inbox'] as const;
 type Tab = (typeof TABS)[number];
 
 export default function ContactDetail() {
@@ -19,6 +20,8 @@ export default function ContactDetail() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [noteDraft, setNoteDraft] = useState('');
   const [taskDraft, setTaskDraft] = useState('');
+  const [timelineEvents, setTimelineEvents] = useState<any[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
 
   const contact = state.contacts.find((c) => c.id === id);
 
@@ -47,6 +50,19 @@ export default function ContactDetail() {
     .sort((a, b) => a.start.localeCompare(b.start));
   const invoices = state.invoices.filter((i) => i.contactId === contact.id);
   const name = `${contact.firstName} ${contact.lastName}`;
+
+  useEffect(() => {
+    if (!contact?.id) return;
+    setTimelineLoading(true);
+    api.contacts.getTimeline(contact.id)
+      .then((res) => {
+        if (res?.timeline && Array.isArray(res.timeline)) {
+          setTimelineEvents(res.timeline);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setTimelineLoading(false));
+  }, [contact?.id]);
 
   const addNote = () => {
     if (!noteDraft.trim()) return;
@@ -178,6 +194,94 @@ export default function ContactDetail() {
                     <StatusBadge status={a.status} />
                   </div>
                 ))
+              )}
+            </div>
+          )}
+
+          {tab === 'timeline' && (
+            <div className="card__body stack">
+              <div className="row row--between" style={{ marginBottom: 4 }}>
+                <strong style={{ fontSize: 13 }}>Contact 360 Activity Ledger</strong>
+                <button
+                  className="btn btn--sm btn--ghost"
+                  onClick={() => {
+                    setTimelineLoading(true);
+                    api.contacts.getTimeline(contact.id)
+                      .then((res) => {
+                        if (res?.timeline) setTimelineEvents(res.timeline);
+                      })
+                      .finally(() => setTimelineLoading(false));
+                  }}
+                >
+                  <Icon name="refresh" size={13} /> Refresh
+                </button>
+              </div>
+
+              {timelineLoading ? (
+                <div className="hint" style={{ padding: '16px 0' }}>Loading activity history…</div>
+              ) : timelineEvents.length === 0 ? (
+                <EmptyState icon={<Icon name="clock" size={20} />} title="No events logged yet" />
+              ) : (
+                <div className="timeline-list stack" style={{ gap: 12 }}>
+                  {timelineEvents.map((evt, idx) => (
+                    <div
+                      key={idx}
+                      className="row"
+                      style={{
+                        gap: 12,
+                        padding: '10px 14px',
+                        background: 'var(--surface-2)',
+                        borderRadius: 6,
+                        border: '1px solid var(--line)',
+                        alignItems: 'flex-start',
+                      }}
+                    >
+                      <div
+                        className="avatar avatar--sm avatar--square"
+                        style={{
+                          background:
+                            evt.type === 'opportunity'
+                              ? 'var(--accent-soft)'
+                              : evt.type === 'task'
+                              ? 'var(--green-soft)'
+                              : evt.type === 'audit'
+                              ? 'var(--amber-soft)'
+                              : 'var(--surface-3)',
+                          color:
+                            evt.type === 'opportunity'
+                              ? 'var(--accent)'
+                              : evt.type === 'task'
+                              ? 'var(--green)'
+                              : evt.type === 'audit'
+                              ? 'var(--amber)'
+                              : 'var(--text-1)',
+                        }}
+                      >
+                        <Icon
+                          name={
+                            evt.type === 'opportunity'
+                              ? 'dollar'
+                              : evt.type === 'task'
+                              ? 'check'
+                              : evt.type === 'note'
+                              ? 'message'
+                              : evt.type === 'contact_created'
+                              ? 'users'
+                              : 'bell'
+                          }
+                          size={14}
+                        />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 550 }}>{evt.detail}</div>
+                        <div className="cell-sub" style={{ marginTop: 2 }}>
+                          <span style={{ textTransform: 'capitalize' }}>{evt.type.replace('_', ' ')}</span>
+                          {evt.date && ` · ${fullDate(evt.date)} (${relative(evt.date)})`}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           )}

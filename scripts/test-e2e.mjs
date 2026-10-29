@@ -563,7 +563,95 @@ async function runTests() {
     console.log(`Verified Deal Opportunity: ID=${elenaOpp.id}, Stage="${elenaOpp.stage}", Value=$${elenaOpp.value}`);
     console.log('✅ Public form ingress verified: form lookup, lead creation, opportunity provisioning, and workflow trigger');
 
-    console.log('\n🎉 ALL 21 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 22. CSV Bulk Ingestion & Multi-Contact Bulk Tagging
+    console.log('\n[TEST 22] CSV Bulk Ingestion & Multi-Contact Tagging: POST /api/crm/contacts/import & /bulk-tag');
+    const csvData = [
+      'firstName,lastName,email,phone,company,tags',
+      'Victor,Stone,victor@star-labs.org,+15550211,S.T.A.R. Labs,enterprise',
+      'Diana,Prince,diana@themyscira-antiques.org,+15550222,Themyscira Antiques,vip'
+    ].join('\n');
+
+    const csvImportRes = await request('/api/crm/contacts/import', {
+      method: 'POST',
+      body: JSON.stringify({ csv: csvData })
+    });
+    console.log(`CSV Import Status: ${csvImportRes.status}`, `Imported: ${csvImportRes.data.imported}`);
+    if (csvImportRes.status !== 201 || csvImportRes.data.imported !== 2) {
+      throw new Error(`CSV bulk import failed: ${JSON.stringify(csvImportRes.data)}`);
+    }
+
+    const importedIds = csvImportRes.data.contacts.map(c => c.id);
+    const bulkTagRes = await request('/api/crm/contacts/bulk-tag', {
+      method: 'POST',
+      body: JSON.stringify({ contactIds: importedIds, tag: 'q4-accelerator' })
+    });
+    console.log(`Bulk Tag Status: ${bulkTagRes.status}`, `Updated: ${bulkTagRes.data.updated}`);
+    if (bulkTagRes.status !== 200 || bulkTagRes.data.updated !== 2) {
+      throw new Error(`Bulk tagging failed: ${JSON.stringify(bulkTagRes.data)}`);
+    }
+
+    // Verify tag persistence on imported contact
+    const victorVerify = await request('/api/crm/contacts?search=Victor');
+    const victor = victorVerify.data.data?.[0];
+    if (!victor || !victor.tags?.includes('q4-accelerator')) {
+      throw new Error('Bulk tag was not applied to imported contact');
+    }
+    console.log(`Verified Tagged Contact: ID=${victor.id}, Name="${victor.firstName} ${victor.lastName}", Tags=[${victor.tags.join(', ')}]`);
+    console.log('✅ CSV contact batch import and bulk tagging verified cleanly');
+
+    // 23. Contact Deduplication & Relational Merge Engine
+    console.log('\n[TEST 23] Contact Deduplication & Relational Merge: POST /api/crm/contacts/merge');
+    // Create a duplicate record for Victor with an extra tag and secondary info
+    const dupRes = await request('/api/crm/contacts', {
+      method: 'POST',
+      body: JSON.stringify({
+        firstName: 'Victor',
+        lastName: 'Stone',
+        email: 'victor.stone@justice-league.org',
+        phone: '+1 555-0999',
+        company: 'Cyborg Innovations',
+        tags: ['founder-club']
+      })
+    });
+    const dupId = dupRes.data.id;
+    console.log(`Created Duplicate Contact ID: ${dupId}`);
+
+    // Merge duplicate into primary Victor
+    const mergeRes = await request('/api/crm/contacts/merge', {
+      method: 'POST',
+      body: JSON.stringify({ primaryId: victor.id, mergeIds: [dupId] })
+    });
+    console.log(`Merge Status: ${mergeRes.status}`, `Merged Count: ${mergeRes.data.mergedCount}`);
+    if (mergeRes.status !== 200 || mergeRes.data.mergedCount !== 1) {
+      throw new Error(`Contact merge failed: ${JSON.stringify(mergeRes.data)}`);
+    }
+
+    // Verify merged tags and duplicate removal
+    const postMergeVictor = await request(`/api/crm/contacts/${victor.id}`);
+    if (!postMergeVictor.data.tags?.includes('founder-club')) {
+      throw new Error('Secondary tags were not merged into primary contact');
+    }
+    const dupCheckRes = await request(`/api/crm/contacts/${dupId}`);
+    if (dupCheckRes.status !== 404) {
+      throw new Error('Duplicate contact was not purged following merge operation');
+    }
+    console.log(`Verified Master Contact: ID=${postMergeVictor.data.id}, Merged Tags=[${postMergeVictor.data.tags.join(', ')}]`);
+    console.log('✅ Contact deduplication and relational merge verified cleanly');
+
+    // 24. Contact 360 Activity Ledger & Timeline Query
+    console.log('\n[TEST 24] Contact 360 Activity Ledger: GET /api/crm/contacts/:id/timeline');
+    const timelineRes = await request(`/api/crm/contacts/${elena.id}/timeline`);
+    console.log(`Timeline Status: ${timelineRes.status}`, `Events: ${timelineRes.data.timeline?.length}`);
+    if (timelineRes.status !== 200 || !Array.isArray(timelineRes.data.timeline) || timelineRes.data.timeline.length < 2) {
+      throw new Error(`Contact timeline query failed: ${JSON.stringify(timelineRes.data)}`);
+    }
+    console.log('Top Timeline Events:');
+    timelineRes.data.timeline.slice(0, 3).forEach(evt => {
+      console.log(`   - [${evt.type}] ${evt.detail} (${evt.date || 'no date'})`);
+    });
+    console.log('✅ Contact 360 activity ledger query verified');
+
+    console.log('\n🎉 ALL 24 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

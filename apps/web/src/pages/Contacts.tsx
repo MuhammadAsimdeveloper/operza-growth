@@ -1,5 +1,5 @@
 import { api } from '../lib/api';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
@@ -22,10 +22,45 @@ export default function Contacts() {
   const [status, setStatus] = useState<'all' | ContactStatus>('all');
   const [tag, setTag] = useState('all');
   const [adding, setAdding] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [merging, setMerging] = useState(false);
+  const [notice, setNotice] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [tagDraft, setTagDraft] = useState('');
   const [statusDraft, setStatusDraft] = useState<ContactStatus>('lead');
   const [confirmBulk, setConfirmBulk] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    api.crm.list('contacts').then((res) => {
+      if (!active || !res?.data || !Array.isArray(res.data)) return;
+      for (const c of res.data) {
+        if (!state.contacts.some((sc) => sc.id === c.id)) {
+          dispatch({
+            type: 'contact/add',
+            contact: {
+              id: c.id,
+              firstName: c.firstName || '',
+              lastName: c.lastName || '',
+              email: c.email || '',
+              phone: c.phone || '',
+              company: c.company || '',
+              tags: Array.isArray(c.tags) ? c.tags : [],
+              source: c.source || 'Manual',
+              status: (c.status || 'lead') as ContactStatus,
+              owner: c.owner || 'Operator',
+              createdAt: c.createdAt || new Date().toISOString(),
+              notes: [],
+              customFields: c.customValues || {},
+            },
+          });
+        }
+      }
+    }).catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [state.contacts, dispatch]);
 
   const allTags = useMemo(
     () => Array.from(new Set(state.contacts.flatMap((c) => c.tags))).sort(),
@@ -59,10 +94,16 @@ export default function Contacts() {
         : Array.from(new Set([...current, ...visibleIds])),
     );
 
-  const applyTag = () => {
+  const applyTag = async () => {
     const value = tagDraft.trim().toLowerCase().replace(/\s+/g, '-');
     if (!value || selected.length === 0) return;
     dispatch({ type: 'contact/bulkTag', ids: selected, tag: value });
+    try {
+      await api.contacts.bulkTag(selected, value);
+      setNotice(`Tag “${value}” applied to ${selected.length} contact(s)`);
+    } catch (err: any) {
+      console.error('Failed to bulk tag contacts:', err);
+    }
     setTagDraft('');
   };
 
@@ -78,8 +119,8 @@ export default function Contacts() {
         subtitle={`${state.contacts.length} people in this workspace`}
         actions={
           <>
-            <button className="btn">
-              <Icon name="filter" size={15} /> Import
+            <button className="btn" onClick={() => setImporting(true)}>
+              <Icon name="upload" size={15} /> Import CSV
             </button>
             <button className="btn btn--primary" onClick={() => setAdding(true)}>
               <Icon name="plus" size={16} /> Add contact
@@ -87,6 +128,12 @@ export default function Contacts() {
           </>
         }
       />
+
+      {notice && (
+        <div className="callout callout--info" style={{ marginBottom: 14 }}>
+          {notice}
+        </div>
+      )}
 
       <div className="card">
         <div className="card__head" style={{ gap: 8, flexWrap: 'wrap' }}>
@@ -152,6 +199,15 @@ export default function Contacts() {
               </button>
             </div>
             <span className="spacer" />
+            {selected.length >= 2 && (
+              <button
+                className="btn btn--sm btn--primary"
+                type="button"
+                onClick={() => setMerging(true)}
+              >
+                <Icon name="link" size={13} /> Merge ({selected.length})
+              </button>
+            )}
             <button className="btn btn--sm btn--ghost" type="button" onClick={() => setSelected([])}>
               Clear
             </button>
@@ -256,6 +312,55 @@ export default function Contacts() {
             api.crm.create('contacts', contact).catch(() => {});
             setAdding(false);
             navigate(`/contacts/${contact.id}`);
+          }}
+        />
+      )}
+
+      {importing && (
+        <ImportModal
+          onClose={() => setImporting(false)}
+          onImported={(count) => {
+            setNotice(`Successfully imported ${count} contact(s) via CSV!`);
+            // Refresh contacts from server
+            api.crm.list('contacts').then((res) => {
+              if (res?.data && Array.isArray(res.data)) {
+                for (const c of res.data) {
+                  if (!state.contacts.some((sc) => sc.id === c.id)) {
+                    dispatch({
+                      type: 'contact/add',
+                      contact: {
+                        id: c.id,
+                        firstName: c.firstName || '',
+                        lastName: c.lastName || '',
+                        email: c.email || '',
+                        phone: c.phone || '',
+                        company: c.company || '',
+                        tags: Array.isArray(c.tags) ? c.tags : [],
+                        source: c.source || 'CSV Import',
+                        status: (c.status || 'lead') as ContactStatus,
+                        owner: c.owner || 'Operator',
+                        createdAt: c.createdAt || new Date().toISOString(),
+                        notes: [],
+                        customFields: c.customValues || {},
+                      },
+                    });
+                  }
+                }
+              }
+            }).catch(() => {});
+          }}
+        />
+      )}
+
+      {merging && (
+        <MergeModal
+          selectedIds={selected}
+          contacts={state.contacts}
+          onClose={() => setMerging(false)}
+          onMerged={(primaryId, mergedIds) => {
+            dispatch({ type: 'contact/bulkDelete', ids: mergedIds });
+            setSelected([primaryId]);
+            setNotice(`Merged ${mergedIds.length} contact(s) into master record.`);
           }}
         />
       )}
@@ -398,6 +503,130 @@ export function AddContact({
         <label>Tags (comma separated)</label>
         <input className="input" placeholder="hot-lead, webinar" value={tags} onChange={(e) => setTags(e.target.value)} />
       </div>
+    </Modal>
+  );
+}
+
+function ImportModal({
+  onClose,
+  onImported,
+}: {
+  onClose: () => void;
+  onImported: (count: number) => void;
+}) {
+  const [csv, setCsv] = useState(
+    'firstName,lastName,email,phone,company,tags\nJane,Doe,jane@acme.com,+15550188,Acme Corp,vip;q4\nAlex,Chen,alex@chen-analytics.io,+15550192,Chen Analytics,ai-ready'
+  );
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleImport = async () => {
+    if (!csv.trim()) return;
+    setLoading(true);
+    setError('');
+    try {
+      const res = await api.contacts.importCsv(csv);
+      onImported(res.imported || 0);
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'CSV Import failed. Verify headers.');
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="Import Contacts (CSV)"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={onClose} disabled={loading}>
+            Cancel
+          </button>
+          <button className="btn btn--primary" onClick={handleImport} disabled={loading || !csv.trim()}>
+            {loading ? 'Importing…' : 'Import Contacts'}
+          </button>
+        </>
+      }
+    >
+      <div className="field">
+        <label>CSV Data (headers: firstName, lastName, email, phone, company, tags)</label>
+        <textarea
+          className="textarea"
+          rows={7}
+          value={csv}
+          onChange={(e) => setCsv(e.target.value)}
+          placeholder="firstName,lastName,email,phone,company,tags..."
+        />
+        <div className="hint" style={{ marginTop: 4 }}>
+          Tags can be separated by semicolons (e.g. <code>lead;enterprise</code>).
+        </div>
+      </div>
+      {error && <div className="callout callout--danger">{error}</div>}
+    </Modal>
+  );
+}
+
+function MergeModal({
+  selectedIds,
+  contacts,
+  onClose,
+  onMerged,
+}: {
+  selectedIds: string[];
+  contacts: Contact[];
+  onClose: () => void;
+  onMerged: (primaryId: string, mergedIds: string[]) => void;
+}) {
+  const selectedContacts = contacts.filter((c) => selectedIds.includes(c.id));
+  const [primaryId, setPrimaryId] = useState(selectedContacts[0]?.id || '');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleMerge = async () => {
+    if (!primaryId) return;
+    const mergeIds = selectedIds.filter((id) => id !== primaryId);
+    setLoading(true);
+    setError('');
+    try {
+      await api.contacts.merge(primaryId, mergeIds);
+      onMerged(primaryId, mergeIds);
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Failed to merge contacts');
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Merge ${selectedIds.length} Duplicate Contacts`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={onClose} disabled={loading}>
+            Cancel
+          </button>
+          <button className="btn btn--primary" onClick={handleMerge} disabled={loading || !primaryId}>
+            {loading ? 'Merging…' : 'Confirm Merge'}
+          </button>
+        </>
+      }
+    >
+      <div className="field">
+        <label>Select Master (Primary) Contact to Retain</label>
+        <select className="select" value={primaryId} onChange={(e) => setPrimaryId(e.target.value)}>
+          {selectedContacts.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.firstName} {c.lastName} ({c.email || c.company || 'No email'})
+            </option>
+          ))}
+        </select>
+        <div className="hint" style={{ marginTop: 6 }}>
+          All tags, opportunities, notes, and tasks from secondary contacts will be transferred to the primary record. Secondary records will be deleted permanently.
+        </div>
+      </div>
+      {error && <div className="callout callout--danger">{error}</div>}
     </Modal>
   );
 }

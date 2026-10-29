@@ -46,6 +46,16 @@ export const api = {
     delete: (collection: string, id: string) =>
       request(`/api/crm/${collection}/${id}`, { method: 'DELETE' }),
   },
+  contacts: {
+    bulkTag: (contactIds: string[], tag: string) =>
+      request('/api/crm/contacts/bulk-tag', { method: 'POST', body: JSON.stringify({ contactIds, tag }) }),
+    importCsv: (csv: string) =>
+      request('/api/crm/contacts/import', { method: 'POST', body: JSON.stringify({ csv }) }),
+    merge: (primaryId: string, mergeIds: string[]) =>
+      request('/api/crm/contacts/merge', { method: 'POST', body: JSON.stringify({ primaryId, mergeIds }) }),
+    getTimeline: (id: string) =>
+      request(`/api/crm/contacts/${id}/timeline`),
+  },
   forms: {
     getPublic: (slug: string) => request(`/api/forms/public/${slug}`),
     submitPublic: (slug: string, answers: Record<string, any>) =>
