@@ -142,6 +142,14 @@ export const api = {
   subscriptions: {
     cancel: (id: string) => request(`/api/subscriptions/${id}/cancel`, { method: 'POST' }),
   },
+  memberships: {
+    enroll: (courseId: string, contactId: string) =>
+      request('/api/memberships/enroll', { method: 'POST', body: JSON.stringify({ courseId, contactId }) }),
+  },
+  affiliates: {
+    track: (code: string, amount: number) =>
+      request(`/api/affiliates/track/${code}`, { method: 'POST', body: JSON.stringify({ amount }) }),
+  },
   copilot: {
     chat: (data: { message: string; sessionId?: string; tools?: any[] }) =>
       request('/api/copilot/chat', { method: 'POST', body: JSON.stringify(data) }),

@@ -55,7 +55,10 @@ const collections = Object.freeze({
   subscriptions: { label: 'Subscriptions', required: ['plan', 'amount'], fields: ['plan','amount','interval','status','renewsAt','contactId'] },
   documents: { label: 'Documents', required: ['title'], fields: ['title','kind','value','status','contactId','signedAt','pdfUrl'] },
   triggerLinks: { label: 'Trigger Links', required: ['name','targetUrl','slug'], fields: ['name','targetUrl','slug','workflowId','clicks','lastClickAt'] },
-  customValues: { label: 'Custom Values', required: ['name','value'], fields: ['name','value'] }
+  customValues: { label: 'Custom Values', required: ['name','value'], fields: ['name','value'] },
+  calls: { label: 'Phone System Calls', required: ['from', 'to'], fields: ['from','to','durationSec','outcome','direction','contactId','startedAt','recordingUrl','handled'] },
+  enrollments: { label: 'Course Enrollments', required: ['courseId', 'contactId'], fields: ['courseId','contactId','progress','startedAt','status'] },
+  affiliates: { label: 'Affiliates', required: ['name', 'code'], fields: ['name','code','commissionPct','clicks','conversions','payout','status'] }
 });
 
 // ─── State Management ─────────────────────────────────────────────────
@@ -84,6 +87,10 @@ const RATE_LIMIT_MAX_REQUESTS = 120;   // per IP per window
 const RATE_LIMIT_AUTH_MAX = 10;        // stricter for auth endpoints
 
 function getRateLimitKey(ip) { return ip || 'unknown'; }
+
+function normalizePhone(p) {
+  return String(p || '').replace(/\D/g, '');
+}
 
 function checkRateLimit(ip, limit = RATE_LIMIT_MAX_REQUESTS) {
   const key = getRateLimitKey(ip);
@@ -1473,13 +1480,64 @@ const server = createServer(async (req, res) => {
             triggerContext: { contact, message: textBody, from: fromNumber }
           }).catch(err => console.error('SMS workflow trigger failed:', err));
         }
-      } else if (messageType === 'call_status') {
-        broadcast('webhook.twilio.call_status', { callSid: payload.CallSid, status: payload.CallStatus });
+      } else if (messageType === 'call_status' || payload.CallDuration !== undefined || payload.CallStatus) {
+        const callStatus = payload.CallStatus || 'completed';
+        const outcome = (callStatus === 'completed') ? 'completed' : ((callStatus === 'no-answer' || callStatus === 'busy') ? 'missed' : 'voicemail');
+        const fromNumber = normalizePhone(payload.From || '');
+
+        state.records.calls = state.records.calls || [];
+        const contact = (state.records.contacts || []).find(c =>
+          normalizePhone(c.phone || '') === fromNumber
+        );
+
+        const agencyId = contact?.agencyId || state.agencies[0]?.id;
+        const locationId = contact?.locationId || state.locations[0]?.id;
+
+        const callRecord = {
+          id: payload.CallSid || randomUUID(),
+          agencyId,
+          locationId,
+          from: fromNumber,
+          to: payload.To || '',
+          durationSec: Number(payload.CallDuration) || (outcome === 'completed' ? 120 : 0),
+          outcome,
+          direction: 'inbound',
+          contactId: contact ? contact.id : undefined,
+          startedAt: new Date().toISOString()
+        };
+        state.records.calls.push(callRecord);
+
+        // Automated Missed-Call Follow Up Task & Trigger
+        if (outcome === 'missed' && contact) {
+          contact.tags = Array.from(new Set([...(contact.tags || []), 'missed-call']));
+          state.records.tasks = state.records.tasks || [];
+          state.records.tasks.push({
+            id: randomUUID(),
+            agencyId: contact.agencyId,
+            locationId: contact.locationId,
+            title: `Missed call follow-up: ${contact.firstName} ${contact.lastName}`,
+            priority: 'high',
+            status: 'pending',
+            contactId: contact.id,
+            dueDate: new Date(Date.now() + 3600000).toISOString(),
+            createdAt: new Date().toISOString()
+          });
+
+          triggerWorkflowExecution({
+            agencyId: contact.agencyId,
+            locationId: contact.locationId,
+            triggerType: 'missed_call',
+            triggerContext: { contact, call: callRecord }
+          }).catch(console.error);
+        }
+
+        await saveState();
+        broadcast('phone.call.received', callRecord);
       }
 
-      // Return TwiML-compatible empty response
+      // Return TwiML-compatible response
       res.writeHead(200, { 'content-type': 'text/xml' });
-      res.end('<Response/>');
+      res.end('<Response><Say>Thanks for calling Operza.</Say></Response>');
       return;
     }
 
@@ -2387,6 +2445,92 @@ const server = createServer(async (req, res) => {
       }).catch(console.error);
 
       return sendJson(res, 200, { success: true, subscription: sub });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── MEMBERSHIPS & COURSE ENROLLMENT ─────────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'POST' && pathname === '/api/memberships/enroll') {
+      const body = await readBody(req);
+      const { courseId, contactId } = body;
+      if (!courseId || !contactId) {
+        return sendJson(res, 400, { error: 'courseId and contactId are required' });
+      }
+
+      state.records.courses = state.records.courses || [];
+      state.records.enrollments = state.records.enrollments || [];
+
+      const course = state.records.courses.find(c => c.id === courseId && c.agencyId === agency.id);
+      const contact = (state.records.contacts || []).find(c => c.id === contactId && c.agencyId === agency.id);
+      if (!course) return sendJson(res, 404, { error: 'Course not found' });
+      if (!contact) return sendJson(res, 404, { error: 'Contact not found' });
+
+      let enrollment = state.records.enrollments.find(e => e.courseId === courseId && e.contactId === contactId);
+      if (!enrollment) {
+        enrollment = {
+          id: randomUUID(),
+          agencyId: agency.id,
+          locationId: activeLocation.id,
+          courseId,
+          contactId,
+          courseName: course.name,
+          contactName: `${contact.firstName} ${contact.lastName}`,
+          progress: 0,
+          status: 'active',
+          startedAt: new Date().toISOString()
+        };
+        state.records.enrollments.push(enrollment);
+        course.members = (course.members || 0) + 1;
+        await saveState();
+
+        auditLog('membership.enrolled', actor, { courseId, contactId });
+        broadcast('membership.enrolled', { courseId, contactId });
+
+        triggerWorkflowExecution({
+          agencyId: agency.id,
+          locationId: activeLocation.id,
+          triggerType: 'course_enrolled',
+          triggerContext: { course, contact, enrollment }
+        }).catch(console.error);
+      }
+
+      return sendJson(res, 201, { success: true, enrollment });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── AFFILIATES & COMMISSION CONVERSION TRACKING ────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'POST' && pathname.startsWith('/api/affiliates/track/')) {
+      const code = pathname.replace('/api/affiliates/track/', '').trim();
+      state.records.affiliates = state.records.affiliates || [];
+      const affiliate = state.records.affiliates.find(
+        a => a.code === code && a.agencyId === agency.id
+      );
+      if (!affiliate) return sendJson(res, 404, { error: 'Affiliate not found' });
+
+      const body = await readBody(req);
+      const orderAmount = Number(body.amount) || 1000;
+      const commissionPct = affiliate.commissionPct || 20;
+      const commissionEarned = (orderAmount * commissionPct) / 100;
+
+      affiliate.conversions = (affiliate.conversions || 0) + 1;
+      affiliate.payout = (affiliate.payout || 0) + commissionEarned;
+      affiliate.updatedAt = new Date().toISOString();
+
+      await saveState();
+      auditLog('affiliate.commission_earned', actor, { code, commissionEarned });
+      broadcast('affiliate.conversion', { code, commissionEarned, totalPayout: affiliate.payout });
+
+      triggerWorkflowExecution({
+        agencyId: agency.id,
+        locationId: activeLocation.id,
+        triggerType: 'affiliate_commission',
+        triggerContext: { affiliate, commissionEarned, orderAmount }
+      }).catch(console.error);
+
+      return sendJson(res, 200, { success: true, affiliate, commissionEarned });
     }
 
     // ═════════════════════════════════════════════════════════════

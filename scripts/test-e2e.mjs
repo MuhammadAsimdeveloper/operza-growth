@@ -275,7 +275,7 @@ async function runTests() {
     });
     const twilioXml = await twilioRes.text();
     console.log(`Twilio Webhook Status: ${twilioRes.status}`, twilioXml.trim());
-    if (twilioRes.status !== 200 || !twilioXml.includes('<Response/>')) {
+    if (twilioRes.status !== 200 || (!twilioXml.includes('<Response>') && !twilioXml.includes('<Response/>'))) {
       throw new Error(`Twilio webhook failed: status ${twilioRes.status}`);
     }
 
@@ -809,7 +809,111 @@ async function runTests() {
     }
     console.log('✅ Recurring subscription provisioned, billed, canceled, and dunning automation triggered');
 
-    console.log('\n🎉 ALL 30 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 31. Telephony Inbound Voice Webhook & Automated Missed-Call Task
+    console.log('\n[TEST 31] Telephony Voice Webhook & Missed-Call Automation: POST /api/webhooks/twilio (voice)');
+    const voiceWebhookRes = await fetch('http://localhost:4005/api/webhooks/twilio', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        CallSid: 'CA_TEST_VOICE_998877',
+        From: '+1 555-0199',
+        To: '+1 800-555-0100',
+        CallStatus: 'no-answer',
+        CallDuration: '0'
+      }).toString()
+    });
+    const voiceXml = await voiceWebhookRes.text();
+    console.log(`Voice Webhook Status: ${voiceWebhookRes.status}`);
+    if (voiceWebhookRes.status !== 200 || !voiceXml.includes('<Response>')) {
+      throw new Error(`Voice webhook failed: ${voiceXml}`);
+    }
+
+    // Verify call logged in database and contact tagged missed-call
+    const callsListRes = await request('/api/crm/calls');
+    const loggedCall = (callsListRes.data.data || []).find(c => c.id === 'CA_TEST_VOICE_998877');
+    if (!loggedCall || loggedCall.outcome !== 'missed') {
+      throw new Error('Inbound voice call was not logged in CRM database');
+    }
+
+    const marcusVerifyRes = await request('/api/crm/contacts?search=Marcus');
+    const marcusContact = marcusVerifyRes.data.data?.[0];
+    if (!marcusContact || !marcusContact.tags?.includes('missed-call')) {
+      throw new Error('Contact not tagged with missed-call following no-answer');
+    }
+
+    const tasksListRes = await request('/api/crm/tasks?status=pending');
+    const missedTask = (tasksListRes.data.data || []).find(t => t.title && t.title.includes('Missed call follow-up'));
+    if (!missedTask) {
+      throw new Error('Missed call urgent recovery task was not created');
+    }
+    console.log(`Verified Missed-Call Task: "${missedTask.title}" (Priority=${missedTask.priority})`);
+    console.log('✅ Telephony voice webhook ingested, call logged, contact tagged, and recovery task created');
+
+    // 32. Course Enrollment & Student Lifecycle
+    console.log('\n[TEST 32] Memberships Course Enrollment: POST /api/crm/courses & /api/memberships/enroll');
+    const courseCreateRes = await request('/api/crm/courses', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'AI Agency Masterclass',
+        status: 'published',
+        members: 0,
+        lessons: 12
+      })
+    });
+    console.log(`Course Create Status: ${courseCreateRes.status}`, `ID: ${courseCreateRes.data.id}`);
+    if (courseCreateRes.status !== 201 || !courseCreateRes.data.id) {
+      throw new Error(`Course creation failed: ${JSON.stringify(courseCreateRes.data)}`);
+    }
+
+    const courseId = courseCreateRes.data.id;
+    const enrollRes = await request('/api/memberships/enroll', {
+      method: 'POST',
+      body: JSON.stringify({ courseId, contactId: elena.id })
+    });
+    console.log(`Enrollment Status: ${enrollRes.status}`, `Student: ${enrollRes.data.enrollment?.contactName}`);
+    if (enrollRes.status !== 201 || !enrollRes.data.enrollment?.id || enrollRes.data.enrollment.status !== 'active') {
+      throw new Error(`Course enrollment failed: ${JSON.stringify(enrollRes.data)}`);
+    }
+
+    // Verify course member count incremented
+    const refreshedCourse = await request(`/api/crm/courses/${courseId}`);
+    if (refreshedCourse.data.members < 1) {
+      throw new Error('Course member count was not incremented upon enrollment');
+    }
+    console.log(`Verified Course Members: ${refreshedCourse.data.members} student(s) enrolled`);
+    console.log('✅ Course created, contact enrolled, and membership automation triggered');
+
+    // 33. Affiliate Tracking & Commission Calculation Engine
+    console.log('\n[TEST 33] Affiliate Tracking & Commission: POST /api/crm/affiliates & /api/affiliates/track/:code');
+    const affiliateCreateRes = await request('/api/crm/affiliates', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Enterprise Growth Partners',
+        code: 'GROWTH25',
+        commissionPct: 25,
+        clicks: 15,
+        conversions: 0,
+        payout: 0,
+        status: 'active'
+      })
+    });
+    console.log(`Affiliate Create Status: ${affiliateCreateRes.status}`, `Code: ${affiliateCreateRes.data.code}`);
+    if (affiliateCreateRes.status !== 201 || affiliateCreateRes.data.code !== 'GROWTH25') {
+      throw new Error(`Affiliate creation failed: ${JSON.stringify(affiliateCreateRes.data)}`);
+    }
+
+    // Simulate $2,000 order referral (25% commission = $500 payout)
+    const trackRes = await request('/api/affiliates/track/GROWTH25', {
+      method: 'POST',
+      body: JSON.stringify({ amount: 2000 })
+    });
+    console.log(`Track Status: ${trackRes.status}`, `Commission: $${trackRes.data.commissionEarned}`, `Total Payout: $${trackRes.data.affiliate?.payout}`);
+    if (trackRes.status !== 200 || trackRes.data.commissionEarned !== 500 || trackRes.data.affiliate?.payout !== 500) {
+      throw new Error(`Affiliate commission calculation failed: ${JSON.stringify(trackRes.data)}`);
+    }
+    console.log('✅ Affiliate partner created, referral tracked, 25% commission calculated and credited');
+
+    console.log('\n🎉 ALL 33 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;
