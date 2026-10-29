@@ -520,7 +520,50 @@ async function runTests() {
     }
     console.log('✅ Marketing campaign dispatch executed: contact segmentation, thread generation, metrics updated');
 
-    console.log('\n🎉 ALL 20 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 21. Public Form Ingress & Automation: GET /api/forms/public/:slug & POST /api/forms/submit/:slug
+    console.log('\n[TEST 21] Public Form Ingress & Lead Provisioning: GET /api/forms/public/contact-us & POST /api/forms/submit/contact-us');
+    const formLookupRes = await request('/api/forms/public/contact-us');
+    console.log(`Form Lookup Status: ${formLookupRes.status}`, `Name: "${formLookupRes.data.name}"`);
+    if (formLookupRes.status !== 200 || !formLookupRes.data.id || formLookupRes.data.name !== 'Inbound Consultation Request') {
+      throw new Error(`Public form lookup failed: ${JSON.stringify(formLookupRes.data)}`);
+    }
+
+    const formSubmitRes = await request('/api/forms/submit/contact-us', {
+      method: 'POST',
+      body: JSON.stringify({
+        answers: {
+          firstName: 'Elena',
+          lastName: 'Rostova',
+          email: 'elena@novatech.io',
+          phone: '+1 555-0442',
+          company: 'NovaTech Dynamics',
+          projectDetails: 'Seeking enterprise multi-channel workflow migration'
+        }
+      })
+    });
+    console.log(`Form Submission Status: ${formSubmitRes.status}`, `Contact ID: ${formSubmitRes.data.contactId}`);
+    if (formSubmitRes.status !== 200 || !formSubmitRes.data.success || !formSubmitRes.data.contactId) {
+      throw new Error(`Public form submission failed: ${JSON.stringify(formSubmitRes.data)}`);
+    }
+
+    // Verify contact created with web-lead tag and form source
+    const elenaVerify = await request('/api/crm/contacts?search=Elena');
+    const elena = elenaVerify.data.data?.[0];
+    if (!elena || elena.company !== 'NovaTech Dynamics' || !elena.tags?.includes('web-lead')) {
+      throw new Error(`Form lead contact verification failed: ${JSON.stringify(elenaVerify.data)}`);
+    }
+    console.log(`Verified Form Lead Contact: ID=${elena.id}, Name="${elena.firstName} ${elena.lastName}", Tags=[${elena.tags.join(', ')}]`);
+
+    // Verify opportunity created in Lead Pipeline
+    const oppsVerify = await request('/api/crm/opportunities?search=Elena');
+    const elenaOpp = oppsVerify.data.data?.[0];
+    if (!elenaOpp || elenaOpp.stage !== 'New Inbound Lead') {
+      throw new Error(`Form lead opportunity verification failed: ${JSON.stringify(oppsVerify.data)}`);
+    }
+    console.log(`Verified Deal Opportunity: ID=${elenaOpp.id}, Stage="${elenaOpp.stage}", Value=$${elenaOpp.value}`);
+    console.log('✅ Public form ingress verified: form lookup, lead creation, opportunity provisioning, and workflow trigger');
+
+    console.log('\n🎉 ALL 21 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;
