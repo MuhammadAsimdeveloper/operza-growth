@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, EmptyState, PageHeader, StatusBadge, Switch } from '../components/ui';
 import { useStore, uid } from '../lib/store';
 import { monthMatrix, sameDay, timeOf, toDateTimeInput } from '../lib/format';
+import { api } from '../lib/api';
 import type { AvailabilityWindow, CalendarDef, WorkspaceState } from '../lib/types';
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -51,6 +52,33 @@ export default function Calendars() {
   const [hidden, setHidden] = useState<string[]>([]);
   const [creating, setCreating] = useState<string | null>(null); // ISO date when creating
   const [managing, setManaging] = useState<string | null>(null); // calendar id being edited
+
+  useEffect(() => {
+    let active = true;
+    api.crm.list('appointments').then((res) => {
+      if (!active || !res?.data || !Array.isArray(res.data)) return;
+      for (const item of res.data) {
+        if (!state.appointments.some((a) => a.id === item.id)) {
+          dispatch({
+            type: 'appointment/add',
+            appointment: {
+              id: item.id,
+              calendarId: item.calendarId || item.calendar || state.calendars[0]?.id || 'cal-1',
+              contactId: item.contactId || '',
+              title: item.title || item.notes || 'Scheduled Booking',
+              start: item.start || item.startsAt || new Date().toISOString(),
+              durationMin: Number(item.durationMin) || 30,
+              status: item.status || 'confirmed',
+              assignee: item.assignee || item.assignedTo || undefined,
+            },
+          });
+        }
+      }
+    }).catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [state.appointments, state.calendars, dispatch]);
 
   const visible = state.appointments.filter(
     (a) => !hidden.includes(a.calendarId) && a.status !== 'cancelled',
@@ -290,12 +318,29 @@ function NewAppointment({
       (!hours || startMin < toMinutes(hours.start) || startMin + duration > toMinutes(hours.end)),
   );
 
-  const submit = () => {
+  const submit = async () => {
     if (!title.trim() || !contactId || !validDate || conflicts.length > 0) return;
+    let newId = uid('apt');
+    try {
+      const res = await api.crm.create('appointments', {
+        title: title.trim(),
+        calendar: calendarId,
+        calendarId,
+        contactId,
+        startsAt: startAt.toISOString(),
+        start: startAt.toISOString(),
+        durationMin: duration,
+        status: 'confirmed',
+        assignedTo: assignee || undefined,
+      });
+      if (res?.id) newId = res.id;
+    } catch (err) {
+      console.error('Failed to persist appointment:', err);
+    }
     dispatch({
       type: 'appointment/add',
       appointment: {
-        id: uid('apt'),
+        id: newId,
         calendarId,
         contactId,
         title: title.trim(),

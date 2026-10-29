@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, EmptyState, PageHeader, StatCard, StatusBadge, Switch } from '../components/ui';
 import { useStore, uid } from '../lib/store';
 import { currency, fullDate, pct } from '../lib/format';
+import { api } from '../lib/api';
 import type { InvoiceStatus } from '../lib/types';
 
 const STATUSES: InvoiceStatus[] = ['draft', 'sent', 'paid', 'overdue'];
@@ -13,6 +14,73 @@ export default function Payments() {
   const { state, dispatch } = useStore();
   const [tab, setTab] = useState<'invoices' | 'products'>('invoices');
   const [creating, setCreating] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      api.crm.list('invoices').catch(() => null),
+      api.crm.list('products').catch(() => null),
+    ]).then(([invRes, prodRes]) => {
+      if (!active) return;
+      if (invRes?.data && Array.isArray(invRes.data)) {
+        for (const item of invRes.data) {
+          if (!state.invoices.some((i) => i.id === item.id)) {
+            dispatch({
+              type: 'invoice/add',
+              invoice: {
+                id: item.id,
+                number: item.number || `INV-${item.id.slice(0, 4)}`,
+                contactId: item.contactId || '',
+                amount: Number(item.amount) || 0,
+                status: (item.status || 'draft') as InvoiceStatus,
+                issuedAt: item.dueDate || item.createdAt || new Date().toISOString(),
+              },
+            });
+          }
+        }
+      }
+      if (prodRes?.data && Array.isArray(prodRes.data)) {
+        for (const p of prodRes.data) {
+          if (!state.products.some((sp) => sp.id === p.id)) {
+            dispatch({
+              type: 'product/add',
+              product: {
+                id: p.id,
+                name: p.name || 'Custom Product',
+                price: Number(p.price) || 0,
+                kind: p.sku?.includes('rec') || p.type === 'recurring' ? 'recurring' : 'one_time',
+                active: p.active !== false && p.status !== 'inactive',
+              },
+            });
+          }
+        }
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [state.invoices, state.products, dispatch]);
+
+  const handleStatusChange = async (invoiceId: string, newStatus: InvoiceStatus) => {
+    dispatch({ type: 'invoice/status', id: invoiceId, status: newStatus });
+    try {
+      await api.crm.update('invoices', invoiceId, { status: newStatus });
+    } catch (err) {
+      console.error('Failed to update invoice status:', err);
+    }
+  };
+
+  const handleProductToggle = async (productId: string, currentActive: boolean) => {
+    dispatch({ type: 'product/toggle', id: productId });
+    try {
+      await api.crm.update('products', productId, {
+        active: !currentActive,
+        status: !currentActive ? 'active' : 'inactive',
+      });
+    } catch (err) {
+      console.error('Failed to toggle product status:', err);
+    }
+  };
 
   const paid = state.invoices.filter((i) => i.status === 'paid').reduce((s, i) => s + i.amount, 0);
   const outstanding = state.invoices
@@ -95,9 +163,7 @@ export default function Payments() {
                           className="select"
                           style={{ height: 28, width: 116, fontSize: 12 }}
                           value={inv.status}
-                          onChange={(e) =>
-                            dispatch({ type: 'invoice/status', id: inv.id, status: e.target.value as InvoiceStatus })
-                          }
+                          onChange={(e) => handleStatusChange(inv.id, e.target.value as InvoiceStatus)}
                         >
                           {STATUSES.map((s) => (
                             <option key={s} value={s}>
@@ -138,7 +204,7 @@ export default function Payments() {
                   <strong className="cell-num" style={{ width: 90, textAlign: 'right' }}>
                     {currency(p.price)}
                   </strong>
-                  <Switch on={p.active} label={`Toggle ${p.name}`} onChange={() => dispatch({ type: 'product/toggle', id: p.id })} />
+                  <Switch on={p.active} label={`Toggle ${p.name}`} onChange={() => handleProductToggle(p.id, p.active)} />
                 </div>
               ))
             )}
@@ -155,8 +221,21 @@ export default function Payments() {
       {creating && (
         <NewInvoice
           onClose={() => setCreating(false)}
-          onSave={(invoice) => {
-            dispatch({ type: 'invoice/add', invoice });
+          onSave={async (invoice) => {
+            let finalId = invoice.id;
+            try {
+              const res = await api.crm.create('invoices', {
+                number: invoice.number,
+                contactId: invoice.contactId,
+                amount: invoice.amount,
+                status: invoice.status,
+                dueDate: invoice.issuedAt,
+              });
+              if (res?.id) finalId = res.id;
+            } catch (err) {
+              console.error('Failed to persist invoice to API:', err);
+            }
+            dispatch({ type: 'invoice/add', invoice: { ...invoice, id: finalId } });
             setCreating(false);
           }}
         />
