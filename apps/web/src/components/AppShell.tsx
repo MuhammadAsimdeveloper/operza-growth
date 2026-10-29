@@ -1,3 +1,4 @@
+import { useAuth } from '../lib/AuthContext';
 import { CopilotHub } from './CopilotHub';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
@@ -322,6 +323,115 @@ function NotificationsButton() {
   );
 }
 
+
+function UserMenu() {
+  const { user, agency, locations, activeLocation, switchLocation, logout } = useAuth();
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
+  const initials = (user?.name || 'OP')
+    .split(' ')
+    .map((n) => n[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      navigate('/login');
+    } catch {
+      navigate('/login');
+    }
+  };
+
+  return (
+    <div style={{ position: 'relative' }} ref={ref}>
+      <button className="user-chip" type="button" onClick={() => setOpen((v) => !v)}>
+        <span className="user-chip__avatar">{initials}</span>
+        <span className="user-chip__name">{user?.name || 'Operator'}</span>
+        <Icon name="chevron-down" size={14} />
+      </button>
+
+      {open && (
+        <div
+          className="card"
+          style={{
+            position: 'absolute',
+            right: 0,
+            top: 42,
+            width: 240,
+            zIndex: 100,
+            boxShadow: 'var(--shadow-lg)',
+            padding: '14px 16px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+            background: 'var(--surface-1, #1e293b)',
+            border: '1px solid var(--border, #334155)',
+            borderRadius: '8px'
+          }}
+        >
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-1)' }}>{user?.name}</div>
+            <div style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{user?.email}</div>
+            <div style={{ fontSize: 11, color: 'var(--primary, #3b82f6)', marginTop: 2, fontWeight: 500 }}>
+              ?? {agency?.name || 'Operza Agency'}
+            </div>
+          </div>
+
+          {locations.length > 1 && (
+            <div>
+              <label style={{ fontSize: 11, color: 'var(--text-3)', display: 'block', marginBottom: 4 }}>
+                Active Location:
+              </label>
+              <select
+                value={activeLocation?.id || ''}
+                onChange={(e) => switchLocation(e.target.value)}
+                style={{
+                  width: '100%',
+                  fontSize: 12,
+                  padding: '4px 8px',
+                  borderRadius: 4,
+                  background: 'var(--surface-2, #0f172a)',
+                  color: 'var(--text-1)',
+                  border: '1px solid var(--border, #334155)'
+                }}
+              >
+                {locations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <hr style={{ border: 'none', borderTop: '1px solid var(--line, #334155)', margin: 0 }} />
+
+          <button
+            type="button"
+            className="btn btn--ghost btn--sm"
+            onClick={handleLogout}
+            style={{ width: '100%', justifyContent: 'flex-start', color: '#ef4444' }}
+          >
+            <Icon name="logout" size={14} /> Log out
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
   const location = useLocation();
   const titles: Record<string, string> = {
@@ -366,11 +476,7 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
           <Icon name="globe" size={18} />
         </button>
         <NotificationsButton />
-        <button className="user-chip" type="button">
-          <span className="user-chip__avatar">AR</span>
-          <span className="user-chip__name">Asim R.</span>
-          <Icon name="chevron-down" size={14} />
-        </button>
+        <UserMenu />
       </div>
     </header>
   );
@@ -396,4 +502,5 @@ export function AppShell({ children }: { children?: ReactNode }) {
     </div>
   );
 }
+
 

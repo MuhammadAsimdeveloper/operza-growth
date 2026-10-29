@@ -1,5 +1,8 @@
 import { Route, Routes } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
+import AuthGuard from './components/AuthGuard';
+import Login from './pages/Login';
+import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import Conversations from './pages/Conversations';
 import PhoneSystem from './pages/PhoneSystem';
@@ -45,7 +48,18 @@ import NotFound from './pages/NotFound';
 export default function App() {
   return (
     <Routes>
-      <Route element={<AppShell />}>
+      {/* Public Authentication Routes */}
+      <Route path="/login" element={<Login />} />
+      <Route path="/signup" element={<Signup />} />
+
+      {/* Protected Agency Workspace Routes */}
+      <Route
+        element={
+          <AuthGuard>
+            <AppShell />
+          </AuthGuard>
+        }
+      >
         <Route index element={<Dashboard />} />
         <Route path="conversations" element={<Conversations />} />
         <Route path="phone" element={<PhoneSystem />} />

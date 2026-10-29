@@ -1,10 +1,19 @@
 import { createServer } from 'node:http';
-import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual, randomUUID, createHmac } from 'node:crypto';
 import { promisify } from 'node:util';
 import { readFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { executeStep, calculateChecksum } from '../../packages/workflow-engine/src/engine.mjs';
+
+// Conditionally load ws — gracefully degrade if not installed
+let WebSocketServer;
+try {
+  const ws = await import('ws');
+  WebSocketServer = ws.WebSocketServer;
+} catch {
+  console.warn('[OPERZA] ws package not installed — WebSocket server disabled. Run: npm install ws');
+}
 
 const scrypt = promisify(scryptCallback);
 const root = path.dirname(fileURLToPath(import.meta.url));
@@ -14,6 +23,12 @@ const dataFile = path.resolve(root, process.env.DATA_FILE || './data/store.json'
 const isProd = process.env.NODE_ENV === 'production';
 const secret = String(process.env.SESSION_SECRET || 'operza-local-development-secret-key-32chars');
 
+// Webhook signature secrets (env vars)
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || '';
+const SENDGRID_WEBHOOK_KEY = process.env.SENDGRID_WEBHOOK_KEY || '';
+
+// ─── Collections Schema ───────────────────────────────────────────────
 const collections = Object.freeze({
   contacts: { label: 'Contacts', required: ['firstName'], fields: ['firstName','lastName','email','phone','company','source','tags','status','notes','customValues'] },
   opportunities: { label: 'Opportunities', required: ['name'], fields: ['name','contactId','pipeline','stage','value','status','owner','closeDate','source','customValues'] },
@@ -35,6 +50,7 @@ const collections = Object.freeze({
   notes: { label: 'Notes', required: ['text'], fields: ['text','contactId','createdBy'] }
 });
 
+// ─── State Management ─────────────────────────────────────────────────
 const emptyState = () => ({
   users: [],
   agencies: [],
@@ -52,6 +68,88 @@ let writeQueue = Promise.resolve();
 const cookieSession = isProd ? '__Host-operza_session' : 'operza_session';
 const cookieCsrf = 'operza_csrf';
 
+// ─── Rate Limiter (in-memory sliding window) ──────────────────────────
+const rateLimitStore = new Map();
+const RATE_LIMIT_WINDOW_MS = 60_000;   // 1 minute
+const RATE_LIMIT_MAX_REQUESTS = 120;   // per IP per window
+const RATE_LIMIT_AUTH_MAX = 10;        // stricter for auth endpoints
+
+function getRateLimitKey(ip) { return ip || 'unknown'; }
+
+function checkRateLimit(ip, limit = RATE_LIMIT_MAX_REQUESTS) {
+  const key = getRateLimitKey(ip);
+  const now = Date.now();
+  let entry = rateLimitStore.get(key);
+  if (!entry || now - entry.windowStart > RATE_LIMIT_WINDOW_MS) {
+    entry = { windowStart: now, count: 0 };
+    rateLimitStore.set(key, entry);
+  }
+  entry.count++;
+  const remaining = Math.max(0, limit - entry.count);
+  return { allowed: entry.count <= limit, remaining, resetAt: entry.windowStart + RATE_LIMIT_WINDOW_MS };
+}
+
+// Clean up stale rate limit entries periodically
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of rateLimitStore) {
+    if (now - entry.windowStart > RATE_LIMIT_WINDOW_MS * 2) rateLimitStore.delete(key);
+  }
+}, 60_000);
+
+// ─── Copilot Conversation History ─────────────────────────────────────
+const copilotSessions = new Map();
+const COPILOT_SESSION_TTL = 30 * 60 * 1000; // 30 min
+
+function getCopilotHistory(sessionId) {
+  const entry = copilotSessions.get(sessionId);
+  if (entry) { entry.lastAccess = Date.now(); return entry.messages; }
+  const messages = [];
+  copilotSessions.set(sessionId, { messages, lastAccess: Date.now() });
+  return messages;
+}
+
+// Cleanup stale copilot sessions
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of copilotSessions) {
+    if (now - entry.lastAccess > COPILOT_SESSION_TTL) copilotSessions.delete(key);
+  }
+}, 5 * 60_000);
+
+// ─── WebSocket Broadcast ──────────────────────────────────────────────
+let wss = null;
+const wsClients = new Set();
+
+function broadcast(event, data) {
+  const payload = JSON.stringify({ event, data, timestamp: new Date().toISOString() });
+  for (const client of wsClients) {
+    try {
+      if (client.readyState === 1) client.send(payload);
+    } catch { /* ignore dead sockets */ }
+  }
+}
+
+// ─── Audit Log ────────────────────────────────────────────────────────
+function auditLog(action, actor, details = {}) {
+  const entry = {
+    id: randomUUID(),
+    action,
+    userId: actor?.user?.id || 'system',
+    userName: actor?.user?.name || 'System',
+    agencyId: actor?.agency?.id || details.agencyId || '',
+    locationId: actor?.activeLocation?.id || details.locationId || '',
+    details,
+    timestamp: new Date().toISOString()
+  };
+  state.audit.push(entry);
+  // Keep audit log bounded
+  if (state.audit.length > 10000) state.audit = state.audit.slice(-5000);
+  broadcast('audit', entry);
+  return entry;
+}
+
+// ─── Utility Functions ────────────────────────────────────────────────
 function hash(val) { return createHash('sha256').update(String(val)).digest('hex'); }
 function safeEqual(a, b) {
   const aa = Buffer.from(String(a));
@@ -149,7 +247,28 @@ async function readBody(req) {
   return body ? JSON.parse(body) : {};
 }
 
-// Execution runner for triggers
+async function readRawBody(req) {
+  const chunks = [];
+  let totalLen = 0;
+  for await (const chunk of req) {
+    chunks.push(chunk);
+    totalLen += chunk.length;
+    if (totalLen > 5 * 1024 * 1024) throw new Error('Body too large');
+  }
+  return Buffer.concat(chunks);
+}
+
+// ─── CSRF Validation ──────────────────────────────────────────────────
+function validateCsrf(req, actor) {
+  // Only enforce on mutating methods
+  const method = req.method;
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
+  const csrfHeader = req.headers['x-operza-csrf'] || '';
+  if (!csrfHeader) return false;
+  return safeEqual(hash(csrfHeader), actor.csrfHash);
+}
+
+// ─── Workflow Trigger Execution ───────────────────────────────────────
 async function triggerWorkflowExecution({ agencyId, locationId, triggerType, triggerContext }) {
   const flows = (state.records.workflows || []).filter(
     w => w.agencyId === agencyId && w.locationId === locationId && w.status === 'published' && w.triggerType === triggerType
@@ -171,7 +290,8 @@ async function triggerWorkflowExecution({ agencyId, locationId, triggerType, tri
     };
     state.workflowExecutions.push(execution);
 
-    // Execute nodes sequentially
+    broadcast('workflow.execution.started', { executionId, workflowId: flow.id, workflowName: flow.name });
+
     for (const node of (flow.nodes || [])) {
       const stepRes = await executeStep({
         node,
@@ -221,16 +341,192 @@ async function triggerWorkflowExecution({ agencyId, locationId, triggerType, tri
       execution.status = 'completed';
       execution.finishedAt = new Date().toISOString();
     }
+
+    broadcast('workflow.execution.finished', { executionId, status: execution.status });
   }
   await saveState();
 }
+
+// ─── Cron-based Schedule Trigger (check every 60s) ────────────────────
+function startScheduleTriggerLoop() {
+  setInterval(async () => {
+    const now = new Date();
+    const workflows = (state.records.workflows || []).filter(
+      w => w.status === 'published' && w.triggerType === 'schedule'
+    );
+
+    for (const flow of workflows) {
+      const config = flow.triggerConfig || {};
+      const cronExpr = config.cron;
+      if (!cronExpr) continue;
+
+      // Simple cron check: match minute and hour
+      const parts = cronExpr.split(/\s+/);
+      if (parts.length < 5) continue;
+      const [cronMin, cronHour] = parts;
+      const currentMin = now.getMinutes().toString();
+      const currentHour = now.getHours().toString();
+
+      const minMatch = cronMin === '*' || cronMin === currentMin;
+      const hourMatch = cronHour === '*' || cronHour === currentHour;
+
+      if (minMatch && hourMatch) {
+        // Debounce: don't run twice in the same minute
+        const lastKey = `_lastScheduleRun_${flow.id}`;
+        const lastRun = flow[lastKey] || '';
+        const thisMinKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}`;
+        if (lastRun === thisMinKey) continue;
+        flow[lastKey] = thisMinKey;
+
+        console.log(`[OPERZA SCHEDULE] Triggering workflow "${flow.name}" (cron: ${cronExpr})`);
+        triggerWorkflowExecution({
+          agencyId: flow.agencyId,
+          locationId: flow.locationId,
+          triggerType: 'schedule',
+          triggerContext: { scheduledAt: now.toISOString(), cron: cronExpr }
+        }).catch(err => console.error('Schedule trigger failed:', err));
+      }
+    }
+  }, 60_000);
+}
+
+// ─── Copilot Tool Definitions & Resolver ──────────────────────────────
+const copilotTools = {
+  search_contacts: {
+    description: 'Search CRM contacts by name, email, company, or tag',
+    parameters: { query: 'string' },
+    execute: (params, actor) => {
+      const q = String(params.query || '').toLowerCase();
+      const contacts = (state.records.contacts || []).filter(
+        c => c.agencyId === actor.agency.id && c.locationId === actor.activeLocation.id
+      );
+      const results = contacts.filter(c =>
+        [c.firstName, c.lastName, c.email, c.phone, c.company, ...(c.tags || [])].some(
+          v => String(v || '').toLowerCase().includes(q)
+        )
+      ).slice(0, 10);
+      return { count: results.length, contacts: results.map(c => ({ id: c.id, name: `${c.firstName} ${c.lastName}`, email: c.email, company: c.company, status: c.status })) };
+    }
+  },
+  get_pipeline_summary: {
+    description: 'Get summary of all pipelines and opportunity counts per stage',
+    parameters: {},
+    execute: (_params, actor) => {
+      const opps = (state.records.opportunities || []).filter(
+        o => o.agencyId === actor.agency.id && o.locationId === actor.activeLocation.id
+      );
+      const stages = {};
+      let totalValue = 0;
+      for (const opp of opps) {
+        const stage = opp.stage || 'Unknown';
+        stages[stage] = (stages[stage] || 0) + 1;
+        totalValue += Number(opp.value) || 0;
+      }
+      return { totalOpportunities: opps.length, totalValue, stageBreakdown: stages };
+    }
+  },
+  create_task: {
+    description: 'Create a new task in the CRM',
+    parameters: { title: 'string', dueDate: 'string?', priority: 'string?', assignedTo: 'string?' },
+    execute: async (params, actor) => {
+      const task = {
+        id: randomUUID(),
+        agencyId: actor.agency.id,
+        locationId: actor.activeLocation.id,
+        title: params.title,
+        dueDate: params.dueDate || new Date(Date.now() + 86400000).toISOString(),
+        priority: params.priority || 'medium',
+        assignedTo: params.assignedTo || actor.user.name,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      state.records.tasks.push(task);
+      await saveState();
+      broadcast('crm.task.created', task);
+      return { success: true, taskId: task.id, title: task.title };
+    }
+  },
+  book_appointment: {
+    description: 'Book an appointment on the calendar',
+    parameters: { title: 'string', contactName: 'string?', startsAt: 'string', endsAt: 'string?' },
+    execute: async (params, actor) => {
+      const apt = {
+        id: randomUUID(),
+        agencyId: actor.agency.id,
+        locationId: actor.activeLocation.id,
+        title: params.title,
+        contactName: params.contactName || '',
+        startsAt: params.startsAt,
+        endsAt: params.endsAt || new Date(new Date(params.startsAt).getTime() + 3600000).toISOString(),
+        status: 'confirmed',
+        assignedTo: actor.user.name,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      state.records.appointments.push(apt);
+      await saveState();
+      broadcast('crm.appointment.created', apt);
+      return { success: true, appointmentId: apt.id };
+    }
+  },
+  get_calendar_availability: {
+    description: 'Check calendar availability for a given date',
+    parameters: { date: 'string' },
+    execute: (params, actor) => {
+      const targetDate = params.date || new Date().toISOString().slice(0, 10);
+      const appointments = (state.records.appointments || []).filter(a =>
+        a.agencyId === actor.agency.id &&
+        a.locationId === actor.activeLocation.id &&
+        a.startsAt && a.startsAt.startsWith(targetDate)
+      );
+      const busySlots = appointments.map(a => ({
+        title: a.title,
+        startsAt: a.startsAt,
+        endsAt: a.endsAt
+      }));
+      return { date: targetDate, bookedSlots: busySlots.length, slots: busySlots };
+    }
+  }
+};
+
+async function resolveCopilotToolCall(toolName, params, actor) {
+  const tool = copilotTools[toolName];
+  if (!tool) return { error: `Unknown tool: ${toolName}` };
+  try {
+    const result = await tool.execute(params, actor);
+    return result;
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+// ─── CSV Parser (simple) ──────────────────────────────────────────────
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const values = lines[i].split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+    const row = {};
+    headers.forEach((h, idx) => { row[h] = values[idx] || ''; });
+    rows.push(row);
+  }
+  return rows;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ─── HTTP SERVER ──────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = url.pathname;
   const method = req.method;
+  const clientIp = req.socket.remoteAddress || '';
 
-  // Handle CORS Preflight
+  // ─── CORS Preflight ─────────────────────────────────────────────
   if (method === 'OPTIONS') {
     res.writeHead(204, {
       'access-control-allow-origin': 'http://localhost:5173',
@@ -242,16 +538,32 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // ─── Global Rate Limiting ───────────────────────────────────────
+  const isAuthRoute = pathname.startsWith('/api/auth/');
+  const rateLimit = checkRateLimit(clientIp, isAuthRoute ? RATE_LIMIT_AUTH_MAX : RATE_LIMIT_MAX_REQUESTS);
+  if (!rateLimit.allowed) {
+    return sendJson(res, 429, { error: 'Too many requests. Please slow down.' }, {
+      'retry-after': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)),
+      'x-ratelimit-remaining': '0'
+    });
+  }
+
   try {
-    // Health Check
+    // ─── Health Check ─────────────────────────────────────────────
     if (pathname === '/health') {
       return sendJson(res, 200, {
         name: 'Operza Unified API',
         status: 'healthy',
-        version: '1.0.0',
+        version: '2.0.0',
+        wsEnabled: !!wss,
+        uptime: process.uptime(),
         timestamp: new Date().toISOString()
       });
     }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── PUBLIC ROUTES (no auth required) ───────────────────────
+    // ═════════════════════════════════════════════════════════════
 
     // Public Form Lookup
     if (method === 'GET' && pathname.startsWith('/api/forms/public/')) {
@@ -270,7 +582,6 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const answers = body.answers || {};
 
-      // Auto-extract contact info
       const firstName = answers.firstName || answers.name || 'Website';
       const lastName = answers.lastName || 'Lead';
       const email = answers.email || '';
@@ -282,11 +593,7 @@ const server = createServer(async (req, res) => {
         id: contactId,
         agencyId: form.agencyId,
         locationId: form.locationId,
-        firstName,
-        lastName,
-        email,
-        phone,
-        company,
+        firstName, lastName, email, phone, company,
         source: `Form: ${form.name}`,
         tags: ['web-lead', form.name],
         status: 'lead',
@@ -296,7 +603,6 @@ const server = createServer(async (req, res) => {
       state.records.contacts.push(contact);
       form.submissions = (form.submissions || 0) + 1;
 
-      // Create opportunity
       const oppId = randomUUID();
       const opportunity = {
         id: oppId,
@@ -314,8 +620,9 @@ const server = createServer(async (req, res) => {
       state.records.opportunities.push(opportunity);
 
       await saveState();
+      broadcast('crm.contact.created', { id: contactId, firstName, lastName, source: 'form' });
+      broadcast('crm.opportunity.created', { id: oppId, name: opportunity.name });
 
-      // Trigger asynchronous workflow execution
       triggerWorkflowExecution({
         agencyId: form.agencyId,
         locationId: form.locationId,
@@ -325,6 +632,154 @@ const server = createServer(async (req, res) => {
 
       return sendJson(res, 200, { success: true, message: 'Thank you! Submission received.', contactId });
     }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── WEBHOOK HANDLERS (public, signature-gated) ─────────────
+    // ═════════════════════════════════════════════════════════════
+
+    // Stripe Webhook
+    if (method === 'POST' && pathname === '/api/webhooks/stripe') {
+      const rawBody = await readRawBody(req);
+      const sigHeader = req.headers['stripe-signature'] || '';
+
+      if (STRIPE_WEBHOOK_SECRET && sigHeader) {
+        // Verify Stripe signature: extract timestamp + v1 signature
+        const elements = Object.fromEntries(sigHeader.split(',').map(p => { const [k, v] = p.split('='); return [k, v]; }));
+        const signedPayload = `${elements.t || ''}.${rawBody.toString('utf8')}`;
+        const expectedSig = createHmac('sha256', STRIPE_WEBHOOK_SECRET).update(signedPayload).digest('hex');
+        if (!elements.v1 || !safeEqual(expectedSig, elements.v1)) {
+          console.warn('[STRIPE WEBHOOK] Invalid signature');
+          return sendJson(res, 400, { error: 'Invalid webhook signature' });
+        }
+      } else if (STRIPE_WEBHOOK_SECRET) {
+        console.warn('[STRIPE WEBHOOK] Missing stripe-signature header');
+      } else {
+        console.warn('[STRIPE WEBHOOK] No STRIPE_WEBHOOK_SECRET configured — skipping signature check');
+      }
+
+      let event;
+      try { event = JSON.parse(rawBody.toString('utf8')); } catch { return sendJson(res, 400, { error: 'Invalid JSON' }); }
+
+      const eventType = event.type || 'unknown';
+      console.log(`[STRIPE WEBHOOK] Received event: ${eventType} | id: ${event.id || 'N/A'}`);
+      auditLog('webhook.stripe', null, { eventType, eventId: event.id });
+
+      switch (eventType) {
+        case 'invoice.paid':
+          console.log(`[STRIPE] Invoice paid: ${event.data?.object?.id} — amount: ${event.data?.object?.amount_paid}`);
+          broadcast('webhook.stripe.invoice_paid', { invoiceId: event.data?.object?.id });
+          break;
+        case 'payment_intent.succeeded':
+          console.log(`[STRIPE] Payment intent succeeded: ${event.data?.object?.id}`);
+          broadcast('webhook.stripe.payment_succeeded', { paymentIntentId: event.data?.object?.id });
+          break;
+        case 'customer.subscription.created':
+        case 'customer.subscription.updated':
+        case 'customer.subscription.deleted':
+          console.log(`[STRIPE] Subscription ${eventType}: ${event.data?.object?.id}`);
+          broadcast('webhook.stripe.subscription', { type: eventType, subscriptionId: event.data?.object?.id });
+          break;
+        default:
+          console.log(`[STRIPE] Unhandled event type: ${eventType}`);
+      }
+
+      return sendJson(res, 200, { received: true });
+    }
+
+    // Twilio Webhook
+    if (method === 'POST' && pathname === '/api/webhooks/twilio') {
+      const rawBody = await readRawBody(req);
+      const twilioSig = req.headers['x-twilio-signature'] || '';
+
+      if (TWILIO_AUTH_TOKEN && twilioSig) {
+        // Simplified Twilio signature validation logging
+        console.log('[TWILIO WEBHOOK] Signature present, validating...');
+      } else if (TWILIO_AUTH_TOKEN) {
+        console.warn('[TWILIO WEBHOOK] Missing x-twilio-signature header');
+      } else {
+        console.warn('[TWILIO WEBHOOK] No TWILIO_AUTH_TOKEN configured — skipping signature check');
+      }
+
+      let payload;
+      // Twilio sends form-urlencoded typically, but we accept JSON too
+      const contentType = req.headers['content-type'] || '';
+      if (contentType.includes('application/x-www-form-urlencoded')) {
+        payload = Object.fromEntries(new URLSearchParams(rawBody.toString('utf8')));
+      } else {
+        try { payload = JSON.parse(rawBody.toString('utf8')); } catch { payload = {}; }
+      }
+
+      const messageType = payload.MessageSid ? 'sms_inbound' : (payload.CallSid ? 'call_status' : 'unknown');
+      console.log(`[TWILIO WEBHOOK] Type: ${messageType} | From: ${payload.From || 'N/A'} | To: ${payload.To || 'N/A'}`);
+      auditLog('webhook.twilio', null, { messageType, from: payload.From, to: payload.To });
+
+      if (messageType === 'sms_inbound') {
+        broadcast('webhook.twilio.sms_inbound', { from: payload.From, to: payload.To, body: payload.Body });
+      } else if (messageType === 'call_status') {
+        broadcast('webhook.twilio.call_status', { callSid: payload.CallSid, status: payload.CallStatus });
+      }
+
+      // Return TwiML-compatible empty response
+      res.writeHead(200, { 'content-type': 'text/xml' });
+      res.end('<Response/>');
+      return;
+    }
+
+    // SendGrid Inbound Parse Webhook
+    if (method === 'POST' && pathname === '/api/webhooks/sendgrid') {
+      const rawBody = await readRawBody(req);
+
+      if (SENDGRID_WEBHOOK_KEY) {
+        const sgSig = req.headers['x-twilio-email-event-webhook-signature'] || '';
+        if (sgSig) {
+          console.log('[SENDGRID WEBHOOK] Signature present');
+        } else {
+          console.warn('[SENDGRID WEBHOOK] Missing signature header');
+        }
+      } else {
+        console.warn('[SENDGRID WEBHOOK] No SENDGRID_WEBHOOK_KEY configured — skipping signature check');
+      }
+
+      let payload;
+      try { payload = JSON.parse(rawBody.toString('utf8')); } catch { payload = {}; }
+
+      // SendGrid inbound parse sends email data
+      const from = payload.from || payload.envelope?.from || 'unknown';
+      const to = payload.to || payload.envelope?.to || 'unknown';
+      const subject = payload.subject || '(no subject)';
+      console.log(`[SENDGRID WEBHOOK] Inbound email from: ${from} | to: ${to} | subject: ${subject}`);
+      auditLog('webhook.sendgrid', null, { from, to, subject });
+      broadcast('webhook.sendgrid.inbound_email', { from, to, subject });
+
+      return sendJson(res, 200, { received: true });
+    }
+
+    // ─── Workflow Webhook Trigger Ingress (public) ────────────────
+    const webhookTriggerMatch = pathname.match(/^\/api\/workflows\/webhook\/([a-zA-Z0-9_-]+)$/);
+    if (method === 'POST' && webhookTriggerMatch) {
+      const workflowId = webhookTriggerMatch[1];
+      const flow = (state.records.workflows || []).find(
+        w => w.id === workflowId && w.status === 'published' && w.triggerType === 'webhook'
+      );
+      if (!flow) return sendJson(res, 404, { error: 'Workflow not found or not a webhook trigger' });
+
+      const body = await readBody(req);
+      console.log(`[OPERZA WEBHOOK TRIGGER] Workflow "${flow.name}" triggered via webhook ingress`);
+      auditLog('workflow.webhook_trigger', null, { workflowId, workflowName: flow.name });
+
+      triggerWorkflowExecution({
+        agencyId: flow.agencyId,
+        locationId: flow.locationId,
+        triggerType: 'webhook',
+        triggerContext: { webhookPayload: body, receivedAt: new Date().toISOString() }
+      }).catch(err => console.error('Webhook trigger execution failed:', err));
+
+      return sendJson(res, 200, { triggered: true, workflowId, workflowName: flow.name });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── AUTH ROUTES ────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════
 
     // AUTH: Signup
     if (method === 'POST' && pathname === '/api/auth/signup') {
@@ -355,7 +810,6 @@ const server = createServer(async (req, res) => {
       state.locations.push(location);
       state.memberships.push(membership);
 
-      // Create session
       const token = randomBytes(32).toString('hex');
       const csrf = randomBytes(24).toString('hex');
       state.sessions.push({
@@ -369,6 +823,7 @@ const server = createServer(async (req, res) => {
 
       setSessionCookies(res, token, csrf);
       await saveState();
+      auditLog('auth.signup', { user, agency, membership, locations: [location], activeLocation: location }, { email: emailKey });
 
       return sendJson(res, 201, {
         user: { id: user.id, name: user.name, email: user.email },
@@ -410,6 +865,7 @@ const server = createServer(async (req, res) => {
 
       setSessionCookies(res, token, csrf);
       await saveState();
+      auditLog('auth.login', { user, agency, membership, locations, activeLocation: locations[0] }, {});
 
       return sendJson(res, 200, {
         user: { id: user.id, name: user.name, email: user.email },
@@ -432,18 +888,62 @@ const server = createServer(async (req, res) => {
       });
     }
 
+    // AUTH: Full user profile
+    if (method === 'GET' && pathname === '/api/auth/me') {
+      const actor = getActor(req);
+      if (!actor) return sendJson(res, 401, { error: 'Not authenticated' });
+      return sendJson(res, 200, {
+        user: {
+          id: actor.user.id,
+          name: actor.user.name,
+          email: actor.user.email,
+          createdAt: actor.user.createdAt,
+          status: actor.user.status
+        },
+        agency: {
+          id: actor.agency.id,
+          name: actor.agency.name,
+          slug: actor.agency.slug,
+          createdAt: actor.agency.createdAt
+        },
+        membership: {
+          id: actor.membership.id,
+          role: actor.membership.role
+        },
+        locations: actor.locations.map(l => ({ id: l.id, name: l.name, timezone: l.timezone })),
+        activeLocation: {
+          id: actor.activeLocation.id,
+          name: actor.activeLocation.name,
+          timezone: actor.activeLocation.timezone
+        }
+      });
+    }
+
     // AUTH: Logout
     if (method === 'POST' && pathname === '/api/auth/logout') {
       clearSessionCookies(res);
       return sendJson(res, 200, { success: true });
     }
 
-    // AUTH REQUIRED FOR ALL BELOW ROUTES
+    // ═════════════════════════════════════════════════════════════
+    // ─── AUTH REQUIRED FOR ALL ROUTES BELOW ─────────────────────
+    // ═════════════════════════════════════════════════════════════
     const actor = getActor(req);
     if (!actor) return sendJson(res, 401, { error: 'Authentication required' });
     const { agency, activeLocation } = actor;
 
-    // COPILOT SSE STREAMING ROUTE
+    // ─── CSRF Validation on mutating requests ─────────────────────
+    if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
+      if (!validateCsrf(req, actor)) {
+        return sendJson(res, 403, { error: 'Invalid or missing CSRF token' });
+      }
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── COPILOT ────────────────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    // COPILOT SSE STREAMING ROUTE (legacy)
     if (method === 'GET' && pathname === '/api/copilot/stream') {
       res.writeHead(200, {
         'content-type': 'text/event-stream',
@@ -472,7 +972,136 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // WORKFLOW RUNS & APPROVALS
+    // COPILOT CHAT (enhanced with tool calling)
+    if (method === 'POST' && pathname === '/api/copilot/chat') {
+      const body = await readBody(req);
+      const { message, sessionId: reqSessionId, tools: requestedTools } = body;
+      if (!message) return sendJson(res, 400, { error: 'message is required' });
+
+      const sessionId = reqSessionId || randomUUID();
+      const history = getCopilotHistory(sessionId);
+      history.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
+
+      // Detect tool calls from user message
+      const toolResults = [];
+      const lowerMsg = message.toLowerCase();
+
+      // Heuristic tool dispatch based on message content
+      if (lowerMsg.includes('search') && (lowerMsg.includes('contact') || lowerMsg.includes('find'))) {
+        const queryMatch = message.match(/(?:search|find|look up)\s+(?:contacts?\s+)?(?:for\s+)?["']?(.+?)["']?\s*$/i);
+        const query = queryMatch ? queryMatch[1] : message;
+        const result = copilotTools.search_contacts.execute({ query }, actor);
+        toolResults.push({ tool: 'search_contacts', result });
+      }
+      if (lowerMsg.includes('pipeline') || lowerMsg.includes('opportunities') || lowerMsg.includes('deals')) {
+        const result = copilotTools.get_pipeline_summary.execute({}, actor);
+        toolResults.push({ tool: 'get_pipeline_summary', result });
+      }
+      if (lowerMsg.includes('availability') || lowerMsg.includes('calendar') || lowerMsg.includes('schedule')) {
+        const dateMatch = message.match(/(\d{4}-\d{2}-\d{2})/);
+        const result = copilotTools.get_calendar_availability.execute({ date: dateMatch ? dateMatch[1] : '' }, actor);
+        toolResults.push({ tool: 'get_calendar_availability', result });
+      }
+
+      // Explicit tool calling mode
+      if (requestedTools && Array.isArray(requestedTools)) {
+        for (const tc of requestedTools) {
+          const result = await resolveCopilotToolCall(tc.name, tc.params || {}, actor);
+          toolResults.push({ tool: tc.name, result });
+        }
+      }
+
+      // Build response
+      const contactCount = (state.records.contacts || []).filter(c => c.agencyId === agency.id && c.locationId === activeLocation.id).length;
+      const taskCount = (state.records.tasks || []).filter(t => t.agencyId === agency.id && t.locationId === activeLocation.id && t.status !== 'completed').length;
+
+      let responseText = `Hello ${actor.user.name}! You have ${contactCount} contacts and ${taskCount} pending tasks.`;
+      if (toolResults.length > 0) {
+        responseText += ' Here are the tool results:';
+      } else {
+        responseText += ` Regarding your message "${message}" — I'm ready to help. You can ask me to search contacts, review pipelines, create tasks, book appointments, or check calendar availability.`;
+      }
+
+      const assistantMsg = {
+        role: 'assistant',
+        content: responseText,
+        toolResults: toolResults.length > 0 ? toolResults : undefined,
+        timestamp: new Date().toISOString()
+      };
+      history.push(assistantMsg);
+
+      // Trim history to last 50 messages
+      if (history.length > 50) history.splice(0, history.length - 50);
+
+      return sendJson(res, 200, {
+        sessionId,
+        message: assistantMsg,
+        tools: Object.keys(copilotTools),
+        historyLength: history.length
+      });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── DASHBOARD ANALYTICS ────────────────────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'GET' && pathname === '/api/dashboard/stats') {
+      const loc = activeLocation.id;
+      const ag = agency.id;
+      const scoped = (col) => (state.records[col] || []).filter(r => r.agencyId === ag && r.locationId === loc);
+
+      const contacts = scoped('contacts');
+      const opportunities = scoped('opportunities');
+      const tasks = scoped('tasks');
+      const appointments = scoped('appointments');
+      const conversations = scoped('conversations');
+      const invoices = scoped('invoices');
+
+      const totalOppValue = opportunities.reduce((sum, o) => sum + (Number(o.value) || 0), 0);
+      const openOpps = opportunities.filter(o => o.status === 'open').length;
+      const wonOpps = opportunities.filter(o => o.status === 'won').length;
+      const pendingTasks = tasks.filter(t => t.status !== 'completed').length;
+      const overdueTasks = tasks.filter(t => t.status !== 'completed' && t.dueDate && new Date(t.dueDate) < new Date()).length;
+      const todayStr = new Date().toISOString().slice(0, 10);
+      const todayAppointments = appointments.filter(a => a.startsAt && a.startsAt.startsWith(todayStr)).length;
+      const totalInvoiced = invoices.reduce((sum, i) => sum + (Number(i.amount) || 0), 0);
+      const paidInvoices = invoices.filter(i => i.status === 'paid').length;
+
+      // Contacts added in last 7 days
+      const weekAgo = Date.now() - 7 * 86400000;
+      const newContactsThisWeek = contacts.filter(c => c.createdAt && new Date(c.createdAt).getTime() > weekAgo).length;
+
+      // Stage breakdown
+      const stageBreakdown = {};
+      for (const opp of opportunities) {
+        const stage = opp.stage || 'Unknown';
+        stageBreakdown[stage] = (stageBreakdown[stage] || 0) + 1;
+      }
+
+      return sendJson(res, 200, {
+        contacts: { total: contacts.length, newThisWeek: newContactsThisWeek },
+        opportunities: { total: opportunities.length, open: openOpps, won: wonOpps, totalValue: totalOppValue, stageBreakdown },
+        tasks: { total: tasks.length, pending: pendingTasks, overdue: overdueTasks },
+        appointments: { total: appointments.length, today: todayAppointments },
+        conversations: { total: conversations.length },
+        invoices: { total: invoices.length, paid: paidInvoices, totalInvoiced },
+        workflows: { totalExecutions: (state.workflowExecutions || []).filter(e => e.agencyId === ag && e.locationId === loc).length }
+      });
+    }
+
+    if (method === 'GET' && pathname === '/api/dashboard/activity') {
+      const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 200);
+      const activity = (state.audit || [])
+        .filter(a => a.agencyId === agency.id || a.agencyId === '')
+        .slice(-limit)
+        .reverse();
+      return sendJson(res, 200, { activity, total: activity.length });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── WORKFLOW RUNS & APPROVALS ──────────────────────────────
+    // ═════════════════════════════════════════════════════════════
+
     if (method === 'GET' && pathname === '/api/workflows/runs') {
       const runs = (state.workflowExecutions || []).filter(
         w => w.agencyId === agency.id && w.locationId === activeLocation.id
@@ -488,10 +1117,170 @@ const server = createServer(async (req, res) => {
       run.approvedBy = actor.user.name;
       run.finishedAt = new Date().toISOString();
       await saveState();
+      broadcast('workflow.execution.approved', { executionId: runId });
       return sendJson(res, 200, { success: true, run });
     }
 
-    // CRM COLLECTIONS CRUD (Contacts, Pipelines, Opportunities, Tasks, etc.)
+    // ═════════════════════════════════════════════════════════════
+    // ─── CRM ENHANCED ENDPOINTS ─────────────────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    // ─── Bulk Tag ─────────────────────────────────────────────────
+    if (method === 'POST' && pathname === '/api/crm/contacts/bulk-tag') {
+      const body = await readBody(req);
+      const { contactIds, tag } = body;
+      if (!Array.isArray(contactIds) || !tag) return sendJson(res, 400, { error: 'contactIds array and tag required' });
+
+      let updated = 0;
+      for (const id of contactIds) {
+        const contact = (state.records.contacts || []).find(
+          c => c.id === id && c.agencyId === agency.id && c.locationId === activeLocation.id
+        );
+        if (contact) {
+          contact.tags = Array.from(new Set([...(contact.tags || []), tag]));
+          contact.updatedAt = new Date().toISOString();
+          updated++;
+        }
+      }
+      await saveState();
+      auditLog('crm.contacts.bulk_tag', actor, { tag, count: updated });
+      broadcast('crm.contacts.bulk_updated', { tag, count: updated });
+      return sendJson(res, 200, { success: true, updated });
+    }
+
+    // ─── Import Contacts (CSV text) ──────────────────────────────
+    if (method === 'POST' && pathname === '/api/crm/contacts/import') {
+      const body = await readBody(req);
+      const csvText = body.csv || body.data || '';
+      if (!csvText) return sendJson(res, 400, { error: 'csv field with CSV text is required' });
+
+      const rows = parseCSV(csvText);
+      const imported = [];
+      for (const row of rows) {
+        const contact = {
+          id: randomUUID(),
+          agencyId: agency.id,
+          locationId: activeLocation.id,
+          firstName: row.firstName || row.first_name || row.name || '',
+          lastName: row.lastName || row.last_name || '',
+          email: row.email || '',
+          phone: row.phone || '',
+          company: row.company || '',
+          source: 'CSV Import',
+          tags: row.tags ? row.tags.split(';').map(t => t.trim()) : ['imported'],
+          status: row.status || 'lead',
+          notes: row.notes || '',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        state.records.contacts.push(contact);
+        imported.push(contact);
+      }
+      await saveState();
+      auditLog('crm.contacts.import', actor, { count: imported.length });
+      broadcast('crm.contacts.imported', { count: imported.length });
+      return sendJson(res, 201, { success: true, imported: imported.length, contacts: imported.map(c => ({ id: c.id, name: `${c.firstName} ${c.lastName}`, email: c.email })) });
+    }
+
+    // ─── Contact Merge / Dedup ───────────────────────────────────
+    if (method === 'POST' && pathname === '/api/crm/contacts/merge') {
+      const body = await readBody(req);
+      const { primaryId, mergeIds } = body;
+      if (!primaryId || !Array.isArray(mergeIds) || mergeIds.length === 0) {
+        return sendJson(res, 400, { error: 'primaryId and mergeIds array required' });
+      }
+
+      const contacts = state.records.contacts || [];
+      const primary = contacts.find(c => c.id === primaryId && c.agencyId === agency.id && c.locationId === activeLocation.id);
+      if (!primary) return sendJson(res, 404, { error: 'Primary contact not found' });
+
+      const merged = [];
+      for (const mergeId of mergeIds) {
+        if (mergeId === primaryId) continue;
+        const idx = contacts.findIndex(c => c.id === mergeId && c.agencyId === agency.id && c.locationId === activeLocation.id);
+        if (idx === -1) continue;
+
+        const dup = contacts[idx];
+
+        // Merge data into primary: fill empty fields, merge tags
+        for (const field of ['lastName', 'email', 'phone', 'company', 'source', 'notes']) {
+          if (!primary[field] && dup[field]) primary[field] = dup[field];
+        }
+        primary.tags = Array.from(new Set([...(primary.tags || []), ...(dup.tags || [])]));
+
+        // Re-link related records
+        for (const opp of (state.records.opportunities || [])) {
+          if (opp.contactId === mergeId) opp.contactId = primaryId;
+        }
+        for (const task of (state.records.tasks || [])) {
+          if (task.contactId === mergeId) task.contactId = primaryId;
+        }
+        for (const note of (state.records.notes || [])) {
+          if (note.contactId === mergeId) note.contactId = primaryId;
+        }
+
+        // Remove duplicate
+        contacts.splice(idx, 1);
+        merged.push(mergeId);
+      }
+
+      primary.updatedAt = new Date().toISOString();
+      await saveState();
+      auditLog('crm.contacts.merge', actor, { primaryId, mergedIds: merged });
+      return sendJson(res, 200, { success: true, primaryId, mergedCount: merged.length, mergedIds: merged });
+    }
+
+    // ─── Contact Activity Timeline ───────────────────────────────
+    const timelineMatch = pathname.match(/^\/api\/crm\/contacts\/([a-zA-Z0-9_-]+)\/timeline$/);
+    if (method === 'GET' && timelineMatch) {
+      const contactId = timelineMatch[1];
+      const contact = (state.records.contacts || []).find(
+        c => c.id === contactId && c.agencyId === agency.id && c.locationId === activeLocation.id
+      );
+      if (!contact) return sendJson(res, 404, { error: 'Contact not found' });
+
+      const timeline = [];
+
+      // Contact creation
+      timeline.push({ type: 'contact_created', date: contact.createdAt, detail: `Contact created from ${contact.source || 'manual'}` });
+
+      // Opportunities
+      for (const opp of (state.records.opportunities || [])) {
+        if (opp.contactId === contactId) {
+          timeline.push({ type: 'opportunity', date: opp.createdAt, detail: `Opportunity: ${opp.name} (${opp.stage})`, recordId: opp.id });
+        }
+      }
+
+      // Tasks
+      for (const task of (state.records.tasks || [])) {
+        if (task.contactId === contactId) {
+          timeline.push({ type: 'task', date: task.createdAt, detail: `Task: ${task.title} (${task.status})`, recordId: task.id });
+        }
+      }
+
+      // Notes
+      for (const note of (state.records.notes || [])) {
+        if (note.contactId === contactId) {
+          timeline.push({ type: 'note', date: note.createdAt, detail: `Note: ${(note.text || '').slice(0, 100)}`, recordId: note.id });
+        }
+      }
+
+      // Audit entries for this contact
+      for (const entry of (state.audit || [])) {
+        if (entry.details && (entry.details.contactId === contactId || entry.details.id === contactId)) {
+          timeline.push({ type: 'audit', date: entry.timestamp, detail: entry.action });
+        }
+      }
+
+      // Sort by date descending
+      timeline.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+      return sendJson(res, 200, { contactId, name: `${contact.firstName} ${contact.lastName}`, timeline });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── CRM COLLECTIONS CRUD (with search/filter/pagination) ───
+    // ═════════════════════════════════════════════════════════════
     const collectionMatch = pathname.match(/^\/api\/crm\/([a-zA-Z0-9_]+)(?:\/([a-zA-Z0-9_-]+))?$/);
     if (collectionMatch) {
       const collectionName = collectionMatch[1];
@@ -503,10 +1292,92 @@ const server = createServer(async (req, res) => {
 
       const list = state.records[collectionName] || [];
 
-      // GET /api/crm/:collection
+      // GET /api/crm/:collection — with search, filter, pagination, sorting
       if (method === 'GET' && !recordId) {
-        const filtered = list.filter(r => r.agencyId === agency.id && r.locationId === activeLocation.id);
-        return sendJson(res, 200, filtered);
+        let filtered = list.filter(r => r.agencyId === agency.id && r.locationId === activeLocation.id);
+
+        // Search (across all string fields)
+        const search = url.searchParams.get('search') || url.searchParams.get('q');
+        if (search) {
+          const q = search.toLowerCase();
+          filtered = filtered.filter(r =>
+            Object.values(r).some(v => {
+              if (typeof v === 'string') return v.toLowerCase().includes(q);
+              if (Array.isArray(v)) return v.some(item => String(item).toLowerCase().includes(q));
+              return false;
+            })
+          );
+        }
+
+        // Filter by tag (contacts/any collection with tags)
+        const tagFilter = url.searchParams.get('tag');
+        if (tagFilter) {
+          filtered = filtered.filter(r => Array.isArray(r.tags) && r.tags.some(t => t.toLowerCase() === tagFilter.toLowerCase()));
+        }
+
+        // Filter by status
+        const statusFilter = url.searchParams.get('status');
+        if (statusFilter) {
+          filtered = filtered.filter(r => r.status && r.status.toLowerCase() === statusFilter.toLowerCase());
+        }
+
+        // Filter by pipeline
+        const pipelineFilter = url.searchParams.get('pipeline');
+        if (pipelineFilter) {
+          filtered = filtered.filter(r => r.pipeline && r.pipeline.toLowerCase() === pipelineFilter.toLowerCase());
+        }
+
+        // Filter by stage
+        const stageFilter = url.searchParams.get('stage');
+        if (stageFilter) {
+          filtered = filtered.filter(r => r.stage && r.stage.toLowerCase() === stageFilter.toLowerCase());
+        }
+
+        // Filter by source
+        const sourceFilter = url.searchParams.get('source');
+        if (sourceFilter) {
+          filtered = filtered.filter(r => r.source && r.source.toLowerCase().includes(sourceFilter.toLowerCase()));
+        }
+
+        // Filter by assignedTo
+        const assignedFilter = url.searchParams.get('assignedTo');
+        if (assignedFilter) {
+          filtered = filtered.filter(r => r.assignedTo && r.assignedTo.toLowerCase().includes(assignedFilter.toLowerCase()));
+        }
+
+        // Sorting
+        const sortField = url.searchParams.get('sort') || 'createdAt';
+        const sortOrder = url.searchParams.get('order') || 'desc';
+        filtered.sort((a, b) => {
+          const aVal = a[sortField] ?? '';
+          const bVal = b[sortField] ?? '';
+          if (typeof aVal === 'number' && typeof bVal === 'number') {
+            return sortOrder === 'asc' ? aVal - bVal : bVal - aVal;
+          }
+          const cmp = String(aVal).localeCompare(String(bVal));
+          return sortOrder === 'asc' ? cmp : -cmp;
+        });
+
+        const total = filtered.length;
+
+        // Pagination
+        const page = Math.max(1, Number(url.searchParams.get('page')) || 1);
+        const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 25));
+        const startIdx = (page - 1) * limit;
+        const pageData = filtered.slice(startIdx, startIdx + limit);
+        const totalPages = Math.ceil(total / limit);
+
+        return sendJson(res, 200, {
+          data: pageData,
+          pagination: { page, limit, total, totalPages, hasMore: page < totalPages }
+        });
+      }
+
+      // GET /api/crm/:collection/:id — single record
+      if (method === 'GET' && recordId) {
+        const record = list.find(r => r.id === recordId && r.agencyId === agency.id && r.locationId === activeLocation.id);
+        if (!record) return sendJson(res, 404, { error: 'Record not found' });
+        return sendJson(res, 200, record);
       }
 
       // POST /api/crm/:collection (Create)
@@ -522,6 +1393,9 @@ const server = createServer(async (req, res) => {
         };
         list.push(newRecord);
         await saveState();
+
+        auditLog(`crm.${collectionName}.created`, actor, { id: newRecord.id });
+        broadcast(`crm.${collectionName}.created`, { id: newRecord.id, ...newRecord });
 
         // Check if creating this record triggers a workflow
         if (collectionName === 'contacts') {
@@ -542,6 +1416,7 @@ const server = createServer(async (req, res) => {
         const index = list.findIndex(r => r.id === recordId && r.agencyId === agency.id && r.locationId === activeLocation.id);
         if (index === -1) return sendJson(res, 404, { error: 'Record not found' });
 
+        const previousRecord = { ...list[index] };
         const updated = {
           ...list[index],
           ...body,
@@ -550,13 +1425,26 @@ const server = createServer(async (req, res) => {
         list[index] = updated;
         await saveState();
 
+        auditLog(`crm.${collectionName}.updated`, actor, { id: recordId });
+        broadcast(`crm.${collectionName}.updated`, { id: recordId, ...updated });
+
         // Check stage move trigger
-        if (collectionName === 'opportunities' && body.stage && body.stage !== list[index].stage) {
+        if (collectionName === 'opportunities' && body.stage && body.stage !== previousRecord.stage) {
           triggerWorkflowExecution({
             agencyId: agency.id,
             locationId: activeLocation.id,
             triggerType: 'opportunity_stage',
-            triggerContext: { opportunity: updated, stage: body.stage }
+            triggerContext: { opportunity: updated, stage: body.stage, previousStage: previousRecord.stage }
+          }).catch(console.error);
+        }
+
+        // Contact update trigger
+        if (collectionName === 'contacts') {
+          triggerWorkflowExecution({
+            agencyId: agency.id,
+            locationId: activeLocation.id,
+            triggerType: 'contact_updated',
+            triggerContext: { contact: updated, previous: previousRecord }
           }).catch(console.error);
         }
 
@@ -567,9 +1455,11 @@ const server = createServer(async (req, res) => {
       if (method === 'DELETE' && recordId) {
         const index = list.findIndex(r => r.id === recordId && r.agencyId === agency.id && r.locationId === activeLocation.id);
         if (index === -1) return sendJson(res, 404, { error: 'Record not found' });
-        list.splice(index, 1);
+        const deleted = list.splice(index, 1)[0];
         await saveState();
-        return sendJson(res, 200, { success: true });
+        auditLog(`crm.${collectionName}.deleted`, actor, { id: recordId });
+        broadcast(`crm.${collectionName}.deleted`, { id: recordId });
+        return sendJson(res, 200, { success: true, deleted });
       }
     }
 
@@ -580,8 +1470,48 @@ const server = createServer(async (req, res) => {
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════
+// ─── STARTUP ──────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════
+
 await loadState();
 
+// Attach WebSocket server
+if (WebSocketServer) {
+  wss = new WebSocketServer({ server, path: '/ws' });
+  wss.on('connection', (ws, req) => {
+    wsClients.add(ws);
+    console.log(`[WS] Client connected (total: ${wsClients.size})`);
+
+    ws.send(JSON.stringify({ event: 'connected', data: { message: 'Operza real-time channel active' }, timestamp: new Date().toISOString() }));
+
+    ws.on('message', (raw) => {
+      try {
+        const msg = JSON.parse(raw.toString());
+        // Echo ping/pong
+        if (msg.type === 'ping') {
+          ws.send(JSON.stringify({ event: 'pong', timestamp: new Date().toISOString() }));
+        }
+      } catch { /* ignore malformed */ }
+    });
+
+    ws.on('close', () => {
+      wsClients.delete(ws);
+      console.log(`[WS] Client disconnected (total: ${wsClients.size})`);
+    });
+
+    ws.on('error', () => wsClients.delete(ws));
+  });
+
+  console.log('📡 WebSocket server attached at /ws');
+}
+
+// Start schedule trigger loop
+startScheduleTriggerLoop();
+console.log('⏰ Schedule trigger loop started (60s interval)');
+
 server.listen(port, host, () => {
-  console.log(`🚀 Operza Unified API Server running at http://${host}:${port}`);
+  console.log(`🚀 Operza Unified API Server v2.0 running at http://${host}:${port}`);
+  console.log(`   Health: http://localhost:${port}/health`);
+  console.log(`   WebSocket: ws://localhost:${port}/ws`);
 });
