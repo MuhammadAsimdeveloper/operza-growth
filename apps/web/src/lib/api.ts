@@ -184,6 +184,48 @@ export const api = {
     getOverview: () =>
       request<{ metrics: { revenue: number; pipeline: number; dealsWon: number; contacts: number; appointmentShowRate: number }; sources: Record<string, number>; timeline: any[]; campaignsCount: number }>('/api/reporting/overview'),
   },
+  media: {
+    upload: (data: { name?: string; folder?: string; kind?: string; mimeType?: string; sizeKb?: number; data?: string }) =>
+      request<{ success: boolean; asset: any }>('/api/media/upload', { method: 'POST', body: JSON.stringify(data) }),
+    delete: (id: string) => request<{ success: boolean; asset: any }>(`/api/media/${id}`, { method: 'DELETE' }),
+    getFileUrl: (id: string) => `/api/media/file/${id}`,
+  },
+  blogs: {
+    getPublic: (slug: string) => request<any>(`/api/blogs/public/${slug}`),
+    publish: (id: string) => request<{ success: boolean; blog: any }>(`/api/blogs/publish/${id}`, { method: 'PUT' }),
+  },
+  qr: {
+    getSvgUrl: (id: string) => `/api/qr/${id}.svg`,
+    scan: (id: string, redirect = false) =>
+      request<{ success: boolean; id: string; name: string; target: string; scans: number }>(
+        `/api/qr/${id}/scan${redirect ? '?redirect=true' : ''}`
+      ),
+  },
+  snippets: {
+    use: (id: string, contactId?: string) =>
+      request<{ success: boolean; snippetId: string; uses: number; resolvedBody: string; resolvedSubject?: string; tokensResolved: number }>(
+        `/api/snippets/${id}/use`,
+        { method: 'POST', body: JSON.stringify({ contactId }) }
+      ),
+  },
+  templates: {
+    use: (id: string, contactId?: string) =>
+      request<{ success: boolean; templateId: string; uses: number; resolvedBody: string; resolvedSubject: string; tokensResolved: number }>(
+        `/api/templates/${id}/use`,
+        { method: 'POST', body: JSON.stringify({ contactId }) }
+      ),
+  },
+  portal: {
+    getSummary: (contactId: string) =>
+      request<{ contact: any; invoices: any[]; courses: any[]; documents: any[]; appointments: any[] }>(
+        `/api/portal/summary/${contactId}`
+      ),
+    toggleAccess: (contactId: string, portalAccess = true) =>
+      request<{ success: boolean; contactId: string; portalAccess: boolean }>(
+        `/api/crm/contacts/${contactId}/portal-access`,
+        { method: 'PUT', body: JSON.stringify({ portalAccess }) }
+      ),
+  },
   copilot: {
     chat: (data: { message: string; sessionId?: string; tools?: any[] }) =>
       request('/api/copilot/chat', { method: 'POST', body: JSON.stringify(data) }),

@@ -1152,7 +1152,210 @@ async function runTests() {
     }
     console.log('✅ Lookalike prospect converted and ingested into CRM database with source attribution and timeline');
 
-    console.log('\n🎉 ALL 40 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 41. Media Assets Upload, Public Serving & Deletion
+    console.log('\n[TEST 41] Media Assets Engine: POST /api/media/upload, GET /api/media/file/:id & DELETE');
+    const mediaUploadRes = await request('/api/media/upload', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'agency-emblem.svg',
+        folder: 'Brand Assets',
+        kind: 'image',
+        mimeType: 'image/svg+xml',
+        sizeKb: 48
+      })
+    });
+    console.log(`Media Upload Status: ${mediaUploadRes.status}`, `ID: ${mediaUploadRes.data.asset?.id}`, `URL: ${mediaUploadRes.data.asset?.url}`);
+    if (mediaUploadRes.status !== 201 || !mediaUploadRes.data.asset?.url) {
+      throw new Error(`Media upload failed: ${JSON.stringify(mediaUploadRes.data)}`);
+    }
+
+    const mediaId = mediaUploadRes.data.asset.id;
+    const mediaFileRes = await request(`/api/media/file/${mediaId}`);
+    console.log(`Media File Ingress Status: ${mediaFileRes.status}`);
+    if (mediaFileRes.status !== 200) {
+      throw new Error(`Media file fetch failed with status ${mediaFileRes.status}`);
+    }
+
+    const mediaDeleteRes = await request(`/api/media/${mediaId}`, { method: 'DELETE' });
+    console.log(`Media Delete Status: ${mediaDeleteRes.status}`, `Deleted: ${mediaDeleteRes.data.asset?.name}`);
+    if (mediaDeleteRes.status !== 200) {
+      throw new Error(`Media delete failed: ${JSON.stringify(mediaDeleteRes.data)}`);
+    }
+    console.log('✅ Media asset uploaded, served via public ingress, and removed with database sync');
+
+    // 42. SEO Blog CMS Creation, Publishing & Public Reader Ingress
+    console.log('\n[TEST 42] SEO Blog CMS & Public Reader: POST /api/crm/blogs, /api/blogs/publish/:id & /api/blogs/public/:slug');
+    const blogCreateRes = await request('/api/crm/blogs', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: 'Scaling Agency Workflows in 2026',
+        slug: 'scaling-agency-workflows-2026',
+        author: 'Elena Rostova',
+        category: 'Strategy',
+        content: 'Autonomous workflows transform agency operations by connecting CRM leads directly to delivery engines.',
+        status: 'draft',
+        views: 0
+      })
+    });
+    console.log(`Blog Create Status: ${blogCreateRes.status}`, `ID: ${blogCreateRes.data.id}`);
+    if (blogCreateRes.status !== 201 || !blogCreateRes.data.id) {
+      throw new Error(`Blog post creation failed: ${JSON.stringify(blogCreateRes.data)}`);
+    }
+
+    const blogId = blogCreateRes.data.id;
+    const blogPublishRes = await request(`/api/blogs/publish/${blogId}`, { method: 'PUT' });
+    console.log(`Publish Status: ${blogPublishRes.status}`, `New Status: ${blogPublishRes.data.blog?.status}`);
+    if (blogPublishRes.status !== 200 || blogPublishRes.data.blog?.status !== 'published') {
+      throw new Error(`Blog publish transition failed: ${JSON.stringify(blogPublishRes.data)}`);
+    }
+
+    // Public reader ingress (view 1)
+    const readerRes1 = await request('/api/blogs/public/scaling-agency-workflows-2026');
+    console.log(`Public Reader Status (1): ${readerRes1.status}`, `Views: ${readerRes1.data.views}`);
+    if (readerRes1.status !== 200 || readerRes1.data.views !== 1) {
+      throw new Error(`Public blog reader ingress failed: ${JSON.stringify(readerRes1.data)}`);
+    }
+
+    // Public reader ingress (view 2)
+    const readerRes2 = await request('/api/blogs/public/scaling-agency-workflows-2026');
+    console.log(`Public Reader Status (2): ${readerRes2.status}`, `Views: ${readerRes2.data.views}`);
+    if (readerRes2.status !== 200 || readerRes2.data.views !== 2) {
+      throw new Error(`Public blog views increment failed: ${JSON.stringify(readerRes2.data)}`);
+    }
+    console.log('✅ SEO blog article authored, published, and served via public reader with automated view tracking');
+
+    // 43. QR Code Generator, SVG Vector Delivery & Scan Tracking
+    console.log('\n[TEST 43] QR Codes Engine: POST /api/crm/qrCodes, GET /api/qr/:id.svg & /api/qr/:id/scan');
+    const qrCreateRes = await request('/api/crm/qrCodes', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'VIP Strategy Session QR',
+        target: 'https://operza.io/vip-consult',
+        scans: 0
+      })
+    });
+    console.log(`QR Create Status: ${qrCreateRes.status}`, `ID: ${qrCreateRes.data.id}`);
+    if (qrCreateRes.status !== 201 || !qrCreateRes.data.id) {
+      throw new Error(`QR code creation failed: ${JSON.stringify(qrCreateRes.data)}`);
+    }
+
+    const qrId = qrCreateRes.data.id;
+    const qrSvgRes = await request(`/api/qr/${qrId}.svg`);
+    console.log(`QR SVG Delivery Status: ${qrSvgRes.status}`);
+    if (qrSvgRes.status !== 200) {
+      throw new Error(`QR SVG generation failed with status ${qrSvgRes.status}`);
+    }
+
+    const qrScanRes = await request(`/api/qr/${qrId}/scan`);
+    console.log(`QR Scan Status: ${qrScanRes.status}`, `Scans: ${qrScanRes.data.scans}`, `Target: ${qrScanRes.data.target}`);
+    if (qrScanRes.status !== 200 || qrScanRes.data.scans !== 1 || qrScanRes.data.target !== 'https://operza.io/vip-consult') {
+      throw new Error(`QR scan tracking failed: ${JSON.stringify(qrScanRes.data)}`);
+    }
+    console.log('✅ QR Code generated, standalone vector SVG rendered, and real-time scan tracked');
+
+    // 44. Client Portal Permission Gating & Summary Ingress
+    console.log('\n[TEST 44] Client Portal Ingress & Access Gating: PUT /api/crm/contacts/:id/portal-access & /api/portal/summary/:id');
+    const testContactId = contact.data.id;
+
+    // First, verify access revoke
+    const revokeRes = await request(`/api/crm/contacts/${testContactId}/portal-access`, {
+      method: 'PUT',
+      body: JSON.stringify({ portalAccess: false })
+    });
+    console.log(`Portal Revoke Status: ${revokeRes.status}`, `Access: ${revokeRes.data.portalAccess}`);
+    if (revokeRes.status !== 200 || revokeRes.data.portalAccess !== false) {
+      throw new Error(`Portal access revoke failed: ${JSON.stringify(revokeRes.data)}`);
+    }
+
+    // Attempting portal summary with revoked access should return 403 Forbidden
+    const forbiddenRes = await request(`/api/portal/summary/${testContactId}`);
+    console.log(`Forbidden Portal Access Status: ${forbiddenRes.status}`);
+    if (forbiddenRes.status !== 403) {
+      throw new Error(`Expected 403 Forbidden for revoked portal access, got ${forbiddenRes.status}`);
+    }
+
+    // Grant portal access
+    const grantRes = await request(`/api/crm/contacts/${testContactId}/portal-access`, {
+      method: 'PUT',
+      body: JSON.stringify({ portalAccess: true })
+    });
+    console.log(`Portal Grant Status: ${grantRes.status}`, `Access: ${grantRes.data.portalAccess}`);
+    if (grantRes.status !== 200 || grantRes.data.portalAccess !== true) {
+      throw new Error(`Portal access grant failed: ${JSON.stringify(grantRes.data)}`);
+    }
+
+    // Valid portal summary query
+    const portalSummaryRes = await request(`/api/portal/summary/${testContactId}`);
+    console.log(`Portal Summary Status: ${portalSummaryRes.status}`, `Client: ${portalSummaryRes.data.contact?.firstName}`, `Invoices: ${portalSummaryRes.data.invoices?.length}`);
+    if (portalSummaryRes.status !== 200 || !portalSummaryRes.data.contact?.id) {
+      throw new Error(`Portal summary query failed: ${JSON.stringify(portalSummaryRes.data)}`);
+    }
+    console.log('✅ Client Portal access gating verified with secure client summary ingress');
+
+    // 45. Merge Token Snippets & Templates Dynamic Resolution Engine
+    console.log('\n[TEST 45] Dynamic Merge Token Snippets & Templates: /api/snippets/:id/use & /api/templates/:id/use');
+    const snippetCreateRes = await request('/api/crm/snippets', {
+      method: 'POST',
+      body: JSON.stringify({
+        label: 'VIP Onboarding SMS',
+        subject: 'Welcome to VIP Retainer',
+        body: 'Hi {{contact.firstName}}, welcome to {{agency.name}}! Reach out anytime.',
+        channel: 'sms',
+        uses: 0
+      })
+    });
+    console.log(`Snippet Create Status: ${snippetCreateRes.status}`, `ID: ${snippetCreateRes.data.id}`);
+    if (snippetCreateRes.status !== 201 || !snippetCreateRes.data.id) {
+      throw new Error(`Snippet creation failed: ${JSON.stringify(snippetCreateRes.data)}`);
+    }
+
+    const snippetId = snippetCreateRes.data.id;
+    const snippetUseRes = await request(`/api/snippets/${snippetId}/use`, {
+      method: 'POST',
+      body: JSON.stringify({ contactId: testContactId })
+    });
+    console.log(`Snippet Use Status: ${snippetUseRes.status}`, `Uses: ${snippetUseRes.data.uses}`, `Resolved: "${snippetUseRes.data.resolvedBody}"`);
+    if (
+      snippetUseRes.status !== 200 ||
+      snippetUseRes.data.uses !== 1 ||
+      !snippetUseRes.data.resolvedBody.includes('Hi Marcus') ||
+      !snippetUseRes.data.resolvedBody.includes('Operza Alpha Agency')
+    ) {
+      throw new Error(`Snippet resolution failed: ${JSON.stringify(snippetUseRes.data)}`);
+    }
+
+    const templateCreateRes = await request('/api/crm/templates', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Quarterly Executive Review Packet',
+        category: 'Review',
+        subject: 'Quarterly review for {{contact.company}}',
+        body: 'Dear {{contact.firstName}},\nHere is the Q4 review for {{contact.company}}.\nFrom: {{agency.name}}',
+        uses: 0
+      })
+    });
+    console.log(`Template Create Status: ${templateCreateRes.status}`, `ID: ${templateCreateRes.data.id}`);
+    if (templateCreateRes.status !== 201 || !templateCreateRes.data.id) {
+      throw new Error(`Template creation failed: ${JSON.stringify(templateCreateRes.data)}`);
+    }
+
+    const templateId = templateCreateRes.data.id;
+    const templateUseRes = await request(`/api/templates/${templateId}/use`, {
+      method: 'POST',
+      body: JSON.stringify({ contactId: testContactId })
+    });
+    console.log(`Template Use Status: ${templateUseRes.status}`, `Uses: ${templateUseRes.data.uses}`, `ResolvedSubject: "${templateUseRes.data.resolvedSubject}"`);
+    if (
+      templateUseRes.status !== 200 ||
+      templateUseRes.data.uses !== 1 ||
+      !templateUseRes.data.resolvedSubject.includes('Vance Media') ||
+      !templateUseRes.data.resolvedBody.includes('Dear Marcus')
+    ) {
+      throw new Error(`Template resolution failed: ${JSON.stringify(templateUseRes.data)}`);
+    }
+    console.log('✅ Snippets and Templates live merge token resolution and usage tracking verified');
+
+    console.log('\n🎉 ALL 45 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

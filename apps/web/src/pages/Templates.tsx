@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, PageHeader } from '../components/ui';
@@ -6,6 +6,7 @@ import { useStore, uid } from '../lib/store';
 import { customValueToken, resolveMerge } from '../lib/merge';
 import { num, relative } from '../lib/format';
 import type { EmailTemplate } from '../lib/types';
+import { api } from '../lib/api';
 
 const TOKENS = [
   '{{contact.first_name}}',
@@ -23,6 +24,21 @@ export default function Templates() {
   const [editing, setEditing] = useState<EmailTemplate | 'new' | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
 
+  useEffect(() => {
+    let active = true;
+    api.crm.list<EmailTemplate>('templates')
+      .then((res) => {
+        if (!active || !res || !Array.isArray(res)) return;
+        for (const item of res) {
+          if (!templates.some((t) => t.id === item.id)) {
+            dispatch({ type: 'template/add', template: item });
+          }
+        }
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [dispatch, templates]);
+
   const categories = useMemo(
     () => ['All', ...Array.from(new Set(templates.map((t) => t.category)))],
     [templates],
@@ -37,6 +53,11 @@ export default function Templates() {
       await navigator.clipboard.writeText(subject);
     } catch {
       /* clipboard unavailable — the increment still records the use */
+    }
+    try {
+      await api.templates.use(t.id, sampleContact?.id);
+    } catch {
+      /* fallback */
     }
     dispatch({ type: 'template/use', id: t.id });
     setCopied(t.id);
@@ -187,6 +208,7 @@ function TemplateEditor({
     if (!canSave) return;
     const cleanCategory = category.trim() || 'General';
     if (template) {
+      api.crm.update('templates', template.id, { name: name.trim(), category: cleanCategory, subject: subject.trim(), body }).catch(() => {});
       dispatch({
         type: 'template/update',
         id: template.id,
@@ -222,6 +244,7 @@ function TemplateEditor({
               type="button"
               style={{ marginRight: 'auto', color: 'var(--red)' }}
               onClick={() => {
+                api.crm.delete('templates', template.id).catch(() => {});
                 dispatch({ type: 'template/delete', id: template.id });
                 onClose();
               }}

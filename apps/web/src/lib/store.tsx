@@ -12,6 +12,7 @@ import type {
   Appointment,
   AuditEntry,
   CalendarDef,
+  BlogPost,
   CallRecord,
   Campaign,
   Channel,
@@ -183,7 +184,10 @@ export type Action =
   | { type: 'triggerLink/add'; link: TriggerLink }
   | { type: 'triggerLink/click'; id: string }
   | { type: 'blog/toggle'; id: string }
+  | { type: 'blog/add'; post: BlogPost }
+  | { type: 'blog/update'; id: string; patch: Partial<BlogPost> }
   | { type: 'qr/add'; code: QrCode }
+  | { type: 'qr/scan'; id: string }
   | { type: 'smartList/add'; list: SmartList }
   | { type: 'smartList/update'; id: string; patch: Partial<SmartList> }
   | { type: 'customField/add'; field: CustomField }
@@ -1062,6 +1066,24 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
         ),
       };
 
+    case 'blog/add':
+      return {
+        ...state,
+        blogs: [action.post, ...state.blogs],
+      };
+
+    case 'blog/update':
+      return {
+        ...state,
+        blogs: state.blogs.map((b) => (b.id === action.id ? { ...b, ...action.patch } : b)),
+      };
+
+    case 'qr/scan':
+      return {
+        ...state,
+        qrCodes: state.qrCodes.map((q) => (q.id === action.id ? { ...q, scans: q.scans + 1 } : q)),
+      };
+
     case 'qr/add':
       return { ...state, qrCodes: [action.code, ...state.qrCodes] };
 
@@ -1511,6 +1533,12 @@ function auditMeta(
         detail: post?.title,
       };
     }
+    case 'blog/add':
+      return { action: 'Blog post created', entity: 'Blog', detail: action.post.title };
+    case 'blog/update':
+      return { action: 'Blog post updated', entity: 'Blog', detail: action.patch.title ?? action.id };
+    case 'qr/scan':
+      return { action: 'QR code scanned', entity: 'QR Code', detail: action.id };
 
     case 'team/add':
       return { action: 'Team member added', entity: 'Team', detail: action.member.name };

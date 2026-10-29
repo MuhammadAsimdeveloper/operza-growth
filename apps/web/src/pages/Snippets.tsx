@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, PageHeader, StatCard } from '../components/ui';
 import { num } from '../lib/format';
 import { CHANNEL_META, uid, useStore } from '../lib/store';
+import { api } from '../lib/api';
 import type { Channel, Snippet } from '../lib/types';
 
 const CHANNELS = Object.keys(CHANNEL_META) as Channel[];
@@ -16,6 +17,23 @@ export default function Snippets() {
   const [query, setQuery] = useState('');
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<Snippet | null>(null);
+  const [resolvedPreview, setResolvedPreview] = useState<{ label: string; subject?: string; body: string; tokensResolved: number } | null>(null);
+
+  // Sync snippets with backend database
+  useEffect(() => {
+    let active = true;
+    api.crm.list<Snippet>('snippets')
+      .then((res) => {
+        if (!active || !res || !Array.isArray(res)) return;
+        for (const item of res) {
+          if (!state.snippets.some((s) => s.id === item.id)) {
+            dispatch({ type: 'snippet/add', snippet: item });
+          }
+        }
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [dispatch, state.snippets]);
 
   const q = query.trim().toLowerCase();
   const rows = state.snippets.filter((s) => {
@@ -28,13 +46,41 @@ export default function Snippets() {
   const shared = state.snippets.filter((s) => !s.channel).length;
   const mostUsed = [...state.snippets].sort((a, b) => b.uses - a.uses)[0];
 
+  async function handleTestUse(snippet: Snippet) {
+    const contactId = state.contacts[0]?.id;
+    try {
+      const res = await api.snippets.use(snippet.id, contactId);
+      if (res?.success) {
+        setResolvedPreview({
+          label: snippet.label,
+          subject: res.resolvedSubject,
+          body: res.resolvedBody,
+          tokensResolved: res.tokensResolved,
+        });
+        dispatch({ type: 'snippet/use', id: snippet.id });
+      }
+    } catch {
+      // Local fallback
+      dispatch({ type: 'snippet/use', id: snippet.id });
+    }
+  }
+
+  async function handleDelete(id: string) {
+    try {
+      await api.crm.delete('snippets', id);
+    } catch {
+      /* fallback */
+    }
+    dispatch({ type: 'snippet/delete', id });
+  }
+
   return (
     <div className="content">
       <PageHeader
         title="Snippets"
         subtitle="Reusable replies that fill merge tokens from the contact and custom values."
         actions={
-          <button className="btn btn--primary" onClick={() => setCreating(true)}>
+          <button className="btn btn--primary" type="button" onClick={() => setCreating(true)}>
             <Icon name="plus" size={16} /> New snippet
           </button>
         }
@@ -75,6 +121,7 @@ export default function Snippets() {
           {FILTERS.map((f) => (
             <button
               key={f}
+              type="button"
               className={filter === f ? 'is-active' : ''}
               onClick={() => setFilter(f)}
               style={{ textTransform: 'capitalize' }}
@@ -95,7 +142,7 @@ export default function Snippets() {
             }
             action={
               state.snippets.length === 0 ? (
-                <button className="btn btn--sm" onClick={() => setCreating(true)}>
+                <button className="btn btn--sm" type="button" onClick={() => setCreating(true)}>
                   New snippet
                 </button>
               ) : undefined
@@ -109,7 +156,7 @@ export default function Snippets() {
                   <th>Snippet</th>
                   <th style={{ width: 120 }}>Channel</th>
                   <th style={{ width: 80 }}>Uses</th>
-                  <th style={{ width: 52 }} />
+                  <th style={{ width: 110 }} className="cell-right">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -137,14 +184,22 @@ export default function Snippets() {
                     </td>
                     <td className="cell-sub">{num(snippet.uses)}</td>
                     <td className="cell-right">
-                      <span className="row" style={{ gap: 2, justifyContent: 'flex-end' }}>
+                      <span className="row" style={{ gap: 4, justifyContent: 'flex-end' }}>
+                        <button
+                          type="button"
+                          className="btn btn--sm"
+                          title="Simulate insertion and token resolution"
+                          onClick={() => handleTestUse(snippet)}
+                        >
+                          <Icon name="zap" size={12} /> Test
+                        </button>
                         <button className="icon-btn" aria-label={`Edit ${snippet.label}`} onClick={() => setEditing(snippet)}>
                           <Icon name="edit" size={15} />
                         </button>
                         <button
                           className="icon-btn"
                           aria-label={`Delete ${snippet.label}`}
-                          onClick={() => dispatch({ type: 'snippet/delete', id: snippet.id })}
+                          onClick={() => handleDelete(snippet.id)}
                         >
                           <Icon name="trash" size={15} />
                         </button>
@@ -159,9 +214,10 @@ export default function Snippets() {
       </div>
 
       <div className="hint" style={{ marginTop: 10 }}>
-        Merge tokens resolve when a snippet is inserted: <span className="mono-cell">{'{{contact.first_name}}'}</span>,{' '}
-        <span className="mono-cell">{'{{contact.company}}'}</span> and{' '}
-        <span className="mono-cell">{'{{custom_values.<name>}}'}</span>. Unknown tokens are left as written.
+        Merge tokens resolve dynamically when inserted: <span className="mono-cell">{'{{contact.firstName}}'}</span>,{' '}
+        <span className="mono-cell">{'{{contact.company}}'}</span>,{' '}
+        <span className="mono-cell">{'{{agency.name}}'}</span> and{' '}
+        <span className="mono-cell">{'{{custom_values.<name>}}'}</span>.
       </div>
 
       {(creating || editing) && (
@@ -171,16 +227,71 @@ export default function Snippets() {
             setCreating(false);
             setEditing(null);
           }}
-          onSave={(draft) => {
+          onSave={async (draft) => {
             if (editing) {
+              try {
+                await api.crm.update('snippets', editing.id, draft);
+              } catch {
+                /* fallback */
+              }
               dispatch({ type: 'snippet/update', id: editing.id, patch: draft });
             } else {
-              dispatch({ type: 'snippet/add', snippet: { ...draft, id: uid('sn'), uses: 0 } });
+              const newSnippet: Snippet = { ...draft, id: uid('sn'), uses: 0 };
+              try {
+                const res = await api.crm.create<Snippet>('snippets', newSnippet);
+                dispatch({ type: 'snippet/add', snippet: res || newSnippet });
+              } catch {
+                dispatch({ type: 'snippet/add', snippet: newSnippet });
+              }
             }
             setCreating(false);
             setEditing(null);
           }}
         />
+      )}
+
+      {resolvedPreview && (
+        <Modal
+          title={`Snippet Resolution Preview · ${resolvedPreview.label}`}
+          onClose={() => setResolvedPreview(null)}
+          footer={
+            <button className="btn btn--primary" type="button" onClick={() => setResolvedPreview(null)}>
+              Done
+            </button>
+          }
+        >
+          <div className="stack" style={{ gap: 12 }}>
+            <div className="row row--between">
+              <Badge tone="green">{resolvedPreview.tokensResolved} dynamic tokens resolved</Badge>
+              {state.contacts[0] && (
+                <span className="hint">Previewed with {state.contacts[0].firstName} {state.contacts[0].lastName}</span>
+              )}
+            </div>
+
+            {resolvedPreview.subject && (
+              <div className="field">
+                <label>Resolved subject</label>
+                <div className="template__subject">{resolvedPreview.subject}</div>
+              </div>
+            )}
+
+            <div className="field">
+              <label>Resolved body</label>
+              <div
+                style={{
+                  padding: '12px 14px',
+                  background: 'var(--surface-2)',
+                  borderRadius: 'var(--radius)',
+                  fontSize: 13,
+                  lineHeight: 1.6,
+                  whiteSpace: 'pre-wrap',
+                }}
+              >
+                {resolvedPreview.body}
+              </div>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );
@@ -273,12 +384,12 @@ function SnippetModal({
           id="snippet-body"
           className="input"
           rows={5}
-          placeholder={`Hi {{contact.first_name}}, thanks for meeting with us…`}
+          placeholder={`Hi {{contact.firstName}}, thanks for meeting with us…`}
           value={body}
           onChange={(e) => setBody(e.target.value)}
         />
         <div className="hint">
-          Use merge tokens like {'{{contact.first_name}}'} or {'{{custom_values.booking_url}}'} — they resolve when inserted.
+          Use merge tokens like {'{{contact.firstName}}'} or {'{{custom_values.booking_url}}'} — they resolve when inserted.
         </div>
       </div>
     </Modal>

@@ -5,6 +5,7 @@ import { Badge, EmptyState, PageHeader, StatCard, Switch } from '../components/u
 import { currency, num, shortDate } from '../lib/format';
 import { uid, useStore } from '../lib/store';
 import type { Coupon, Order } from '../lib/types';
+import { api } from '../lib/api';
 
 const usd = (value: number) =>
   new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
@@ -147,6 +148,22 @@ export default function Store() {
       },
       couponId: couponUsableNow && appliedCoupon ? appliedCoupon.id : undefined,
     });
+    api.crm.create('orders', {
+      orderNumber: order.number,
+      contactId,
+      amount: total,
+      currency: 'USD',
+      status: 'paid',
+      items: lines.map((l) => ({ name: l.product.name, price: l.product.price, qty: l.qty })),
+      paidAt: at,
+    }).catch(() => {});
+    api.crm.create('invoices', {
+      number: nextNumber('INV', state.invoices, 1047),
+      contactName: state.contacts.find((c) => c.id === contactId)?.firstName || 'Store Customer',
+      amount: total,
+      status: 'paid',
+      dueDate: at.slice(0, 10),
+    }).catch(() => {});
     setReceipt({ order, fee, net, couponCode: order.couponCode });
     setCart({});
     setCouponInput('');

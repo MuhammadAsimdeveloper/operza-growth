@@ -1,7 +1,11 @@
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
+import { Modal } from '../components/Modal';
 import { Avatar, Badge, PageHeader, StatCard, Switch } from '../components/ui';
 import { useStore } from '../lib/store';
-import { num, shortDate } from '../lib/format';
+import { currency, num } from '../lib/format';
+import { api } from '../lib/api';
+import type { Contact } from '../lib/types';
 
 const PORTAL_FEATURES = [
   { icon: 'file', title: 'Contracts & proposals', text: 'Members review and sign documents in the portal.' },
@@ -12,26 +16,68 @@ const PORTAL_FEATURES = [
 
 export default function ClientPortal() {
   const { state, dispatch } = useStore();
+  const [previewContactId, setPreviewContactId] = useState<string | null>(null);
+  const [portalSummary, setPortalSummary] = useState<any | null>(null);
+  const [loadingSummary, setLoadingSummary] = useState(false);
+
+  // Sync contacts from backend on mount
+  useEffect(() => {
+    let active = true;
+    api.crm.list<Contact>('contacts')
+      .then((res) => {
+        if (!active || !res || !Array.isArray(res)) return;
+        for (const item of res) {
+          if (!state.contacts.some((c) => c.id === item.id)) {
+            dispatch({ type: 'contact/add', contact: item });
+          }
+        }
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [dispatch, state.contacts]);
+
   const members = state.contacts.filter((c) => c.portalAccess);
   const candidates = state.contacts.filter((c) => !c.portalAccess).slice(0, 4);
 
   const sharedDocs = state.documents.filter((d) => members.some((m) => m.id === d.contactId)).length;
   const seats = state.enrollments.filter((e) => members.some((m) => m.id === e.contactId)).length;
 
+  async function handleToggleAccess(contactId: string, granted: boolean) {
+    try {
+      await api.portal.toggleAccess(contactId, granted);
+    } catch {
+      /* fallback */
+    }
+    dispatch({ type: 'contact/update', id: contactId, patch: { portalAccess: granted } });
+  }
+
+  async function handleOpenPreview(contactId: string) {
+    setPreviewContactId(contactId);
+    setLoadingSummary(true);
+    try {
+      const summary = await api.portal.getSummary(contactId);
+      setPortalSummary(summary);
+    } catch {
+      setPortalSummary(null);
+    } finally {
+      setLoadingSummary(false);
+    }
+  }
+
   return (
     <div className="content">
       <PageHeader
         title="Client Portal"
-        subtitle="A branded space where clients see documents, courses and invoices."
+        subtitle="A branded, unified space where clients see documents, courses and invoices."
         actions={
-          <>
-            <button className="btn">
-              <Icon name="globe" size={15} /> Preview portal
-            </button>
-            <button className="btn btn--primary">
-              <Icon name="settings" size={15} /> Portal settings
-            </button>
-          </>
+          <button
+            className="btn btn--primary"
+            type="button"
+            disabled={members.length === 0}
+            onClick={() => handleOpenPreview(members[0]?.id || '')}
+          >
+            <Icon name="globe" size={15} /> Preview portal
+          </button>
         }
       />
 
@@ -59,8 +105,8 @@ export default function ClientPortal() {
                 <tr>
                   <th>Member</th>
                   <th>Company</th>
-                  <th className="cell-right" style={{ width: 80 }}>
-                    Access
+                  <th className="cell-right" style={{ width: 140 }}>
+                    Actions
                   </th>
                 </tr>
               </thead>
@@ -78,20 +124,35 @@ export default function ClientPortal() {
                         </span>
                       </span>
                     </td>
-                    <td>{m.company}</td>
+                    <td>{m.company || '—'}</td>
                     <td className="cell-right">
-                      <span style={{ display: 'inline-flex' }}>
-                        <Switch
-                          on
-                          label={`Revoke portal access for ${m.firstName}`}
-                          onChange={() =>
-                            dispatch({ type: 'contact/update', id: m.id, patch: { portalAccess: false } })
-                          }
-                        />
+                      <span className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
+                        <button
+                          type="button"
+                          className="btn btn--sm"
+                          aria-label={`Preview portal for ${m.firstName}`}
+                          onClick={() => handleOpenPreview(m.id)}
+                        >
+                          <Icon name="eye" size={12} /> Preview
+                        </button>
+                        <span style={{ display: 'inline-flex' }}>
+                          <Switch
+                            on
+                            label={`Revoke portal access for ${m.firstName}`}
+                            onChange={() => handleToggleAccess(m.id, false)}
+                          />
+                        </span>
                       </span>
                     </td>
                   </tr>
                 ))}
+                {members.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="cell-sub" style={{ textAlign: 'center', padding: '24px' }}>
+                      No members have active portal access. Invite contacts below.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -113,15 +174,13 @@ export default function ClientPortal() {
                     <span className="person__name">
                       {c.firstName} {c.lastName}
                     </span>
-                    <span className="person__sub">Contact since {shortDate(c.createdAt)}</span>
+                    <span className="person__sub">{c.email}</span>
                   </span>
                 </span>
                 <button
                   type="button"
                   className="btn btn--sm"
-                  onClick={() =>
-                    dispatch({ type: 'contact/update', id: c.id, patch: { portalAccess: true } })
-                  }
+                  onClick={() => handleToggleAccess(c.id, true)}
                 >
                   <Icon name="plus" size={12} /> Grant access
                 </button>
@@ -150,6 +209,124 @@ export default function ClientPortal() {
           </div>
         ))}
       </div>
+
+      {previewContactId && (
+        <Modal
+          title={`Client Portal · ${portalSummary?.contact?.firstName || 'Member'} ${portalSummary?.contact?.lastName || ''}`}
+          wide
+          onClose={() => {
+            setPreviewContactId(null);
+            setPortalSummary(null);
+          }}
+          footer={
+            <button
+              className="btn btn--primary"
+              type="button"
+              onClick={() => {
+                setPreviewContactId(null);
+                setPortalSummary(null);
+              }}
+            >
+              Done Previewing
+            </button>
+          }
+        >
+          {loadingSummary ? (
+            <div className="cell-sub" style={{ padding: 20 }}>
+              Loading member data from secure portal ingress...
+            </div>
+          ) : portalSummary ? (
+            <div className="stack" style={{ gap: 16 }}>
+              <div className="card" style={{ background: 'var(--surface-2)', border: 'none' }}>
+                <div className="card__body row row--between">
+                  <span className="person">
+                    <Avatar name={`${portalSummary.contact.firstName} ${portalSummary.contact.lastName}`} size="md" />
+                    <span className="person__text">
+                      <strong style={{ fontSize: 14 }}>
+                        {portalSummary.contact.firstName} {portalSummary.contact.lastName}
+                      </strong>
+                      <span className="cell-sub">{portalSummary.contact.email} · {portalSummary.contact.company || 'Private Client'}</span>
+                    </span>
+                  </span>
+                  <Badge tone="green">Verified Client Access</Badge>
+                </div>
+              </div>
+
+              <div className="grid grid--3">
+                <div className="card">
+                  <div className="card__head">
+                    <div className="card__title">Invoices ({portalSummary.invoices?.length || 0})</div>
+                  </div>
+                  <div className="card__body stack" style={{ gap: 8 }}>
+                    {portalSummary.invoices?.length ? (
+                      portalSummary.invoices.map((inv: any) => (
+                        <div key={inv.id} className="row row--between" style={{ fontSize: 12 }}>
+                          <span>{inv.number}</span>
+                          <span className="row" style={{ gap: 6 }}>
+                            <strong>{currency(inv.amount)}</strong>
+                            <Badge tone={inv.status === 'paid' ? 'green' : 'amber'}>{inv.status}</Badge>
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="cell-sub">No outstanding invoices</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="card">
+                  <div className="card__head">
+                    <div className="card__title">Courses ({portalSummary.courses?.length || 0})</div>
+                  </div>
+                  <div className="card__body stack" style={{ gap: 8 }}>
+                    {portalSummary.courses?.length ? (
+                      portalSummary.courses.map((c: any) => (
+                        <div key={c.courseId} style={{ fontSize: 12 }}>
+                          <div className="row row--between">
+                            <strong>{c.name}</strong>
+                            <span className="cell-sub">{c.progress}%</span>
+                          </div>
+                          <div style={{ height: 4, background: 'var(--border)', borderRadius: 2, marginTop: 4, overflow: 'hidden' }}>
+                            <div style={{ width: `${c.progress}%`, height: '100%', background: 'var(--accent)' }} />
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="cell-sub">No enrolled courses</div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="card">
+                  <div className="card__head">
+                    <div className="card__title">Documents ({portalSummary.documents?.length || 0})</div>
+                  </div>
+                  <div className="card__body stack" style={{ gap: 8 }}>
+                    {portalSummary.documents?.length ? (
+                      portalSummary.documents.map((d: any) => (
+                        <div key={d.id} className="row row--between" style={{ fontSize: 12 }}>
+                          <span>{d.name || d.title}</span>
+                          <Badge tone={d.status === 'signed' ? 'green' : 'blue'}>{d.status}</Badge>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="cell-sub">No contracts or proposals</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="hint">
+                Direct Portal Endpoint: <span className="mono-cell">/api/portal/summary/{portalSummary.contact.id}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="cell-sub" style={{ padding: 20 }}>
+              Unable to load portal summary. Ensure portal access is active.
+            </div>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }

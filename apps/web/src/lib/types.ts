@@ -553,6 +553,8 @@ export interface MediaAsset {
   folder: string;
   sizeKb: number;
   uploadedAt: string;
+  url?: string;
+  mimeType?: string;
 }
 
 export type ProspectStatus = 'new' | 'contacted' | 'qualified' | 'skipped';
@@ -634,10 +636,14 @@ export interface TriggerLink {
 export interface BlogPost {
   id: ID;
   title: string;
+  slug?: string;
   author: string;
   status: 'draft' | 'published';
   views: number;
   publishedAt: string;
+  category?: string;
+  content?: string;
+  coverImage?: string;
 }
 
 export interface QrCode {

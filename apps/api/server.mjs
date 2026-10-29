@@ -59,7 +59,12 @@ const collections = Object.freeze({
   calls: { label: 'Phone System Calls', required: ['from'], fields: ['from','to','durationSec','outcome','direction','contactId','startedAt','recordingUrl','handled','notes','numberId'] },
   enrollments: { label: 'Course Enrollments', required: ['courseId', 'contactId'], fields: ['courseId','contactId','progress','startedAt','status'] },
   affiliates: { label: 'Affiliates', required: ['name', 'code'], fields: ['name','code','commissionPct','clicks','conversions','payout','status'] },
-  coupons: { label: 'Coupons', required: ['code'], fields: ['code','kind','amount','minSubtotal','maxRedemptions','redemptions','expiresAt','active','description'] }
+  coupons: { label: 'Coupons', required: ['code'], fields: ['code','kind','amount','minSubtotal','maxRedemptions','redemptions','expiresAt','active','description'] },
+  media: { label: 'Media Assets', required: ['name'], fields: ['name','url','kind','folder','sizeKb','mimeType','uploadedAt'] },
+  blogs: { label: 'Blogs', required: ['title'], fields: ['title','slug','author','content','views','status','publishedAt','category','coverImage'] },
+  qrCodes: { label: 'QR Codes', required: ['name','target'], fields: ['name','target','scans','createdAt','lastScannedAt'] },
+  snippets: { label: 'Snippets', required: ['label','body'], fields: ['label','subject','body','channel','uses'] },
+  templates: { label: 'Templates', required: ['name','subject'], fields: ['name','category','subject','body','uses','updatedAt'] }
 });
 
 // ─── State Management ─────────────────────────────────────────────────
@@ -73,7 +78,8 @@ const emptyState = () => ({
   records: Object.fromEntries(Object.keys(collections).map(key => [key, []])),
   workflowExecutions: [],
   snapshots: [],
-  audit: []
+  audit: [],
+  mediaFiles: {}
 });
 
 let state = emptyState();
@@ -91,6 +97,106 @@ function getRateLimitKey(ip) { return ip || 'unknown'; }
 
 function normalizePhone(p) {
   return String(p || '').replace(/\D/g, '');
+}
+
+function generateQrSvg(target, size = 256) {
+  const GRID = 21;
+  let h = 2166136261;
+  for (let i = 0; i < target.length; i++) {
+    h ^= target.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  let stateVal = h >>> 0;
+  const rand = () => {
+    stateVal ^= stateVal << 13;
+    stateVal ^= stateVal >>> 17;
+    stateVal ^= stateVal << 5;
+    return (stateVal >>> 0) / 4294967296;
+  };
+  const inFinder = (x, y) =>
+    (x < 8 && y < 8) || (x > GRID - 9 && y < 8) || (x < 8 && y > GRID - 9);
+
+  const unit = size / GRID;
+  let rects = '';
+  for (let y = 0; y < GRID; y++) {
+    for (let x = 0; x < GRID; x++) {
+      if (inFinder(x, y)) continue;
+      if (rand() > 0.52) {
+        rects += `<rect x="${(x * unit).toFixed(1)}" y="${(y * unit).toFixed(1)}" width="${unit.toFixed(1)}" height="${unit.toFixed(1)}" fill="#111827"/>`;
+      }
+    }
+  }
+
+  const finder = (ox, oy) => `
+    <rect x="${(ox * unit).toFixed(1)}" y="${(oy * unit).toFixed(1)}" width="${(unit * 7).toFixed(1)}" height="${(unit * 7).toFixed(1)}" fill="none" stroke="#111827" stroke-width="${unit.toFixed(1)}"/>
+    <rect x="${((ox + 2) * unit).toFixed(1)}" y="${((oy + 2) * unit).toFixed(1)}" width="${(unit * 3).toFixed(1)}" height="${(unit * 3).toFixed(1)}" fill="#111827"/>
+  `;
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+  <rect width="${size}" height="${size}" fill="#ffffff"/>
+  ${finder(0, 0)}
+  ${finder(GRID - 7, 0)}
+  ${finder(0, GRID - 7)}
+  ${rects}
+</svg>`;
+}
+
+function resolveTokensHelper(text, agency, contact, userEmail) {
+  if (typeof text !== 'string') return { resolvedText: '', tokensResolved: 0 };
+  state.records.customValues = state.records.customValues || [];
+  const cvList = agency ? state.records.customValues.filter(v => v.agencyId === agency.id) : state.records.customValues;
+
+  let tokensResolved = 0;
+  let resolvedText = text;
+
+  // 1. Resolve custom values: {{custom_values.key}} or {{custom_value.key}}
+  for (const cv of cvList) {
+    const keySlug = cv.name.toLowerCase().replace(/[^a-z0-9_]+/g, '_');
+    const pattern = new RegExp(`\\{\\{\\s*custom_values?\\.${keySlug}\\s*\\}\\}`, 'gi');
+    const patternExact = new RegExp(`\\{\\{\\s*custom_values?\\.${cv.name.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\s*\\}\\}`, 'gi');
+    if (pattern.test(resolvedText)) {
+      resolvedText = resolvedText.replace(pattern, () => { tokensResolved++; return cv.value; });
+    }
+    if (patternExact.test(resolvedText)) {
+      resolvedText = resolvedText.replace(patternExact, () => { tokensResolved++; return cv.value; });
+    }
+  }
+
+  // 2. Resolve contact fields if contact provided
+  if (contact) {
+    const contactMap = {
+      'contact.first_name': contact.firstName,
+      'contact.firstName': contact.firstName,
+      'contact.last_name': contact.lastName,
+      'contact.lastName': contact.lastName,
+      'contact.name': `${contact.firstName} ${contact.lastName}`.trim(),
+      'contact.full_name': `${contact.firstName} ${contact.lastName}`.trim(),
+      'contact.email': contact.email,
+      'contact.phone': contact.phone,
+      'contact.company': contact.company
+    };
+    for (const [tag, val] of Object.entries(contactMap)) {
+      const re = new RegExp(`\\{\\{\\s*${tag}\\s*\\}\\}`, 'gi');
+      if (re.test(resolvedText)) {
+        resolvedText = resolvedText.replace(re, () => { tokensResolved++; return val || ''; });
+      }
+    }
+  }
+
+  // 3. Resolve agency fields
+  const agencyMap = {
+    'agency.name': agency?.name || 'Operza Agency',
+    'agency.email': userEmail || 'agency@operza.io'
+  };
+  for (const [tag, val] of Object.entries(agencyMap)) {
+    const re = new RegExp(`\\{\\{\\s*${tag}\\s*\\}\\}`, 'gi');
+    if (re.test(resolvedText)) {
+      resolvedText = resolvedText.replace(re, () => { tokensResolved++; return val || ''; });
+    }
+  }
+
+  return { resolvedText, tokensResolved };
 }
 
 function checkRateLimit(ip, limit = RATE_LIMIT_MAX_REQUESTS) {
@@ -1591,6 +1697,178 @@ const server = createServer(async (req, res) => {
       });
     }
 
+    // Public Media File Server
+    if (method === 'GET' && pathname.startsWith('/api/media/file/')) {
+      const fileId = pathname.replace('/api/media/file/', '').trim();
+      const fileRecord = (state.records.media || []).find(m => m.id === fileId);
+      const stored = (state.mediaFiles || {})[fileId];
+
+      if (stored) {
+        res.writeHead(200, {
+          'Content-Type': stored.mimeType || 'image/png',
+          'Content-Length': Buffer.isBuffer(stored.data) ? stored.data.length : Buffer.byteLength(stored.data),
+          'Cache-Control': 'public, max-age=86400'
+        });
+        return res.end(stored.data);
+      }
+
+      if (fileRecord) {
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
+          <rect width="400" height="300" fill="#f3f4f6"/>
+          <text x="200" y="140" font-family="sans-serif" font-size="18" font-weight="bold" fill="#374151" text-anchor="middle">${fileRecord.name}</text>
+          <text x="200" y="170" font-family="sans-serif" font-size="14" fill="#6b7280" text-anchor="middle">${fileRecord.kind.toUpperCase()} · ${fileRecord.sizeKb} KB</text>
+        </svg>`;
+        res.writeHead(200, {
+          'Content-Type': 'image/svg+xml',
+          'Cache-Control': 'public, max-age=86400'
+        });
+        return res.end(svg);
+      }
+
+      return sendJson(res, 404, { error: 'Media asset not found' });
+    }
+
+    // Public Blog Post Reader Ingress
+    if (method === 'GET' && pathname.startsWith('/api/blogs/public/')) {
+      const rawSlug = pathname.replace('/api/blogs/public/', '').trim();
+      state.records.blogs = state.records.blogs || [];
+      const blog = state.records.blogs.find(b =>
+        b.status === 'published' && (
+          b.slug === rawSlug ||
+          (b.title && b.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') === rawSlug)
+        )
+      );
+
+      if (!blog) {
+        return sendJson(res, 404, { error: 'Blog post not found or unpublished' });
+      }
+
+      blog.views = (blog.views || 0) + 1;
+      await saveState();
+
+      broadcast('blog.viewed', { blogId: blog.id, slug: rawSlug, views: blog.views });
+
+      return sendJson(res, 200, {
+        id: blog.id,
+        title: blog.title,
+        slug: blog.slug || blog.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+        author: blog.author || 'Editorial Team',
+        category: blog.category || 'Insights',
+        content: blog.content || '',
+        views: blog.views,
+        publishedAt: blog.publishedAt || blog.createdAt,
+        coverImage: blog.coverImage
+      });
+    }
+
+    // Public QR Code SVG Vector Delivery
+    if (method === 'GET' && pathname.startsWith('/api/qr/') && pathname.endsWith('.svg')) {
+      const id = pathname.replace('/api/qr/', '').replace('.svg', '').trim();
+      state.records.qrCodes = state.records.qrCodes || [];
+      const qr = state.records.qrCodes.find(q => q.id === id);
+      if (!qr) {
+        return sendJson(res, 404, { error: 'QR Code not found' });
+      }
+
+      const svg = generateQrSvg(qr.target || 'https://operza.io', 256);
+      res.writeHead(200, {
+        'Content-Type': 'image/svg+xml',
+        'Cache-Control': 'public, max-age=3600'
+      });
+      return res.end(svg);
+    }
+
+    // Public QR Code Scan Tracker
+    if (method === 'GET' && pathname.startsWith('/api/qr/') && pathname.endsWith('/scan')) {
+      const id = pathname.replace('/api/qr/', '').replace('/scan', '').trim();
+      state.records.qrCodes = state.records.qrCodes || [];
+      const qr = state.records.qrCodes.find(q => q.id === id);
+      if (!qr) {
+        return sendJson(res, 404, { error: 'QR Code not found' });
+      }
+
+      qr.scans = (qr.scans || 0) + 1;
+      qr.lastScannedAt = new Date().toISOString();
+      await saveState();
+
+      broadcast('qr.scanned', { qrId: qr.id, scans: qr.scans, target: qr.target });
+      auditLog('qr.scanned', null, { qrId: qr.id, name: qr.name, scans: qr.scans });
+
+      if (url.searchParams.get('redirect') === 'true') {
+        res.writeHead(302, { Location: qr.target || '/' });
+        return res.end();
+      }
+
+      return sendJson(res, 200, {
+        success: true,
+        id: qr.id,
+        name: qr.name,
+        target: qr.target,
+        scans: qr.scans,
+        lastScannedAt: qr.lastScannedAt
+      });
+    }
+
+    // Public Client Portal Summary Ingress
+    if (method === 'GET' && pathname.startsWith('/api/portal/summary/')) {
+      const contactId = pathname.replace('/api/portal/summary/', '').trim();
+      state.records.contacts = state.records.contacts || [];
+      const contact = state.records.contacts.find(c => c.id === contactId);
+
+      if (!contact) {
+        return sendJson(res, 404, { error: 'Contact not found' });
+      }
+
+      if (contact.portalAccess === false) {
+        return sendJson(res, 403, { error: 'Portal access not enabled for this contact' });
+      }
+
+      state.records.invoices = state.records.invoices || [];
+      state.records.documents = state.records.documents || [];
+      state.records.enrollments = state.records.enrollments || [];
+      state.records.courses = state.records.courses || [];
+      state.records.appointments = state.records.appointments || [];
+
+      const fullName = `${contact.firstName} ${contact.lastName}`.trim().toLowerCase();
+
+      const invoices = state.records.invoices.filter(i =>
+        i.contactId === contact.id || (i.contactName && i.contactName.toLowerCase() === fullName)
+      );
+
+      const enrollments = state.records.enrollments.filter(e => e.contactId === contact.id);
+      const courses = enrollments.map(e => {
+        const course = state.records.courses.find(c => c.id === e.courseId);
+        return {
+          courseId: e.courseId,
+          name: course?.name || 'Enrolled Course',
+          progress: e.progress || 0,
+          startedAt: e.startedAt,
+          status: e.status
+        };
+      });
+
+      const documents = state.records.documents.filter(d => d.contactId === contact.id);
+
+      const appointments = state.records.appointments.filter(a =>
+        a.contactId === contact.id || (a.contactName && a.contactName.toLowerCase() === fullName)
+      );
+
+      return sendJson(res, 200, {
+        contact: {
+          id: contact.id,
+          firstName: contact.firstName,
+          lastName: contact.lastName,
+          email: contact.email,
+          company: contact.company,
+          portalAccess: contact.portalAccess !== false
+        },
+        invoices,
+        courses,
+        documents,
+        appointments
+      });
+    }
+
     // ═════════════════════════════════════════════════════════════
     // ─── WEBHOOK HANDLERS (public, signature-gated) ─────────────
     // ═════════════════════════════════════════════════════════════
@@ -2061,6 +2339,77 @@ const server = createServer(async (req, res) => {
           }
         ],
         createdAt: new Date().toISOString()
+      });
+
+      // Seed default published blog post
+      state.records.blogs = state.records.blogs || [];
+      state.records.blogs.push({
+        id: randomUUID(),
+        agencyId,
+        locationId,
+        title: 'How AI Automation Scales 7-Figure Marketing Agencies',
+        slug: 'how-ai-automation-scales-agencies',
+        author: 'Elena Rostova',
+        category: 'Strategy',
+        content: 'Scaling a modern marketing agency requires moving from fragmented manual tools to unified autonomous agent infrastructure. In this guide, we break down end-to-end inbound capture, AI pipeline qualification, and automated fulfillment.',
+        status: 'published',
+        views: 142,
+        publishedAt: new Date().toISOString(),
+        createdAt: new Date().toISOString()
+      });
+
+      // Seed default QR code
+      state.records.qrCodes = state.records.qrCodes || [];
+      state.records.qrCodes.push({
+        id: randomUUID(),
+        agencyId,
+        locationId,
+        name: 'Discovery Booking QR',
+        target: '/calendars/public/discovery-strategy',
+        scans: 12,
+        createdAt: new Date().toISOString()
+      });
+
+      // Seed default media asset
+      state.records.media = state.records.media || [];
+      state.records.media.push({
+        id: randomUUID(),
+        agencyId,
+        locationId,
+        name: 'brand-hero-logo.svg',
+        folder: 'Logos',
+        kind: 'image',
+        sizeKb: 34,
+        mimeType: 'image/svg+xml',
+        url: '/api/media/file/brand-hero-logo',
+        uploadedAt: new Date().toISOString()
+      });
+
+      // Seed default snippet
+      state.records.snippets = state.records.snippets || [];
+      state.records.snippets.push({
+        id: randomUUID(),
+        agencyId,
+        locationId,
+        label: 'Discovery Call Follow-up',
+        subject: 'Following up on our discovery conversation',
+        body: 'Hi {{contact.firstName}}, great speaking with you today! We look forward to scaling {{contact.company}} with {{agency.name}}.',
+        channel: 'email',
+        uses: 8
+      });
+
+      // Seed default template
+      state.records.templates = state.records.templates || [];
+      state.records.templates.push({
+        id: randomUUID(),
+        agencyId,
+        locationId,
+        name: 'Welcome & Onboarding Packet',
+        category: 'Onboarding',
+        subject: 'Welcome to {{agency.name}}, {{contact.firstName}}!',
+        body: 'Hello {{contact.firstName}},\n\nWelcome to {{agency.name}}! Your dedicated growth portal is ready.\n\nBest regards,\n{{agency.name}} Team',
+        uses: 15,
+        updatedAt: new Date().toISOString()
       });
 
       const token = randomBytes(32).toString('hex');
@@ -2807,63 +3156,187 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 400, { error: 'Text string is required' });
       }
 
-      state.records.customValues = state.records.customValues || [];
-      const cvList = state.records.customValues.filter(v => v.agencyId === agency.id);
-
       let contact = null;
       if (contactId) {
         contact = (state.records.contacts || []).find(c => c.id === contactId && c.agencyId === agency.id);
       }
 
-      let tokensResolved = 0;
-      let resolvedText = text;
-
-      // 1. Resolve custom values: {{custom_values.key}} or {{custom_value.key}}
-      for (const cv of cvList) {
-        const keySlug = cv.name.toLowerCase().replace(/[^a-z0-9_]+/g, '_');
-        const pattern = new RegExp(`\\{\\{\\s*custom_values?\\.${keySlug}\\s*\\}\\}`, 'gi');
-        const patternExact = new RegExp(`\\{\\{\\s*custom_values?\\.${cv.name.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\s*\\}\\}`, 'gi');
-        if (pattern.test(resolvedText)) {
-          resolvedText = resolvedText.replace(pattern, () => { tokensResolved++; return cv.value; });
-        }
-        if (patternExact.test(resolvedText)) {
-          resolvedText = resolvedText.replace(patternExact, () => { tokensResolved++; return cv.value; });
-        }
-      }
-
-      // 2. Resolve contact fields if contact provided
-      if (contact) {
-        const contactMap = {
-          'contact.first_name': contact.firstName,
-          'contact.firstName': contact.firstName,
-          'contact.last_name': contact.lastName,
-          'contact.lastName': contact.lastName,
-          'contact.name': `${contact.firstName} ${contact.lastName}`.trim(),
-          'contact.email': contact.email,
-          'contact.phone': contact.phone,
-          'contact.company': contact.company
-        };
-        for (const [tag, val] of Object.entries(contactMap)) {
-          const re = new RegExp(`\\{\\{\\s*${tag}\\s*\\}\\}`, 'gi');
-          if (re.test(resolvedText)) {
-            resolvedText = resolvedText.replace(re, () => { tokensResolved++; return val || ''; });
-          }
-        }
-      }
-
-      // 3. Resolve agency fields
-      const agencyMap = {
-        'agency.name': agency.name,
-        'agency.email': actor.user?.email || 'agency@operza.io'
-      };
-      for (const [tag, val] of Object.entries(agencyMap)) {
-        const re = new RegExp(`\\{\\{\\s*${tag}\\s*\\}\\}`, 'gi');
-        if (re.test(resolvedText)) {
-          resolvedText = resolvedText.replace(re, () => { tokensResolved++; return val || ''; });
-        }
-      }
-
+      const { resolvedText, tokensResolved } = resolveTokensHelper(text, agency, contact, actor.user?.email);
       return sendJson(res, 200, { resolvedText, tokensResolved });
+    }
+
+    // Use Snippet & Resolve Merge Tokens
+    if (method === 'POST' && pathname.startsWith('/api/snippets/') && pathname.endsWith('/use')) {
+      const snippetId = pathname.replace('/api/snippets/', '').replace('/use', '').trim();
+      state.records.snippets = state.records.snippets || [];
+      const snippet = state.records.snippets.find(s => s.id === snippetId && s.agencyId === agency.id);
+      if (!snippet) {
+        return sendJson(res, 404, { error: 'Snippet not found' });
+      }
+
+      const body = await readBody(req);
+      let contact = null;
+      if (body.contactId) {
+        contact = (state.records.contacts || []).find(c => c.id === body.contactId && c.agencyId === agency.id);
+      }
+
+      snippet.uses = (snippet.uses || 0) + 1;
+      const resBody = resolveTokensHelper(snippet.body, agency, contact, actor.user?.email);
+      const resSubject = snippet.subject ? resolveTokensHelper(snippet.subject, agency, contact, actor.user?.email) : null;
+
+      await saveState();
+      broadcast('snippet.used', { snippetId: snippet.id, uses: snippet.uses });
+
+      return sendJson(res, 200, {
+        success: true,
+        snippetId: snippet.id,
+        uses: snippet.uses,
+        resolvedBody: resBody.resolvedText,
+        resolvedSubject: resSubject ? resSubject.resolvedText : undefined,
+        tokensResolved: resBody.tokensResolved + (resSubject ? resSubject.tokensResolved : 0)
+      });
+    }
+
+    // Use Template & Resolve Merge Tokens
+    if (method === 'POST' && pathname.startsWith('/api/templates/') && pathname.endsWith('/use')) {
+      const templateId = pathname.replace('/api/templates/', '').replace('/use', '').trim();
+      state.records.templates = state.records.templates || [];
+      const template = state.records.templates.find(t => t.id === templateId && t.agencyId === agency.id);
+      if (!template) {
+        return sendJson(res, 404, { error: 'Template not found' });
+      }
+
+      const body = await readBody(req);
+      let contact = null;
+      if (body.contactId) {
+        contact = (state.records.contacts || []).find(c => c.id === body.contactId && c.agencyId === agency.id);
+      }
+
+      template.uses = (template.uses || 0) + 1;
+      const resBody = resolveTokensHelper(template.body, agency, contact, actor.user?.email);
+      const resSubject = resolveTokensHelper(template.subject, agency, contact, actor.user?.email);
+
+      await saveState();
+      broadcast('template.used', { templateId: template.id, uses: template.uses });
+
+      return sendJson(res, 200, {
+        success: true,
+        templateId: template.id,
+        uses: template.uses,
+        resolvedBody: resBody.resolvedText,
+        resolvedSubject: resSubject.resolvedText,
+        tokensResolved: resBody.tokensResolved + resSubject.tokensResolved
+      });
+    }
+
+    // Upload Media Asset
+    if (method === 'POST' && pathname === '/api/media/upload') {
+      const body = await readBody(req);
+      const name = body.name || `upload-${Date.now()}.png`;
+      const folder = body.folder || 'Unsorted';
+      const kind = body.kind || 'image';
+      const mimeType = body.mimeType || (kind === 'image' ? 'image/png' : kind === 'video' ? 'video/mp4' : 'application/pdf');
+      const data = body.data || null;
+
+      let sizeKb = body.sizeKb;
+      if (!sizeKb) {
+        if (data && typeof data === 'string') {
+          const isBase64 = data.includes(';base64,');
+          const raw = isBase64 ? data.split(';base64,')[1] : data;
+          sizeKb = Math.round(Buffer.byteLength(raw, 'base64') / 1024) || 24;
+        } else {
+          sizeKb = Math.round(50 + Math.random() * 200);
+        }
+      }
+
+      const assetId = randomUUID();
+      state.records.media = state.records.media || [];
+      state.mediaFiles = state.mediaFiles || {};
+
+      if (data) {
+        state.mediaFiles[assetId] = {
+          data: Buffer.from(data.includes(';base64,') ? data.split(';base64,')[1] : data, 'base64'),
+          mimeType
+        };
+      }
+
+      const asset = {
+        id: assetId,
+        agencyId: agency.id,
+        locationId: activeLocation.id,
+        name,
+        kind,
+        folder,
+        sizeKb,
+        mimeType,
+        url: `/api/media/file/${assetId}`,
+        uploadedAt: new Date().toISOString()
+      };
+
+      state.records.media.push(asset);
+      await saveState();
+
+      broadcast('media.uploaded', { asset });
+      auditLog('media.uploaded', actor, { assetId, name, sizeKb });
+
+      return sendJson(res, 201, { success: true, asset });
+    }
+
+    // Delete Media Asset
+    if (method === 'DELETE' && pathname.startsWith('/api/media/')) {
+      const assetId = pathname.replace('/api/media/', '').trim();
+      state.records.media = state.records.media || [];
+      const idx = state.records.media.findIndex(m => m.id === assetId && m.agencyId === agency.id);
+      if (idx === -1) {
+        return sendJson(res, 404, { error: 'Media asset not found' });
+      }
+
+      const removed = state.records.media.splice(idx, 1)[0];
+      if (state.mediaFiles) delete state.mediaFiles[assetId];
+      await saveState();
+
+      broadcast('media.deleted', { assetId });
+      auditLog('media.deleted', actor, { assetId, name: removed.name });
+
+      return sendJson(res, 200, { success: true, asset: removed });
+    }
+
+    // Publish Blog Post State Machine
+    if (method === 'PUT' && pathname.startsWith('/api/blogs/publish/')) {
+      const blogId = pathname.replace('/api/blogs/publish/', '').trim();
+      state.records.blogs = state.records.blogs || [];
+      const blog = state.records.blogs.find(b => b.id === blogId && b.agencyId === agency.id);
+      if (!blog) {
+        return sendJson(res, 404, { error: 'Blog post not found' });
+      }
+
+      blog.status = 'published';
+      blog.publishedAt = blog.publishedAt || new Date().toISOString();
+      await saveState();
+
+      broadcast('blog.published', { blogId: blog.id, title: blog.title });
+      auditLog('blog.published', actor, { blogId: blog.id, title: blog.title });
+
+      return sendJson(res, 200, { success: true, blog });
+    }
+
+    // Contact Client Portal Access Toggle
+    if (method === 'PUT' && pathname.startsWith('/api/crm/contacts/') && pathname.endsWith('/portal-access')) {
+      const contactId = pathname.replace('/api/crm/contacts/', '').replace('/portal-access', '').trim();
+      const contact = (state.records.contacts || []).find(c => c.id === contactId && c.agencyId === agency.id);
+      if (!contact) {
+        return sendJson(res, 404, { error: 'Contact not found' });
+      }
+
+      const body = await readBody(req);
+      const granted = body.portalAccess !== undefined ? Boolean(body.portalAccess) : true;
+      contact.portalAccess = granted;
+
+      await saveState();
+      broadcast('contact.portalAccess.updated', { contactId: contact.id, portalAccess: granted });
+      auditLog('contact.portal_access', actor, { contactId: contact.id, granted });
+
+      return sendJson(res, 200, { success: true, contactId: contact.id, portalAccess: granted });
     }
 
     // ═════════════════════════════════════════════════════════════
