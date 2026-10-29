@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { api } from '../lib/api';
 import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
@@ -21,7 +22,45 @@ export default function Conversations() {
   const [draft, setDraft] = useState('');
   const [subject, setSubject] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [composing, setComposing] = useState(false);
+    const [composing, setComposing] = useState(false);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [aiDrafting, setAiDrafting] = useState(false);
+
+  useEffect(() => {
+    let ws: WebSocket | null = null;
+    try {
+      ws = new WebSocket('ws://localhost:4000/ws');
+      ws.onopen = () => setWsConnected(true);
+      ws.onclose = () => setWsConnected(false);
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'message.received') {
+            console.log('[Operza Live Ingress Message]', msg);
+          }
+        } catch {}
+      };
+    } catch {}
+    return () => ws?.close();
+  }, []);
+
+  const askAiDraft = () => {
+    if (!selected) return;
+    setAiDrafting(true);
+    const lastMsg = selected.messages[selected.messages.length - 1]?.body || 'Inquiry';
+    const prompt = `Draft a concise, professional 1-2 sentence response to this customer: "${lastMsg}".`;
+    let responseText = '';
+    api.copilot.stream(
+      prompt,
+      (delta) => {
+        responseText += delta;
+        setDraft(responseText.trim());
+      },
+      () => {
+        setAiDrafting(false);
+      }
+    );
+  };
 
   const contactOf = (id: string) => state.contacts.find((c) => c.id === id);
 
@@ -230,6 +269,7 @@ export default function Conversations() {
                 >
                   <Icon name="star" size={16} />
                 </button>
+                <span className="badge" style={{ background: wsConnected ? 'rgba(34, 197, 94, 0.15)' : 'rgba(148, 163, 184, 0.15)', color: wsConnected ? '#22c55e' : '#94a3b8', fontSize: 11 }}>{wsConnected ? '?? Live Sync' : '? Standby'}</span>
                 <Link className="btn btn--sm" to={`/contacts/${selectedContact.id}`}>
                   <Icon name="user" size={14} /> View contact
                 </Link>
@@ -328,6 +368,9 @@ export default function Conversations() {
                 }}
                 rows={1}
               />
+              <button type="button" className="btn btn--secondary" onClick={askAiDraft} disabled={aiDrafting} title="Use Operza AI Copilot to draft a response" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Icon name="sparkles" size={14} /> {aiDrafting ? "Drafting…" : "AI Draft"}
+              </button>
               <button
                 className="btn btn--primary"
                 onClick={send}
@@ -490,3 +533,4 @@ function NewConversation({
     </Modal>
   );
 }
+
