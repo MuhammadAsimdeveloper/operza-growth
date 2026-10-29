@@ -1,7 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
-import { Avatar, PageHeader, StatCard, StatusBadge } from '../components/ui';
-import { useStore } from '../lib/store';
+import { Modal } from '../components/Modal';
+import { Avatar, EmptyState, PageHeader, StatCard, StatusBadge } from '../components/ui';
+import { uid, useStore } from '../lib/store';
 import { currency, num, pct } from '../lib/format';
 import { api } from '../lib/api';
 import type { Affiliate } from '../lib/types';
@@ -9,13 +10,30 @@ import type { Affiliate } from '../lib/types';
 export default function Affiliates() {
   const { state, dispatch } = useStore();
   const { affiliates } = state;
+  const [inviting, setInviting] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     api.crm.list<Affiliate>('affiliates').then((res) => {
       if (res.data && res.data.length > 0) {
         for (const aff of res.data) {
           if (!affiliates.some((x) => x.id === aff.id)) {
-            dispatch({ type: 'affiliate/status', id: aff.id, status: aff.status });
+            dispatch({
+              type: 'affiliate/add',
+              affiliate: {
+                id: aff.id,
+                name: aff.name,
+                email: aff.email || `${aff.name.toLowerCase().replace(/[^a-z0-9]/g, '')}@partner.io`,
+                code: aff.code,
+                commissionPct: Number(aff.commissionPct) || 20,
+                clicks: Number(aff.clicks) || 0,
+                signups: Number(aff.signups) || 0,
+                conversions: Number(aff.conversions) || 0,
+                payout: Number(aff.payout) || 0,
+                status: (aff.status as any) || 'active',
+              },
+            });
           }
         }
       }
@@ -35,12 +53,15 @@ export default function Affiliates() {
 
   const handleTestTrack = async (a: Affiliate) => {
     try {
-      await api.affiliates.track(a.code, 1000);
+      const res = await api.affiliates.track(a.code, 1000);
       dispatch({
         type: 'affiliate/status',
         id: a.id,
         status: a.status,
       });
+      if (res?.affiliate?.payout !== undefined) {
+        setNotice(`Simulated $1,000 order for ${a.name}! Earned ${currency(res.commissionEarned)} commission.`);
+      }
     } catch { /* dev fallback */ }
   };
 
@@ -56,15 +77,21 @@ export default function Affiliates() {
         subtitle="Partner links, commission tracking and payouts."
         actions={
           <>
-            <button className="btn">
+            <button className="btn" onClick={() => setReportOpen(true)}>
               <Icon name="copy" size={15} /> Payout report
             </button>
-            <button className="btn btn--primary">
+            <button className="btn btn--primary" onClick={() => setInviting(true)}>
               <Icon name="plus" size={15} /> Invite affiliate
             </button>
           </>
         }
       />
+
+      {notice && (
+        <div className="callout" style={{ marginBottom: 16 }}>
+          {notice}
+        </div>
+      )}
 
       <div className="grid grid--4" style={{ marginBottom: 16 }}>
         <StatCard label="Affiliates" value={num(affiliates.length)} icon={<Icon name="users" size={15} />} meta={`${affiliates.filter((a) => a.status === 'active').length} active`} />
@@ -169,6 +196,239 @@ export default function Affiliates() {
           </table>
         </div>
       </div>
+
+      {inviting && <InviteAffiliateModal onClose={() => setInviting(false)} />}
+      {reportOpen && <PayoutReportModal onClose={() => setReportOpen(false)} />}
     </div>
+  );
+}
+
+function InviteAffiliateModal({ onClose }: { onClose: () => void }) {
+  const { dispatch } = useStore();
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
+  const [commissionPct, setCommissionPct] = useState('20');
+  const [submitting, setSubmitting] = useState(false);
+
+  const canSave = name.trim().length > 1 && email.trim().includes('@');
+
+  const handleNameChange = (val: string) => {
+    setName(val);
+    if (!code || code === name.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6) + '20') {
+      setCode(val.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6) + '20');
+    }
+  };
+
+  const save = async () => {
+    if (!canSave || submitting) return;
+    setSubmitting(true);
+    const newAffiliate: Affiliate = {
+      id: uid('aff'),
+      name: name.trim(),
+      email: email.trim(),
+      code: (code || name.trim().slice(0, 5) + '20').toUpperCase().replace(/[^A-Z0-9]/g, ''),
+      commissionPct: Math.max(1, Math.min(100, Number(commissionPct) || 20)),
+      clicks: 0,
+      signups: 0,
+      conversions: 0,
+      payout: 0,
+      status: 'active',
+    };
+    try {
+      const res = await api.crm.create('affiliates', {
+        name: newAffiliate.name,
+        email: newAffiliate.email,
+        code: newAffiliate.code,
+        commissionPct: newAffiliate.commissionPct,
+        clicks: 0,
+        signups: 0,
+        conversions: 0,
+        payout: 0,
+        status: 'active',
+      });
+      if (res?.id) newAffiliate.id = res.id;
+    } catch { /* dev fallback */ }
+    dispatch({ type: 'affiliate/add', affiliate: newAffiliate });
+    setSubmitting(false);
+    onClose();
+  };
+
+  return (
+    <Modal
+      title="Invite Affiliate Partner"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" type="button" onClick={onClose} disabled={submitting}>
+            Cancel
+          </button>
+          <button className="btn btn--primary" type="button" disabled={!canSave || submitting} onClick={save}>
+            {submitting ? 'Inviting...' : 'Send Partner Invite'}
+          </button>
+        </>
+      }
+    >
+      <div className="stack" style={{ gap: 12 }}>
+        <div className="field">
+          <label htmlFor="aff-name">Partner Name</label>
+          <input
+            id="aff-name"
+            className="input"
+            autoFocus
+            placeholder="Elena Rostova"
+            value={name}
+            onChange={(e) => handleNameChange(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="aff-email">Partner Email</label>
+          <input
+            id="aff-email"
+            className="input"
+            type="email"
+            placeholder="elena@growthventures.co"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
+        </div>
+        <div className="row" style={{ gap: 12 }}>
+          <div className="field" style={{ flex: 1 }}>
+            <label htmlFor="aff-code">Referral Tracking Code</label>
+            <input
+              id="aff-code"
+              className="input mono-cell"
+              placeholder="ELENA20"
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+            />
+          </div>
+          <div className="field" style={{ width: 120 }}>
+            <label htmlFor="aff-comm">Commission %</label>
+            <input
+              id="aff-comm"
+              className="input"
+              type="number"
+              min="1"
+              max="100"
+              value={commissionPct}
+              onChange={(e) => setCommissionPct(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="hint">
+          Partners can use this code on checkout to credit referral commissions automatically.
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function PayoutReportModal({ onClose }: { onClose: () => void }) {
+  const { state, dispatch } = useStore();
+  const { affiliates } = state;
+  const [settling, setSettling] = useState<string | null>(null);
+
+  const totalOwed = affiliates.reduce((sum, a) => sum + (Number(a.payout) || 0), 0);
+  const totalConversions = affiliates.reduce((sum, a) => sum + (Number(a.conversions) || 0), 0);
+  const payablePartners = affiliates.filter((a) => (Number(a.payout) || 0) > 0);
+
+  const handleSettle = async (a: Affiliate) => {
+    setSettling(a.id);
+    try {
+      await api.affiliates.settlePayout(a.id, a.payout);
+    } catch { /* dev fallback */ }
+    dispatch({ type: 'affiliate/payout', id: a.id, amount: a.payout });
+    setSettling(null);
+  };
+
+  const downloadCsv = () => {
+    const header = 'Name,Email,Code,Conversions,CommissionPct,UnpaidPayout,Status\n';
+    const rows = affiliates
+      .map((a) => `"${a.name}","${a.email}","${a.code}",${a.conversions},${a.commissionPct}%,$${a.payout},"${a.status}"`)
+      .join('\n');
+    const blob = new Blob([header + rows], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `affiliate-payout-report-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <Modal
+      title="Affiliate Payout Report & Settlements"
+      wide
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" type="button" onClick={downloadCsv}>
+            <Icon name="download" size={14} /> Export CSV
+          </button>
+          <button className="btn btn--primary" type="button" onClick={onClose}>
+            Done
+          </button>
+        </>
+      }
+    >
+      <div className="grid grid--3" style={{ marginBottom: 16 }}>
+        <StatCard label="Total Commission Owed" value={currency(totalOwed)} icon={<Icon name="dollar" size={15} />} meta="pending settlement" />
+        <StatCard label="Payable Partners" value={num(payablePartners.length)} icon={<Icon name="users" size={15} />} meta="balance > $0" />
+        <StatCard label="Total Referrals" value={num(totalConversions)} icon={<Icon name="check" size={15} />} meta="lifetime conversions" />
+      </div>
+
+      <div className="card">
+        <div className="card__head">
+          <div className="card__title">Pending Settlements</div>
+        </div>
+        {payablePartners.length === 0 ? (
+          <div className="card__body">
+            <EmptyState icon={<Icon name="check" size={20} />} title="All payouts settled" text="No outstanding commission balances owed to partners." />
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Partner</th>
+                  <th>Code</th>
+                  <th className="cell-right">Conversions</th>
+                  <th className="cell-right">Balance Owed</th>
+                  <th className="cell-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payablePartners.map((p) => (
+                  <tr key={p.id}>
+                    <td>
+                      <strong>{p.name}</strong>
+                      <div className="cell-sub">{p.email}</div>
+                    </td>
+                    <td>
+                      <span className="badge">{p.code}</span>
+                    </td>
+                    <td className="cell-right cell-num">{num(p.conversions)}</td>
+                    <td className="cell-right cell-num" style={{ color: 'var(--green)', fontWeight: 650 }}>
+                      {currency(p.payout)}
+                    </td>
+                    <td className="cell-right">
+                      <button
+                        type="button"
+                        className="btn btn--sm btn--primary"
+                        disabled={settling === p.id}
+                        onClick={() => handleSettle(p)}
+                      >
+                        {settling === p.id ? 'Settling...' : 'Settle Payout'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }

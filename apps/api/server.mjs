@@ -59,7 +59,7 @@ const collections = Object.freeze({
   customValues: { label: 'Custom Values', required: ['name','value'], fields: ['name','value'] },
   calls: { label: 'Phone System Calls', required: ['from'], fields: ['from','to','durationSec','outcome','direction','contactId','startedAt','recordingUrl','handled','notes','numberId'] },
   enrollments: { label: 'Course Enrollments', required: ['courseId', 'contactId'], fields: ['courseId','contactId','progress','startedAt','status'] },
-  affiliates: { label: 'Affiliates', required: ['name', 'code'], fields: ['name','code','commissionPct','clicks','conversions','payout','status'] },
+  affiliates: { label: 'Affiliates', required: ['name', 'code'], fields: ['name','email','code','commissionPct','clicks','signups','conversions','payout','status','createdAt'] },
   coupons: { label: 'Coupons', required: ['code'], fields: ['code','kind','amount','minSubtotal','maxRedemptions','redemptions','expiresAt','active','description'] },
   media: { label: 'Media Assets', required: ['name'], fields: ['name','url','kind','folder','sizeKb','mimeType','uploadedAt'] },
   blogs: { label: 'Blogs', required: ['title'], fields: ['title','slug','author','content','views','status','publishedAt','category','coverImage'] },
@@ -91,8 +91,8 @@ const cookieCsrf = 'operza_csrf';
 // ─── Rate Limiter (in-memory sliding window) ──────────────────────────
 const rateLimitStore = new Map();
 const RATE_LIMIT_WINDOW_MS = 60_000;   // 1 minute
-const RATE_LIMIT_MAX_REQUESTS = 120;   // per IP per window
-const RATE_LIMIT_AUTH_MAX = 10;        // stricter for auth endpoints
+const RATE_LIMIT_MAX_REQUESTS = Number(process.env.RATE_LIMIT_MAX_REQUESTS) || (isProd ? 120 : 2000);   // per IP per window
+const RATE_LIMIT_AUTH_MAX = Number(process.env.RATE_LIMIT_AUTH_MAX) || (isProd ? 10 : 200);        // stricter for auth endpoints
 
 function getRateLimitKey(ip) { return ip || 'unknown'; }
 
@@ -3146,6 +3146,83 @@ const server = createServer(async (req, res) => {
       }).catch(console.error);
 
       return sendJson(res, 200, { success: true, affiliate, commissionEarned });
+    }
+
+    // Settle Affiliate Commission Payout
+    if (method === 'POST' && pathname.startsWith('/api/affiliates/') && pathname.endsWith('/payout')) {
+      const affiliateId = pathname.replace('/api/affiliates/', '').replace('/payout', '').trim();
+      state.records.affiliates = state.records.affiliates || [];
+      const affiliate = state.records.affiliates.find(
+        a => a.id === affiliateId && a.agencyId === agency.id
+      );
+      if (!affiliate) return sendJson(res, 404, { error: 'Affiliate not found' });
+
+      const body = await readBody(req);
+      const balance = Number(affiliate.payout) || 0;
+      const requestedAmount = body.amount !== undefined ? Number(body.amount) : balance;
+      const paidAmount = Math.max(0, Math.min(balance, requestedAmount));
+
+      affiliate.payout = Math.max(0, balance - paidAmount);
+      affiliate.updatedAt = new Date().toISOString();
+
+      // Generate invoice / payout settlement record
+      const invoiceId = randomUUID();
+      const invoiceNum = `PAY-${Math.floor(100000 + Math.random() * 900000)}`;
+      state.records.invoices = state.records.invoices || [];
+      state.records.invoices.push({
+        id: invoiceId,
+        agencyId: agency.id,
+        locationId: activeLocation.id,
+        number: invoiceNum,
+        contactName: affiliate.name,
+        amount: paidAmount,
+        status: 'paid',
+        dueDate: new Date().toISOString(),
+        description: `Affiliate Commission Payout for code ${affiliate.code}`,
+        createdAt: new Date().toISOString()
+      });
+
+      await saveState();
+      auditLog('affiliate.payout', actor, { affiliateId, paidAmount, code: affiliate.code, remainingBalance: affiliate.payout });
+      broadcast('affiliate.payout_settled', { affiliateId, paidAmount, remainingPayout: affiliate.payout, invoiceId });
+
+      return sendJson(res, 200, {
+        success: true,
+        affiliate,
+        paidAmount,
+        remainingPayout: affiliate.payout,
+        invoiceId
+      });
+    }
+
+    // Get Affiliate Payout Aggregated Report
+    if (method === 'GET' && pathname === '/api/affiliates/payout-report') {
+      state.records.affiliates = state.records.affiliates || [];
+      const tenantAffiliates = state.records.affiliates.filter(a => a.agencyId === agency.id);
+      const activePartners = tenantAffiliates.filter(a => a.status === 'active');
+      const totalUnpaid = tenantAffiliates.reduce((sum, a) => sum + (Number(a.payout) || 0), 0);
+      const totalConversions = tenantAffiliates.reduce((sum, a) => sum + (Number(a.conversions) || 0), 0);
+
+      const partners = tenantAffiliates.map(a => ({
+        id: a.id,
+        name: a.name,
+        email: a.email || '',
+        code: a.code,
+        payout: Number(a.payout) || 0,
+        conversions: Number(a.conversions) || 0,
+        clicks: Number(a.clicks) || 0,
+        commissionPct: Number(a.commissionPct) || 20,
+        status: a.status || 'active'
+      }));
+
+      return sendJson(res, 200, {
+        success: true,
+        totalPartners: tenantAffiliates.length,
+        activePartners: activePartners.length,
+        totalUnpaid,
+        totalConversions,
+        partners
+      });
     }
 
     // ═════════════════════════════════════════════════════════════

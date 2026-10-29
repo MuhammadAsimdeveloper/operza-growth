@@ -166,6 +166,15 @@ export const api = {
   affiliates: {
     track: (code: string, amount: number) =>
       request(`/api/affiliates/track/${code}`, { method: 'POST', body: JSON.stringify({ amount }) }),
+    settlePayout: (id: string, amount?: number) =>
+      request<{ success: boolean; affiliate: any; paidAmount: number; invoiceId: string }>(
+        `/api/affiliates/${id}/payout`,
+        { method: 'POST', body: JSON.stringify({ amount }) }
+      ),
+    getPayoutReport: () =>
+      request<{ totalPartners: number; activePartners: number; totalUnpaid: number; totalConversions: number; partners: any[] }>(
+        '/api/affiliates/payout-report'
+      ),
   },
   funnels: {
     getPublic: (slugOrId: string, pageSlug?: string) =>

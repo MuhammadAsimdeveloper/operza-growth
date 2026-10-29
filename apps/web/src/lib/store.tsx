@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { seed } from './seed';
 import type {
+  Affiliate,
   Appointment,
   AuditEntry,
   CalendarDef,
@@ -179,6 +180,8 @@ export type Action =
   | { type: 'order/add'; order: Order }
   | { type: 'subscription/status'; id: string; status: 'active' | 'past_due' | 'canceled' }
   | { type: 'affiliate/status'; id: string; status: 'active' | 'pending' | 'paused' }
+  | { type: 'affiliate/add'; affiliate: Affiliate }
+  | { type: 'affiliate/payout'; id: string; amount?: number }
   | { type: 'template/use'; id: string }
   | { type: 'template/add'; template: EmailTemplate }
   | { type: 'template/update'; id: string; patch: Partial<Pick<EmailTemplate, 'name' | 'category' | 'subject' | 'body'>> }
@@ -1025,6 +1028,22 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
       return {
         ...state,
         affiliates: state.affiliates.map((a) => (a.id === action.id ? { ...a, status: action.status } : a)),
+      };
+
+    case 'affiliate/add':
+      return {
+        ...state,
+        affiliates: [action.affiliate, ...state.affiliates.filter((a) => a.id !== action.affiliate.id)],
+      };
+
+    case 'affiliate/payout':
+      return {
+        ...state,
+        affiliates: state.affiliates.map((a) =>
+          a.id === action.id
+            ? { ...a, payout: Math.max(0, a.payout - (action.amount ?? a.payout)) }
+            : a
+        ),
       };
 
     case 'template/use':

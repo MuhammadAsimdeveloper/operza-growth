@@ -1551,7 +1551,69 @@ async function runTests() {
     }
     console.log('✅ LMS course authoring, lesson additions, publishing, and portal curriculum ingress verified');
 
-    console.log('\n🎉 ALL 49 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 50. Affiliate Partner Invitation, Referral Tracking, and Commission Settlement Lifecycle
+    console.log('\n[TEST 50] Affiliate Partner Lifecycle: Invite, Track Referral, Settle Payout, & Report');
+    const newAffiliateRes = await request('/api/crm/affiliates', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Elena Rostova',
+        email: 'elena@growthventures.co',
+        code: 'ELENA30',
+        commissionPct: 30,
+        clicks: 0,
+        signups: 0,
+        conversions: 0,
+        payout: 0,
+        status: 'active'
+      })
+    });
+    console.log(`Affiliate Invite Status: ${newAffiliateRes.status}`, `ID: ${newAffiliateRes.data.id}`, `Code: ${newAffiliateRes.data.code}`);
+    if (newAffiliateRes.status !== 201 || !newAffiliateRes.data.id || newAffiliateRes.data.code !== 'ELENA30') {
+      throw new Error(`Affiliate creation failed: ${JSON.stringify(newAffiliateRes.data)}`);
+    }
+
+    const elenaId = newAffiliateRes.data.id;
+
+    // Track a $2,000 order referral with 30% commission ($600)
+    const trackOrderRes = await request('/api/affiliates/track/ELENA30', {
+      method: 'POST',
+      body: JSON.stringify({ amount: 2000 })
+    });
+    console.log(`Track Referral Status: ${trackOrderRes.status}`, `Commission: $${trackOrderRes.data.commissionEarned}`, `Total Payout: $${trackOrderRes.data.affiliate?.payout}`);
+    if (
+      trackOrderRes.status !== 200 ||
+      trackOrderRes.data.commissionEarned !== 600 ||
+      trackOrderRes.data.affiliate?.payout !== 600 ||
+      trackOrderRes.data.affiliate?.conversions !== 1
+    ) {
+      throw new Error(`Affiliate referral tracking failed: ${JSON.stringify(trackOrderRes.data)}`);
+    }
+
+    // Settle affiliate commission payout
+    const settleRes = await request(`/api/affiliates/${elenaId}/payout`, {
+      method: 'POST',
+      body: JSON.stringify({ amount: 600 })
+    });
+    console.log(`Settle Payout Status: ${settleRes.status}`, `Paid: $${settleRes.data.paidAmount}`, `Remaining: $${settleRes.data.remainingPayout}`, `Invoice: ${settleRes.data.invoiceId}`);
+    if (
+      settleRes.status !== 200 ||
+      settleRes.data.paidAmount !== 600 ||
+      settleRes.data.remainingPayout !== 0 ||
+      !settleRes.data.invoiceId
+    ) {
+      throw new Error(`Affiliate commission settlement failed: ${JSON.stringify(settleRes.data)}`);
+    }
+
+    // Query payout aggregated report
+    const payoutReportRes = await request('/api/affiliates/payout-report');
+    console.log(`Payout Report Status: ${payoutReportRes.status}`, `Partners: ${payoutReportRes.data.totalPartners}`, `Total Conversions: ${payoutReportRes.data.totalConversions}`);
+    const elenaReport = payoutReportRes.data.partners?.find(p => p.id === elenaId);
+    if (!elenaReport || elenaReport.payout !== 0 || elenaReport.conversions !== 1) {
+      throw new Error(`Payout report evaluation failed: ${JSON.stringify(payoutReportRes.data)}`);
+    }
+    console.log('✅ Affiliate partner created, referral tracked, commission settled, and payout report verified');
+
+    console.log('\n🎉 ALL 50 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;
