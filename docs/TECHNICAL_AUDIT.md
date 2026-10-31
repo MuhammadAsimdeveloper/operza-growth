@@ -57,7 +57,7 @@ Operza implements an architectural dual-mode persistence pattern:
 
 ## 6. Audit Verdict
 
-- **Automated Test Coverage**: 77 End-to-End system verification tests passing cleanly (100% pass rate).
+- **Automated Test Coverage**: 85 Automated Tests (8 Workflow Engine Unit Tests + 77 End-to-End System Tests) passing cleanly (100% pass rate).
 - **Static Analysis**: TypeScript strict compiler verification passes with 0 errors (`tsc -b --noEmit`).
 - **Production Bundle**: Clean production build via Vite in under 7 seconds.
 - **Competitor Reference Sanitization**: Verified 0 whole-word mentions of external competitor platforms.
