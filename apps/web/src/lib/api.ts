@@ -320,5 +320,53 @@ export const api = {
       };
       return () => eventSource.close();
     }
+  },
+  integrations: {
+    list: () => request<{ integrations: any[] }>('/api/integrations'),
+    connect: (id: string, data: any) =>
+      request<{ success: boolean; integration: any }>(`/api/integrations/${id}/connect`, { method: 'POST', body: JSON.stringify(data) }),
+    disconnect: (id: string) =>
+      request<{ success: boolean; integration: any }>(`/api/integrations/${id}/disconnect`, { method: 'POST' }),
+    test: (id: string) =>
+      request<{ success: boolean; latencyMs: number; message: string }>(`/api/integrations/${id}/test`, { method: 'POST' }),
+  },
+  aiTrainer: {
+    getConfig: () => request<{ config: any }>('/api/ai/config'),
+    updateConfig: (config: any) =>
+      request<{ success: boolean; config: any }>('/api/ai/config', { method: 'PUT', body: JSON.stringify(config) }),
+    getKnowledge: () => request<{ documents: any[] }>('/api/ai/knowledge'),
+    addKnowledge: (data: { title: string; content: string; type?: string }) =>
+      request<{ success: boolean; document: any }>('/api/ai/knowledge', { method: 'POST', body: JSON.stringify(data) }),
+    deleteKnowledge: (id: string) =>
+      request<{ success: boolean; deletedId: string }>(`/api/ai/knowledge/${id}`, { method: 'DELETE' }),
+    testQuery: (query: string) =>
+      request<{ query: string; answer: string; sources: any[] }>('/api/ai/test', { method: 'POST', body: JSON.stringify({ query }) }),
+  },
+  developers: {
+    getKeys: () => request<{ keys: any[] }>('/api/developers/keys'),
+    createKey: (data: { label: string; scopes?: string[] }) =>
+      request<{ success: boolean; key: any }>('/api/developers/keys', { method: 'POST', body: JSON.stringify(data) }),
+    revokeKey: (id: string) =>
+      request<{ success: boolean; revokedId: string }>(`/api/developers/keys/${id}`, { method: 'DELETE' }),
+    getWebhooks: () => request<{ webhooks: any[] }>('/api/developers/webhooks'),
+    createWebhook: (data: { url: string; events?: string[]; secret?: string }) =>
+      request<{ success: boolean; webhook: any }>('/api/developers/webhooks', { method: 'POST', body: JSON.stringify(data) }),
+    deleteWebhook: (id: string) =>
+      request<{ success: boolean; deletedId: string }>(`/api/developers/webhooks/${id}`, { method: 'DELETE' }),
+    testWebhook: (id: string) =>
+      request<{ success: boolean; delivery: any }>(`/api/developers/webhooks/${id}/test`, { method: 'POST' }),
+    getDeliveries: () => request<{ deliveries: any[] }>('/api/developers/webhooks/deliveries'),
+  },
+  branding: {
+    get: () => request<{ branding: any }>('/api/agency/branding'),
+    update: (data: any) =>
+      request<{ success: boolean; branding: any }>('/api/agency/branding', { method: 'PUT', body: JSON.stringify(data) }),
+    verifyDomain: (customDomain?: string) =>
+      request<{ success: boolean; branding: any; message: string }>('/api/agency/branding/verify-domain', {
+        method: 'POST',
+        body: JSON.stringify({ customDomain }),
+      }),
+    verifyEmail: () =>
+      request<{ success: boolean; branding: any; message: string }>('/api/agency/branding/verify-email', { method: 'POST' }),
   }
 };

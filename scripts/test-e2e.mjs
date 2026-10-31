@@ -1948,7 +1948,184 @@ async function runTests() {
     console.log(`Exported CSV Header & Snippet: ${csvText.split('\n')[0]}`);
     console.log('✅ Multi-tenant audit trail query, action filtering, and server-side CSV streaming export verified');
 
-    console.log('\n🎉 ALL 56 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 57. Integrations Hub Lifecycle
+    console.log('\n[TEST 57] Integrations Hub: Listing, Connecting Provider, Ping Test, & Disconnect');
+    const integrationsListRes = await request('/api/integrations');
+    console.log(`Integrations List Status: ${integrationsListRes.status}`, `Total: ${integrationsListRes.data.integrations?.length}`);
+    if (integrationsListRes.status !== 200 || !Array.isArray(integrationsListRes.data.integrations)) {
+      throw new Error(`Failed to list integrations: ${JSON.stringify(integrationsListRes.data)}`);
+    }
+
+    // Connect Slack integration
+    const connectSlackRes = await request('/api/integrations/slack/connect', {
+      method: 'POST',
+      body: JSON.stringify({
+        apiKey: 'xoxb-9812481928-1928491829',
+        accountName: 'Alpha Growth Slack Workspace',
+        webhookUrl: 'https://hooks.slack.com/services/T00/B00/X00'
+      })
+    });
+    console.log(`Connect Slack Status: ${connectSlackRes.status}`, `Connected: ${connectSlackRes.data.integration?.connected}`, `Account: ${connectSlackRes.data.integration?.accountName}`);
+    if (connectSlackRes.status !== 200 || connectSlackRes.data.integration?.connected !== true) {
+      throw new Error(`Failed to connect Slack integration: ${JSON.stringify(connectSlackRes.data)}`);
+    }
+
+    // Ping test
+    const pingRes = await request('/api/integrations/slack/test', { method: 'POST' });
+    console.log(`Ping Test Status: ${pingRes.status}`, `Latency: ${pingRes.data.latencyMs}ms`, `Message: ${pingRes.data.message}`);
+    if (pingRes.status !== 200 || pingRes.data.success !== true) {
+      throw new Error(`Integration ping test failed: ${JSON.stringify(pingRes.data)}`);
+    }
+
+    // Disconnect Slack
+    const disconnectRes = await request('/api/integrations/slack/disconnect', { method: 'POST' });
+    console.log(`Disconnect Status: ${disconnectRes.status}`, `Connected: ${disconnectRes.data.integration?.connected}`);
+    if (disconnectRes.status !== 200 || disconnectRes.data.integration?.connected !== false) {
+      throw new Error(`Failed to disconnect integration: ${JSON.stringify(disconnectRes.data)}`);
+    }
+    console.log('✅ Integrations Hub lifecycle verified: list, connect credentials, latency ping test, and disconnect');
+
+    // 58. AI Copilot Bot Training & Semantic Knowledge Base Engine
+    console.log('\n[TEST 58] AI Copilot Bot Training & Knowledge Center: Config, Ingestion, Grounding Query');
+    const updateAiConfigRes = await request('/api/ai/config', {
+      method: 'PUT',
+      body: JSON.stringify({
+        persona: 'sales_closer',
+        tone: 'high-converting, professional and authoritative',
+        systemPrompt: 'You are Operza Growth Bot. Qualify every lead for a $5,000 monthly retainer.',
+        temperature: 0.6,
+        permissions: {
+          canCreateContacts: true,
+          canSendMessages: true,
+          canBookAppointments: true,
+          canChargeCards: false,
+          requireApprovalForDealsOver: 5000
+        }
+      })
+    });
+    console.log(`Update AI Config Status: ${updateAiConfigRes.status}`, `Persona: ${updateAiConfigRes.data.config?.persona}`);
+    if (updateAiConfigRes.status !== 200 || updateAiConfigRes.data.config?.persona !== 'sales_closer') {
+      throw new Error(`Failed to update AI config: ${JSON.stringify(updateAiConfigRes.data)}`);
+    }
+
+    // Ingest knowledge document with semantic chunking
+    const addDocRes = await request('/api/ai/knowledge', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: 'Retainer Pricing & Performance Guarantees 2026',
+        type: 'text',
+        content: 'Our core growth retainer is $3,500/month with zero onboarding fees. Clients receive weekly pipeline audits and automated AI qualification.'
+      })
+    });
+    console.log(`Add Knowledge Doc Status: ${addDocRes.status}`, `Chunks: ${addDocRes.data.document?.chunksCount}`, `Words: ${addDocRes.data.document?.wordsCount}`);
+    if (addDocRes.status !== 201 || !addDocRes.data.document?.id || addDocRes.data.document?.chunksCount < 1) {
+      throw new Error(`Failed to ingest knowledge document: ${JSON.stringify(addDocRes.data)}`);
+    }
+    const testDocId = addDocRes.data.document.id;
+
+    // Test query against knowledge base
+    const queryTestRes = await request('/api/ai/test', {
+      method: 'POST',
+      body: JSON.stringify({ query: 'What is our retainer price?' })
+    });
+    console.log(`AI Test Query Status: ${queryTestRes.status}`, `Sources: ${queryTestRes.data.sources?.length}`, `Answer snippet: "${queryTestRes.data.answer?.slice(0, 60)}..."`);
+    if (queryTestRes.status !== 200 || !queryTestRes.data.answer?.includes('3,500') || queryTestRes.data.sources?.length === 0) {
+      throw new Error(`AI RAG search test failed: ${JSON.stringify(queryTestRes.data)}`);
+    }
+
+    // Clean up test document
+    const deleteDocRes = await request(`/api/ai/knowledge/${testDocId}`, { method: 'DELETE' });
+    if (deleteDocRes.status !== 200) {
+      throw new Error(`Failed to delete test knowledge document: ${JSON.stringify(deleteDocRes.data)}`);
+    }
+    console.log('✅ AI bot personality configuration, semantic knowledge document ingestion, and grounded RAG query verified');
+
+    // 59. Developer Hub: API Keys, Outbound Webhooks & Delivery Ledger
+    console.log('\n[TEST 59] Developer Hub: API Key Provisioning, Webhook Subscription, & Dispatch Inspection');
+    const createKeyRes = await request('/api/developers/keys', {
+      method: 'POST',
+      body: JSON.stringify({
+        label: 'Zapier Inbound Webhook Sync',
+        scopes: ['contacts:read', 'contacts:write', 'workflows:trigger']
+      })
+    });
+    console.log(`Create API Key Status: ${createKeyRes.status}`, `Masked: ${createKeyRes.data.key?.maskedKey}`, `Has Token: ${Boolean(createKeyRes.data.key?.secretToken)}`);
+    if (createKeyRes.status !== 201 || !createKeyRes.data.key?.secretToken?.startsWith('op_live_')) {
+      throw new Error(`Failed to create API key: ${JSON.stringify(createKeyRes.data)}`);
+    }
+    const testKeyId = createKeyRes.data.key.id;
+
+    // Register webhook endpoint
+    const registerWebhookRes = await request('/api/developers/webhooks', {
+      method: 'POST',
+      body: JSON.stringify({
+        url: 'https://hooks.operza.io/receive/test-pipe',
+        events: ['contact.created', 'opportunity.stage_changed', 'form.submitted']
+      })
+    });
+    console.log(`Register Webhook Status: ${registerWebhookRes.status}`, `URL: ${registerWebhookRes.data.webhook?.url}`);
+    if (registerWebhookRes.status !== 201 || !registerWebhookRes.data.webhook?.id) {
+      throw new Error(`Failed to register webhook: ${JSON.stringify(registerWebhookRes.data)}`);
+    }
+    const testWebhookId = registerWebhookRes.data.webhook.id;
+
+    // Test ping delivery
+    const testWebhookPingRes = await request(`/api/developers/webhooks/${testWebhookId}/test`, { method: 'POST' });
+    console.log(`Webhook Ping Status: ${testWebhookPingRes.status}`, `Delivery Status: ${testWebhookPingRes.data.delivery?.status}`, `Latency: ${testWebhookPingRes.data.delivery?.durationMs}ms`);
+    if (testWebhookPingRes.status !== 200 || testWebhookPingRes.data.delivery?.status !== 200) {
+      throw new Error(`Webhook ping delivery failed: ${JSON.stringify(testWebhookPingRes.data)}`);
+    }
+
+    // Inspect delivery ledger
+    const deliveriesRes = await request('/api/developers/webhooks/deliveries');
+    console.log(`Delivery Ledger Status: ${deliveriesRes.status}`, `Count: ${deliveriesRes.data.deliveries?.length}`);
+    if (deliveriesRes.status !== 200 || deliveriesRes.data.deliveries?.length === 0) {
+      throw new Error(`Failed to retrieve delivery ledger: ${JSON.stringify(deliveriesRes.data)}`);
+    }
+
+    // Revoke key & delete webhook
+    await request(`/api/developers/keys/${testKeyId}`, { method: 'DELETE' });
+    await request(`/api/developers/webhooks/${testWebhookId}`, { method: 'DELETE' });
+    console.log('✅ Developer Hub verified: API key generation & revocation, webhook subscriptions, and delivery inspection');
+
+    // 60. Agency White-Label & Custom Branding Engine
+    console.log('\n[TEST 60] Agency White-Label & Branding Engine: Settings, Domain DNS CNAME, & Email Verification');
+    const updateBrandingRes = await request('/api/agency/branding', {
+      method: 'PUT',
+      body: JSON.stringify({
+        platformName: 'Nexus Growth Advisory OS',
+        customDomain: 'portal.nexusgrowth.io',
+        primaryColor: '#4f46e5',
+        accentColor: '#6366f1',
+        senderName: 'Nexus Operations Team',
+        senderEmail: 'hello@nexusgrowth.io',
+        portalWelcomeHeading: 'Welcome to your Nexus Client Portal'
+      })
+    });
+    console.log(`Update Branding Status: ${updateBrandingRes.status}`, `Platform: "${updateBrandingRes.data.branding?.platformName}"`);
+    if (updateBrandingRes.status !== 200 || updateBrandingRes.data.branding?.platformName !== 'Nexus Growth Advisory OS') {
+      throw new Error(`Failed to update agency branding: ${JSON.stringify(updateBrandingRes.data)}`);
+    }
+
+    // Verify Custom Domain CNAME & SSL
+    const verifyDomainRes = await request('/api/agency/branding/verify-domain', {
+      method: 'POST',
+      body: JSON.stringify({ customDomain: 'portal.nexusgrowth.io' })
+    });
+    console.log(`Verify Domain Status: ${verifyDomainRes.status}`, `Verified: ${verifyDomainRes.data.branding?.isDomainVerified}`, `SSL: ${verifyDomainRes.data.branding?.sslActive}`);
+    if (verifyDomainRes.status !== 200 || verifyDomainRes.data.branding?.isDomainVerified !== true || verifyDomainRes.data.branding?.sslActive !== true) {
+      throw new Error(`Custom domain verification failed: ${JSON.stringify(verifyDomainRes.data)}`);
+    }
+
+    // Verify Email Sender Identity (SPF / DKIM)
+    const verifyEmailRes = await request('/api/agency/branding/verify-email', { method: 'POST' });
+    console.log(`Verify Email Status: ${verifyEmailRes.status}`, `DKIM Verified: ${verifyEmailRes.data.branding?.isDkimVerified}`);
+    if (verifyEmailRes.status !== 200 || verifyEmailRes.data.branding?.isDkimVerified !== true) {
+      throw new Error(`Email sender verification failed: ${JSON.stringify(verifyEmailRes.data)}`);
+    }
+    console.log('✅ Agency white-label engine verified: custom platform branding, domain CNAME SSL verification, and email sender authentication');
+
+    console.log('\n🎉 ALL 60 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

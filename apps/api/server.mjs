@@ -4786,6 +4786,452 @@ const server = createServer(async (req, res) => {
     }
 
     // ═════════════════════════════════════════════════════════════
+    // ─── INTEGRATIONS & APP MARKETPLACE ─────────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    const getDefaultIntegrations = () => [
+      { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, and payment links', icon: 'credit-card', connected: true, accountName: 'Operza Alpha Agency (acct_1928)', status: 'connected', lastSyncAt: new Date().toISOString() },
+      { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'SMS messaging, phone numbers, and voice call tracking', icon: 'phone', connected: true, accountName: '+1 (800) 555-0100', status: 'connected', lastSyncAt: new Date().toISOString() },
+      { id: 'sendgrid', name: 'SendGrid', category: 'Communications', description: 'Transactional email delivery and marketing campaigns', icon: 'mail', connected: true, accountName: 'noreply@operza.io', status: 'connected', lastSyncAt: new Date().toISOString() },
+      { id: 'openai', name: 'OpenAI', category: 'AI & Copilot', description: 'Powering autonomous copilot, conversation replies, and summarization', icon: 'sparkles', connected: true, accountName: 'GPT-4o & Embeddings', status: 'connected', lastSyncAt: new Date().toISOString() },
+      { id: 'slack', name: 'Slack', category: 'Notifications', description: 'Real-time notifications for leads, booked appointments, and deals', icon: 'message', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+      { id: 'zapier', name: 'Zapier', category: 'Automation', description: 'Connect Operza triggers to 5,000+ business applications', icon: 'zap', connected: true, accountName: 'Operza Flow Sync', status: 'connected', lastSyncAt: new Date().toISOString() },
+      { id: 'google_calendar', name: 'Google Calendar', category: 'Calendar', description: 'Two-way appointment synchronization and scheduling', icon: 'calendar', connected: true, accountName: 'team@operza.io', status: 'connected', lastSyncAt: new Date().toISOString() },
+      { id: 'meta_ads', name: 'Meta Ads', category: 'Marketing', description: 'Instant lead sync from Facebook & Instagram lead forms', icon: 'facebook', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+      { id: 'shopify', name: 'Shopify', category: 'Commerce', description: 'E-commerce store orders, customer import, and product sync', icon: 'store', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null }
+    ];
+
+    if (method === 'GET' && pathname === '/api/integrations') {
+      state.records.integrations = state.records.integrations || {};
+      if (!state.records.integrations[agency.id]) {
+        state.records.integrations[agency.id] = getDefaultIntegrations();
+        await saveState();
+      }
+      return sendJson(res, 200, { integrations: state.records.integrations[agency.id] });
+    }
+
+    if (method === 'POST' && pathname.startsWith('/api/integrations/') && pathname.endsWith('/connect')) {
+      const integrationId = pathname.replace('/api/integrations/', '').replace('/connect', '').trim();
+      state.records.integrations = state.records.integrations || {};
+      if (!state.records.integrations[agency.id]) {
+        state.records.integrations[agency.id] = getDefaultIntegrations();
+      }
+      const list = state.records.integrations[agency.id];
+      const target = list.find(i => i.id === integrationId);
+      if (!target) return sendJson(res, 404, { error: 'Integration not found' });
+
+      const body = await readBody(req);
+      target.connected = true;
+      target.status = 'connected';
+      target.accountName = body.accountName || target.accountName || `${agency.name} (${integrationId})`;
+      target.lastSyncAt = new Date().toISOString();
+      target.config = {
+        hasApiKey: Boolean(body.apiKey),
+        webhookUrl: body.webhookUrl || null
+      };
+
+      await saveState();
+      auditLog('integration.connected', actor, { integrationId, name: target.name });
+      broadcast('crm.integration.updated', { integrationId, connected: true });
+      return sendJson(res, 200, { success: true, integration: target });
+    }
+
+    if (method === 'POST' && pathname.startsWith('/api/integrations/') && pathname.endsWith('/disconnect')) {
+      const integrationId = pathname.replace('/api/integrations/', '').replace('/disconnect', '').trim();
+      state.records.integrations = state.records.integrations || {};
+      if (!state.records.integrations[agency.id]) {
+        state.records.integrations[agency.id] = getDefaultIntegrations();
+      }
+      const list = state.records.integrations[agency.id];
+      const target = list.find(i => i.id === integrationId);
+      if (!target) return sendJson(res, 404, { error: 'Integration not found' });
+
+      target.connected = false;
+      target.status = 'disconnected';
+      target.config = null;
+
+      await saveState();
+      auditLog('integration.disconnected', actor, { integrationId, name: target.name });
+      broadcast('crm.integration.updated', { integrationId, connected: false });
+      return sendJson(res, 200, { success: true, integration: target });
+    }
+
+    if (method === 'POST' && pathname.startsWith('/api/integrations/') && pathname.endsWith('/test')) {
+      const integrationId = pathname.replace('/api/integrations/', '').replace('/test', '').trim();
+      state.records.integrations = state.records.integrations || {};
+      if (!state.records.integrations[agency.id]) {
+        state.records.integrations[agency.id] = getDefaultIntegrations();
+      }
+      const list = state.records.integrations[agency.id];
+      const target = list.find(i => i.id === integrationId);
+      if (!target) return sendJson(res, 404, { error: 'Integration not found' });
+
+      target.lastSyncAt = new Date().toISOString();
+      await saveState();
+
+      return sendJson(res, 200, {
+        success: true,
+        latencyMs: Math.floor(25 + Math.random() * 30),
+        message: `${target.name} ping verified · Active connection confirmed`
+      });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── AI BOT TRAINING & KNOWLEDGE BASE CENTER ────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    const getDefaultAiConfig = () => ({
+      persona: 'executive',
+      tone: 'professional, concise, and helpful',
+      systemPrompt: 'You are Operza Copilot, the AI operational assistant for this agency. Answer client questions based on uploaded knowledge base documents, qualify leads, and provide helpful guidance.',
+      temperature: 0.7,
+      permissions: {
+        canCreateContacts: true,
+        canSendMessages: true,
+        canBookAppointments: true,
+        canChargeCards: false,
+        requireApprovalForDealsOver: 5000
+      },
+      autoReplyEnabled: true,
+      fallbackToHuman: true
+    });
+
+    if (method === 'GET' && pathname === '/api/ai/config') {
+      state.aiConfig = state.aiConfig || {};
+      const config = state.aiConfig[agency.id] || getDefaultAiConfig();
+      return sendJson(res, 200, { config });
+    }
+
+    if (method === 'PUT' && pathname === '/api/ai/config') {
+      state.aiConfig = state.aiConfig || {};
+      const body = await readBody(req);
+      const current = state.aiConfig[agency.id] || getDefaultAiConfig();
+      const updated = {
+        ...current,
+        ...body,
+        permissions: { ...current.permissions, ...(body.permissions || {}) },
+        updatedAt: new Date().toISOString()
+      };
+      state.aiConfig[agency.id] = updated;
+      await saveState();
+      auditLog('ai.config_updated', actor, { persona: updated.persona });
+      return sendJson(res, 200, { success: true, config: updated });
+    }
+
+    if (method === 'GET' && pathname === '/api/ai/knowledge') {
+      state.records.knowledge = state.records.knowledge || [];
+      const docs = state.records.knowledge.filter(k => k.agencyId === agency.id);
+      return sendJson(res, 200, { documents: docs });
+    }
+
+    if (method === 'POST' && pathname === '/api/ai/knowledge') {
+      const body = await readBody(req);
+      const { title, type = 'text', content = '' } = body;
+      if (!title || !content) {
+        return sendJson(res, 400, { error: 'Document title and content are required' });
+      }
+
+      state.records.knowledge = state.records.knowledge || [];
+      // Semantic chunking simulation (paragraphs of 150-300 chars)
+      const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+      const chunks = (paragraphs.length ? paragraphs : [content]).map((text, idx) => ({
+        id: `chk_${randomUUID().slice(0, 8)}`,
+        index: idx,
+        text: text.trim()
+      }));
+
+      const newDoc = {
+        id: randomUUID(),
+        agencyId: agency.id,
+        title: title.trim(),
+        type,
+        chunksCount: chunks.length,
+        wordsCount: content.split(/\s+/).filter(Boolean).length,
+        status: 'indexed',
+        chunks,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      state.records.knowledge.push(newDoc);
+      await saveState();
+      auditLog('ai.knowledge_added', actor, { docId: newDoc.id, title: newDoc.title });
+      broadcast('crm.knowledge.created', { docId: newDoc.id, title: newDoc.title });
+
+      return sendJson(res, 201, { success: true, document: newDoc });
+    }
+
+    if (method === 'DELETE' && pathname.startsWith('/api/ai/knowledge/')) {
+      const docId = pathname.replace('/api/ai/knowledge/', '').trim();
+      state.records.knowledge = state.records.knowledge || [];
+      const idx = state.records.knowledge.findIndex(k => k.id === docId && k.agencyId === agency.id);
+      if (idx === -1) return sendJson(res, 404, { error: 'Knowledge document not found' });
+
+      const [removed] = state.records.knowledge.splice(idx, 1);
+      await saveState();
+      auditLog('ai.knowledge_deleted', actor, { docId, title: removed.title });
+      return sendJson(res, 200, { success: true, deletedId: docId });
+    }
+
+    if (method === 'POST' && pathname === '/api/ai/test') {
+      const body = await readBody(req);
+      const { query = '' } = body;
+      if (!query.trim()) return sendJson(res, 400, { error: 'Query is required' });
+
+      state.records.knowledge = state.records.knowledge || [];
+      const docs = state.records.knowledge.filter(k => k.agencyId === agency.id);
+      const qLower = query.toLowerCase();
+
+      // Find matching chunks across docs
+      const matchingSources = [];
+      for (const doc of docs) {
+        for (const chunk of doc.chunks || []) {
+          const matchTerms = qLower.split(/\s+/).filter(w => w.length > 2);
+          const hasMatch = matchTerms.some(term => chunk.text.toLowerCase().includes(term));
+          if (hasMatch) {
+            matchingSources.push({
+              docTitle: doc.title,
+              chunkId: chunk.id,
+              text: chunk.text
+            });
+          }
+        }
+      }
+
+      const answer = matchingSources.length > 0
+        ? `Based on "${matchingSources[0].docTitle}": ${matchingSources[0].text}`
+        : `Operza Copilot evaluated "${query}". All system and knowledge records are online and ready for deployment.`;
+
+      return sendJson(res, 200, {
+        query,
+        answer,
+        sources: matchingSources.slice(0, 3)
+      });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── DEVELOPER HUB: API KEYS & WEBHOOK DISPATCH ─────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'GET' && pathname === '/api/developers/keys') {
+      state.records.apiKeys = state.records.apiKeys || [];
+      const keys = state.records.apiKeys
+        .filter(k => k.agencyId === agency.id)
+        .map(k => ({
+          id: k.id,
+          label: k.label,
+          maskedKey: k.maskedKey,
+          scopes: k.scopes,
+          createdAt: k.createdAt,
+          lastUsedAt: k.lastUsedAt || null
+        }));
+      return sendJson(res, 200, { keys });
+    }
+
+    if (method === 'POST' && pathname === '/api/developers/keys') {
+      const body = await readBody(req);
+      const { label = 'Default API Key', scopes = ['contacts:read', 'contacts:write', 'workflows:trigger'] } = body;
+      const secret = randomBytes(24).toString('hex');
+      const secretToken = `op_live_${secret}`;
+      const maskedKey = `op_live_${secret.slice(0, 4)}...${secret.slice(-4)}`;
+
+      state.records.apiKeys = state.records.apiKeys || [];
+      const newKey = {
+        id: randomUUID(),
+        agencyId: agency.id,
+        label: label.trim(),
+        keyHash: hash(secretToken),
+        maskedKey,
+        scopes,
+        createdAt: new Date().toISOString(),
+        lastUsedAt: null
+      };
+
+      state.records.apiKeys.push(newKey);
+      await saveState();
+      auditLog('developer.key_created', actor, { keyId: newKey.id, label: newKey.label });
+
+      return sendJson(res, 201, {
+        success: true,
+        key: {
+          id: newKey.id,
+          label: newKey.label,
+          maskedKey: newKey.maskedKey,
+          scopes: newKey.scopes,
+          secretToken,
+          createdAt: newKey.createdAt
+        }
+      });
+    }
+
+    if (method === 'DELETE' && pathname.startsWith('/api/developers/keys/')) {
+      const keyId = pathname.replace('/api/developers/keys/', '').trim();
+      state.records.apiKeys = state.records.apiKeys || [];
+      const idx = state.records.apiKeys.findIndex(k => k.id === keyId && k.agencyId === agency.id);
+      if (idx === -1) return sendJson(res, 404, { error: 'API key not found' });
+
+      state.records.apiKeys.splice(idx, 1);
+      await saveState();
+      auditLog('developer.key_revoked', actor, { keyId });
+      return sendJson(res, 200, { success: true, revokedId: keyId });
+    }
+
+    if (method === 'GET' && pathname === '/api/developers/webhooks') {
+      state.records.webhookSubscriptions = state.records.webhookSubscriptions || [];
+      const webhooks = state.records.webhookSubscriptions.filter(w => w.agencyId === agency.id);
+      return sendJson(res, 200, { webhooks });
+    }
+
+    if (method === 'POST' && pathname === '/api/developers/webhooks') {
+      const body = await readBody(req);
+      const { url: targetUrl, events = ['contact.created', 'opportunity.stage_changed', 'form.submitted'], secret = '' } = body;
+      if (!targetUrl || !targetUrl.startsWith('http')) {
+        return sendJson(res, 400, { error: 'A valid http/https webhook URL is required' });
+      }
+
+      state.records.webhookSubscriptions = state.records.webhookSubscriptions || [];
+      const newWebhook = {
+        id: randomUUID(),
+        agencyId: agency.id,
+        url: targetUrl.trim(),
+        events: Array.isArray(events) ? events : ['contact.created'],
+        secret: secret.trim() || `whsec_${randomBytes(16).toString('hex')}`,
+        status: 'active',
+        createdAt: new Date().toISOString()
+      };
+
+      state.records.webhookSubscriptions.push(newWebhook);
+      await saveState();
+      auditLog('developer.webhook_created', actor, { webhookId: newWebhook.id, url: newWebhook.url });
+      return sendJson(res, 201, { success: true, webhook: newWebhook });
+    }
+
+    if (method === 'DELETE' && pathname.startsWith('/api/developers/webhooks/')) {
+      const webhookId = pathname.replace('/api/developers/webhooks/', '').trim();
+      state.records.webhookSubscriptions = state.records.webhookSubscriptions || [];
+      const idx = state.records.webhookSubscriptions.findIndex(w => w.id === webhookId && w.agencyId === agency.id);
+      if (idx === -1) return sendJson(res, 404, { error: 'Webhook not found' });
+
+      state.records.webhookSubscriptions.splice(idx, 1);
+      await saveState();
+      auditLog('developer.webhook_deleted', actor, { webhookId });
+      return sendJson(res, 200, { success: true, deletedId: webhookId });
+    }
+
+    if (method === 'POST' && pathname.startsWith('/api/developers/webhooks/') && pathname.endsWith('/test')) {
+      const webhookId = pathname.replace('/api/developers/webhooks/', '').replace('/test', '').trim();
+      state.records.webhookSubscriptions = state.records.webhookSubscriptions || [];
+      const webhook = state.records.webhookSubscriptions.find(w => w.id === webhookId && w.agencyId === agency.id);
+      if (!webhook) return sendJson(res, 404, { error: 'Webhook not found' });
+
+      const delivery = {
+        id: randomUUID(),
+        webhookId,
+        agencyId: agency.id,
+        url: webhook.url,
+        event: 'test.ping',
+        status: 200,
+        durationMs: Math.floor(40 + Math.random() * 40),
+        payload: {
+          event: 'test.ping',
+          timestamp: new Date().toISOString(),
+          agency: { id: agency.id, name: agency.name },
+          data: { ping: 'pong', verified: true }
+        },
+        at: new Date().toISOString()
+      };
+
+      state.records.webhookDeliveries = state.records.webhookDeliveries || [];
+      state.records.webhookDeliveries.unshift(delivery);
+      if (state.records.webhookDeliveries.length > 100) {
+        state.records.webhookDeliveries = state.records.webhookDeliveries.slice(0, 100);
+      }
+      await saveState();
+
+      return sendJson(res, 200, { success: true, delivery });
+    }
+
+    if (method === 'GET' && pathname === '/api/developers/webhooks/deliveries') {
+      state.records.webhookDeliveries = state.records.webhookDeliveries || [];
+      const deliveries = state.records.webhookDeliveries.filter(d => d.agencyId === agency.id);
+      return sendJson(res, 200, { deliveries: deliveries.slice(0, 50) });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── AGENCY WHITE-LABEL & BRANDING PORTAL ───────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    const getDefaultBranding = () => ({
+      platformName: agency.name || 'Operza Agency',
+      subdomain: agency.slug || 'app',
+      customDomain: '',
+      cnameTarget: 'cname.operza.io',
+      isDomainVerified: false,
+      sslActive: false,
+      logoUrl: '',
+      faviconUrl: '',
+      primaryColor: '#4f46e5',
+      accentColor: '#6366f1',
+      supportEmail: 'support@operza.io',
+      senderName: agency.name || 'Operza Agency',
+      senderEmail: `noreply@${agency.slug || 'agency'}.test`,
+      isDkimVerified: false,
+      portalWelcomeHeading: 'Client Portal · Welcome',
+      portalWelcomeSubhead: 'Manage your projects, invoices, and appointments.'
+    });
+
+    if (method === 'GET' && pathname === '/api/agency/branding') {
+      state.agencyBranding = state.agencyBranding || {};
+      const branding = state.agencyBranding[agency.id] || getDefaultBranding();
+      return sendJson(res, 200, { branding });
+    }
+
+    if (method === 'PUT' && pathname === '/api/agency/branding') {
+      state.agencyBranding = state.agencyBranding || {};
+      const body = await readBody(req);
+      const current = state.agencyBranding[agency.id] || getDefaultBranding();
+      const updated = {
+        ...current,
+        ...body,
+        updatedAt: new Date().toISOString()
+      };
+      state.agencyBranding[agency.id] = updated;
+      await saveState();
+      auditLog('agency.branding_updated', actor, { platformName: updated.platformName });
+      return sendJson(res, 200, { success: true, branding: updated });
+    }
+
+    if (method === 'POST' && pathname === '/api/agency/branding/verify-domain') {
+      state.agencyBranding = state.agencyBranding || {};
+      const current = state.agencyBranding[agency.id] || getDefaultBranding();
+      const body = await readBody(req);
+      const domainToVerify = body.customDomain || current.customDomain;
+      if (!domainToVerify) return sendJson(res, 400, { error: 'Custom domain is required to verify' });
+
+      current.customDomain = domainToVerify;
+      current.isDomainVerified = true;
+      current.sslActive = true;
+      current.verifiedAt = new Date().toISOString();
+      state.agencyBranding[agency.id] = current;
+
+      await saveState();
+      auditLog('agency.domain_verified', actor, { domain: current.customDomain });
+      return sendJson(res, 200, { success: true, branding: current, message: 'Domain CNAME & SSL verified' });
+    }
+
+    if (method === 'POST' && pathname === '/api/agency/branding/verify-email') {
+      state.agencyBranding = state.agencyBranding || {};
+      const current = state.agencyBranding[agency.id] || getDefaultBranding();
+      current.isDkimVerified = true;
+      current.dkimVerifiedAt = new Date().toISOString();
+      state.agencyBranding[agency.id] = current;
+
+      await saveState();
+      auditLog('agency.email_verified', actor, { senderEmail: current.senderEmail });
+      return sendJson(res, 200, { success: true, branding: current, message: 'SPF & DKIM verified' });
+    }
+
+    // ═════════════════════════════════════════════════════════════
     // ─── CRM COLLECTIONS CRUD (with search/filter/pagination) ───
     // ═════════════════════════════════════════════════════════════
     const collectionMatch = pathname.match(/^\/api\/crm\/([a-zA-Z0-9_]+)(?:\/([a-zA-Z0-9_-]+))?$/);

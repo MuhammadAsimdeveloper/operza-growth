@@ -17,6 +17,8 @@ interface NavEntry {
 
 function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   const { state } = useStore();
+  const { agency, locations, activeLocation, switchLocation } = useAuth();
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const unread = state.conversations.reduce((sum, c) => sum + c.unread, 0);
 
   const groups: Array<{ label?: string; items: NavEntry[] }> = [
@@ -58,8 +60,11 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
       ],
     },
     {
-      label: 'Automation',
-      items: [{ to: '/workflows', label: 'Workflows', icon: 'zap' }],
+      label: 'Automation & AI',
+      items: [
+        { to: '/workflows', label: 'Workflows', icon: 'zap' },
+        { to: '/ai-trainer', label: 'AI Bot Training', icon: 'sparkles' },
+      ],
     },
     {
       label: 'Commerce',
@@ -82,15 +87,18 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
       ],
     },
     {
-      label: 'Agency',
+      label: 'Agency & White-Label',
       items: [
         { to: '/sub-accounts', label: 'Sub-accounts', icon: 'building' },
         { to: '/snapshots', label: 'Account Snapshots', icon: 'refresh' },
+        { to: '/branding', label: 'Custom Branding', icon: 'sliders' },
       ],
     },
     {
-      label: 'Workspace',
+      label: 'Platform & Ecosystem',
       items: [
+        { to: '/integrations', label: 'App Marketplace', icon: 'plug' },
+        { to: '/developers', label: 'Developer Hub', icon: 'webhook' },
         { to: '/custom-values', label: 'Custom Values', icon: 'sliders' },
         { to: '/audit-log', label: 'Audit Log', icon: 'clipboard' },
       ],
@@ -110,18 +118,68 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
         </button>
       </div>
 
-      <button className="sidebar__account" type="button">
-        <span className="account__avatar">AG</span>
-        <span style={{ minWidth: 0, flex: 1 }}>
-          <span className="account__name" style={{ display: 'block' }}>
-            Asim Growth Agency
+      <div style={{ position: 'relative' }}>
+        <button
+          className="sidebar__account"
+          type="button"
+          onClick={() => setAccountMenuOpen((v) => !v)}
+          title="Switch active sub-account / location"
+        >
+          <span className="account__avatar">
+            {(agency?.name || 'OP').slice(0, 2).toUpperCase()}
           </span>
-          <span className="account__plan" style={{ display: 'block' }}>
-            Agency · Unlimited
+          <span style={{ minWidth: 0, flex: 1 }}>
+            <span className="account__name" style={{ display: 'block' }}>
+              {activeLocation?.name || agency?.name || 'Operza Agency'}
+            </span>
+            <span className="account__plan" style={{ display: 'block' }}>
+              {agency?.name || 'Agency Workspace'}
+            </span>
           </span>
-        </span>
-        <Icon name="chevron-down" size={15} />
-      </button>
+          <Icon name="chevron-down" size={15} />
+        </button>
+
+        {accountMenuOpen && (
+          <div
+            className="card"
+            style={{
+              position: 'absolute',
+              top: '100%',
+              left: 12,
+              right: 12,
+              zIndex: 50,
+              boxShadow: 'var(--shadow-lg)',
+              padding: '8px',
+              borderRadius: 'var(--r-md)',
+              background: 'var(--surface)',
+              border: '1px solid var(--line)',
+            }}
+          >
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', padding: '4px 8px' }}>
+              SWITCH SUB-ACCOUNT
+            </div>
+            {locations.map((loc) => (
+              <button
+                key={loc.id}
+                type="button"
+                className="btn btn--ghost btn--sm"
+                style={{
+                  width: '100%',
+                  justifyContent: 'flex-start',
+                  fontWeight: loc.id === activeLocation?.id ? 700 : 400,
+                  color: loc.id === activeLocation?.id ? 'var(--accent)' : 'var(--text)',
+                }}
+                onClick={() => {
+                  switchLocation(loc.id);
+                  setAccountMenuOpen(false);
+                }}
+              >
+                <Icon name="building" size={13} /> {loc.name}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       <nav className="sidebar__nav">
         {groups.map((group, gi) => (
@@ -384,8 +442,8 @@ function UserMenu() {
           <div>
             <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-1)' }}>{user?.name}</div>
             <div style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{user?.email}</div>
-            <div style={{ fontSize: 11, color: 'var(--primary, #3b82f6)', marginTop: 2, fontWeight: 500 }}>
-              ?? {agency?.name || 'Operza Agency'}
+            <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 4, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Icon name="building" size={12} /> {agency?.name || 'Operza Agency'}
             </div>
           </div>
 
@@ -434,6 +492,23 @@ function UserMenu() {
 
 function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
   const location = useLocation();
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('operza-theme');
+    if (saved === 'dark' || saved === 'light') return saved;
+    return typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
+      ? 'dark'
+      : 'light';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('operza-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
+  };
+
   const titles: Record<string, string> = {
     '/': 'Dashboard',
     '/conversations': 'Conversations',
@@ -460,6 +535,10 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
     '/custom-values': 'Custom Values',
     '/audit-log': 'Audit Log',
     '/settings': 'Settings',
+    '/integrations': 'App Marketplace',
+    '/ai-trainer': 'AI Copilot Training',
+    '/developers': 'Developer Hub',
+    '/branding': 'White-Label Branding',
   };
   const title = titles[location.pathname] ?? 'Workspace';
 
@@ -472,6 +551,14 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
       <SearchBox />
       <span className="topbar__spacer" />
       <div className="topbar__actions">
+        <button
+          className="icon-btn"
+          onClick={toggleTheme}
+          aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
+          title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
+        >
+          <Icon name={theme === 'light' ? 'moon' : 'sun'} size={18} />
+        </button>
         <button className="icon-btn" aria-label="Help">
           <Icon name="globe" size={18} />
         </button>

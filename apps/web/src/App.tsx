@@ -47,6 +47,10 @@ import QrCodes from './pages/QrCodes';
 import ClientPortal from './pages/ClientPortal';
 import Reporting from './pages/Reporting';
 import Settings from './pages/Settings';
+import Integrations from './pages/Integrations';
+import AiTrainer from './pages/AiTrainer';
+import Developers from './pages/Developers';
+import Branding from './pages/Branding';
 import NotFound from './pages/NotFound';
 
 export default function App() {
@@ -108,6 +112,10 @@ export default function App() {
         <Route path="settings" element={<Settings />} />
         <Route path="sub-accounts" element={<SubAccounts />} />
         <Route path="snapshots" element={<Snapshots />} />
+        <Route path="integrations" element={<Integrations />} />
+        <Route path="ai-trainer" element={<AiTrainer />} />
+        <Route path="developers" element={<Developers />} />
+        <Route path="branding" element={<Branding />} />
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
