@@ -1,3 +1,18 @@
+/**
+ * ============================================================================
+ * Operza Workflow Execution Engine & State Machine
+ * ============================================================================
+ * 
+ * Deterministic step executor supporting multi-step branching, human approvals,
+ * template variable hydration, and checksum state validation.
+ * 
+ * Key Features:
+ * 1. Safe Template Engine: Dynamic string interpolation for {{contact.firstName}}, etc.
+ * 2. Deterministic Condition Evaluator: Supports equals, not_equals, contains, numeric compares.
+ * 3. Human Approval Gates: Suspends workflow execution in 'waiting_approval' state.
+ * 4. Step Walkers: Supports SMS, email, tags, tasks, webhooks, loops, splits, and math nodes.
+ */
+
 import { createHash, randomUUID } from 'node:crypto';
 
 // ---------------------------------------------------------------------------

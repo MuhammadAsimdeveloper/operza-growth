@@ -57,6 +57,14 @@ class SimpleRedisClient {
     });
   }
 
+  /**
+   * Parse inbound TCP stream chunks according to the Redis Serialization Protocol (RESP v2):
+   * '+' -> Simple String (e.g. +OK\r\n)
+   * ':' -> Integer (e.g. :1000\r\n)
+   * '-' -> Error message (e.g. -ERR unknown command\r\n)
+   * '$' -> Bulk String with length prefix (e.g. $6\r\nfoobar\r\n)
+   * '*' -> Multi-bulk Array with element count (e.g. *2\r\n$3\r\nfoo\r\n$3\r\nbar\r\n)
+   */
   _processBuffer() {
     while (this.buffer.length > 0 && this.pendingCallbacks.length > 0) {
       const lineEnd = this.buffer.indexOf('\r\n');

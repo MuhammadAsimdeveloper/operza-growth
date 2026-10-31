@@ -1,3 +1,23 @@
+/**
+ * ============================================================================
+ * Operza Unified Enterprise API & Orchestration Server v2.0
+ * ============================================================================
+ * 
+ * Core Architectural Engine:
+ * 1. Dual-Mode Storage:
+ *    - Relational PostgreSQL Mode with strict Row-Level Security (RLS).
+ *    - Zero-config durable JSON atomic file mode (data/store.json) for dev/testing.
+ * 2. Enterprise Queue:
+ *    - Redis BullMQ driver using direct RESP TCP sockets.
+ *    - Memory fallback queue with priority and delay support.
+ * 3. Real-Time WebSockets:
+ *    - Native ws connection pooling at /ws for live CRM timeline updates.
+ * 4. Omnichannel Ingress:
+ *    - Webhook ingestion for Twilio SMS, WhatsApp Cloud API, and Meta Messenger.
+ * 5. Agency Multi-Tenancy & Carrier Compliance:
+ *    - Sub-account hierarchy, snapshot diff & sync, and A2P 10DLC trust hub.
+ */
+
 import { createServer } from 'node:http';
 import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual, randomUUID, createHmac } from 'node:crypto';
 import { promisify } from 'node:util';

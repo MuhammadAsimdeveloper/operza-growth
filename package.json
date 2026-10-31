@@ -2,7 +2,7 @@
   "name": "operza",
   "version": "1.0.0",
   "private": true,
-  "description": "Operza — The Open-Source Unified Business OS, Multi-Tenant Agency CRM & Intelligent Workflow Orchestrator (GoHighLevel & n8n Alternative)",
+  "description": "Operza — The Open-Source Unified Business OS, Multi-Tenant Agency CRM & Intelligent Workflow Orchestrator",
   "type": "module",
   "homepage": "https://github.com/MuhammadAsimdeveloper/operza-growth#readme",
   "bugs": {
@@ -17,8 +17,8 @@
   "keywords": [
     "crm",
     "agency-crm",
-    "gohighlevel-alternative",
-    "n8n-alternative",
+    "business-operating-system",
+    "workflow-orchestrator",
     "workflow-automation",
     "visual-builder",
     "funnel-builder",

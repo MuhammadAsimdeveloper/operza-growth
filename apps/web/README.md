@@ -1,20 +1,20 @@
 # @operza/web
 
-The official frontend web application for Operza: a modern, enterprise-grade React 19 + TypeScript + Vite CRM workspace engineered to match and surpass GoHighLevel and n8n in usability and aesthetic polish.
+The official frontend web application for Operza: a modern, enterprise-grade React 19 + TypeScript + Vite CRM workspace engineered with exceptional usability and aesthetic polish.
 
 ---
 
 ## 🎨 Key Features & Components
 
 ### 1. Visual Workflow Graph Canvas (`WorkflowCanvas.tsx`)
-- **n8n Parity:** Full 2D node-and-wire visual graph canvas with interactive panning and zooming (40% to 200%).
+- **2D Node Canvas:** Full 2D node-and-wire visual graph canvas with interactive panning and zooming (40% to 200%).
 - **Interactive Node Graph:** Draggable trigger, condition, action, wait, and approval nodes.
 - **Dynamic Connection Wires:** High-precision SVG cubic bezier curving wires with directional arrows and pulsing dash stroke animations.
 - **Color-Coded Branching:** `YES` branch rendered in emerald green, `NO` branch rendered in red.
-- **Dual-Mode Switching:** Seamless 1-click toggle between **Visual Graph (n8n Mode)** and **Step List (GHL Mode)**.
+- **Dual-Mode Switching:** Seamless 1-click toggle between **Visual Graph (Canvas Mode)** and **Step List (Tree Mode)**.
 
 ### 2. In-Browser Visual Funnel Page Builder (`VisualPageBuilder.tsx`)
-- **GoHighLevel Parity:** Full WYSIWYG drag-and-drop page editor for funnels and landing pages.
+- **Full WYSIWYG Editor:** Element-level drag-and-drop page editor for high-converting funnels and landing pages.
 - **Rich Component Palette:** Headlines, Body Copy, Hero Images, 2-Column Responsive Grids, Countdown Timers, 1-Click Order Bumps, Call-to-Action Buttons, and Customer Testimonials.
 - **Responsive Viewport Inspector:** Instant switching between Desktop (100%), Tablet (768px), and Mobile (375px) viewports.
 - **Direct Funnel Integration:** Launched directly from the Funnels step table via the **"Design Canvas"** trigger.

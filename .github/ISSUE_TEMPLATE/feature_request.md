@@ -13,8 +13,8 @@ A clear and concise description of what the problem is. Ex: I'm always frustrate
 A clear and concise description of what you want to happen. Include any UI ideas, API endpoints, or workflow nodes.
 
 ## Target Subsystem
-- [ ] Visual Workflow Graph Canvas (n8n parity)
-- [ ] Visual Funnel / Website Builder (GHL parity)
+- [ ] Visual Workflow Graph Canvas (Node-and-Wire Engine)
+- [ ] Visual Funnel / Website Builder (WYSIWYG Drag-and-Drop)
 - [ ] Omnichannel Messaging & Telephony (Twilio / Conversations)
 - [ ] AI Copilot & Autonomous Agents
 - [ ] Multi-Tenant Agency Management & Client Portals

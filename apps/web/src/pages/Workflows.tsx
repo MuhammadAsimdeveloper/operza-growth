@@ -539,7 +539,7 @@ export default function Workflows() {
                       className={`btn btn--xs ${viewMode === 'graph' ? 'btn--primary' : 'btn--subtle'}`}
                       style={{ padding: '4px 8px', fontSize: 11, border: 'none' }}
                       onClick={() => setViewMode('graph')}
-                      title="Visual Nodal Canvas (n8n Mode)"
+                      title="Visual Nodal Canvas (Graph Mode)"
                     >
                       <Icon name="share" size={11} /> Visual Graph
                     </button>
@@ -548,7 +548,7 @@ export default function Workflows() {
                       className={`btn btn--xs ${viewMode === 'tree' ? 'btn--primary' : 'btn--subtle'}`}
                       style={{ padding: '4px 8px', fontSize: 11, border: 'none' }}
                       onClick={() => setViewMode('tree')}
-                      title="Step List (GHL Mode)"
+                      title="Linear Steps (List Mode)"
                     >
                       <Icon name="sliders" size={11} /> Step List
                     </button>
@@ -1535,7 +1535,7 @@ function TemplateGalleryModal({
     {
       name: 'Inbound Webhook to Pipeline & Slack Dispatch',
       category: 'Omnichannel & Integrations',
-      description: 'Listens for webhooks from Zapier or n8n, tags the contact, dispatches to an internal webhook, and creates an intake task.',
+      description: 'Listens for external inbound lead webhooks, tags the contact, dispatches notifications, and creates an intake task.',
       trigger: { kind: 'webhook', detail: 'External Inbound Lead' },
       actions: [
         { id: uid('act'), kind: 'tag', label: 'Tag webhook-lead', config: { tag: 'webhook-lead' } },

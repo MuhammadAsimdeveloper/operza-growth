@@ -3,7 +3,7 @@
 # ⚡ Operza
 
 ### The Open-Source Business Operating System & Intelligent Automation Engine
-**GoHighLevel Agency CRM + n8n Visual Automation + Autonomous AI Copilot**
+**Unified Multi-Tenant CRM + Visual Node Automation + Autonomous AI Copilot**
 
 [![CI Status](https://github.com/MuhammadAsimdeveloper/operza-growth/actions/workflows/ci.yml/badge.svg)](https://github.com/MuhammadAsimdeveloper/operza-growth/actions)
 [![Tests Passing](https://img.shields.io/badge/Tests-72%2F72%20Passed-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
@@ -17,7 +17,7 @@
   <a href="#-quickstart-in-30-seconds">Quickstart</a> •
   <a href="#-system-architecture">Architecture</a> •
   <a href="#-core-capabilities--modules">Core Capabilities</a> •
-  <a href="#-competitive-matrix-operza-vs-ghl-vs-n8n">Comparison Matrix</a> •
+  <a href="#-enterprise-architecture-comparison-matrix">Comparison Matrix</a> •
   <a href="#-rest--websocket-api-directory">API Reference</a> •
   <a href="#-contributing">Contributing</a>
 </p>
@@ -29,10 +29,10 @@
 ## 💡 What is Operza?
 
 Modern growth agencies and scaling businesses are forced into an expensive, fragmented software trap:
-1. **GoHighLevel (GHL)** provides CRM, pipelines, and funnels, but locks agencies into closed-source monoliths with restrictive workflow logic and high recurring fees (\$497+/month).
-2. **n8n** provides developer-grade node-and-wire automation, but lacks native CRM contacts, sales pipelines, client billing, and public agency portals.
+1. **Legacy Agency CRMs** provide pipelines and contact lists, but lock teams into closed-source monoliths with rigid, linear automation trees and high recurring fees (\$497+/month).
+2. **Standalone iPaaS & Workflow Tools** provide visual automation graphs, but lack native CRM contact records, sales deal stages, client billing, and white-label client portals.
 
-**Operza solves this fragmentation.** It unites the full-featured multi-tenant agency CRM and funnel builder of GoHighLevel with the visual node-graph orchestration of n8n, powered by an autonomous, streaming AI Copilot with human-in-the-loop safety gates.
+**Operza solves this fragmentation.** It unites an enterprise-grade multi-tenant CRM, an in-browser drag-and-drop funnel builder, and an interactive 2D node-graph workflow canvas—all backed by an autonomous, streaming AI Copilot with human-in-the-loop safety gates.
 
 ---
 
@@ -42,7 +42,7 @@ Modern growth agencies and scaling businesses are forced into an expensive, frag
 flowchart TD
     subgraph Clients["Presentation Layer (React 19 + TypeScript + Tailwind)"]
         UI["Operza CRM Workspace"]
-        Canvas["Visual n8n Workflow Graph Canvas"]
+        Canvas["Visual Workflow Graph Canvas"]
         Builder["WYSIWYG Funnel & Page Builder"]
         CopilotWidget["Streaming AI Copilot Widget"]
         Portal["White-Label Client Portal"]
@@ -89,13 +89,13 @@ flowchart TD
 
 ## ⚡ Key Capabilities & Modules
 
-### 1. Visual Workflow Graph Canvas (n8n Parity)
+### 1. Visual Workflow Graph Canvas (2D Node-and-Wire Engine)
 - **2D Node-and-Wire Canvas:** Smooth panning, multi-level zoom (40% to 200%), and draggable trigger, condition, action, and delay nodes.
 - **Dynamic Curving SVG Wires:** High-precision cubic bezier connection lines with directional arrowheads and animated pulsing energy dashes.
 - **Color-Coded Branching:** `YES` affirmative branches in emerald green, `NO` negative branches in crimson red.
-- **Dual-Mode Workflow Engine:** 1-click toggle between **"Visual Graph (n8n Mode)"** and **"Step List (GHL Mode)"** to suit both developers and non-technical account managers.
+- **Dual-Mode Workflow Engine:** 1-click toggle between **"Visual Graph Canvas"** and **"Linear Step List"** to suit both developers and non-technical account managers.
 
-### 2. In-Browser Visual Funnel Page Builder (GHL Parity)
+### 2. In-Browser Visual Funnel Page Builder (WYSIWYG Engine)
 - **WYSIWYG Drag-and-Drop Editor:** Design conversion-optimized sales pages directly in the browser.
 - **Component Palette:** Headlines, Body Copy, Hero Images, 2-Column Responsive Layouts, Urgency Countdown Timers, 1-Click Order Bumps, Call-to-Action Buttons, and Social Proof Testimonials.
 - **Multi-Device Responsive Preview:** Instant live preview across Desktop (100%), Tablet (768px), and Mobile (375px) viewports.
@@ -123,13 +123,13 @@ flowchart TD
 
 ---
 
-## 📊 Competitive Matrix: Operza vs GHL vs n8n
+## 📊 Enterprise Architecture Comparison Matrix
 
-| Capability / Dimension | GoHighLevel (GHL) | n8n | **Operza** |
+| Capability / Dimension | Legacy Agency CRMs (Closed SaaS) | Standalone iPaaS & Workflow Tools | **Operza** |
 | :--- | :---: | :---: | :---: |
-| **Open Source & Self-Hostable** | ❌ Closed SaaS | ⚠️ Fair-Code (n8n license) | ✅ **100% MIT Open Source** |
+| **Open Source & Self-Hostable** | ❌ Closed SaaS | ⚠️ Proprietary / Limited Community | ✅ **100% MIT Open Source** |
 | **Visual Workflow Graph Canvas** | ❌ Linear tree only | ✅ Full 2D Node Canvas | ✅ **Full 2D Node Canvas + Step Toggle** |
-| **Node Payload Pinning & Step Inspector** | ❌ Not available | ✅ Built-in Inspector | ✅ **Built-in n8n Payload Drawer** |
+| **Node Payload Pinning & Step Inspector** | ❌ Not available | ✅ Built-in Inspector | ✅ **Built-in Node Payload Drawer** |
 | **In-Browser WYSIWYG Funnel Builder** | ✅ Prop-heavy builder | ❌ Not available | ✅ **Built-in Responsive Visual Builder** |
 | **Public Live Funnel & 1-Click Bump** | ✅ Built-in | ❌ Not available | ✅ **Native Live Ingress & Bump Engine** |
 | **Multi-Tenant Agency & Sub-Accounts** | ✅ Available ($497/mo) | ❌ Single tenant | ✅ **Native PostgreSQL RLS Tenancy** |
@@ -174,7 +174,7 @@ The system will boot instantly:
 ---
 
 ### 2. Full Production Stack with Docker Compose
-To boot the full production stack with **PostgreSQL 16 (Row-Level Security)**, **Redis 7 (BullMQ Queue)**, **n8n Automation Engine**, and the compiled **Operza Web & API containers**:
+To boot the full production stack with **PostgreSQL 16 (Row-Level Security)**, **Redis 7 (BullMQ Queue)**, and the compiled **Operza Web & API containers**:
 
 ```bash
 docker compose up -d
@@ -186,7 +186,6 @@ docker compose up -d
 | **API Server** | `4000` | Node.js ESM REST API + WebSocket Hub |
 | **PostgreSQL** | `5432` | Multi-tenant PostgreSQL 16 with RLS |
 | **Redis** | `6379` | Distributed Redis 7 Queue & Cache |
-| **n8n Studio** | `5678` | Integrated n8n Automation Studio |
 
 ---
 
@@ -212,8 +211,8 @@ operza/
 │   └── web/                    # React 19 + TypeScript + Vite CRM Application
 │       ├── src/
 │       │   ├── components/
-│       │   │   ├── WorkflowCanvas.tsx    # n8n-style 2D visual node canvas
-│       │   │   ├── VisualPageBuilder.tsx # GHL-style WYSIWYG funnel page builder
+│       │   │   ├── WorkflowCanvas.tsx    # 2D visual node-and-wire canvas
+│       │   │   ├── VisualPageBuilder.tsx # WYSIWYG drag-and-drop page builder
 │       │   │   ├── CopilotWidget.tsx     # Floating SSE AI chat assistant
 │       │   │   └── Layout.tsx            # Main CRM responsive sidebar layout
 │       │   ├── pages/                    # 25+ view modules (Funnels, Pipelines, etc.)
@@ -227,9 +226,9 @@ operza/
 │
 ├── scripts/
 │   ├── dev.mjs                 # Single-command local launcher
-│   └── test-e2e.mjs            # Comprehensive 68-step end-to-end test suite
+│   └── test-e2e.mjs            # Comprehensive 72-step end-to-end test suite
 │
-├── docker-compose.yml          # Complete PostgreSQL, Redis, n8n, API & Web stack
+├── docker-compose.yml          # Complete PostgreSQL, Redis, API & Web stack
 ├── package.json                # Monorepo root workspaces configuration
 ├── CONTRIBUTING.md             # Contribution guidelines & branching strategy
 ├── CODE_OF_CONDUCT.md          # Contributor Covenant v2.1

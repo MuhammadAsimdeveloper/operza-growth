@@ -1,3 +1,18 @@
+/**
+ * ============================================================================
+ * Operza Telephony System & A2P 10DLC Carrier Trust Hub
+ * ============================================================================
+ * 
+ * Provides end-to-end voice and SMS communications infrastructure:
+ * 1. Virtual Lines Management: Number provisioning, whisper/IVR forwarding,
+ *    and call recording policies.
+ * 2. Real-Time Call Logs: Chronological inbound/outbound calls, durations,
+ *    outcomes (completed, missed, voicemail), and automated missed-call task triggers.
+ * 3. A2P 10DLC Trust Hub: Official carrier brand and campaign registration wizard,
+ *    The Campaign Registry (TCR) compliance tracking, opt-in flow verification,
+ *    and carrier message throughput monitoring.
+ */
+
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';

@@ -1,3 +1,20 @@
+/**
+ * ============================================================================
+ * Operza Public Funnel & High-Converting Landing Page Viewer
+ * ============================================================================
+ * 
+ * Renders published funnels and client acquisition landing pages directly from
+ * public vanity URLs (/funnel/:slug and /v/:slug).
+ * 
+ * Key Features:
+ * 1. Element-Level Rendering: Dynamically renders headlines, responsive grids,
+ *    live ticking countdown timers, hero images, and social proof testimonials.
+ * 2. Real-Time Lead Opt-In: Captures visitor contact information, creates/matches
+ *    CRM contacts, and attaches pipeline deals.
+ * 3. 1-Click Order Bumps: Real-time client-side price recalculation with immediate
+ *    fulfillment tracking on submission.
+ */
+
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
@@ -120,7 +137,7 @@ export default function PublicFunnel() {
         {
           id: 'ob1',
           type: 'order_bump',
-          content: 'VIP Implementation Blueprint (+ $37): Receive our turn-key n8n automation snapshots and GoHighLevel migration playbook.',
+          content: 'VIP Implementation Blueprint (+ $37): Receive our turn-key workflow automation snapshots and scale migration playbook.',
           bumpPrice: 37,
           bumpTitle: 'VIP Implementation Blueprint'
         }
@@ -333,7 +350,7 @@ export default function PublicFunnel() {
                       ⚡ YES! Add the VIP Implementation Blueprint (+${bumpPrice})
                     </div>
                     <div style={{ fontSize: 12.5, color: '#475569', marginTop: 4, lineHeight: 1.5 }}>
-                      Receive immediate access to our turnkey n8n automation templates, GHL snapshot blueprints, and 24/7 AI copilot workflows.
+                      Receive immediate access to our turnkey automation templates, agency snapshot blueprints, and 24/7 AI copilot workflows.
                     </div>
                   </div>
                 </div>

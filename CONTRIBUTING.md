@@ -1,6 +1,6 @@
 # Contributing to Operza
 
-Thank you for your interest in contributing to **Operza**! Operza is an open-source, production-grade business automation platform and multi-tenant agency CRM designed to unify the capabilities of GoHighLevel and n8n with an autonomous AI Copilot.
+Thank you for your interest in contributing to **Operza**! Operza is an open-source, production-grade business automation platform and multi-tenant agency CRM designed to unify full-funnel client management, visual node-and-wire automation, and an autonomous AI Copilot.
 
 We welcome contributions from developers, designers, and technical writers worldwide.
 

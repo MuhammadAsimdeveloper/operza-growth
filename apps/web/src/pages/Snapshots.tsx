@@ -1,3 +1,17 @@
+/**
+ * ============================================================================
+ * Operza Multi-Tenant Snapshot Management & Bi-Directional Diff Sync
+ * ============================================================================
+ * 
+ * Provides agency snapshot capabilities:
+ * 1. 1-Click Blueprints: Packages workflows, sales pipelines, calendars, forms,
+ *    and payment links into transportable snapshot templates.
+ * 2. Bi-Directional Drift Diffing: Performs granular comparison between blueprint
+ *    resources and target sub-account installations.
+ * 3. Selective Push Synchronization: Allows agencies to selectively push updates
+ *    (e.g., new workflows or updated forms) without clobbering sub-account customizations.
+ */
+
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';

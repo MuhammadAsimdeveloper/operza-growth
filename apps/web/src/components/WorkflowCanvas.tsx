@@ -1,3 +1,21 @@
+/**
+ * ============================================================================
+ * Operza Visual Workflow Canvas (2D Nodal Graph Engine)
+ * ============================================================================
+ * 
+ * Provides an interactive, infinite 2D canvas for designing, inspecting,
+ * and dry-running complex business automation workflows.
+ * 
+ * Key Architectural Highlights:
+ * 1. Infinite Pan & Zoom Engine: Mouse drag panning and zoom controls (40% - 200%).
+ * 2. High-Precision Bezier Router: Computes cubic bezier curves (M, C) with
+ *    directional arrowheads and pulsing dash strokes between parent and child nodes.
+ * 3. Conditional Branch Splitting: Dedicated YES (green) and NO (red) routing for
+ *    logical condition nodes.
+ * 4. Step Payload Pinning Drawer: Inspects inbound input parameters, execution
+ *    context, output payloads, and offers on-the-fly dry run testing.
+ */
+
 import { useState, useRef, type MouseEvent } from 'react';
 import { Icon } from './Icon';
 import { Badge } from './ui';
@@ -229,7 +247,7 @@ export function WorkflowCanvas({
         <span>·</span>
         <span>Click node to configure</span>
         <span>·</span>
-        <Badge tone="green">n8n Graph Mode Active</Badge>
+        <Badge tone="green">Visual Graph Canvas Active</Badge>
       </div>
 
       {/* SVG Canvas for Curving Bezier Wires */}
@@ -267,7 +285,8 @@ export function WorkflowCanvas({
             const toNode = nodes.find((n) => n.id === conn.toId);
             if (!fromNode || !toNode) return null;
 
-            // Compute connection wire endpoints
+            // Compute connection wire endpoints:
+            // Condition nodes route the YES branch from the left quadrant (25%) and NO branch from right (75%)
             let startX = fromNode.x + fromNode.width / 2;
             let startY = fromNode.y + fromNode.height;
 
@@ -280,6 +299,7 @@ export function WorkflowCanvas({
             const endX = toNode.x + toNode.width / 2;
             const endY = toNode.y;
 
+            // Compute cubic bezier control point offset (deltaY) for natural fluid flow
             const deltaY = Math.max(40, (endY - startY) * 0.5);
             const pathD = `M ${startX} ${startY} C ${startX} ${startY + deltaY}, ${endX} ${endY - deltaY}, ${endX} ${endY}`;
 
@@ -441,7 +461,7 @@ export function WorkflowCanvas({
                   <button
                     type="button"
                     className="icon-btn"
-                    title="Inspect Step Payloads (n8n mode)"
+                    title="Inspect Step Payloads & Data"
                     style={{ padding: '2px 4px' }}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -532,7 +552,7 @@ export function WorkflowCanvas({
         })}
       </div>
 
-      {/* Interactive Node Inspector Drawer (n8n Payload Inspection) */}
+      {/* Interactive Node Inspector Drawer (Payload Data Pinning & Simulation) */}
       {inspectedNode && (
         <div
           style={{

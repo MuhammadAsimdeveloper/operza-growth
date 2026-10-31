@@ -1,3 +1,22 @@
+/**
+ * ============================================================================
+ * Operza Visual In-Browser Funnel & Landing Page Builder
+ * ============================================================================
+ * 
+ * High-performance, element-level WYSIWYG editor for crafting conversion-optimized
+ * sales funnels, lead capture pages, and checkout flows.
+ * 
+ * Architectural Highlights:
+ * 1. Element Palette: Headlines, paragraphs, hero media, 2-column grids,
+ *    urgency countdown timers, high-converting CTAs, and order bump modules.
+ * 2. Responsive Device Preview: Instant preview simulation across Desktop (100%),
+ *    Tablet (768px), and Mobile (375px) viewports.
+ * 3. Element Property Inspector: Real-time two-way state binding for typography,
+ *    alignment, color schemes, pricing, and destination links.
+ * 4. Dual-Store Persistence: Serializes page blocks to both tenant databases and
+ *    public CDN-ready runtime schemas.
+ */
+
 import { useState, useEffect } from 'react';
 import { Icon } from './Icon';
 import { currency } from '../lib/format';

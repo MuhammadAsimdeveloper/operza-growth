@@ -1,4 +1,14 @@
-// Operza Production API Client
+/**
+ * ============================================================================
+ * Operza Unified Frontend API Client
+ * ============================================================================
+ * 
+ * Provides type-safe REST communication with the Operza Backend API server:
+ * 1. Automatic Tenant Header: Injects `x-operza-location` header for multi-tenancy.
+ * 2. Credentials Inclusion: Manages HTTP-only session cookies and CSRF tokens.
+ * 3. Module Namespaces: Auth, CRM collections, Telephony (A2P 10DLC), Agency Snapshots
+ *    (diff & sync), Funnels, Workflows, Client Portal, Copilot SSE streaming, and Billing.
+ */
 
 const BASE = '';
 

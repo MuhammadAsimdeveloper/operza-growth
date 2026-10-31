@@ -34,21 +34,6 @@ services:
       timeout: 5s
       retries: 5
 
-  n8n:
-    image: n8nio/n8n:latest
-    container_name: operza-n8n
-    restart: unless-stopped
-    ports:
-      - "5678:5678"
-    environment:
-      - N8N_HOST=0.0.0.0
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=http
-      - WEBHOOK_URL=http://localhost:5678/
-      - GENERIC_TIMEZONE=UTC
-    volumes:
-      - n8n_data:/home/node/.n8n
-
   api:
     build:
       context: .
@@ -63,7 +48,6 @@ services:
       - HOST=0.0.0.0
       - DATABASE_URL=postgresql://operza_app:operza_secret@postgres:5432/operza_db
       - REDIS_URL=redis://redis:6379
-      - N8N_URL=http://n8n:5678
       - SESSION_SECRET=operza-production-grade-session-secret-change-this-in-real-deployment-32chars
     depends_on:
       postgres:
@@ -86,4 +70,3 @@ services:
 volumes:
   postgres_data:
   redis_data:
-  n8n_data:
