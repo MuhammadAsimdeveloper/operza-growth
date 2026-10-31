@@ -15,45 +15,83 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 
-// ---------------------------------------------------------------------------
+
 // Utility — Checksum
-// ---------------------------------------------------------------------------
+
 
 export function calculateChecksum(state) {
   return createHash('sha256').update(JSON.stringify(state || {})).digest('hex');
 }
 
-// ---------------------------------------------------------------------------
+
 // Template Engine — replaces {{path.to.value}} with context data
-// ---------------------------------------------------------------------------
+
 
 /**
- * Resolve a dotted path ("contact.firstName") from a nested object.
- * Returns undefined when any segment is missing.
+ * Resolve a dotted or bracketed path ("contact.firstName", "items[0].id", "$json.email") from context.
+ * Supports n8n-style expressions ($json, $vars, $input, $now, $today).
  */
-function resolvePath(obj, path) {
-  return path.split('.').reduce((cur, key) => cur?.[key], obj);
+export function resolvePath(obj, path) {
+  if (!obj || !path) return undefined;
+
+  if (path === '$now') return new Date().toISOString();
+  if (path === '$today') return new Date().toISOString().split('T')[0];
+  if (path === '$timestamp') return Date.now();
+
+  const normalized = path
+    .replace(/\[(\w+)\]/g, '.$1')
+    .replace(/^\./, '');
+
+  const parts = normalized.split('.');
+  let current = obj;
+
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (part === '$json') {
+      current = current?.contact || current?.data || current;
+      continue;
+    }
+    if (part === '$vars' || part === '$variables') {
+      current = current?.variables || current;
+      continue;
+    }
+    if (part === '$input') {
+      current = current?.triggerContext || current;
+      continue;
+    }
+    if (current == null) return undefined;
+    current = current[part];
+  }
+
+  return current;
 }
 
 /**
- * Replace every `{{expr}}` in `template` with the corresponding value
- * looked up in `context`.  Unknown placeholders are left blank.
+ * Replaces {{expr}} in template strings with resolved context values.
+ * Compatible with n8n-style {{ $json.field }} and standard {{ contact.field }} formats.
  */
 export function renderTemplate(template, context) {
   if (typeof template !== 'string') return template;
-  return template.replace(/\{\{([\w.]+)\}\}/g, (_match, path) => {
-    const val = resolvePath(context, path.trim());
+  return template.replace(/\{\{\s*([$\w.[\]]+)\s*\}\}/g, (_match, expr) => {
+    const val = resolvePath(context, expr.trim());
     return val !== undefined && val !== null ? String(val) : '';
   });
 }
 
-// ---------------------------------------------------------------------------
+
 // Condition evaluator
-// ---------------------------------------------------------------------------
+
 
 export function evaluateCondition(rule, context) {
   const { field, operator, value } = rule;
-  const target = resolvePath(context, field) ?? '';
+  let target = resolvePath(context, field);
+  if (target === undefined && context?.contact) {
+    target = resolvePath(context.contact, field);
+  }
+  if (target === undefined && typeof field === 'string' && field.startsWith('contact.')) {
+    target = resolvePath(context, field.replace(/^contact\./, ''));
+  }
+  target = target ?? '';
   switch (operator) {
     case 'equals':
       return String(target).toLowerCase() === String(value).toLowerCase();
@@ -84,9 +122,9 @@ export function evaluateCondition(rule, context) {
   }
 }
 
-// ---------------------------------------------------------------------------
+
 // Retry Logic — exponential back-off helper
-// ---------------------------------------------------------------------------
+
 
 const DEFAULT_RETRY_OPTIONS = {
   maxAttempts: 3,
@@ -117,9 +155,9 @@ export async function withRetry(fn, opts = {}) {
   throw lastError;
 }
 
-// ---------------------------------------------------------------------------
+
 // Step executor — all node types
-// ---------------------------------------------------------------------------
+
 
 export async function executeStep({
   node,
@@ -146,9 +184,9 @@ export async function executeStep({
 
   try {
     switch (type) {
-      // ---------------------------------------------------------------
+
       // Original node types
-      // ---------------------------------------------------------------
+
       case 'email':
       case 'send_email': {
         const to = renderTemplate(config.to, ctx) || triggerContext.contact?.email;
@@ -446,6 +484,67 @@ export async function executeStep({
         return { status: 'completed', nodeId, result: { reviewRequestSent: true, platform, channel } };
       }
 
+      // JavaScript code transformation node (n8n-style)
+      case 'code':
+      case 'javascript': {
+        const script = config.script || config.code || 'return items;';
+        const sandboxData = {
+          $json: triggerContext.contact || triggerContext,
+          $input: triggerContext,
+          $vars: variables,
+          items: Array.isArray(triggerContext) ? triggerContext : [triggerContext],
+        };
+        let codeResult;
+        try {
+          const fn = new Function('$json', '$input', '$vars', 'items', 'context', script);
+          codeResult = fn(sandboxData.$json, sandboxData.$input, sandboxData.$vars, sandboxData.items, ctx);
+        } catch (err) {
+          throw new Error(`Code execution failed: ${err.message}`);
+        }
+        const setVar = config.resultVariable ? { name: config.resultVariable, value: codeResult } : undefined;
+        return {
+          status: 'completed',
+          nodeId,
+          ...(setVar ? { setVariable: setVar } : {}),
+          result: { codeOutput: codeResult, data: codeResult },
+        };
+      }
+
+      // Multi-branch conditional switch (n8n-style)
+      case 'switch': {
+        const rules = config.rules || [];
+        const data = triggerContext.contact || triggerContext;
+        let selectedBranch = config.fallbackBranch || 'default';
+        for (let i = 0; i < rules.length; i++) {
+          const rule = rules[i];
+          if (evaluateCondition(rule, data)) {
+            selectedBranch = rule.branch !== undefined ? String(rule.branch) : String(i);
+            break;
+          }
+        }
+        return {
+          status: 'completed',
+          nodeId,
+          selectedBranch,
+          result: { selectedBranch, matched: selectedBranch !== (config.fallbackBranch || 'default') },
+        };
+      }
+
+      // Multi-input merge node (n8n-style)
+      case 'merge': {
+        const mode = config.mode || 'combine';
+        const merged = {
+          context: triggerContext,
+          variables,
+          mergedAt: new Date(now).toISOString()
+        };
+        return {
+          status: 'completed',
+          nodeId,
+          result: { merged: true, mode, data: merged },
+        };
+      }
+
       // No-op fallback
       default:
         return { status: 'completed', nodeId, result: { notice: 'No-op step' } };
@@ -459,9 +558,9 @@ export async function executeStep({
   }
 }
 
-// ---------------------------------------------------------------------------
+
 // Graph Walker — traverse a directed graph of nodes
-// ---------------------------------------------------------------------------
+
 
 /**
  * Build an adjacency map from a flat array of nodes.
@@ -636,9 +735,9 @@ export async function walkGraph(nodes, triggerContext, stepExecutor, deps = {}) 
   return { timeline, variables, finalStatus };
 }
 
-// ---------------------------------------------------------------------------
+
 // Execution Timeline Builder
-// ---------------------------------------------------------------------------
+
 
 /**
  * Build a structured timeline from an execution record that contains step logs.

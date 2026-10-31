@@ -28,6 +28,9 @@ const ACTION_ICON: Record<WorkflowAction['kind'], string> = {
   task: 'task',
   webhook: 'webhook',
   condition: 'condition',
+  code: 'code',
+  switch: 'condition',
+  ai_agent: 'bot',
 };
 
 const KINDS: Array<{ value: WorkflowAction['kind']; label: string; defaultLabel: string }> = [
@@ -38,6 +41,9 @@ const KINDS: Array<{ value: WorkflowAction['kind']; label: string; defaultLabel:
   { value: 'task', label: 'Create task', defaultLabel: 'Create follow-up task' },
   { value: 'webhook', label: 'Webhook', defaultLabel: 'POST to endpoint' },
   { value: 'condition', label: 'If / else', defaultLabel: 'Check contact status' },
+  { value: 'code', label: 'JavaScript Code (n8n-style)', defaultLabel: 'Transform JSON data' },
+  { value: 'switch', label: 'Multi-Way Switch', defaultLabel: 'Route by branch' },
+  { value: 'ai_agent', label: 'AI Copilot Agent', defaultLabel: 'AI Lead Analysis' },
 ];
 
 const TRIGGER_KINDS: Array<{ value: WorkflowTriggerKind; label: string }> = [
@@ -1347,6 +1353,7 @@ function RunResult({
   onApproved?: () => void;
 }) {
   const [approving, setApproving] = useState(false);
+  const [inspectedIdx, setInspectedIdx] = useState<number | null>(null);
   const steps = run.steps || [];
   const done = steps.filter((step: any) => step.status === 'done' || step.status === 'completed').length;
   const isCompleted = run.status === 'success' || run.status === 'completed';
@@ -1369,9 +1376,10 @@ function RunResult({
   const getStepIcon = (kind?: string) => {
     if (!kind) return 'play';
     if (kind === 'ai_agent') return 'bot';
+    if (kind === 'code' || kind === 'javascript') return 'code';
     if (kind === 'update_contact' || kind === 'tag') return 'tag';
     if (kind === 'task') return 'task';
-    if (kind === 'condition') return 'condition';
+    if (kind === 'condition' || kind === 'switch') return 'condition';
     if (kind === 'email') return 'mail';
     if (kind === 'sms') return 'message';
     if (kind === 'webhook') return 'webhook';
@@ -1439,23 +1447,30 @@ function RunResult({
       <div className="divider" style={{ margin: '14px 0' }} />
 
       <div className="stack" style={{ gap: 8 }}>
+        <div style={{ fontSize: 11.5, color: 'var(--text-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          Execution Step Inspector (Click step to toggle node data)
+        </div>
         {steps.map((step: any, index: number) => {
           const isStepDone = step.status === 'done' || step.status === 'completed';
           const isStepApproval = step.status === 'waiting_approval';
           const isStepFailed = step.status === 'failed';
+          const isInspected = inspectedIdx === index;
 
           return (
             <div
               className="list-row"
               key={`${run.id}-${index}`}
+              onClick={() => setInspectedIdx(isInspected ? null : index)}
               style={{
-                border: '1px solid var(--line)',
+                border: isInspected ? '1px solid var(--accent, #6366f1)' : '1px solid var(--line)',
                 borderRadius: 9,
-                background: 'var(--surface-2)',
+                background: isInspected ? 'var(--surface-3, #f8fafc)' : 'var(--surface-2)',
                 flexDirection: 'column',
                 alignItems: 'stretch',
                 padding: '10px 12px',
-                gap: 6
+                gap: 6,
+                cursor: 'pointer',
+                transition: 'border-color 0.15s ease'
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -1470,15 +1485,42 @@ function RunResult({
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>{step.nodeName || step.label || step.nodeId}</div>
-                  <div className="cell-sub">{step.detail || step.nodeType || step.kind}</div>
+                  <div className="cell-sub">{step.detail || step.nodeType || step.kind} {step.durationMs !== undefined ? `• ${step.durationMs}ms` : ''}</div>
                 </div>
                 <Badge tone={isStepFailed ? 'red' : isStepApproval ? 'amber' : isStepDone ? 'green' : 'default'}>
                   {step.status}
                 </Badge>
+                <span style={{ fontSize: 11, color: 'var(--text-3)' }}>{isInspected ? '▲' : '▼'}</span>
               </div>
 
-              {step.result && (
-                <div style={{ marginTop: 4, padding: '6px 10px', background: 'var(--surface)', borderRadius: 6, fontSize: 12, border: '1px solid var(--border)' }}>
+              {isInspected && (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6, borderTop: '1px dashed var(--line)', paddingTop: 8 }}>
+                  {step.input && (
+                    <div style={{ padding: '6px 10px', background: 'var(--surface)', borderRadius: 6, fontSize: 11.5, border: '1px solid var(--border)' }}>
+                      <div style={{ color: 'var(--text-3)', fontWeight: 700, marginBottom: 2 }}>INPUT DATA:</div>
+                      <pre style={{ margin: 0, overflowX: 'auto', maxHeight: 120, fontSize: 11, color: 'var(--text-1)' }}>
+                        {JSON.stringify(step.input, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                  {(step.output || step.result) && (
+                    <div style={{ padding: '6px 10px', background: 'var(--surface)', borderRadius: 6, fontSize: 11.5, border: '1px solid var(--border)' }}>
+                      <div style={{ color: 'var(--green, #10b981)', fontWeight: 700, marginBottom: 2 }}>OUTPUT DATA:</div>
+                      <pre style={{ margin: 0, overflowX: 'auto', maxHeight: 120, fontSize: 11, color: 'var(--text-1)' }}>
+                        {JSON.stringify(step.output || step.result, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                  {step.error && (
+                    <div style={{ padding: '6px 10px', background: '#fef2f2', borderRadius: 6, fontSize: 11.5, border: '1px solid #fee2e2', color: '#b91c1c' }}>
+                      <strong>ERROR:</strong> {step.error}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!isInspected && step.result && (
+                <div style={{ marginTop: 4, padding: '4px 8px', background: 'var(--surface)', borderRadius: 6, fontSize: 11.5, border: '1px solid var(--border)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
                   <span style={{ color: 'var(--text-3)', fontWeight: 600, marginRight: 6 }}>Output:</span>
                   <span style={{ color: 'var(--text-1)' }}>
                     {typeof step.result === 'string' ? step.result : JSON.stringify(step.result)}

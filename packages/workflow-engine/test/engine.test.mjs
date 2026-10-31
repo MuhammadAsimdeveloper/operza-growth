@@ -158,4 +158,74 @@ assert.equal(timeline[0].nodeId, '1');
 assert.equal(timeline[1].nodeId, '2');
 console.log('✅ Execution timeline constructed cleanly');
 
-console.log('\n🎉 ALL 8 WORKFLOW ENGINE UNIT TESTS PASSED CLEANLY! 🎉');
+// 9. n8n-style Expression Engine ($json, $vars, $today)
+console.log('[TEST 9] n8n-style Expression Resolution');
+const exprContext = {
+  contact: { email: 'client@example.com', score: 85 },
+  variables: { discount: 20 }
+};
+const n8nTemplate = 'Send to {{ $json.email }} with {{ $vars.discount }}% discount. Date: {{ $today }}.';
+const renderedExpr = renderTemplate(n8nTemplate, exprContext);
+assert.ok(renderedExpr.includes('Send to client@example.com with 20% discount. Date: '));
+console.log('✅ n8n-style expression syntax verified');
+
+// 10. JavaScript Code Node
+console.log('[TEST 10] JavaScript Code Transformation Node');
+const codeStepRes = await executeStep({
+  node: {
+    id: 'n_code',
+    type: 'code',
+    config: {
+      script: 'return { fullName: $json.firstName + " " + $json.lastName, scoreMultiplier: $json.score * 2 };',
+      resultVariable: 'transformed'
+    }
+  },
+  execution: {},
+  triggerContext: { contact: { firstName: 'Sarah', lastName: 'Connor', score: 40 } },
+  variables: {}
+});
+assert.equal(codeStepRes.status, 'completed');
+assert.equal(codeStepRes.result.codeOutput.fullName, 'Sarah Connor');
+assert.equal(codeStepRes.result.codeOutput.scoreMultiplier, 80);
+assert.equal(codeStepRes.setVariable.name, 'transformed');
+console.log('✅ JavaScript code transformation node verified');
+
+// 11. Multi-Branch Switch Node
+console.log('[TEST 11] Multi-Branch Switch Node');
+const switchStepRes = await executeStep({
+  node: {
+    id: 'n_switch',
+    type: 'switch',
+    config: {
+      rules: [
+        { field: 'contact.tier', operator: 'equals', value: 'enterprise', branch: 'enterprise_branch' },
+        { field: 'contact.tier', operator: 'equals', value: 'starter', branch: 'starter_branch' }
+      ],
+      fallbackBranch: 'standard_branch'
+    }
+  },
+  execution: {},
+  triggerContext: { contact: { tier: 'enterprise' } }
+});
+assert.equal(switchStepRes.status, 'completed');
+assert.equal(switchStepRes.selectedBranch, 'enterprise_branch');
+console.log('✅ Multi-branch switch node routing verified');
+
+// 12. Multi-Input Merge Node
+console.log('[TEST 12] Multi-Input Merge Node');
+const mergeStepRes = await executeStep({
+  node: {
+    id: 'n_merge',
+    type: 'merge',
+    config: { mode: 'combine' }
+  },
+  execution: {},
+  triggerContext: { contact: { id: 'c100' } },
+  variables: { interimResult: 'ready' }
+});
+assert.equal(mergeStepRes.status, 'completed');
+assert.equal(mergeStepRes.result.merged, true);
+assert.equal(mergeStepRes.result.data.variables.interimResult, 'ready');
+console.log('✅ Merge node context combination verified');
+
+console.log('\n🎉 ALL 12 WORKFLOW ENGINE UNIT TESTS PASSED CLEANLY! 🎉');

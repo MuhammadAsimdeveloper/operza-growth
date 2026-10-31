@@ -76,7 +76,7 @@ const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || '';
 const SENDGRID_WEBHOOK_KEY = process.env.SENDGRID_WEBHOOK_KEY || '';
 
-// ─── Collections Schema ───────────────────────────────────────────────
+// 
 const collections = Object.freeze({
   contacts: { label: 'Contacts', required: ['firstName'], fields: ['firstName','lastName','email','phone','company','source','tags','status','notes','customValues'] },
   opportunities: { label: 'Opportunities', required: ['name'], fields: ['name','contactId','pipeline','stage','value','status','owner','closeDate','source','customValues'] },
@@ -118,7 +118,7 @@ const collections = Object.freeze({
   phoneNumbers: { label: 'Phone Numbers', required: ['number'], fields: ['number','label','type','voice','sms','mms','status','assignedTo','forwardTo','ivrEnabled','ivrMenu','recordingEnabled','areaCode'] }
 });
 
-// ─── State Management ─────────────────────────────────────────────────
+// 
 const emptyState = () => ({
   users: [],
   agencies: [],
@@ -138,7 +138,7 @@ let writeQueue = Promise.resolve();
 const cookieSession = isProd ? '__Host-operza_session' : 'operza_session';
 const cookieCsrf = 'operza_csrf';
 
-// ─── Rate Limiter (in-memory sliding window) ──────────────────────────
+// 
 const rateLimitStore = new Map();
 const RATE_LIMIT_WINDOW_MS = 60_000;   // 1 minute
 const RATE_LIMIT_MAX_REQUESTS = Number(process.env.RATE_LIMIT_MAX_REQUESTS) || (isProd ? 120 : (isTest ? 50000 : 2000));
@@ -271,7 +271,7 @@ setInterval(() => {
   }
 }, 60_000);
 
-// ─── Copilot Conversation History ─────────────────────────────────────
+// 
 const copilotSessions = new Map();
 const COPILOT_SESSION_TTL = 30 * 60 * 1000; // 30 min
 
@@ -291,7 +291,7 @@ setInterval(() => {
   }
 }, 5 * 60_000);
 
-// ─── WebSocket Broadcast with Strict Tenant Isolation ─────────────────
+// 
 let wss = null;
 const wsClients = new Set();
 
@@ -311,7 +311,7 @@ function broadcast(event, data, targetAgencyId) {
   }
 }
 
-// ─── Audit Log ────────────────────────────────────────────────────────
+// 
 function auditLog(action, actor, details = {}) {
   const entry = {
     id: randomUUID(),
@@ -330,7 +330,7 @@ function auditLog(action, actor, details = {}) {
   return entry;
 }
 
-// ─── Utility Functions ────────────────────────────────────────────────
+// 
 function hash(val) { return createHash('sha256').update(String(val)).digest('hex'); }
 function safeEqual(a, b) {
   const aa = Buffer.from(String(a));
@@ -338,7 +338,7 @@ function safeEqual(a, b) {
   return aa.length === bb.length && timingSafeEqual(aa, bb);
 }
 
-// ─── Enterprise Structured Logging & Observability ─────────────────────
+// 
 function logStructured(level, message, meta = {}) {
   const logEntry = {
     timestamp: new Date().toISOString(),
@@ -355,7 +355,7 @@ function logStructured(level, message, meta = {}) {
   }
 }
 
-// ─── Webhook Replay Protection (Redis TTL + In-Memory Fallback) ──────
+// 
 const webhookReplayCache = new Map();
 async function isWebhookReplay(eventId) {
   if (!eventId) return false;
@@ -382,7 +382,7 @@ async function isWebhookReplay(eventId) {
   return false;
 }
 
-// ─── Plan Limits & Server-Side Subscription Enforcement ───────────────
+// 
 const PLAN_LIMITS = {
   trial: {
     key: 'trial',
@@ -942,7 +942,7 @@ async function readRawBody(req) {
   return Buffer.concat(chunks);
 }
 
-// ─── CSRF Validation ──────────────────────────────────────────────────
+// 
 function validateCsrf(req, actor) {
   // Only enforce on mutating methods
   const method = req.method;
@@ -952,7 +952,7 @@ function validateCsrf(req, actor) {
   return safeEqual(hash(csrfHeader), actor.csrfHash);
 }
 
-// ─── Workflow Execution Engine ────────────────────────────────────────
+// 
 async function executeWorkflowInstance({ flow, agencyId, locationId, triggerType, triggerContext }) {
   const executionId = randomUUID();
   const startTime = Date.now();
@@ -1138,6 +1138,12 @@ async function executeWorkflowInstance({ flow, agencyId, locationId, triggerType
       nodeType: node.type || node.kind,
       status: stepRes.status,
       durationMs: stepEnd - stepStart,
+      input: {
+        config: node.config || {},
+        contactId: triggerContext.contact?.id,
+        contactEmail: triggerContext.contact?.email
+      },
+      output: stepRes.result || null,
       result: stepRes.result || null,
       error: stepRes.error || null,
       executedAt: new Date(stepStart).toISOString()
@@ -1161,7 +1167,7 @@ async function executeWorkflowInstance({ flow, agencyId, locationId, triggerType
   return execution;
 }
 
-// ─── Workflow Trigger Execution ───────────────────────────────────────
+// 
 async function triggerWorkflowExecution({ agencyId, locationId, triggerType, triggerContext }) {
   const flows = (state.records.workflows || []).filter(
     w => w.agencyId === agencyId && w.locationId === locationId && w.status === 'published' && w.triggerType === triggerType
@@ -1172,7 +1178,7 @@ async function triggerWorkflowExecution({ agencyId, locationId, triggerType, tri
   }
 }
 
-// ─── Cron-based Schedule Trigger (check every 60s) ────────────────────
+// 
 function startScheduleTriggerLoop() {
   setInterval(async () => {
     const now = new Date();
@@ -1215,7 +1221,7 @@ function startScheduleTriggerLoop() {
   }, 60_000);
 }
 
-// ─── Copilot Tool Definitions & Resolver ──────────────────────────────
+// 
 const copilotTools = {
   search_contacts: {
     description: 'Search CRM contacts by name, email, company, or tag',
@@ -1520,7 +1526,7 @@ async function resolveCopilotToolCall(toolName, params, actor) {
   }
 }
 
-// ─── CSV Parser (simple) ──────────────────────────────────────────────
+// 
 function parseCSV(text) {
   const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) return [];
@@ -1535,9 +1541,9 @@ function parseCSV(text) {
   return rows;
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// ─── HTTP SERVER ──────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════
+
+// 
+
 
 const server = createServer(async (req, res) => {
   res.req = req;
@@ -1550,7 +1556,7 @@ const server = createServer(async (req, res) => {
   const method = req.method;
   const clientIp = (req.headers['x-forwarded-for'] ? String(req.headers['x-forwarded-for']).split(',')[0].trim() : '') || req.socket.remoteAddress || '';
 
-  // ─── CORS Preflight ─────────────────────────────────────────────
+// 
   if (method === 'OPTIONS') {
     const reqOrigin = req.headers.origin || '';
     const corsOrigin = ALLOWED_ORIGIN_SET.has(reqOrigin) ? reqOrigin : 'http://localhost:5173';
@@ -1565,7 +1571,7 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // ─── Global Rate Limiting ───────────────────────────────────────
+// 
   const isProbeRoute = pathname === '/health' || pathname === '/ready' || pathname === '/live' || pathname === '/metrics';
   const isAuthRoute = pathname.startsWith('/api/auth/');
   if (!isProbeRoute) {
@@ -1579,7 +1585,7 @@ const server = createServer(async (req, res) => {
   }
 
   try {
-    // ─── Technical SEO Endpoints (Robots & Sitemap Fallback) ─────────
+// 
     if (pathname === '/robots.txt') {
       res.writeHead(200, {
         'content-type': 'text/plain; charset=utf-8',
@@ -1631,7 +1637,7 @@ const server = createServer(async (req, res) => {
       return res.end(xml);
     }
 
-    // ─── Health, Readiness & Observability Telemetry ─────────────────
+// 
     if (pathname === '/health') {
       return sendJson(res, 200, {
         name: 'Operza Unified API',
@@ -1703,7 +1709,7 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ─── Queue & Relational Database Admin Telemetry ───────────────
+// 
     if (pathname === '/api/admin/queue/status') {
       return sendJson(res, 200, {
         queue: workflowQueue.getMetrics(),
@@ -1753,7 +1759,7 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ─── Test Harness Diagnostics (only enabled in test mode) ───────
+// 
     if (isTest && pathname === '/api/test/emails') {
       if (method === 'DELETE') {
         getEmailProvider().clear();
@@ -1762,9 +1768,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { emails: getEmailProvider().sentEmails || [] });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── PUBLIC ROUTES (no auth required) ───────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     // Public Form Lookup
     if (method === 'GET' && pathname.startsWith('/api/forms/public/')) {
@@ -1884,9 +1890,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, message: 'Thank you! Submission received.', contactId, submissionId });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── PUBLIC WEBDESK / CHAT WIDGET INGRESS ─────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'GET' && (pathname === '/widget/operza.js' || pathname === '/api/widget/embed.js')) {
       const widgetScript = `(function() {
@@ -2598,9 +2604,9 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── FUNNELS & SITES PUBLIC INGRESS ─────────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     // Public Funnel/Site Lookup & Visit Tracker
     if (method === 'GET' && (pathname.startsWith('/api/funnels/public/') || pathname.startsWith('/api/websites/public/'))) {
@@ -3044,9 +3050,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, enrollment });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── WEBHOOK HANDLERS (public, signature-gated) ─────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     // Stripe Webhook
     if (method === 'POST' && pathname === '/api/webhooks/stripe') {
@@ -3392,7 +3398,7 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { received: true });
     }
 
-    // ─── WhatsApp Cloud API Webhook (Verification & Inbound Messages) ──
+// 
     if (pathname === '/api/webhooks/whatsapp') {
       const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN || process.env.META_VERIFY_TOKEN || 'test_tok';
       const appSecret = process.env.WHATSAPP_APP_SECRET || process.env.META_APP_SECRET;
@@ -3525,7 +3531,7 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    // ─── Meta Messenger & Instagram Direct Webhook ─────────────────
+// 
     if (pathname === '/api/webhooks/meta') {
       const verifyToken = process.env.META_VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOKEN || 'test_tok';
       const appSecret = process.env.META_APP_SECRET || process.env.WHATSAPP_APP_SECRET;
@@ -3656,7 +3662,7 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    // ─── Workflow Webhook Trigger Ingress (public) ────────────────
+// 
     const webhookTriggerMatch = pathname.match(/^\/api\/workflows\/webhook\/([a-zA-Z0-9_-]+)$/);
     if (method === 'POST' && webhookTriggerMatch) {
       const workflowId = webhookTriggerMatch[1];
@@ -3679,9 +3685,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { triggered: true, workflowId, workflowName: flow.name });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── AUTH ROUTES ────────────────────────────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     // AUTH: Signup
     if (method === 'POST' && pathname === '/api/auth/signup') {
@@ -4079,23 +4085,23 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── AUTH REQUIRED FOR ALL ROUTES BELOW ─────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
     const actor = getActor(req);
     if (!actor) return sendJson(res, 401, { error: 'Authentication required' });
     const { agency, activeLocation } = actor;
 
-    // ─── CSRF Validation on mutating requests ─────────────────────
+// 
     if (method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS') {
       if (!validateCsrf(req, actor)) {
         return sendJson(res, 403, { error: 'Invalid or missing CSRF token' });
       }
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── COPILOT ────────────────────────────────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     // COPILOT SSE STREAMING ROUTE (legacy)
     if (method === 'GET' && pathname === '/api/copilot/stream') {
@@ -4266,9 +4272,9 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── DASHBOARD ANALYTICS ────────────────────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'GET' && pathname === '/api/dashboard/stats') {
       const loc = activeLocation.id;
@@ -4323,9 +4329,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { activity, total: activity.length });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── AUDIT TRAIL ────────────────────────────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'GET' && (pathname === '/api/audit' || pathname === '/api/audit-logs')) {
       const q = (url.searchParams.get('q') || url.searchParams.get('search') || '').toLowerCase();
@@ -4386,9 +4392,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, message: 'Audit log cleared' });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── MARKETING CAMPAIGNS DISPATCH ───────────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'POST' && pathname.startsWith('/api/campaigns/') && pathname.endsWith('/send')) {
       const campaignId = pathname.replace('/api/campaigns/', '').replace('/send', '').trim();
@@ -4517,9 +4523,9 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── OMNICHANNEL OUTBOUND MESSAGING ──────────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'POST' && pathname.startsWith('/api/conversations/') && pathname.endsWith('/messages')) {
       const convId = pathname.replace('/api/conversations/', '').replace('/messages', '').trim();
@@ -4555,9 +4561,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 201, { success: true, message: msg, conversation: conv });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── SOCIAL MEDIA PLANNER PUBLISHING ─────────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'POST' && pathname.startsWith('/api/social/publish/')) {
       const postId = pathname.replace('/api/social/publish/', '').trim();
@@ -4580,9 +4586,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, post });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── TRIGGER LINKS CLICK INGRESS & AUTOMATION ────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'GET' && pathname.startsWith('/api/links/click/')) {
       const slug = pathname.replace('/api/links/click/', '').trim();
@@ -4613,9 +4619,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, targetUrl: link.targetUrl, clicks: link.clicks });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── DOCUMENTS & CONTRACTS E-SIGNATURE INGRESS ───────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'POST' && pathname.startsWith('/api/documents/') && pathname.endsWith('/sign')) {
       const docId = pathname.replace('/api/documents/', '').replace('/sign', '').trim();
@@ -4645,9 +4651,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, document: doc });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── RECURRING SUBSCRIPTIONS ENGINE ──────────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'GET' && pathname === '/api/subscriptions') {
       state.records.subscriptions = state.records.subscriptions || [];
@@ -4742,9 +4748,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, subscription: sub });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── FORMS & SURVEYS ENGINE ──────────────────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     // Toggle Form Published State
     if (method === 'POST' && pathname.startsWith('/api/forms/') && pathname.endsWith('/publish')) {
@@ -4782,9 +4788,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { submissions });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── HOSTED WEBSITES & MULTI-PAGE CMS ───────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     // Toggle Website / Funnel Publishing State
     if (method === 'POST' && pathname.startsWith('/api/websites/') && pathname.endsWith('/publish')) {
@@ -4866,9 +4872,9 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── MEMBERSHIPS & COURSE ENROLLMENT ─────────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'POST' && pathname === '/api/memberships/enroll') {
       const body = await readBody(req);
@@ -4917,9 +4923,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 201, { success: true, enrollment });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── AFFILIATES & COMMISSION CONVERSION TRACKING ────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'POST' && pathname.startsWith('/api/affiliates/track/')) {
       const code = pathname.replace('/api/affiliates/track/', '').trim();
@@ -5029,9 +5035,9 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── CUSTOM VALUES RESOLUTION & MERGE ENGINE ────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'POST' && pathname === '/api/custom-values/resolve') {
       const body = await readBody(req);
@@ -5113,9 +5119,9 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── REPUTATION: REVIEW REPLIES & REQUEST DISPATCH ──────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     // Reply to Review
     if (method === 'POST' && pathname.startsWith('/api/reviews/') && pathname.endsWith('/reply')) {
@@ -5243,9 +5249,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, request: reviewReq });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── COURSES / LMS CURRICULUM & LESSONS ─────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     // Add Lesson to Course
     if (method === 'POST' && pathname.startsWith('/api/courses/') && pathname.endsWith('/lessons')) {
@@ -5451,9 +5457,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, contactId: contact.id, portalAccess: granted });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── TELEPHONY CALL STATUS & HANDLED TOGGLE ─────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'PUT' && pathname.startsWith('/api/calls/handled/')) {
       const callId = pathname.replace('/api/calls/handled/', '').trim();
@@ -5472,9 +5478,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, call });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── A2P 10DLC CARRIER REGISTRATION & TRUST HUB ─────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     // GET /api/telephony/a2p/status - retrieve carrier compliance & 10DLC status
     if (method === 'GET' && pathname === '/api/telephony/a2p/status') {
@@ -5563,9 +5569,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 201, registrationRecord);
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── SMART LISTS DYNAMIC RULE EVALUATION ────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'GET' && pathname.startsWith('/api/crm/smart-lists/') && pathname.endsWith('/evaluate')) {
       const listId = pathname.split('/')[4];
@@ -5612,9 +5618,9 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── UNIFIED REPORTING & ANALYTICS OVERVIEW ─────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'GET' && pathname === '/api/reporting/overview') {
       state.records.invoices = state.records.invoices || [];
@@ -5681,9 +5687,9 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── WORKFLOW RUNS & APPROVALS ──────────────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'GET' && pathname === '/api/workflows/runs') {
       const runs = (state.workflowExecutions || []).filter(
@@ -5737,11 +5743,11 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 201, { success: true, execution });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── CRM ENHANCED ENDPOINTS ─────────────────────────────────
-    // ═════════════════════════════════════════════════════════════
 
-    // ─── Bulk Tag ─────────────────────────────────────────────────
+// 
+
+
+// 
     if (method === 'POST' && pathname === '/api/crm/contacts/bulk-tag') {
       const body = await readBody(req);
       const { contactIds, tag } = body;
@@ -5764,7 +5770,7 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, updated });
     }
 
-    // ─── Import Contacts (CSV text) ──────────────────────────────
+// 
     if (method === 'POST' && pathname === '/api/crm/contacts/import') {
       const body = await readBody(req);
       const csvText = body.csv || body.data || '';
@@ -5803,7 +5809,7 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 201, { success: true, imported: imported.length, contacts: imported.map(c => ({ id: c.id, name: `${c.firstName} ${c.lastName}`, email: c.email })) });
     }
 
-    // ─── Contact Merge / Dedup ───────────────────────────────────
+// 
     if (method === 'POST' && pathname === '/api/crm/contacts/merge') {
       const body = await readBody(req);
       const { primaryId, mergeIds } = body;
@@ -5851,7 +5857,7 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, primaryId, mergedCount: merged.length, mergedIds: merged });
     }
 
-    // ─── Contact Activity Timeline ───────────────────────────────
+// 
     const timelineMatch = pathname.match(/^\/api\/crm\/contacts\/([a-zA-Z0-9_-]+)\/timeline$/);
     if (method === 'GET' && timelineMatch) {
       const contactId = timelineMatch[1];
@@ -5899,9 +5905,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { contactId, name: `${contact.firstName} ${contact.lastName}`, timeline });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── AGENCY: BUSINESS PROFILE ───────────────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'GET' && pathname === '/api/agency/profile') {
       return sendJson(res, 200, {
@@ -5949,9 +5955,9 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── GDPR & DATA PRIVACY: PORTABILITY & RIGHT TO ERASURE ──────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     // GET /api/agency/export — GDPR Article 20 Data Portability Export
     if (method === 'GET' && pathname === '/api/agency/export') {
@@ -6021,9 +6027,9 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── AGENCY: SUBSCRIPTIONS, LIMITS & USAGE METERING ───────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     // GET /api/agency/usage — retrieve server-side metered resource utilization vs limits
     if (method === 'GET' && pathname === '/api/agency/usage') {
@@ -6067,9 +6073,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, plan: targetPlan, ...updatedUsage });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── AGENCY: TEAM ACCESS & ROLE GOVERNANCE ───────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     // GET /api/agency/team — list team members for agency
     if (method === 'GET' && pathname === '/api/agency/team') {
@@ -6172,9 +6178,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, member: removed });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── AGENCY: SUB-ACCOUNTS / LOCATIONS ───────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     // GET /api/agency/locations — list client workspaces with metrics
     if (method === 'GET' && pathname === '/api/agency/locations') {
@@ -6298,9 +6304,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, deletedId: locId });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── AGENCY: SNAPSHOTS ENGINE ───────────────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     // GET /api/agency/snapshots — list snapshot templates for agency
     if (method === 'GET' && pathname === '/api/agency/snapshots') {
@@ -6507,7 +6513,7 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ─── GET /api/agency/snapshots/:id/diff/:locationId — Snapshot Diff ──
+// 
     const snapshotDiffMatch = pathname.match(/^\/api\/agency\/snapshots\/([a-zA-Z0-9_-]+)\/diff\/([a-zA-Z0-9_-]+)$/);
     if (method === 'GET' && snapshotDiffMatch) {
       const snapshotId = snapshotDiffMatch[1];
@@ -6556,7 +6562,7 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ─── POST /api/agency/snapshots/:id/sync/:locationId — Push Sync ────
+// 
     const snapshotSyncMatch = pathname.match(/^\/api\/agency\/snapshots\/([a-zA-Z0-9_-]+)\/sync\/([a-zA-Z0-9_-]+)$/);
     if (method === 'POST' && snapshotSyncMatch) {
       const snapshotId = snapshotSyncMatch[1];
@@ -6664,9 +6670,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, deletedId: snapshotId });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── INTEGRATIONS & APP MARKETPLACE ─────────────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     const getDefaultIntegrations = () => [
       { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, and payment links', icon: 'credit-card', connected: true, accountName: 'Operza Alpha Agency (acct_1928)', status: 'connected', lastSyncAt: new Date().toISOString() },
@@ -6755,9 +6761,9 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── AI BOT TRAINING & KNOWLEDGE BASE CENTER ────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     const getDefaultAiConfig = () => ({
       persona: 'executive',
@@ -6888,9 +6894,9 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── DEVELOPER HUB: API KEYS & WEBHOOK DISPATCH ─────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     if (method === 'GET' && pathname === '/api/developers/keys') {
       state.records.apiKeys = state.records.apiKeys || [];
@@ -7036,9 +7042,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { deliveries: deliveries.slice(0, 50) });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── AGENCY WHITE-LABEL & BRANDING PORTAL ───────────────────
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
 
     const getDefaultBranding = () => ({
       platformName: agency.name || 'Operza Agency',
@@ -7110,9 +7116,9 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, branding: current, message: 'SPF & DKIM verified' });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── CRM COLLECTIONS CRUD (with search/filter/pagination) ───
-    // ═════════════════════════════════════════════════════════════
+
+// 
+
     const collectionMatch = pathname.match(/^\/api\/crm\/([a-zA-Z0-9_]+)(?:\/([a-zA-Z0-9_-]+))?$/);
     if (collectionMatch) {
       const collectionName = collectionMatch[1];
@@ -7350,9 +7356,9 @@ const server = createServer(async (req, res) => {
   }
 });
 
-// ═══════════════════════════════════════════════════════════════════════
-// ─── STARTUP ──────────────────────────────────────────────────────────
-// ═══════════════════════════════════════════════════════════════════════
+
+// 
+
 
 await initDatabase();
 await workflowQueue.init();
