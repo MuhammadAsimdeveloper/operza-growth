@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from './Icon';
 import { Avatar } from './ui';
+import { Modal } from './Modal';
 import { useStore } from '../lib/store';
 import { relative } from '../lib/format';
 
@@ -315,9 +316,51 @@ function SearchBox() {
   );
 }
 
+// ─── Floating Tooltip Component ───────────────────────────────────────
+function Tooltip({ label, children }: { label: string; children: ReactNode }) {
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <div
+      style={{ position: 'relative', display: 'inline-flex' }}
+      onMouseEnter={() => setVisible(true)}
+      onMouseLeave={() => setVisible(false)}
+      onFocus={() => setVisible(true)}
+      onBlur={() => setVisible(false)}
+    >
+      {children}
+      {visible && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 7px)',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'var(--text, #0f172a)',
+            color: 'var(--surface, #ffffff)',
+            fontSize: 11,
+            fontWeight: 600,
+            padding: '3px 8px',
+            borderRadius: 6,
+            whiteSpace: 'nowrap',
+            zIndex: 1000,
+            pointerEvents: 'none',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            letterSpacing: '0.01em',
+            animation: 'fadeIn 0.15s ease-out',
+          }}
+        >
+          {label}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NotificationsButton() {
   const { state, dispatch } = useStore();
   const [open, setOpen] = useState(false);
+  const [selectedNotification, setSelectedNotification] = useState<any | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const unread = state.notifications.filter((n) => !n.read).length;
 
@@ -329,58 +372,157 @@ function NotificationsButton() {
     return () => document.removeEventListener('mousedown', onDown);
   }, []);
 
+  const handleOpenNotification = (n: any) => {
+    dispatch({ type: 'notifications/read', id: n.id });
+    setSelectedNotification(n);
+    setOpen(false);
+  };
+
   return (
-    <div style={{ position: 'relative' }} ref={ref}>
-      <button className="icon-btn" onClick={() => setOpen((v) => !v)} aria-label="Notifications">
-        <Icon name="bell" size={18} />
-        {unread > 0 && <span className="icon-btn__dot" />}
-      </button>
-      {open && (
-        <div
-          className="card"
-          style={{ position: 'absolute', right: 0, top: 42, width: 330, zIndex: 50, boxShadow: 'var(--shadow-lg)', overflow: 'hidden' }}
-        >
-          <div className="card__head">
-            <div className="card__title">Notifications</div>
-            <button
-              className="btn btn--ghost btn--sm"
-              style={{ marginLeft: 'auto' }}
-              onClick={() => dispatch({ type: 'notifications/readAll' })}
-            >
-              Mark all read
-            </button>
-          </div>
-          <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-            {state.notifications.map((n) => (
-              <div
-                key={n.id}
-                className="list-row"
-                style={{ alignItems: 'flex-start', background: n.read ? undefined : 'var(--accent-soft)' }}
-              >
-                <span
-                  style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: '50%',
-                    background: n.read ? 'var(--line-strong)' : 'var(--accent)',
-                    marginTop: 7,
-                    flex: '0 0 auto',
-                  }}
-                />
-                <span style={{ minWidth: 0 }}>
-                  <span style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>{n.title}</span>
-                  <span style={{ display: 'block', fontSize: 12, color: 'var(--text-2)', marginTop: 1 }}>{n.body}</span>
-                  <span style={{ display: 'block', fontSize: 11, color: 'var(--text-3)', marginTop: 3 }}>{relative(n.at)}</span>
-                </span>
+    <>
+      <div style={{ position: 'relative' }} ref={ref}>
+        <Tooltip label={`Notifications${unread > 0 ? ` (${unread} unread)` : ''}`}>
+          <button
+            className="icon-btn"
+            onClick={() => setOpen((v) => !v)}
+            aria-label="Notifications"
+            style={{ transition: 'transform 0.15s ease, background 0.15s ease' }}
+          >
+            <Icon name="bell" size={18} />
+            {unread > 0 && <span className="icon-btn__dot" />}
+          </button>
+        </Tooltip>
+
+        {open && (
+          <div
+            className="card"
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: 42,
+              width: 340,
+              zIndex: 100,
+              boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08)',
+              overflow: 'hidden',
+              background: 'var(--surface, #ffffff)',
+              border: '1px solid var(--line, #e2e8f0)',
+              borderRadius: '12px'
+            }}
+          >
+            <div className="card__head" style={{ padding: '12px 16px', borderBottom: '1px solid var(--line)' }}>
+              <div className="card__title" style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
+                Notifications
               </div>
-            ))}
+              <button
+                className="btn btn--ghost btn--sm"
+                style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--accent)' }}
+                onClick={() => dispatch({ type: 'notifications/readAll' })}
+              >
+                Mark all read
+              </button>
+            </div>
+            <div style={{ maxHeight: 340, overflowY: 'auto' }}>
+              {state.notifications.length === 0 ? (
+                <div style={{ padding: '24px 16px', textAlign: 'center', color: 'var(--text-3)', fontSize: 12.5 }}>
+                  No notifications yet. You're all caught up!
+                </div>
+              ) : (
+                state.notifications.map((n) => (
+                  <div
+                    key={n.id}
+                    className="list-row"
+                    onClick={() => handleOpenNotification(n)}
+                    style={{
+                      alignItems: 'flex-start',
+                      background: n.read ? undefined : 'var(--accent-soft)',
+                      cursor: 'pointer',
+                      padding: '12px 16px',
+                      borderBottom: '1px solid var(--line)',
+                      transition: 'background 0.15s ease'
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 7,
+                        height: 7,
+                        borderRadius: '50%',
+                        background: n.read ? 'var(--line-strong)' : 'var(--accent)',
+                        marginTop: 6,
+                        flex: '0 0 auto',
+                      }}
+                    />
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 650, color: 'var(--text)' }}>{n.title}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-2)', marginTop: 2, lineHeight: 1.4 }}>{n.body}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>{relative(n.at)}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
-        </div>
+        )}
+      </div>
+
+      {/* Notification Message Detail Modal */}
+      {selectedNotification && (
+        <Modal
+          title={selectedNotification.title || 'Notification Details'}
+          onClose={() => setSelectedNotification(null)}
+          footer={
+            <div style={{ display: 'flex', justifyContent: 'flex-end', width: '100%', gap: 8 }}>
+              <button className="btn btn--primary" onClick={() => setSelectedNotification(null)}>
+                Close
+              </button>
+            </div>
+          }
+        >
+          <div className="stack" style={{ gap: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div
+                style={{
+                  width: 38,
+                  height: 38,
+                  borderRadius: 10,
+                  background: 'var(--accent-soft)',
+                  color: 'var(--accent)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                <Icon name="bell" size={20} />
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>
+                  {selectedNotification.title}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                  Received {relative(selectedNotification.at)}
+                </div>
+              </div>
+            </div>
+
+            <div
+              style={{
+                padding: '16px',
+                background: 'var(--surface-2, #f8fafc)',
+                borderRadius: '8px',
+                border: '1px solid var(--line, #e2e8f0)',
+                color: 'var(--text)',
+                fontSize: 13.5,
+                lineHeight: 1.6,
+                whiteSpace: 'pre-wrap'
+              }}
+            >
+              {selectedNotification.body}
+            </div>
+          </div>
+        </Modal>
       )}
-    </div>
+    </>
   );
 }
-
 
 function UserMenu() {
   const { user, agency, locations, activeLocation, switchLocation, logout } = useAuth();
@@ -414,11 +556,18 @@ function UserMenu() {
 
   return (
     <div style={{ position: 'relative' }} ref={ref}>
-      <button className="user-chip" type="button" onClick={() => setOpen((v) => !v)}>
-        <span className="user-chip__avatar">{initials}</span>
-        <span className="user-chip__name">{user?.name || 'Operator'}</span>
-        <Icon name="chevron-down" size={14} />
-      </button>
+      <Tooltip label="My Account">
+        <button
+          className="user-chip"
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          style={{ transition: 'transform 0.15s ease, box-shadow 0.15s ease' }}
+        >
+          <span className="user-chip__avatar">{initials}</span>
+          <span className="user-chip__name">{user?.name || 'Operator'}</span>
+          <Icon name="chevron-down" size={14} />
+        </button>
+      </Tooltip>
 
       {open && (
         <div
@@ -427,29 +576,43 @@ function UserMenu() {
             position: 'absolute',
             right: 0,
             top: 42,
-            width: 240,
+            width: 260,
             zIndex: 100,
-            boxShadow: 'var(--shadow-lg)',
-            padding: '14px 16px',
+            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08)',
+            padding: '16px',
             display: 'flex',
             flexDirection: 'column',
             gap: 12,
-            background: 'var(--surface-1, #1e293b)',
-            border: '1px solid var(--border, #334155)',
-            borderRadius: '8px'
+            background: 'var(--surface, #ffffff)',
+            border: '1px solid var(--line, #e2e8f0)',
+            borderRadius: '12px'
           }}
         >
           <div>
-            <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--text-1)' }}>{user?.name}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--text-3)' }}>{user?.email}</div>
-            <div style={{ fontSize: 11, color: 'var(--accent)', marginTop: 4, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 4 }}>
-              <Icon name="building" size={12} /> {agency?.name || 'Operza Agency'}
+            <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text, #0f172a)' }}>
+              {user?.name || 'Muhammad Asim'}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-3, #64748b)', marginTop: 2 }}>
+              {user?.email || 'sanjarkhanabbasi786@gmail.com'}
+            </div>
+            <div
+              style={{
+                fontSize: 12,
+                color: 'var(--accent, #4f46e5)',
+                marginTop: 6,
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6
+              }}
+            >
+              <Icon name="building" size={13} /> {agency?.name || 'Asim Tech'}
             </div>
           </div>
 
           {locations.length > 1 && (
             <div>
-              <label style={{ fontSize: 11, color: 'var(--text-3)', display: 'block', marginBottom: 4 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3, #64748b)', display: 'block', marginBottom: 4 }}>
                 Active Location:
               </label>
               <select
@@ -458,11 +621,11 @@ function UserMenu() {
                 style={{
                   width: '100%',
                   fontSize: 12,
-                  padding: '4px 8px',
-                  borderRadius: 4,
-                  background: 'var(--surface-2, #0f172a)',
-                  color: 'var(--text-1)',
-                  border: '1px solid var(--border, #334155)'
+                  padding: '6px 8px',
+                  borderRadius: 6,
+                  background: 'var(--surface-2, #f8fafc)',
+                  color: 'var(--text, #0f172a)',
+                  border: '1px solid var(--line, #e2e8f0)'
                 }}
               >
                 {locations.map((loc) => (
@@ -474,13 +637,13 @@ function UserMenu() {
             </div>
           )}
 
-          <hr style={{ border: 'none', borderTop: '1px solid var(--line, #334155)', margin: 0 }} />
+          <hr style={{ border: 'none', borderTop: '1px solid var(--line, #e2e8f0)', margin: '4px 0' }} />
 
           <button
             type="button"
             className="btn btn--ghost btn--sm"
             onClick={handleLogout}
-            style={{ width: '100%', justifyContent: 'flex-start', color: '#ef4444' }}
+            style={{ width: '100%', justifyContent: 'flex-start', color: '#ef4444', fontWeight: 600 }}
           >
             <Icon name="logout" size={14} /> Log out
           </button>
@@ -550,18 +713,23 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
       <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', minWidth: 90 }}>{title}</span>
       <SearchBox />
       <span className="topbar__spacer" />
-      <div className="topbar__actions">
-        <button
-          className="icon-btn"
-          onClick={toggleTheme}
-          aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
-          title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
-        >
-          <Icon name={theme === 'light' ? 'moon' : 'sun'} size={18} />
-        </button>
-        <button className="icon-btn" aria-label="Help">
-          <Icon name="globe" size={18} />
-        </button>
+      <div className="topbar__actions" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Tooltip label={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}>
+          <button
+            className="icon-btn"
+            onClick={toggleTheme}
+            aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
+          >
+            <Icon name={theme === 'light' ? 'moon' : 'sun'} size={18} />
+          </button>
+        </Tooltip>
+
+        <Tooltip label="Help & Documentation">
+          <button className="icon-btn" aria-label="Help">
+            <Icon name="globe" size={18} />
+          </button>
+        </Tooltip>
+
         <NotificationsButton />
         <UserMenu />
       </div>

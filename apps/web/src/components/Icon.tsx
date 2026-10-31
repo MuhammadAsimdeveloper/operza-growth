@@ -135,6 +135,13 @@ const paths: Record<string, ReactNode> = {
   ),
   phone: <path d="M6 3h3l2 5-2.5 1.5a12 12 0 0 0 6 6L16 13l5 2v3a2 2 0 0 1-2.2 2A17 17 0 0 1 4 5.2 2 2 0 0 1 6 3Z" />,
   sliders: <path d="M4 7h9M17 7h3M4 17h3M11 17h9M15 4v6M8 14v6" />,
+  code: <path d="m16 18 6-6-6-6M8 6l-6 6 6 6" />,
+  layout: (
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <path d="M3 9h18M9 21V9" />
+    </>
+  ),
   dollar: <path d="M12 2v20M17 6.5C17 4.6 14.8 3.5 12 3.5S7 4.6 7 7s2.2 3.4 5 4 5 1.1 5 3.5-2.2 3.5-5 3.5-5-1.1-5-3" />,
   clock: (
     <>

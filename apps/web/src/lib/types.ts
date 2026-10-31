@@ -279,6 +279,9 @@ export interface SitePage {
   subhead?: string;
   cta?: string;
   theme?: PageTheme;
+  blocks?: any[];
+  metaTitle?: string;
+  metaDescription?: string;
 }
 
 export interface Site {
@@ -292,6 +295,14 @@ export interface Site {
   pages: SitePage[];
   /** Order-step configuration; funnels without a checkout leave this empty. */
   checkout?: FunnelCheckout;
+  maintenanceMode?: boolean;
+  maintenanceHeadline?: string;
+  maintenanceNotice?: string;
+  headerScripts?: string;
+  footerScripts?: string;
+  seoTitle?: string;
+  seoDescription?: string;
+  faviconUrl?: string;
 }
 
 export type FormKind = 'form' | 'survey';

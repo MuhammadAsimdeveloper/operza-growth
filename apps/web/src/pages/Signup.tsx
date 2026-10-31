@@ -47,16 +47,16 @@ export default function Signup() {
           <div style={styles.brandMark}>OP</div>
           <div>
             <div style={styles.brandName}>Operza</div>
-            <div style={styles.brandSub}>Agency Workspace & AI Automation</div>
+            <div style={styles.brandSub}>Agency Workspace & Automation</div>
           </div>
         </div>
 
         {/* Card */}
         <div className="card" style={styles.card}>
           <div style={styles.cardBody}>
-            <h1 style={styles.heading}>Create your workspace</h1>
+            <h1 style={styles.heading}>Create your account</h1>
             <p style={styles.subtitle}>
-              Start automating your marketing, CRM pipelines, and AI copilot agents.
+              Start automating your marketing, CRM pipelines, and client operations.
             </p>
 
             {error && (
@@ -72,12 +72,12 @@ export default function Signup() {
 
             <form onSubmit={handleSubmit} style={styles.form}>
               <div className="field">
-                <label htmlFor="signup-name">Your Full Name</label>
+                <label htmlFor="signup-name">Full name</label>
                 <input
                   id="signup-name"
                   className="input"
                   type="text"
-                  placeholder="e.g. Asim Khan"
+                  placeholder="e.g. Muhammad Asim"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   autoComplete="name"
@@ -86,19 +86,19 @@ export default function Signup() {
               </div>
 
               <div className="field">
-                <label htmlFor="signup-agency">Agency / Company Name</label>
+                <label htmlFor="signup-agency">Agency or company name</label>
                 <input
                   id="signup-agency"
                   className="input"
                   type="text"
-                  placeholder="e.g. Apex Growth Agency"
+                  placeholder="e.g. Asim Tech Advisory"
                   value={agencyName}
                   onChange={(e) => setAgencyName(e.target.value)}
                 />
               </div>
 
               <div className="field">
-                <label htmlFor="signup-email">Work Email</label>
+                <label htmlFor="signup-email">Work email address</label>
                 <input
                   id="signup-email"
                   className="input"
@@ -111,12 +111,12 @@ export default function Signup() {
               </div>
 
               <div className="field">
-                <label htmlFor="signup-password">Password (min 8 characters)</label>
+                <label htmlFor="signup-password">Password</label>
                 <input
                   id="signup-password"
                   className="input"
                   type="password"
-                  placeholder="••••••••"
+                  placeholder="At least 8 characters"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   autoComplete="new-password"
@@ -127,19 +127,25 @@ export default function Signup() {
                 className="btn btn--primary btn--block"
                 type="submit"
                 disabled={submitting}
-                style={{ height: 38, fontSize: 13.5, fontWeight: 600, marginTop: 6 }}
+                style={{ height: 38, fontSize: 13.5, fontWeight: 600, marginTop: 4 }}
               >
-                {submitting ? 'Creating workspace…' : 'Create Operza Workspace'}
+                {submitting ? 'Creating workspace…' : 'Create workspace'}
               </button>
             </form>
           </div>
 
           <div style={styles.footer}>
-            Already have an account?{' '}
-            <Link to="/login" style={styles.link}>
-              Sign in
-            </Link>
+            <span style={{ color: 'var(--text-3)', fontSize: 13 }}>
+              Already have an account?{' '}
+              <Link to="/login" style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                Sign in
+              </Link>
+            </span>
           </div>
+        </div>
+
+        <div style={styles.legalText}>
+          © {new Date().getFullYear()} Operza. All rights reserved.
         </div>
       </div>
     </div>
@@ -149,11 +155,10 @@ export default function Signup() {
 const styles: Record<string, React.CSSProperties> = {
   wrapper: {
     minHeight: '100vh',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: 'var(--bg, #0b0f19)',
-    padding: '24px 16px',
+    display: 'grid',
+    placeItems: 'center',
+    padding: 20,
+    background: 'var(--bg)',
   },
   container: {
     width: '100%',
@@ -161,74 +166,66 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: 20,
+    gap: 24,
   },
   brand: {
     display: 'flex',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
   brandMark: {
     width: 36,
     height: 36,
-    borderRadius: 'var(--radius-sm, 6px)',
-    background: 'var(--primary, #3b82f6)',
+    borderRadius: 10,
+    display: 'grid',
+    placeItems: 'center',
     color: '#fff',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
+    background: 'linear-gradient(135deg, #4f46e5, #7c3aed)',
     fontWeight: 700,
     fontSize: 14,
-    letterSpacing: '0.05em',
+    letterSpacing: '-0.03em',
   },
   brandName: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 700,
-    color: 'var(--text-1, #f8fafc)',
     letterSpacing: '-0.02em',
+    lineHeight: 1.2,
   },
   brandSub: {
-    fontSize: 11,
-    color: 'var(--text-3, #64748b)',
-    textTransform: 'uppercase',
-    letterSpacing: '0.06em',
+    fontSize: 11.5,
+    color: 'var(--text-3)',
   },
   card: {
     width: '100%',
-    padding: 0,
     overflow: 'hidden',
-    border: '1px solid var(--border, #1e293b)',
-    borderRadius: 'var(--radius-lg, 12px)',
-    background: 'var(--surface-1, #111827)',
   },
   cardBody: {
-    padding: '28px 24px 20px',
+    padding: '28px 24px 24px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 16,
   },
   heading: {
     fontSize: 18,
-    fontWeight: 600,
-    color: 'var(--text-1, #f8fafc)',
-    margin: 0,
-    letterSpacing: '-0.01em',
+    fontWeight: 680,
+    letterSpacing: '-0.02em',
+    lineHeight: 1.3,
   },
   subtitle: {
     fontSize: 13,
-    color: 'var(--text-3, #64748b)',
-    marginTop: 6,
-    marginBottom: 20,
-    lineHeight: 1.4,
+    color: 'var(--text-3)',
+    marginTop: -8,
   },
   error: {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
     padding: '10px 12px',
-    borderRadius: 'var(--radius-sm, 6px)',
-    background: 'rgba(239, 68, 68, 0.1)',
-    border: '1px solid rgba(239, 68, 68, 0.25)',
-    color: '#f87171',
-    fontSize: 12.5,
-    marginBottom: 16,
+    borderRadius: 'var(--r-md)',
+    background: 'var(--red-soft)',
+    color: 'var(--red)',
+    fontSize: 13,
+    fontWeight: 550,
   },
   form: {
     display: 'flex',
@@ -237,15 +234,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   footer: {
     padding: '14px 24px',
-    borderTop: '1px solid var(--border, #1e293b)',
-    background: 'var(--surface-2, #0f172a)',
-    fontSize: 12.5,
-    color: 'var(--text-3, #64748b)',
+    borderTop: '1px solid var(--line)',
+    background: 'var(--surface-2)',
     textAlign: 'center',
   },
-  link: {
-    color: 'var(--primary, #3b82f6)',
-    fontWeight: 600,
-    textDecoration: 'none',
+  legalText: {
+    fontSize: 11.5,
+    color: 'var(--text-3)',
   },
 };

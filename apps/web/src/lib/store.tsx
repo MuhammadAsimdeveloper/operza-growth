@@ -120,6 +120,7 @@ export type Action =
   | { type: 'post/add'; post: SocialPost }
   | { type: 'post/status'; id: string; status: SocialPost['status'] }
   | { type: 'site/toggle'; id: string }
+  | { type: 'site/update'; id: string; patch: Partial<Site> }
   | { type: 'site/step/add'; siteId: string; page: SitePage }
   | { type: 'site/step/update'; siteId: string; id: string; patch: Partial<SitePage> }
   | { type: 'site/step/move'; siteId: string; id: string; direction: 'up' | 'down' }
@@ -217,6 +218,7 @@ export type Action =
   | { type: 'snapshot/create'; id: string; name: string }
   | { type: 'snapshot/restore'; id: string }
   | { type: 'snapshot/delete'; id: string }
+  | { type: 'notifications/read'; id: string }
   | { type: 'notifications/readAll' }
   | { type: 'workspace/reset' };
 
@@ -558,6 +560,12 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
       return {
         ...state,
         sites: state.sites.map((s) => (s.id === action.id ? { ...s, published: !s.published } : s)),
+      };
+
+    case 'site/update':
+      return {
+        ...state,
+        sites: state.sites.map((s) => (s.id === action.id ? { ...s, ...action.patch } : s)),
       };
 
     case 'site/step/add':
@@ -1170,6 +1178,12 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
       return {
         ...state,
         team: state.team.filter((m) => m.id !== action.id),
+      };
+
+    case 'notifications/read':
+      return {
+        ...state,
+        notifications: state.notifications.map((n) => (n.id === action.id ? { ...n, read: true } : n)),
       };
 
     case 'notifications/readAll':

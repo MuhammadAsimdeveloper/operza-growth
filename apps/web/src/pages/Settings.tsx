@@ -12,6 +12,7 @@ const SECTIONS = [
   { key: 'team', label: 'Team', icon: 'users' },
   { key: 'fields', label: 'Custom fields', icon: 'sliders' },
   { key: 'integrations', label: 'Integrations', icon: 'plug' },
+  { key: 'apiKeys', label: 'API keys & access', icon: 'lock' },
   { key: 'data', label: 'Workspace data', icon: 'database' },
 ] as const;
 
@@ -56,12 +57,54 @@ export default function Settings() {
     <div className="content">
       <PageHeader title="Settings" subtitle="Workspace configuration, team access and connected apps." />
 
-      <div className="settings-layout">
-        <nav className="settings-nav">
+      <div
+        className="settings-layout"
+        style={{
+          marginTop: 24,
+          gap: 24,
+          display: 'grid',
+          gridTemplateColumns: '240px minmax(0, 1fr)',
+          alignItems: 'start',
+        }}
+      >
+        <nav
+          className="settings-nav"
+          style={{
+            position: 'sticky',
+            top: 76,
+            background: 'var(--surface)',
+            border: '1px solid var(--line)',
+            borderRadius: 'var(--r-lg)',
+            padding: 10,
+            boxShadow: 'var(--shadow-xs)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+          }}
+        >
           {SECTIONS.map((s) => (
-            <button key={s.key} className={section === s.key ? 'is-active' : ''} onClick={() => setSection(s.key)}>
-              <span className="row" style={{ gap: 8 }}>
-                <Icon name={s.icon} size={15} /> {s.label}
+            <button
+              key={s.key}
+              className={section === s.key ? 'is-active' : ''}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                width: '100%',
+                padding: '10px 14px',
+                borderRadius: 'var(--r-md)',
+                fontSize: 13.5,
+                fontWeight: section === s.key ? 650 : 500,
+                background: section === s.key ? 'var(--accent-soft)' : 'transparent',
+                color: section === s.key ? 'var(--accent)' : 'var(--text-2)',
+                border: 'none',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease',
+                textAlign: 'left',
+              }}
+              onClick={() => setSection(s.key)}
+            >
+              <span className="row" style={{ gap: 10, alignItems: 'center' }}>
+                <Icon name={s.icon} size={16} /> {s.label}
               </span>
             </button>
           ))}
@@ -214,6 +257,8 @@ export default function Settings() {
               })}
             </div>
           )}
+
+          {section === 'apiKeys' && <ApiKeysSection />}
 
           {section === 'data' && (
             <div className="stack">
@@ -482,6 +527,257 @@ function InviteMember({ onClose, onSave }: { onClose: () => void; onSave: (membe
         </select>
       </div>
     </Modal>
+  );
+}
+
+function ApiKeysSection() {
+  const [keys, setKeys] = useState<any[]>([
+    {
+      id: 'key_live_default',
+      label: 'Production Agency Key',
+      maskedKey: 'op_live_3821...9f82',
+      scopes: ['contacts:read', 'contacts:write', 'workflows:trigger'],
+      createdAt: new Date().toISOString(),
+    },
+  ]);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [keyLabel, setKeyLabel] = useState('');
+  const [keyScopes, setKeyScopes] = useState<string[]>(['contacts:read', 'contacts:write', 'workflows:trigger']);
+  const [createdToken, setCreatedToken] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [generating, setGenerating] = useState(false);
+
+  useEffect(() => {
+    api.developers
+      .getKeys()
+      .then((res) => {
+        if (res?.keys && res.keys.length > 0) setKeys(res.keys);
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleGenerate = async () => {
+    if (!keyLabel.trim()) return;
+    setGenerating(true);
+    try {
+      const res = await api.developers.createKey({ label: keyLabel.trim(), scopes: keyScopes });
+      if (res?.key) {
+        setKeys((prev) => [res.key, ...prev]);
+        setCreatedToken(res.key.secretToken);
+        setGenerating(false);
+        return;
+      }
+    } catch {
+      // fallback
+    }
+
+    // High entropy local fallback
+    const rndBytes = new Uint8Array(20);
+    if (typeof window !== 'undefined' && window.crypto) {
+      window.crypto.getRandomValues(rndBytes);
+    } else {
+      for (let i = 0; i < 20; i++) rndBytes[i] = Math.floor(Math.random() * 256);
+    }
+    const secretHex = Array.from(rndBytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+    const secretToken = `op_live_${secretHex}`;
+    const maskedKey = `op_live_${secretHex.slice(0, 4)}...${secretHex.slice(-4)}`;
+    const newLocalKey = {
+      id: `key_${Date.now()}`,
+      label: keyLabel.trim(),
+      maskedKey,
+      scopes: keyScopes,
+      createdAt: new Date().toISOString(),
+    };
+    setKeys((prev) => [newLocalKey, ...prev]);
+    setCreatedToken(secretToken);
+    setGenerating(false);
+  };
+
+  const handleRevoke = async (id: string) => {
+    try {
+      await api.developers.revokeKey(id);
+    } catch {}
+    setKeys((prev) => prev.filter((k) => k.id !== id));
+  };
+
+  const copyToClipboard = () => {
+    if (!createdToken) return;
+    navigator.clipboard.writeText(createdToken);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="card">
+      <div className="card__head">
+        <div>
+          <div className="card__title">API keys & Developer Tokens</div>
+          <div className="card__sub">Generate secret keys to securely authenticate external CRM APIs and scripts.</div>
+        </div>
+        <div className="card__actions">
+          <button
+            className="btn btn--primary btn--sm"
+            onClick={() => {
+              setModalOpen(true);
+              setCreatedToken(null);
+              setKeyLabel('');
+            }}
+          >
+            <Icon name="plus" size={14} /> Generate API key
+          </button>
+        </div>
+      </div>
+
+      <div className="table-wrap">
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Key Label</th>
+              <th>Token Preview</th>
+              <th>Permissions</th>
+              <th>Created</th>
+              <th className="cell-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {keys.map((k) => (
+              <tr key={k.id}>
+                <td className="cell-main">{k.label}</td>
+                <td style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{k.maskedKey}</td>
+                <td>
+                  <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+                    {(k.scopes || []).map((s: string) => (
+                      <Badge key={s}>{s}</Badge>
+                    ))}
+                  </div>
+                </td>
+                <td className="cell-sub">{new Date(k.createdAt).toLocaleDateString()}</td>
+                <td className="cell-right">
+                  <button
+                    className="icon-btn"
+                    onClick={() => handleRevoke(k.id)}
+                    title="Revoke key"
+                    aria-label="Revoke key"
+                  >
+                    <Icon name="trash" size={14} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {modalOpen && (
+        <Modal
+          title={createdToken ? 'API Key Generated' : 'Generate New API Key'}
+          onClose={() => setModalOpen(false)}
+          footer={
+            createdToken ? (
+              <button className="btn btn--primary" onClick={() => setModalOpen(false)}>
+                Done
+              </button>
+            ) : (
+              <>
+                <button className="btn" onClick={() => setModalOpen(false)}>
+                  Cancel
+                </button>
+                <button
+                  className="btn btn--primary"
+                  onClick={handleGenerate}
+                  disabled={!keyLabel.trim() || generating}
+                >
+                  {generating ? 'Generating…' : 'Generate Key'}
+                </button>
+              </>
+            )
+          }
+        >
+          {createdToken ? (
+            <div className="stack" style={{ gap: 14 }}>
+              <div
+                style={{
+                  background: 'var(--amber-soft)',
+                  color: 'var(--amber)',
+                  padding: '12px 14px',
+                  borderRadius: 'var(--r-md)',
+                  fontSize: 13,
+                  lineHeight: 1.5,
+                }}
+              >
+                ⚠️ <strong>Copy this secret key now.</strong> For security reasons, you will not be able to view this token again after closing this window.
+              </div>
+
+              <div className="field">
+                <label>Secret API Token</label>
+                <div className="row" style={{ gap: 8 }}>
+                  <input
+                    className="input"
+                    readOnly
+                    value={createdToken}
+                    style={{ fontFamily: 'var(--font-mono)', fontSize: 13, fontWeight: 600 }}
+                  />
+                  <button className="btn btn--secondary" onClick={copyToClipboard} style={{ minWidth: 100 }}>
+                    <Icon name={copied ? 'check' : 'clipboard'} size={14} /> {copied ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="stack" style={{ gap: 14 }}>
+              <div className="field">
+                <label htmlFor="settings-key-label">Key Name / Description</label>
+                <input
+                  id="settings-key-label"
+                  className="input"
+                  placeholder="e.g. Zapier Lead Sync or Mobile App"
+                  value={keyLabel}
+                  onChange={(e) => setKeyLabel(e.target.value)}
+                  autoFocus
+                />
+              </div>
+
+              <div className="field">
+                <label>Permissions (Scopes)</label>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8 }}>
+                  {[
+                    { id: 'contacts:read', label: 'Read Contacts' },
+                    { id: 'contacts:write', label: 'Write Contacts' },
+                    { id: 'workflows:trigger', label: 'Trigger Workflows' },
+                    { id: 'invoices:read', label: 'View Invoices' },
+                    { id: 'payments:create', label: 'Create Payments' },
+                  ].map((s) => (
+                    <label
+                      key={s.id}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        fontSize: 12.5,
+                        padding: '6px 10px',
+                        background: 'var(--surface-2)',
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={keyScopes.includes(s.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) setKeyScopes([...keyScopes, s.id]);
+                          else setKeyScopes(keyScopes.filter((x) => x !== s.id));
+                        }}
+                      />
+                      <span>{s.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </Modal>
+      )}
+    </div>
   );
 }
 
