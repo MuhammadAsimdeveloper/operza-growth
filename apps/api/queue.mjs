@@ -181,6 +181,11 @@ export class DurableWorkflowQueue {
     this.memoryActive = [];  // Currently executing leases
     this.memoryDlq = [];     // Dead-letter queue for unrecoverable/exhausted jobs
     this.idempotencyKeys = new Map(); // idempotencyKey -> { jobId, expiresAt }
+    this.handlers = new Map(); // queueName -> async (job) => void
+    this.workerRunning = false;
+    this.workerPollTimer = null;
+    this.activeJobCount = 0;
+    this.concurrencyLimit = 5;
   }
 
   async init() {
@@ -429,10 +434,117 @@ export class DurableWorkflowQueue {
     return dlqEntry;
   }
 
+  registerHandler(queueName, handlerFn) {
+    if (typeof handlerFn !== 'function') {
+      throw new Error(`Handler for queue '${queueName}' must be a function.`);
+    }
+    this.handlers.set(queueName, handlerFn);
+    console.log(`🔧 [OPERZA-WORKER] Registered handler for queue: ${queueName}`);
+  }
+
+  async startWorker({
+    concurrency = 5,
+    pollIntervalMs = 500,
+    queues = ['default', 'workflows', 'webhooks', 'emails', 'telephony', 'test_queue']
+  } = {}) {
+    if (this.workerRunning) return;
+    this.workerRunning = true;
+    this.concurrencyLimit = concurrency;
+    console.log(`🚀 [OPERZA-WORKER] Background worker started. Concurrency: ${concurrency}, Queues: ${queues.join(', ')}`);
+
+    const workerLoop = async () => {
+      if (!this.workerRunning) return;
+      try {
+        if (this.activeJobCount < this.concurrencyLimit) {
+          for (const q of queues) {
+            if (this.activeJobCount >= this.concurrencyLimit) break;
+            const jobs = await this.pollReadyJobs(q);
+            for (const job of jobs) {
+              this.activeJobCount++;
+              this._executeJob(job).finally(() => {
+                this.activeJobCount--;
+              });
+              if (this.activeJobCount >= this.concurrencyLimit) break;
+            }
+          }
+        }
+      } catch (err) {
+        console.error('[OPERZA-WORKER] Worker tick error:', err.message);
+      } finally {
+        if (this.workerRunning) {
+          this.workerPollTimer = setTimeout(workerLoop, pollIntervalMs);
+        }
+      }
+    };
+
+    workerLoop();
+  }
+
+  async _executeJob(job) {
+    const handler = this.handlers.get(job.queueName) || this.handlers.get('default');
+    if (!handler) {
+      console.warn(`[OPERZA-WORKER] No handler registered for queue '${job.queueName}'. Acking and skipping.`);
+      await this.ackJob(job);
+      return;
+    }
+
+    try {
+      const startTime = Date.now();
+      await handler(job);
+      await this.ackJob(job);
+      const duration = Date.now() - startTime;
+      console.log(`✅ [OPERZA-WORKER] Job ${job.id} completed successfully in ${duration}ms (queue: ${job.queueName})`);
+    } catch (err) {
+      console.error(`❌ [OPERZA-WORKER] Job ${job.id} failed:`, err.message);
+      await this.retryJob(job, err.message);
+    }
+  }
+
+  async stopWorker() {
+    this.workerRunning = false;
+    if (this.workerPollTimer) {
+      clearTimeout(this.workerPollTimer);
+      this.workerPollTimer = null;
+    }
+    let elapsed = 0;
+    while (this.activeJobCount > 0 && elapsed < 5000) {
+      await new Promise(r => setTimeout(r, 100));
+      elapsed += 100;
+    }
+    console.log('🛑 [OPERZA-WORKER] Background worker stopped cleanly.');
+  }
+
+  async cancelJob(queueName, jobId) {
+    if (!jobId) return false;
+    let found = false;
+    if (this.useRedis && this.redisClient?.connected) {
+      try {
+        const readyItems = await this.redisClient.sendCommand(['LRANGE', `operza:q:${queueName}:ready`, '0', '-1']);
+        if (Array.isArray(readyItems)) {
+          for (const item of readyItems) {
+            try {
+              const parsed = JSON.parse(item);
+              if (parsed.id === jobId) {
+                await this.redisClient.sendCommand(['LREM', `operza:q:${queueName}:ready`, '1', item]);
+                found = true;
+                break;
+              }
+            } catch { /* ignore */ }
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    this.memoryReady = this.memoryReady.filter(j => j.id !== jobId);
+    this.memoryDelayed = this.memoryDelayed.filter(j => j.id !== jobId);
+    return found;
+  }
+
   getMetrics() {
     return {
       engine: this.useRedis && this.redisClient?.connected ? 'redis_distributed' : 'memory_durable',
       connected: this.useRedis ? Boolean(this.redisClient?.connected) : true,
+      workerRunning: this.workerRunning,
+      activeJobsInFlight: this.activeJobCount,
       readyDepth: this.memoryReady.length,
       delayedDepth: this.memoryDelayed.length,
       activeDepth: this.memoryActive.length,
@@ -443,6 +555,7 @@ export class DurableWorkflowQueue {
   }
 
   close() {
+    this.stopWorker();
     if (this.redisClient) {
       this.redisClient.close();
     }

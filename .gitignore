@@ -37,6 +37,7 @@ data/
 data/store.json
 apps/api/data/*.json
 apps/api/data/*.tmp
+backups/
 *.tmp
 *.bak
 

@@ -444,50 +444,24 @@ function clearSessionCookies(res) {
 
 async function initDatabase() {
   if (!pgPool) {
+    if (isProd) {
+      throw new Error('[OPERZA-DB] FATAL: Production requires DATABASE_URL configuration.');
+    }
     console.log('📦 [OPERZA-DB] Running in zero-config JSON file mode (data/store.json).');
     return;
   }
   try {
     const client = await pgPool.connect();
     try {
-      // 1. Ensure tenant-scoped state table exists
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS agency_tenant_states (
-          agency_id uuid PRIMARY KEY,
-          payload jsonb NOT NULL CHECK (jsonb_typeof(payload)='object'),
-          version integer NOT NULL DEFAULT 1 CHECK (version > 0),
-          created_at timestamptz NOT NULL DEFAULT now(),
-          updated_at timestamptz NOT NULL DEFAULT now()
-        );
+      // Verify database connectivity and schema readiness without attempting unprivileged DDL
+      const tableCheck = await client.query(`
+        SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'agency_tenant_states'
       `);
-
-      // 2. Safe migration: If legacy unscoped operza_app_state exists, migrate records into agency_tenant_states
-      const legacyTableCheck = await client.query(`
-        SELECT 1 FROM information_schema.tables WHERE table_name = 'operza_app_state'
-      `);
-      if (legacyTableCheck.rows.length > 0) {
-        const legacyRows = await client.query("SELECT payload FROM operza_app_state WHERE id = 'active_state'");
-        if (legacyRows.rows.length > 0 && legacyRows.rows[0].payload) {
-          const legacyData = legacyRows.rows[0].payload;
-          if (Array.isArray(legacyData.agencies)) {
-            for (const ag of legacyData.agencies) {
-              const agencyState = {
-                agency: ag,
-                records: {},
-                workflows: (legacyData.workflows || []).filter(w => w.agencyId === ag.id),
-                forms: (legacyData.forms || []).filter(f => f.agencyId === ag.id)
-              };
-              for (const [col, items] of Object.entries(legacyData.records || {})) {
-                agencyState.records[col] = (items || []).filter(item => item.agencyId === ag.id);
-              }
-              await client.query(`
-                INSERT INTO agency_tenant_states (agency_id, payload, updated_at)
-                VALUES ($1, $2::jsonb, now())
-                ON CONFLICT (agency_id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()
-              `, [ag.id, JSON.stringify(agencyState)]);
-            }
-            console.log('🐘 [OPERZA-DB] Successfully migrated legacy unscoped state to tenant-scoped agency_tenant_states');
-          }
+      if (tableCheck.rows.length === 0) {
+        if (isProd) {
+          throw new Error('[OPERZA-DB] FATAL: Required table "agency_tenant_states" is missing. Please run database migrations with "npm run db:migrate" first.');
+        } else {
+          console.warn('[OPERZA-DB] Notice: "agency_tenant_states" not found. Running migrations recommended.');
         }
       }
 
@@ -598,23 +572,38 @@ async function loadState() {
 
   if (pgPool) {
     try {
-      const res = await pgPool.query('SELECT agency_id, payload FROM agency_tenant_states');
-      if (res.rows.length > 0) {
-        state = emptyState();
-        for (const row of res.rows) {
-          const parsed = row.payload;
-          if (parsed.agency && !state.agencies.some(a => a.id === parsed.agency.id)) {
-            state.agencies.push(parsed.agency);
+      const client = await pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        const res = await client.query('SELECT agency_id, payload FROM agency_tenant_states');
+        if (res.rows.length > 0) {
+          state = emptyState();
+          for (const row of res.rows) {
+            const parsed = row.payload;
+            if (parsed.agency && !state.agencies.some(a => a.id === parsed.agency.id)) {
+              state.agencies.push(parsed.agency);
+            }
+            for (const [col, items] of Object.entries(parsed.records || {})) {
+              state.records[col] = [...(state.records[col] || []), ...(items || [])];
+            }
           }
-          for (const [col, items] of Object.entries(parsed.records || {})) {
-            state.records[col] = [...(state.records[col] || []), ...(items || [])];
-          }
+          await client.query('COMMIT');
+          console.log(`🐘 [OPERZA-DB] Successfully loaded ${res.rows.length} tenant states from PostgreSQL (table: agency_tenant_states)`);
+          return;
         }
-        console.log(`🐘 [OPERZA-DB] Successfully loaded ${res.rows.length} tenant states from PostgreSQL (table: agency_tenant_states)`);
-        return;
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        if (isProd) throw err;
+        console.warn('[OPERZA-DB] Notice reading PostgreSQL tenant states, falling back to local file:', err.message);
+      } finally {
+        await client.query("SELECT set_config('app.current_agency_id', '', false), set_config('app.agency_id', '', false)").catch(() => {});
+        client.release();
       }
     } catch (err) {
-      console.warn('[OPERZA-DB] Notice reading PostgreSQL tenant states, falling back to local file:', err.message);
+      if (isProd) {
+        throw new Error(`[OPERZA-DB] FATAL: Failed loading PostgreSQL tenant states in production: ${err.message}`);
+      }
     }
   }
 
@@ -624,24 +613,36 @@ async function loadState() {
     state = { ...emptyState(), ...parsed, records: { ...emptyState().records, ...(parsed.records || {}) }, snapshots: parsed.snapshots || [] };
     if (pgPool && Array.isArray(state.agencies)) {
       try {
-        for (const ag of state.agencies) {
-          const agState = {
-            agency: ag,
-            records: {},
-            workflows: (state.workflows || []).filter(w => w.agencyId === ag.id),
-            forms: (state.forms || []).filter(f => f.agencyId === ag.id)
-          };
-          for (const [col, items] of Object.entries(state.records || {})) {
-            agState.records[col] = (items || []).filter(item => item.agencyId === ag.id);
+        const client = await pgPool.connect();
+        try {
+          for (const ag of state.agencies) {
+            await client.query('BEGIN');
+            await client.query("SELECT set_config('app.current_agency_id', $1, true), set_config('app.agency_id', $1, true)", [ag.id]);
+            const agState = {
+              agency: ag,
+              records: {},
+              workflows: (state.workflows || []).filter(w => w.agencyId === ag.id),
+              forms: (state.forms || []).filter(f => f.agencyId === ag.id)
+            };
+            for (const [col, items] of Object.entries(state.records || {})) {
+              agState.records[col] = (items || []).filter(item => item.agencyId === ag.id);
+            }
+            await client.query(
+              `INSERT INTO agency_tenant_states (agency_id, payload, updated_at)
+               VALUES ($1, $2::jsonb, now())
+               ON CONFLICT (agency_id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()`,
+              [ag.id, JSON.stringify(agState)]
+            );
+            await client.query('COMMIT');
           }
-          await pgPool.query(
-            `INSERT INTO agency_tenant_states (agency_id, payload, updated_at)
-             VALUES ($1, $2::jsonb, now())
-             ON CONFLICT (agency_id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()`,
-            [ag.id, JSON.stringify(agState)]
-          );
+          console.log('🐘 [OPERZA-DB] Seeded tenant states in agency_tenant_states from local store');
+        } catch (err) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw err;
+        } finally {
+          await client.query("SELECT set_config('app.current_agency_id', '', false), set_config('app.agency_id', '', false)").catch(() => {});
+          client.release();
         }
-        console.log('🐘 [OPERZA-DB] Seeded tenant states in agency_tenant_states from local store');
       } catch (err) {
         console.warn('[OPERZA-DB] Notice seeding PostgreSQL tenant states:', err.message);
       }
@@ -662,29 +663,42 @@ async function saveState(targetAgencyId) {
 
     if (pgPool) {
       try {
-        const agenciesToPersist = targetAgencyId
-          ? state.agencies.filter(a => a.id === targetAgencyId)
-          : state.agencies;
+        const client = await pgPool.connect();
+        try {
+          const agenciesToPersist = targetAgencyId
+            ? state.agencies.filter(a => a.id === targetAgencyId)
+            : state.agencies;
 
-        for (const ag of agenciesToPersist) {
-          const agState = {
-            agency: ag,
-            records: {},
-            workflows: (state.workflows || []).filter(w => w.agencyId === ag.id),
-            forms: (state.forms || []).filter(f => f.agencyId === ag.id)
-          };
-          for (const [col, items] of Object.entries(state.records || {})) {
-            agState.records[col] = (items || []).filter(item => item.agencyId === ag.id);
+          for (const ag of agenciesToPersist) {
+            await client.query('BEGIN');
+            await client.query("SELECT set_config('app.current_agency_id', $1, true), set_config('app.agency_id', $1, true)", [ag.id]);
+            const agState = {
+              agency: ag,
+              records: {},
+              workflows: (state.workflows || []).filter(w => w.agencyId === ag.id),
+              forms: (state.forms || []).filter(f => f.agencyId === ag.id)
+            };
+            for (const [col, items] of Object.entries(state.records || {})) {
+              agState.records[col] = (items || []).filter(item => item.agencyId === ag.id);
+            }
+            await client.query(
+              `INSERT INTO agency_tenant_states (agency_id, payload, updated_at)
+               VALUES ($1, $2::jsonb, now())
+               ON CONFLICT (agency_id) DO UPDATE SET payload = EXCLUDED.payload, version = agency_tenant_states.version + 1, updated_at = now()`,
+              [ag.id, JSON.stringify(agState)]
+            );
+            await client.query('COMMIT');
           }
-          await pgPool.query(
-            `INSERT INTO agency_tenant_states (agency_id, payload, updated_at)
-             VALUES ($1, $2::jsonb, now())
-             ON CONFLICT (agency_id) DO UPDATE SET payload = EXCLUDED.payload, version = agency_tenant_states.version + 1, updated_at = now()`,
-            [ag.id, JSON.stringify(agState)]
-          );
+        } catch (err) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw err;
+        } finally {
+          await client.query("SELECT set_config('app.current_agency_id', '', false), set_config('app.agency_id', '', false)").catch(() => {});
+          client.release();
         }
       } catch (pgErr) {
         console.error('[OPERZA-DB] Failed to persist tenant states to PostgreSQL:', pgErr.message);
+        if (isProd) throw pgErr;
       }
     }
   });
@@ -6877,7 +6891,8 @@ if (WebSocketServer) {
 
     let session = null;
     if (token) {
-      session = state.sessions.find(s => s.token === token && new Date(s.expiresAt) > new Date());
+      const tokenHash = hash(token);
+      session = state.sessions.find(s => (s.tokenHash === tokenHash || s.token === token) && new Date(s.expiresAt) > new Date());
     }
 
     if (isProd && !session) {
@@ -6886,8 +6901,11 @@ if (WebSocketServer) {
       return;
     }
 
-    ws.agencyId = session?.agencyId || (new URL(req.url, 'http://localhost').searchParams.get('agencyId') || null);
+    // Enforce tenant scoping: In production, agencyId must strictly derive from validated session.
+    ws.agencyId = session?.agencyId || (isProd ? null : (new URL(req.url, 'http://localhost').searchParams.get('agencyId') || null));
     ws.userId = session?.userId || null;
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
     wsClients.add(ws);
 
     console.log(`[WS] Client connected (agencyId: ${ws.agencyId || 'guest'}, total: ${wsClients.size})`);
@@ -6919,6 +6937,18 @@ if (WebSocketServer) {
 
     ws.on('error', () => wsClients.delete(ws));
   });
+
+  const wsHeartbeat = setInterval(() => {
+    for (const client of wsClients) {
+      if (!client.isAlive) {
+        client.terminate();
+        wsClients.delete(client);
+        continue;
+      }
+      client.isAlive = false;
+      client.ping();
+    }
+  }, 30000);
 
   console.log('📡 WebSocket server attached at /ws');
 }

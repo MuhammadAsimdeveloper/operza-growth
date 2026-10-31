@@ -1,6 +1,15 @@
-import pg from 'pg';
+let pgModule;
+try {
+  pgModule = await import('pg');
+} catch {
+  try {
+    pgModule = await import('../../../apps/api/node_modules/pg/lib/index.js');
+  } catch {
+    // pg will throw on pool creation if not installed
+  }
+}
 
-const { Pool } = pg;
+const Pool = pgModule?.default?.Pool || pgModule?.Pool;
 let pool;
 
 export function databaseConfigured() { return Boolean(process.env.DATABASE_URL); }
