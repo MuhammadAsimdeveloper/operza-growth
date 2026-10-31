@@ -37,6 +37,7 @@ export default function Funnels() {
   const [filter, setFilter] = useState<'all' | 'published' | 'draft'>('all');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [creatingFunnel, setCreatingFunnel] = useState(false);
 
   useEffect(() => {
     api.crm.list<Site>('websites').then((res) => {
@@ -105,12 +106,17 @@ export default function Funnels() {
         title="Funnels"
         subtitle="Multi-step opt-in flows and their conversion performance."
         actions={
-          <div className="segmented">
-            {(['all', 'published', 'draft'] as const).map((f) => (
-              <button key={f} className={filter === f ? 'is-active' : ''} onClick={() => setFilter(f)} style={{ textTransform: 'capitalize' }}>
-                {f}
-              </button>
-            ))}
+          <div className="row" style={{ gap: 10 }}>
+            <div className="segmented">
+              {(['all', 'published', 'draft'] as const).map((f) => (
+                <button key={f} className={filter === f ? 'is-active' : ''} onClick={() => setFilter(f)} style={{ textTransform: 'capitalize' }}>
+                  {f}
+                </button>
+              ))}
+            </div>
+            <button className="btn btn--primary" onClick={() => setCreatingFunnel(true)}>
+              <Icon name="plus" size={15} /> New funnel
+            </button>
           </div>
         }
       />
@@ -191,6 +197,7 @@ export default function Funnels() {
       </div>
 
       {editing && <FunnelBuilder funnel={editing} onClose={() => setEditingId(null)} />}
+      {creatingFunnel && <NewFunnelModal onClose={() => setCreatingFunnel(false)} />}
     </div>
   );
 }
@@ -830,6 +837,171 @@ function FunnelCheckoutPreview({ funnel, onClose }: { funnel: Site; onClose: () 
           </div>
         </div>
       )}
+    </Modal>
+  );
+}
+
+function NewFunnelModal({ onClose }: { onClose: () => void }) {
+  const { state, dispatch } = useStore();
+  const [name, setName] = useState('');
+  const [domain, setDomain] = useState('');
+  const [hasOrderBump, setHasOrderBump] = useState(true);
+  const [bumpPrice, setBumpPrice] = useState('97');
+  const [bumpTitle, setBumpTitle] = useState('VIP Fast-Track Accelerator Toolkit');
+  const [loading, setLoading] = useState(false);
+
+  const canCreate = name.trim().length > 1;
+
+  const handleCreate = async () => {
+    if (!canCreate || loading) return;
+    setLoading(true);
+    const funnelId = uid('fn');
+    const slug = (domain.trim() || name.trim()).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const firstProduct = state.products[0];
+
+    const newFunnel: Site = {
+      id: funnelId,
+      name: name.trim(),
+      kind: 'funnel',
+      domain: slug,
+      published: true,
+      visits: 0,
+      optins: 0,
+      pages: [
+        {
+          id: uid('fp'),
+          name: 'Opt-in Page',
+          path: '/optin',
+          visits: 0,
+          optins: 0,
+          headline: `Free Masterclass: Scale with ${name.trim()}`,
+          subhead: 'Learn the exact frameworks used by top agencies to generate predictable revenue.',
+          cta: 'Claim Free Access',
+          theme: 'gradient',
+        },
+        {
+          id: uid('fp'),
+          name: 'Order Confirmation',
+          path: '/thank-you',
+          visits: 0,
+          optins: 0,
+          headline: 'Your Strategy Session is Confirmed!',
+          subhead: 'Check your inbox for onboarding credentials and private community link.',
+          cta: 'Join VIP Community',
+          theme: 'plain',
+        },
+      ],
+      checkout: {
+        productId: firstProduct?.id ?? 'prod_default',
+        bumps: hasOrderBump
+          ? [
+              {
+                id: uid('ob'),
+                productId: firstProduct?.id ?? 'prod_default',
+                enabled: true,
+                price: parseFloat(bumpPrice) || 97,
+                title: bumpTitle.trim() || 'VIP Implementation Toolkit',
+                copy: 'Get immediate access to copy-paste automation templates and plug-and-play workflows.',
+              },
+            ]
+          : [],
+      },
+    };
+
+    dispatch({ type: 'site/duplicate', copy: newFunnel });
+
+    try {
+      await api.crm.create('websites', newFunnel);
+    } catch (err) {
+      console.error('Failed to save funnel to server:', err);
+    } finally {
+      setLoading(false);
+      onClose();
+    }
+  };
+
+  return (
+    <Modal
+      title="Create New Funnel"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" type="button" onClick={onClose} disabled={loading}>
+            Cancel
+          </button>
+          <button className="btn btn--primary" type="button" disabled={!canCreate || loading} onClick={handleCreate}>
+            {loading ? 'Creating...' : 'Create funnel'}
+          </button>
+        </>
+      }
+    >
+      <div className="stack" style={{ gap: 14 }}>
+        <div className="field">
+          <label htmlFor="fn-name">Funnel Name</label>
+          <input
+            id="fn-name"
+            className="input"
+            autoFocus
+            placeholder="e.g. High-Ticket Client Acquisition Funnel"
+            value={name}
+            onChange={(e) => {
+              setName(e.target.value);
+              if (!domain) {
+                setDomain(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+              }
+            }}
+          />
+        </div>
+
+        <div className="field">
+          <label htmlFor="fn-slug">Public Funnel URL Slug</label>
+          <input
+            id="fn-slug"
+            className="input"
+            style={{ fontFamily: 'var(--font-mono)' }}
+            placeholder="e.g. high-ticket-funnel"
+            value={domain}
+            onChange={(e) => setDomain(e.target.value)}
+          />
+          <div className="hint" style={{ marginTop: 4 }}>
+            Visitors will access your funnel at /api/funnels/public/{domain || 'high-ticket-funnel'}
+          </div>
+        </div>
+
+        <div style={{ borderTop: '1px solid var(--line)', paddingTop: 12 }}>
+          <div className="row row--between" style={{ marginBottom: 10 }}>
+            <div>
+              <strong style={{ fontSize: 13 }}>1-Click Order Bump Offer</strong>
+              <div className="cell-sub">Add high-converting impulse upsell on checkout</div>
+            </div>
+            <Switch on={hasOrderBump} label="Toggle order bump" onChange={() => setHasOrderBump(!hasOrderBump)} />
+          </div>
+
+          {hasOrderBump && (
+            <div className="grid grid--2" style={{ gap: 10, marginTop: 8 }}>
+              <div className="field">
+                <label htmlFor="ob-title">Order Bump Title</label>
+                <input
+                  id="ob-title"
+                  className="input"
+                  value={bumpTitle}
+                  onChange={(e) => setBumpTitle(e.target.value)}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="ob-price">Bump Price ($)</label>
+                <input
+                  id="ob-price"
+                  type="number"
+                  className="input"
+                  value={bumpPrice}
+                  onChange={(e) => setBumpPrice(e.target.value)}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </Modal>
   );
 }
