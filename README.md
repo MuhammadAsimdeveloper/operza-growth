@@ -6,7 +6,7 @@
 **Unified Multi-Tenant CRM + Visual Node Automation + Autonomous AI Copilot**
 
 [![CI Status](https://github.com/MuhammadAsimdeveloper/operza-growth/actions/workflows/ci.yml/badge.svg)](https://github.com/MuhammadAsimdeveloper/operza-growth/actions)
-[![Tests Passing](https://img.shields.io/badge/Tests-202%2F202%20Passed-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
+[![Tests Passing](https://img.shields.io/badge/Tests-211%2F211%20Passed-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
 [![Node.js Version](https://img.shields.io/badge/Node.js-%3E%3D20.0.0-339933.svg?style=flat-square&logo=node.js)](package.json)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6.svg?style=flat-square&logo=typescript)](apps/web)
 [![React](https://img.shields.io/badge/React-19.0-61dafb.svg?style=flat-square&logo=react)](apps/web)
@@ -243,15 +243,22 @@ operza/
 Operza includes an authoritative suite of operational manuals, architectural blueprints, and financial runbooks in `docs/`:
 
 1. [**System Architecture & Topology**](docs/ARCHITECTURE.md) — Comprehensive service topology, presentation layer, API runtime, and persistence architecture.
-2. [**Security Architecture & Threat Model**](docs/SECURITY.md) — Zero-trust multi-tenancy, Row-Level Security, HMAC webhook validation, and cryptographic standards.
-3. [**Production Deployment Manual**](docs/DEPLOYMENT.md) — Docker Compose production deployment, environment setup, and zero-downtime rollback procedures.
-4. [**Environment Reference**](docs/ENVIRONMENT.md) — Complete environment variable specification, secrets generation, and plan limit configurations.
-5. [**Database Architecture & Schema**](docs/DATABASE.md) — PostgreSQL 16 relational tables, role privilege boundaries, RLS policies, and advisory locked migrations.
-6. [**Backup & Disaster Recovery Runbook**](docs/BACKUP-RESTORE.md) — Automated SHA-256 manifest backup engine, point-in-time restore, and retention policies.
-7. [**Automated Testing & QA Guide**](docs/TESTING.md) — 4-tier test pyramid (202 automated checks), static typecheck, and k6 load testing suites.
-8. [**Operations & SRE Runbook**](docs/OPERATIONS.md) — Observability probes, Prometheus metrics, connection pool triage, and incident response playbooks.
-9. [**Pre-Launch Sign-Off Checklist**](docs/LAUNCH-CHECKLIST.md) — 22-point evidence-backed launch readiness certification matrix.
-10. [**AWS Cost Plan & Zero-Spend Runway**](docs/AWS-COST-PLAN.md) — $15/month Lightsail production architecture targeting $100 AWS credit runway with $0 development spend.
+2. [**Global SaaS Architecture**](docs/GLOBAL-ARCHITECTURE.md) — Multi-region topology, primary Mumbai `ap-south-1` latency budgets, and expansion roadmap.
+3. [**Workflow Engine Specification**](docs/WORKFLOW-ENGINE.md) — Node catalog, sandboxed JavaScript code execution, data expressions, and telemetry inspector.
+4. [**CRM & Business OS Specification**](docs/CRM-FEATURES.md) — Multi-tenant sub-accounts, snapshots, contacts, duplicate merging, and omnichannel conversations.
+5. [**Security Architecture & Threat Model**](docs/SECURITY.md) — Zero-trust multi-tenancy, Row-Level Security, HMAC webhook validation, and cryptographic standards.
+6. [**Database Architecture & Schema**](docs/DATABASE.md) — PostgreSQL 16 relational tables, role privilege boundaries, RLS policies, and advisory locked migrations.
+7. [**Internationalization (i18n) Guide**](docs/INTERNATIONALIZATION.md) — UTC timestamps, E.164 phone normalization, multi-currency engine, and UTF-8 encodings.
+8. [**Privacy & GDPR Compliance**](docs/PRIVACY-AND-DATA.md) — Article 20 Data Portability, Article 17 Right to Erasure, and immutable consent tracking.
+9. [**Technical SEO Strategy**](docs/SEO-STRATEGY.md) — Sitemap, robots.txt, canonical coverage, Schema.org JSON-LD, and 106 automated checks.
+10. [**Local Development & Docker Simulation**](docs/LOCAL-DEVELOPMENT.md) — Zero-cost development guide, Docker Compose stack, and test fixtures.
+11. [**Backup & Disaster Recovery Runbook**](docs/BACKUP-RESTORE.md) — Automated SHA-256 manifest backup engine, point-in-time restore, and retention policies.
+12. [**Production Deployment Manual**](docs/DEPLOYMENT.md) — Docker Compose production deployment, environment setup, and zero-downtime rollback procedures.
+13. [**Payment Provider Architecture**](docs/PAYMENT-PROVIDERS.md) — Merchant of Record (Paddle / Lemon Squeezy), Stripe integration, and local gateways.
+14. [**Communications Architecture**](docs/EMAIL-SMS-PROVIDERS.md) — SES SMTP, Twilio SMS, PTA compliance, and zero-cost mock adapters.
+15. [**Automated Testing & QA Guide**](docs/TESTING.md) — 4-tier test pyramid (211 automated checks), static typecheck, and k6 load testing suites.
+16. [**Global Launch Readiness Checklist**](docs/GLOBAL-LAUNCH-CHECKLIST.md) — Pre-launch verification matrix across financial, security, and functional gates.
+17. [**AWS Cost Plan & Zero-Spend Runway**](docs/AWS-COST-PLAN.md) — $15/month Lightsail production architecture targeting $100 AWS credit runway with $0 development spend.
 
 ---
 
