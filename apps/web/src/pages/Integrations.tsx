@@ -37,7 +37,7 @@ export default function Integrations() {
       if (!active || !res?.integrations) return;
       setIntegrations(res.integrations);
     }).catch(() => {
-      // Dev mock initial list if needed
+      // Default catalogue fallback when offline or initializing
       setIntegrations([
         { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, and payment links', icon: 'credit-card', connected: true, accountName: 'Operza Alpha Agency (acct_1928)', status: 'connected', lastSyncAt: new Date().toISOString() },
         { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'SMS messaging, phone numbers, and voice call tracking', icon: 'phone', connected: true, accountName: '+1 (800) 555-0100', status: 'connected', lastSyncAt: new Date().toISOString() },

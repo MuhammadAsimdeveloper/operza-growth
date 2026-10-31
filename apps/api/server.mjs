@@ -352,12 +352,25 @@ function logStructured(level, message, meta = {}) {
   }
 }
 
-// ─── Webhook Replay Protection Cache (1 hour sliding TTL) ──────────────
-const webhookReplayCache = new Map(); // id -> timestamp
-function isWebhookReplay(eventId) {
+// ─── Webhook Replay Protection (Redis TTL + In-Memory Fallback) ──────
+const webhookReplayCache = new Map();
+async function isWebhookReplay(eventId) {
   if (!eventId) return false;
+  if (workflowQueue?.useRedis && workflowQueue.redisClient?.connected) {
+    try {
+      const res = await workflowQueue.redisClient.sendCommand([
+        'SET', `operza:dedupe:${eventId}`, '1', 'EX', '3600', 'NX'
+      ]);
+      if (res === null) {
+        return true;
+      }
+      return false;
+    } catch {
+      // Degrade to in-memory map on command exception
+    }
+  }
+
   const now = Date.now();
-  // Evict older than 1 hour
   for (const [id, ts] of webhookReplayCache.entries()) {
     if (now - ts > 3600000) webhookReplayCache.delete(id);
   }
@@ -2832,7 +2845,7 @@ const server = createServer(async (req, res) => {
       let event;
       try { event = JSON.parse(rawBody.toString('utf8')); } catch { return sendJson(res, 400, { error: 'Invalid JSON' }); }
 
-      if (event.id && isWebhookReplay(`stripe:${event.id}`)) {
+      if (event.id && await isWebhookReplay(`stripe:${event.id}`)) {
         logStructured('WARN', 'Duplicate Stripe webhook event detected and safely skipped', { eventId: event.id });
         return sendJson(res, 200, { received: true, deduplicated: true });
       }
@@ -2897,7 +2910,7 @@ const server = createServer(async (req, res) => {
         console.warn('[TWILIO WEBHOOK] No TWILIO_AUTH_TOKEN configured — skipping signature check');
       }
 
-      if (payload.MessageSid && isWebhookReplay(`twilio:${payload.MessageSid}`)) {
+      if (payload.MessageSid && await isWebhookReplay(`twilio:${payload.MessageSid}`)) {
         logStructured('WARN', 'Duplicate Twilio SMS webhook detected and ignored', { messageSid: payload.MessageSid });
         res.writeHead(200, { 'content-type': 'text/xml' });
         res.end('<Response></Response>');
@@ -3179,7 +3192,7 @@ const server = createServer(async (req, res) => {
         try { payload = JSON.parse(rawBody.toString('utf8')); } catch { payload = {}; }
 
         const eventId = payload.id || payload.entry?.[0]?.id || payload.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id;
-        if (eventId && isWebhookReplay(`whatsapp:${eventId}`)) {
+        if (eventId && await isWebhookReplay(`whatsapp:${eventId}`)) {
           logStructured('WARN', 'Duplicate WhatsApp webhook event detected and safely skipped', { eventId });
           return sendJson(res, 200, { received: true, deduplicated: true });
         }
@@ -3312,7 +3325,7 @@ const server = createServer(async (req, res) => {
         try { payload = JSON.parse(rawBody.toString('utf8')); } catch { payload = {}; }
 
         const eventId = payload.id || payload.entry?.[0]?.id || payload.entry?.[0]?.messaging?.[0]?.message?.mid;
-        if (eventId && isWebhookReplay(`meta:${eventId}`)) {
+        if (eventId && await isWebhookReplay(`meta:${eventId}`)) {
           logStructured('WARN', 'Duplicate Meta webhook event detected and safely skipped', { eventId });
           return sendJson(res, 200, { received: true, deduplicated: true });
         }

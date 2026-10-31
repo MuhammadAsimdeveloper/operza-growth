@@ -238,9 +238,7 @@ export async function executeStep({
         return { status: 'waiting', nodeId, retryAt, result: { retryAt } };
       }
 
-      // ---------------------------------------------------------------
-      // NEW — http_request
-      // ---------------------------------------------------------------
+      // Outbound HTTP webhook dispatch with JSON/text payload negotiation
       case 'http_request': {
         const url = renderTemplate(config.url, ctx);
         const method = (config.method || 'GET').toUpperCase();
@@ -269,9 +267,7 @@ export async function executeStep({
         };
       }
 
-      // ---------------------------------------------------------------
-      // NEW — delay  (minutes / hours / days)
-      // ---------------------------------------------------------------
+      // Timed execution delay with scheduled resumption
       case 'delay': {
         const unit = config.unit || 'minutes';
         const amount = Number(config.amount) || 1;
@@ -281,9 +277,7 @@ export async function executeStep({
         return { status: 'waiting', nodeId, retryAt, result: { retryAt, delayAmount: amount, delayUnit: unit } };
       }
 
-      // ---------------------------------------------------------------
-      // NEW — split_test  (A/B traffic split)
-      // ---------------------------------------------------------------
+      // Traffic split evaluation based on configured percentage weights
       case 'split_test': {
         const pct = Number(config.percentageA) || 50;
         const roll = Math.random() * 100;
@@ -296,9 +290,7 @@ export async function executeStep({
         };
       }
 
-      // ---------------------------------------------------------------
-      // NEW — loop  (iterate over an array in context)
-      // ---------------------------------------------------------------
+      // Array iteration over contextual payload
       case 'loop': {
         const arrayPath = config.arrayPath; // e.g. "contact.tags"
         const items = resolvePath(ctx, arrayPath);
@@ -314,9 +306,7 @@ export async function executeStep({
         };
       }
 
-      // ---------------------------------------------------------------
-      // NEW — set_variable
-      // ---------------------------------------------------------------
+      // Context mutation and scoped variable assignment
       case 'set_variable': {
         const varName = config.name;
         let varValue;
@@ -334,9 +324,7 @@ export async function executeStep({
         };
       }
 
-      // ---------------------------------------------------------------
-      // NEW — math
-      // ---------------------------------------------------------------
+      // Arithmetic transforms and numerical rounding
       case 'math': {
         const a = Number(resolvePath(ctx, config.operandA) ?? config.operandA);
         const b = Number(resolvePath(ctx, config.operandB) ?? config.operandB);
@@ -362,9 +350,7 @@ export async function executeStep({
         };
       }
 
-      // ---------------------------------------------------------------
-      // NEW — filter  (filter / transform arrays)
-      // ---------------------------------------------------------------
+      // Array projection and condition-based filtering
       case 'filter': {
         const arrayPath = config.arrayPath;
         const items = resolvePath(ctx, arrayPath);
@@ -389,9 +375,7 @@ export async function executeStep({
         };
       }
 
-      // ---------------------------------------------------------------
-      // NEW — slack_notify
-      // ---------------------------------------------------------------
+      // Outbound Slack webhook notification
       case 'slack_notify': {
         const webhookUrl = renderTemplate(config.webhookUrl, ctx);
         const text = renderTemplate(config.message || config.text, ctx);
@@ -409,9 +393,7 @@ export async function executeStep({
         return { status: 'completed', nodeId, result: { httpStatus: res.status, slackText: text } };
       }
 
-      // ---------------------------------------------------------------
-      // NEW — update_contact
-      // ---------------------------------------------------------------
+      // CRM entity mutation: contact attribute patching
       case 'update_contact': {
         const contactId = triggerContext.contact?.id;
         if (!contactId) {
@@ -425,9 +407,7 @@ export async function executeStep({
         return { status: 'completed', nodeId, result: { contactUpdated: contactId, fields } };
       }
 
-      // ---------------------------------------------------------------
-      // NEW — create_opportunity
-      // ---------------------------------------------------------------
+      // Pipeline opportunity generation and stage assignment
       case 'create_opportunity': {
         const contactId = triggerContext.contact?.id;
         const name = renderTemplate(config.name || config.title, ctx) || 'New Opportunity';
@@ -438,9 +418,7 @@ export async function executeStep({
         return { status: 'completed', nodeId, result: { opportunityCreated: result?.id || true, name, value, stage } };
       }
 
-      // ---------------------------------------------------------------
-      // NEW — assign_to  (assign contact/task to team member)
-      // ---------------------------------------------------------------
+      // Team member assignment via direct selection or round-robin rotation
       case 'assign_to': {
         const contactId = triggerContext.contact?.id;
         let assigneeId = config.userId;
@@ -457,9 +435,7 @@ export async function executeStep({
         return { status: 'completed', nodeId, result: { assignedTo: assigneeId, contactId } };
       }
 
-      // ---------------------------------------------------------------
-      // NEW — send_review_request
-      // ---------------------------------------------------------------
+      // Automated reputation and customer review dispatch
       case 'send_review_request': {
         const contactId = triggerContext.contact?.id;
         const platform = config.platform || 'google'; // google, facebook, yelp, etc.
@@ -470,9 +446,7 @@ export async function executeStep({
         return { status: 'completed', nodeId, result: { reviewRequestSent: true, platform, channel } };
       }
 
-      // ---------------------------------------------------------------
-      // Default — no-op
-      // ---------------------------------------------------------------
+      // No-op fallback
       default:
         return { status: 'completed', nodeId, result: { notice: 'No-op step' } };
     }
