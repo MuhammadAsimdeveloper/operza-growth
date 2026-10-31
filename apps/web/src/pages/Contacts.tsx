@@ -29,6 +29,9 @@ export default function Contacts() {
   const [tagDraft, setTagDraft] = useState('');
   const [statusDraft, setStatusDraft] = useState<ContactStatus>('lead');
   const [confirmBulk, setConfirmBulk] = useState(false);
+  const [findingDuplicates, setFindingDuplicates] = useState(false);
+  const [duplicateGroups, setDuplicateGroups] = useState<Array<{ reason: string; matchKey: string; contacts: any[] }>>([]);
+  const [showDuplicatesModal, setShowDuplicatesModal] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -112,6 +115,24 @@ export default function Contacts() {
     dispatch({ type: 'contact/bulkStatus', ids: selected, status: statusDraft });
   };
 
+  const handleFindDuplicates = async () => {
+    setFindingDuplicates(true);
+    setNotice('');
+    try {
+      const res = await api.contacts.getDuplicates();
+      if (res?.duplicates && res.duplicates.length > 0) {
+        setDuplicateGroups(res.duplicates);
+        setShowDuplicatesModal(true);
+      } else {
+        setNotice('No duplicate contacts detected based on matching email addresses or phone numbers.');
+      }
+    } catch (err: any) {
+      setNotice(err.message || 'Failed to detect duplicates.');
+    } finally {
+      setFindingDuplicates(false);
+    }
+  };
+
   return (
     <div className="content">
       <PageHeader
@@ -119,6 +140,9 @@ export default function Contacts() {
         subtitle={`${state.contacts.length} people in this workspace`}
         actions={
           <>
+            <button className="btn" onClick={handleFindDuplicates} disabled={findingDuplicates}>
+              <Icon name="link" size={15} /> {findingDuplicates ? 'Scanning…' : 'Find Duplicates'}
+            </button>
             <button className="btn" onClick={() => setImporting(true)}>
               <Icon name="upload" size={15} /> Import CSV
             </button>
@@ -350,6 +374,61 @@ export default function Contacts() {
             }).catch(() => {});
           }}
         />
+      )}
+
+      {showDuplicatesModal && (
+        <Modal
+          title={`Detected Duplicate Contacts (${duplicateGroups.length} cluster${duplicateGroups.length === 1 ? '' : 's'})`}
+          onClose={() => setShowDuplicatesModal(false)}
+          footer={
+            <button className="btn" onClick={() => setShowDuplicatesModal(false)}>
+              Close
+            </button>
+          }
+        >
+          <div className="stack" style={{ gap: 14 }}>
+            <p className="hint">
+              The following contact groups share the same email address or E.164 normalized phone number. Click <strong>Merge Group</strong> to review and combine them into a single primary record.
+            </p>
+            {duplicateGroups.map((group, idx) => (
+              <div key={idx} className="card" style={{ padding: 12, border: '1px solid var(--border)' }}>
+                <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}>
+                  <span className="tag" style={{ textTransform: 'uppercase', fontSize: 11, fontWeight: 700 }}>
+                    Match: {group.reason} ({group.matchKey})
+                  </span>
+                  <button
+                    className="btn btn--sm btn--primary"
+                    type="button"
+                    onClick={() => {
+                      setSelected(group.contacts.map((c) => c.id));
+                      setShowDuplicatesModal(false);
+                      setMerging(true);
+                    }}
+                  >
+                    <Icon name="link" size={13} /> Merge Group ({group.contacts.length})
+                  </button>
+                </div>
+                <div className="stack" style={{ gap: 6 }}>
+                  {group.contacts.map((c: any) => (
+                    <div key={c.id} className="row" style={{ gap: 8, fontSize: 12.5, color: 'var(--text-2)' }}>
+                      <strong style={{ color: 'var(--text-1)' }}>{c.firstName} {c.lastName}</strong>
+                      <span>·</span>
+                      <span>{c.email || 'No email'}</span>
+                      <span>·</span>
+                      <span>{c.phone || 'No phone'}</span>
+                      {c.company && (
+                        <>
+                          <span>·</span>
+                          <span>{c.company}</span>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Modal>
       )}
 
       {merging && (

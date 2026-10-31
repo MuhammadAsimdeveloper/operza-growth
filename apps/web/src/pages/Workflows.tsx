@@ -329,6 +329,23 @@ export default function Workflows() {
     return contact ? `${contact.firstName} ${contact.lastName}` : 'Unknown contact';
   };
 
+  const [duplicating, setDuplicating] = useState(false);
+
+  const handleDuplicate = async (workflowId: string) => {
+    setDuplicating(true);
+    try {
+      const res = await api.workflows.duplicate(workflowId);
+      if (res?.workflow) {
+        dispatch({ type: 'workflow/add', workflow: res.workflow });
+        setSelectedId(res.workflow.id);
+      }
+    } catch (err: any) {
+      console.error('Failed to duplicate workflow:', err);
+    } finally {
+      setDuplicating(false);
+    }
+  };
+
   const addStep = (parentId?: string, branch?: 'yes' | 'no') => {
     if (!selected) return;
     setStepDraft({ workflowId: selected.id, parentId, branch });
@@ -503,6 +520,19 @@ export default function Workflows() {
                     <div style={{ fontSize: 13, fontWeight: 650 }}>{num(w.enrolled)}</div>
                     <div className="cell-sub">enrolled</div>
                   </div>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title={`Duplicate ${w.name}`}
+                    aria-label={`Duplicate ${w.name}`}
+                    disabled={duplicating}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDuplicate(w.id);
+                    }}
+                  >
+                    <Icon name="copy" size={14} />
+                  </button>
                   <Switch on={w.status === 'published'} label={`Toggle ${w.name}`} onChange={() => dispatch({ type: 'workflow/toggle', id: w.id })} />
                 </div>
               </div>
@@ -564,6 +594,15 @@ export default function Workflows() {
                   </Badge>
                   <button type="button" className="btn btn--sm" onClick={() => setRunFor(selected)}>
                     <Icon name="play" size={13} /> Run now
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn--sm"
+                    title="Duplicate this workflow"
+                    disabled={duplicating}
+                    onClick={() => handleDuplicate(selected.id)}
+                  >
+                    <Icon name="copy" size={13} /> {duplicating ? 'Duplicating…' : 'Duplicate'}
                   </button>
                   <button
                     type="button"

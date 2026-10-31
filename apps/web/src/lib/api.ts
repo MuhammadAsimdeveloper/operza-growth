@@ -61,6 +61,8 @@ export const api = {
       request('/api/crm/contacts/bulk-tag', { method: 'POST', body: JSON.stringify({ contactIds, tag }) }),
     importCsv: (csv: string) =>
       request('/api/crm/contacts/import', { method: 'POST', body: JSON.stringify({ csv }) }),
+    getDuplicates: () =>
+      request<{ duplicates: Array<{ reason: string; matchKey: string; contacts: any[] }>; count: number }>('/api/crm/contacts/duplicates'),
     merge: (primaryId: string, mergeIds: string[]) =>
       request('/api/crm/contacts/merge', { method: 'POST', body: JSON.stringify({ primaryId, mergeIds }) }),
     getTimeline: (id: string) =>
@@ -98,6 +100,8 @@ export const api = {
       request(`/api/workflows/runs/${runId}/approve`, { method: 'POST' }),
     run: (workflowId: string, data: { contactId?: string; payload?: any } = {}) =>
       request(`/api/workflows/${workflowId}/run`, { method: 'POST', body: JSON.stringify(data) }),
+    duplicate: (workflowId: string) =>
+      request<{ success: boolean; workflow: any }>(`/api/workflows/${workflowId}/duplicate`, { method: 'POST' }),
   },
   reviews: {
     getPublic: (locationId: string) => request(`/api/reviews/public/${locationId}`),
