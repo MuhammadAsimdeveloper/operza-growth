@@ -42,10 +42,10 @@ async function request(urlPath, options = {}) {
   if (!headers.has('Content-Type') && options.body) {
     headers.set('Content-Type', 'application/json');
   }
-  if (sessionCookie) {
+  if (!headers.has('Cookie') && sessionCookie) {
     headers.set('Cookie', sessionCookie);
   }
-  if (csrfToken) {
+  if (!headers.has('x-operza-csrf') && csrfToken) {
     headers.set('x-operza-csrf', csrfToken);
   }
 
@@ -2665,7 +2665,240 @@ async function runTests() {
     console.log(`Health Status: ${t77_res.status}`);
     console.log('✅ Enterprise observability and security headers verified');
 
-    console.log('\n🎉 ALL 77 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ─────────────────────────────────────────────────────────────
+    // TEST 78: Strict Multi-Tenant Isolation: Cross-Tenant Read Protection
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n[TEST 78] Strict Multi-Tenant Isolation: Cross-Tenant Read Protection');
+    const tenantACookie = sessionCookie;
+    const tenantACsrf = csrfToken;
+
+    // Signup Tenant B (Second Isolated Agency)
+    sessionCookie = '';
+    csrfToken = '';
+    const t78_signupB = await request('/api/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Tenant B Admin',
+        email: `tenantb_${Date.now()}@operza.io`,
+        password: 'Password123!',
+        agencyName: 'Operza Beta Agency'
+      })
+    });
+    console.log(`Tenant B Signup Status: ${t78_signupB.status} Agency: "${t78_signupB.data.agency?.name}"`);
+    const tenantBCookie = sessionCookie;
+    const tenantBCsrf = csrfToken;
+
+    // Create private confidential contact in Tenant B
+    const t78_contactBRes = await request('/api/crm/contacts', {
+      method: 'POST',
+      body: JSON.stringify({
+        firstName: 'Confidential',
+        lastName: 'ClientB',
+        email: `confidential_${Date.now()}@tenantb.io`,
+        phone: '+1 555-0999'
+      })
+    });
+    const contactBId = t78_contactBRes.data.id;
+    console.log(`Tenant B Contact Created: ${t78_contactBRes.status} ID: ${contactBId}`);
+
+    // Switch session context back to Tenant A
+    sessionCookie = tenantACookie;
+    csrfToken = tenantACsrf;
+
+    // Attempt to read Tenant B's contact directly by ID
+    const t78_crossReadRes = await request(`/api/crm/contacts/${contactBId}`);
+    console.log(`Cross-Tenant Read Status (Tenant A querying Tenant B contact): ${t78_crossReadRes.status}`);
+    if (t78_crossReadRes.status !== 404) {
+      throw new Error(`CRITICAL SECURITY FAILURE: Tenant A was able to read Tenant B confidential contact!`);
+    }
+    console.log('✅ Cross-tenant read protection verified: Tenant A cannot read Tenant B data (HTTP 404)');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 79: Strict Multi-Tenant Isolation: Cross-Tenant Mutation & Deletion Protection
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n[TEST 79] Strict Multi-Tenant Isolation: Cross-Tenant Mutation & Deletion Protection');
+    // Attempt to update Tenant B's contact as Tenant A
+    const t79_crossUpdateRes = await request(`/api/crm/contacts/${contactBId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ firstName: 'TamperedByTenantA' })
+    });
+    console.log(`Cross-Tenant Update Status: ${t79_crossUpdateRes.status}`);
+    if (t79_crossUpdateRes.status !== 404) {
+      throw new Error(`CRITICAL SECURITY FAILURE: Tenant A modified Tenant B contact!`);
+    }
+
+    // Attempt to delete Tenant B's contact as Tenant A
+    const t79_crossDeleteRes = await request(`/api/crm/contacts/${contactBId}`, {
+      method: 'DELETE'
+    });
+    console.log(`Cross-Tenant Delete Status: ${t79_crossDeleteRes.status}`);
+    if (t79_crossDeleteRes.status !== 404) {
+      throw new Error(`CRITICAL SECURITY FAILURE: Tenant A deleted Tenant B contact!`);
+    }
+
+    // Verify contact in Tenant B remains untouched
+    sessionCookie = tenantBCookie;
+    csrfToken = tenantBCsrf;
+    const t79_verifyBRes = await request(`/api/crm/contacts/${contactBId}`);
+    if (t79_verifyBRes.status !== 200 || t79_verifyBRes.data.firstName !== 'Confidential') {
+      throw new Error(`Tenant B contact data was compromised!`);
+    }
+    console.log('✅ Cross-tenant mutation and deletion protection verified: Zero data leakage');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 80: Fail-Closed Unauthenticated Gating
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n[TEST 80] Fail-Closed Unauthenticated Gating: Protected CRM Endpoints');
+    const t80_unauthRes = await request('/api/crm/contacts', {
+      headers: {
+        'Cookie': 'operza_session=invalid_fake_token_12345; operza_csrf=fake'
+      }
+    });
+    console.log(`Unauthenticated Access Status: ${t80_unauthRes.status}`);
+    if (t80_unauthRes.status !== 401) {
+      throw new Error(`Unauthenticated request did not fail closed! Status: ${t80_unauthRes.status}`);
+    }
+    console.log('✅ Fail-closed unauthenticated gating verified: HTTP 401 Unauthorized');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 81: Stripe Webhook Cryptographic Verification
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n[TEST 81] Stripe Webhook Cryptographic Verification: Reject Invalid Signatures');
+    const t81_badStripeRes = await request('/api/webhooks/stripe', {
+      method: 'POST',
+      headers: {
+        'stripe-signature': 't=1700000000,v1=bad_fraudulent_signature_hash'
+      },
+      body: JSON.stringify({ id: 'evt_fraud_test', type: 'invoice.paid' })
+    });
+    console.log(`Invalid Stripe Signature Status: ${t81_badStripeRes.status}`);
+    if (t81_badStripeRes.status !== 400) {
+      throw new Error(`Forged Stripe signature was not rejected! Status: ${t81_badStripeRes.status}`);
+    }
+    console.log('✅ Stripe webhook cryptographic verification verified: Forged signatures rejected');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 82: WhatsApp Webhook Handshake Verification Token Gating
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n[TEST 82] WhatsApp Webhook Handshake Verification: Reject Forged Verify Tokens');
+    const t82_badWaRes = await request('/api/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=attacker_token_xyz&hub.challenge=test_123');
+    console.log(`Forged WhatsApp Handshake Status: ${t82_badWaRes.status}`);
+    if (t82_badWaRes.status !== 403) {
+      throw new Error(`Unauthorized WhatsApp verify token was not rejected! Status: ${t82_badWaRes.status}`);
+    }
+    console.log('✅ WhatsApp webhook verification token gating verified: HTTP 403 Forbidden on forged token');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 83: Meta Messenger Webhook Handshake Verification Gating
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n[TEST 83] Meta Messenger Handshake Verification: Reject Forged Verify Tokens');
+    const t83_badMetaRes = await request('/api/webhooks/meta?hub.mode=subscribe&hub.verify_token=attacker_token_xyz&hub.challenge=test_456');
+    console.log(`Forged Meta Handshake Status: ${t83_badMetaRes.status}`);
+    if (t83_badMetaRes.status !== 403) {
+      throw new Error(`Unauthorized Meta verify token was not rejected! Status: ${t83_badMetaRes.status}`);
+    }
+    console.log('✅ Meta Messenger webhook verification token gating verified: HTTP 403 Forbidden on forged token');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 84: Atomic Concurrent API Writes Data Integrity
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n[TEST 84] Atomic Concurrent API Writes: Data Integrity Under Load');
+    sessionCookie = tenantACookie;
+    csrfToken = tenantACsrf;
+
+    const concurrentWrites = Array.from({ length: 10 }).map((_, i) =>
+      request('/api/crm/contacts', {
+        method: 'POST',
+        body: JSON.stringify({
+          firstName: `ConcurrentLead_${i}`,
+          lastName: `Tester_${Date.now()}`,
+          email: `lead_${i}_${Date.now()}@stress-test.io`
+        })
+      })
+    );
+    const writeResults = await Promise.all(concurrentWrites);
+    const allCreated = writeResults.every(r => r.status === 201 && r.data?.id);
+    console.log(`Concurrent Writes Dispatched: 10 | Successful: ${writeResults.filter(r => r.status === 201).length}`);
+    if (!allCreated) {
+      throw new Error(`Concurrent writes suffered data loss or returned non-201 status!`);
+    }
+    console.log('✅ Atomic concurrent API writes verified: 10/10 records safely committed without race condition loss');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 85: Durable Queue Error Retries & Dead-Letter Queue (DLQ)
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n[TEST 85] Durable Queue Retries & Dead-Letter Queue (DLQ) Resilience');
+    const { workflowQueue } = await import('../apps/api/queue.mjs');
+    const testQueueJob = await workflowQueue.enqueue('audit-stress-queue', { action: 'simulate_failure' }, { maxRetries: 2 });
+    console.log(`Job Enqueued: ${testQueueJob.id} Attempts: ${testQueueJob.attempts}`);
+
+    const retryStep1 = await workflowQueue.retryJob(testQueueJob, 'Temporary API connection reset');
+    console.log(`Retry 1 Dispatched: Attempts = ${retryStep1.attempts}`);
+    if (retryStep1.attempts !== 1) {
+      throw new Error(`Queue retry failed to increment attempt count!`);
+    }
+
+    const dlqStep = await workflowQueue.retryJob(retryStep1, 'Permanent authorization refusal');
+    console.log(`DLQ Routing: Dead-Lettered = ${Boolean(dlqStep.deadLetteredAt)} Reason: "${dlqStep.errorReason}"`);
+    if (!dlqStep.deadLetteredAt || !dlqStep.errorReason.includes('Exceeded max retries')) {
+      throw new Error(`Queue failed to route exhausted job to Dead-Letter Queue!`);
+    }
+    console.log('✅ Durable queue error retries & Dead-Letter Queue (DLQ) lifecycle verified');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 86: WebSocket Cross-Tenant Event Isolation
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n[TEST 86] WebSocket Cross-Tenant Real-Time Event Isolation');
+    const wsModule = await import('../apps/api/node_modules/ws/index.js');
+    const WebSocket = wsModule.default?.WebSocket || wsModule.default || wsModule;
+    const wsClientA = new WebSocket(`ws://localhost:4005/ws?agencyId=${t78_signupB.data.agency.id}`); // Client for Beta
+    const wsClientB = new WebSocket('ws://localhost:4005/ws?agencyId=unrelated_agency_xyz'); // Client for different agency
+
+    let receivedByClientA = 0;
+    let receivedByClientB = 0;
+
+    await new Promise((resolve) => {
+      let openCount = 0;
+      function checkOpen() {
+        openCount++;
+        if (openCount === 2) resolve(true);
+      }
+      wsClientA.on('open', checkOpen);
+      wsClientB.on('open', checkOpen);
+    });
+
+    wsClientA.on('message', (data) => {
+      const parsed = JSON.parse(data.toString());
+      if (parsed.event === 'crm.contacts.updated' || parsed.event === 'audit') receivedByClientA++;
+    });
+    wsClientB.on('message', (data) => {
+      const parsed = JSON.parse(data.toString());
+      if (parsed.event === 'crm.contacts.updated' || parsed.event === 'audit') receivedByClientB++;
+    });
+
+    // Switch to Tenant B session and trigger a contact update (which broadcasts to Tenant B only)
+    sessionCookie = tenantBCookie;
+    csrfToken = tenantBCsrf;
+    await request(`/api/crm/contacts/${contactBId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ notes: 'Security check' })
+    });
+
+    await sleep(400);
+    wsClientA.close();
+    wsClientB.close();
+
+    console.log(`WebSocket Client A (Beta Agency) received events: ${receivedByClientA}`);
+    console.log(`WebSocket Client B (Other Agency) received events: ${receivedByClientB}`);
+    if (receivedByClientA === 0) {
+      throw new Error(`WebSocket Client A failed to receive Tenant B contact update event!`);
+    }
+    if (receivedByClientB > 0) {
+      throw new Error(`CRITICAL SECURITY FAILURE: WebSocket Client B (other agency) received ${receivedByClientB} private events from Tenant B!`);
+    }
+    console.log('✅ WebSocket cross-tenant real-time isolation verified: Zero event leakage across tenants');
+
+    console.log('\n🎉 ALL 86 SYSTEM INTEGRATION & SECURITY TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

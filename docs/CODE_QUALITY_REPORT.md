@@ -52,7 +52,7 @@ This report documents the comprehensive code engineering, refactoring, and quali
 ---
 
 ### 2.4. Brand Authenticity & Competitor Negative Filter
-- **Policy Enforcement:** Strict zero-tolerance compliance eliminating legacy references or mentions of competitor platforms (`ghl`, `n8n`, `gohighlevel`).
+- **Policy Enforcement:** Strict zero-tolerance compliance eliminating legacy references or external third-party proprietary system brand names.
 - **Sanitization Scope:**
   - Removed outdated placeholder descriptions such as "demo data only" from [`apps/web/index.html`](file:///C:/Users/Muhammad%20Asim/.gemini/antigravity/scratch/operza/apps/web/index.html).
   - Integrated automated regex scanning into [`scripts/seo-audit/run-seo-checks.mjs`](file:///C:/Users/Muhammad%20Asim/.gemini/antigravity/scratch/operza/scripts/seo-audit/run-seo-checks.mjs) verifying zero occurrences of competitor tokens across marketing views, SEO utilities, schema definitions, robots directives, and HTML shells.

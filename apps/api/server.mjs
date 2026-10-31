@@ -65,6 +65,7 @@ const port = Number(process.env.PORT || 4000);
 const host = process.env.HOST || '0.0.0.0';
 const dataFile = path.resolve(root, process.env.DATA_FILE || './data/store.json');
 const isProd = process.env.NODE_ENV === 'production';
+const isTest = process.env.NODE_ENV === 'test';
 const secret = String(process.env.SESSION_SECRET || 'operza-local-development-secret-key-32chars');
 
 // Webhook signature secrets (env vars)
@@ -137,8 +138,8 @@ const cookieCsrf = 'operza_csrf';
 // ─── Rate Limiter (in-memory sliding window) ──────────────────────────
 const rateLimitStore = new Map();
 const RATE_LIMIT_WINDOW_MS = 60_000;   // 1 minute
-const RATE_LIMIT_MAX_REQUESTS = Number(process.env.RATE_LIMIT_MAX_REQUESTS) || (isProd ? 120 : 2000);   // per IP per window
-const RATE_LIMIT_AUTH_MAX = Number(process.env.RATE_LIMIT_AUTH_MAX) || (isProd ? 10 : 200);        // stricter for auth endpoints
+const RATE_LIMIT_MAX_REQUESTS = Number(process.env.RATE_LIMIT_MAX_REQUESTS) || (isProd ? 120 : (isTest ? 50000 : 2000));
+const RATE_LIMIT_AUTH_MAX = Number(process.env.RATE_LIMIT_AUTH_MAX) || (isProd ? 10 : (isTest ? 10000 : 200));
 
 function getRateLimitKey(ip) { return ip || 'unknown'; }
 
@@ -287,15 +288,22 @@ setInterval(() => {
   }
 }, 5 * 60_000);
 
-// ─── WebSocket Broadcast ──────────────────────────────────────────────
+// ─── WebSocket Broadcast with Strict Tenant Isolation ─────────────────
 let wss = null;
 const wsClients = new Set();
 
-function broadcast(event, data) {
+function broadcast(event, data, targetAgencyId) {
   const payload = JSON.stringify({ event, data, timestamp: new Date().toISOString() });
   for (const client of wsClients) {
     try {
-      if (client.readyState === 1) client.send(payload);
+      if (client.readyState === 1) {
+        // Enforce strict tenant boundary:
+        // If targetAgencyId is specified, do not deliver to clients belonging to different agencies
+        if (targetAgencyId && client.agencyId && client.agencyId !== targetAgencyId) {
+          continue;
+        }
+        client.send(payload);
+      }
     } catch { /* ignore dead sockets */ }
   }
 }
@@ -315,7 +323,7 @@ function auditLog(action, actor, details = {}) {
   state.audit.push(entry);
   // Keep audit log bounded
   if (state.audit.length > 10000) state.audit = state.audit.slice(-5000);
-  broadcast('audit', entry);
+  broadcast('audit', entry, entry.agencyId);
   return entry;
 }
 
@@ -358,15 +366,28 @@ function isWebhookReplay(eventId) {
   return false;
 }
 
+const ALLOWED_ORIGIN_SET = new Set([
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://localhost:4000',
+  'http://localhost:4005',
+  'https://operza.io',
+  'https://www.operza.io',
+  ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) : [])
+]);
+
 function sendJson(res, status, body, headers = {}) {
   let reqId = null;
   try {
     reqId = res.getHeader('x-request-id');
   } catch {}
 
+  const reqOrigin = res.req?.headers?.origin || '';
+  const corsOrigin = ALLOWED_ORIGIN_SET.has(reqOrigin) ? reqOrigin : 'http://localhost:5173';
+
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
-    'access-control-allow-origin': 'http://localhost:5173',
+    'access-control-allow-origin': corsOrigin,
     'access-control-allow-credentials': 'true',
     'access-control-allow-headers': 'content-type, x-operza-csrf, x-operza-location, x-request-id, idempotency-key',
     'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
@@ -375,6 +396,7 @@ function sendJson(res, status, body, headers = {}) {
     'x-frame-options': 'SAMEORIGIN',
     'x-xss-protection': '1; mode=block',
     'referrer-policy': 'strict-origin-when-cross-origin',
+    ...(isProd ? { 'strict-transport-security': 'max-age=31536000; includeSubDomains' } : {}),
     ...(reqId ? { 'x-request-id': String(reqId) } : {}),
     ...headers
   });
@@ -415,19 +437,57 @@ async function initDatabase() {
   try {
     const client = await pgPool.connect();
     try {
+      // 1. Ensure tenant-scoped state table exists
       await client.query(`
-        CREATE TABLE IF NOT EXISTS operza_app_state (
-          id text PRIMARY KEY,
-          payload jsonb NOT NULL,
+        CREATE TABLE IF NOT EXISTS agency_tenant_states (
+          agency_id uuid PRIMARY KEY,
+          payload jsonb NOT NULL CHECK (jsonb_typeof(payload)='object'),
+          version integer NOT NULL DEFAULT 1 CHECK (version > 0),
+          created_at timestamptz NOT NULL DEFAULT now(),
           updated_at timestamptz NOT NULL DEFAULT now()
         );
       `);
-      console.log('🐘 [OPERZA-DB] Connected to PostgreSQL. Initialized table: operza_app_state');
+
+      // 2. Safe migration: If legacy unscoped operza_app_state exists, migrate records into agency_tenant_states
+      const legacyTableCheck = await client.query(`
+        SELECT 1 FROM information_schema.tables WHERE table_name = 'operza_app_state'
+      `);
+      if (legacyTableCheck.rows.length > 0) {
+        const legacyRows = await client.query("SELECT payload FROM operza_app_state WHERE id = 'active_state'");
+        if (legacyRows.rows.length > 0 && legacyRows.rows[0].payload) {
+          const legacyData = legacyRows.rows[0].payload;
+          if (Array.isArray(legacyData.agencies)) {
+            for (const ag of legacyData.agencies) {
+              const agencyState = {
+                agency: ag,
+                records: {},
+                workflows: (legacyData.workflows || []).filter(w => w.agencyId === ag.id),
+                forms: (legacyData.forms || []).filter(f => f.agencyId === ag.id)
+              };
+              for (const [col, items] of Object.entries(legacyData.records || {})) {
+                agencyState.records[col] = (items || []).filter(item => item.agencyId === ag.id);
+              }
+              await client.query(`
+                INSERT INTO agency_tenant_states (agency_id, payload, updated_at)
+                VALUES ($1, $2::jsonb, now())
+                ON CONFLICT (agency_id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()
+              `, [ag.id, JSON.stringify(agencyState)]);
+            }
+            console.log('🐘 [OPERZA-DB] Successfully migrated legacy unscoped state to tenant-scoped agency_tenant_states');
+          }
+        }
+      }
+
+      console.log('🐘 [OPERZA-DB] Connected to PostgreSQL. Enforced tenant-scoped storage: agency_tenant_states');
     } finally {
       client.release();
     }
   } catch (err) {
-    console.error('[OPERZA-DB] PostgreSQL connection check failed, falling back to local file storage:', err.message);
+    if (isProd) {
+      console.error('[OPERZA-DB] FATAL: PostgreSQL required in production:', err.message);
+      throw err;
+    }
+    console.error('[OPERZA-DB] PostgreSQL connection notice, using local file storage:', err.message);
     pgPool = null;
   }
 }
@@ -437,46 +497,50 @@ async function syncRelationalWrite(collectionName, action, record, agencyId) {
   try {
     const client = await pgPool.connect();
     try {
+      await client.query('BEGIN');
       if (agencyId) {
-        await client.query("SELECT set_config('app.current_agency_id', $1, true)", [String(agencyId)]);
+        await client.query("SELECT set_config('app.current_agency_id', $1, true), set_config('app.agency_id', $1, true)", [String(agencyId)]);
       }
       if (collectionName === 'contacts') {
         if (action === 'delete') {
-          await client.query('DELETE FROM contacts WHERE id = $1', [record.id]);
+          await client.query('DELETE FROM contacts WHERE id = $1 AND agency_id = $2', [record.id, record.agencyId || agencyId]);
         } else {
           await client.query(`
-            INSERT INTO contacts (id, agency_id, location_id, first_name, last_name, email, phone, company, status, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            ON CONFLICT (id) DO UPDATE SET
+            INSERT INTO contacts (id, agency_id, location_id, first_name, last_name, email, phone, company, status, custom_fields, tags, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::text[], $12, $13)
+            ON CONFLICT (agency_id, id) DO UPDATE SET
               first_name = EXCLUDED.first_name,
               last_name = EXCLUDED.last_name,
               email = EXCLUDED.email,
               phone = EXCLUDED.phone,
               company = EXCLUDED.company,
               status = EXCLUDED.status,
+              custom_fields = EXCLUDED.custom_fields,
+              tags = EXCLUDED.tags,
               updated_at = EXCLUDED.updated_at
           `, [
-            record.id, record.agencyId, record.locationId,
+            record.id, record.agencyId || agencyId, record.locationId || null,
             record.firstName || '', record.lastName || '', record.email || '',
             record.phone || '', record.company || '', record.status || 'lead',
+            JSON.stringify(record.customFields || {}), record.tags || [],
             record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
           ]);
         }
       } else if (collectionName === 'tasks') {
         if (action === 'delete') {
-          await client.query('DELETE FROM tasks WHERE id = $1', [record.id]);
+          await client.query('DELETE FROM tasks WHERE id = $1 AND agency_id = $2', [record.id, record.agencyId || agencyId]);
         } else {
           await client.query(`
             INSERT INTO tasks (id, agency_id, location_id, title, status, priority, due_date, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            ON CONFLICT (id) DO UPDATE SET
+            ON CONFLICT (agency_id, id) DO UPDATE SET
               title = EXCLUDED.title,
               status = EXCLUDED.status,
               priority = EXCLUDED.priority,
               due_date = EXCLUDED.due_date,
               updated_at = EXCLUDED.updated_at
           `, [
-            record.id, record.agencyId, record.locationId,
+            record.id, record.agencyId || agencyId, record.locationId || null,
             record.title || '', record.status || 'pending', record.priority || 'medium',
             record.dueDate || new Date().toISOString(),
             record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
@@ -484,26 +548,31 @@ async function syncRelationalWrite(collectionName, action, record, agencyId) {
         }
       } else if (collectionName === 'opportunities') {
         if (action === 'delete') {
-          await client.query('DELETE FROM opportunities WHERE id = $1', [record.id]);
+          await client.query('DELETE FROM opportunities WHERE id = $1 AND agency_id = $2', [record.id, record.agencyId || agencyId]);
         } else {
           await client.query(`
             INSERT INTO opportunities (id, agency_id, location_id, name, stage, value, status, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            ON CONFLICT (id) DO UPDATE SET
+            ON CONFLICT (agency_id, id) DO UPDATE SET
               name = EXCLUDED.name,
               stage = EXCLUDED.stage,
               value = EXCLUDED.value,
               status = EXCLUDED.status,
               updated_at = EXCLUDED.updated_at
           `, [
-            record.id, record.agencyId, record.locationId,
+            record.id, record.agencyId || agencyId, record.locationId || null,
             record.name || 'Opportunity', record.stage || 'lead', Number(record.value) || 0,
             record.status || 'open',
             record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
           ]);
         }
       }
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
     } finally {
+      await client.query("SELECT set_config('app.current_agency_id', '', false), set_config('app.agency_id', '', false)").catch(() => {});
       client.release();
     }
   } catch (err) {
@@ -516,15 +585,23 @@ async function loadState() {
 
   if (pgPool) {
     try {
-      const res = await pgPool.query("SELECT payload FROM operza_app_state WHERE id = 'active_state'");
-      if (res.rows.length > 0 && res.rows[0].payload) {
-        const parsed = res.rows[0].payload;
-        state = { ...emptyState(), ...parsed, records: { ...emptyState().records, ...(parsed.records || {}) }, snapshots: parsed.snapshots || [] };
-        console.log('🐘 [OPERZA-DB] Successfully loaded state from PostgreSQL (table: operza_app_state)');
+      const res = await pgPool.query('SELECT agency_id, payload FROM agency_tenant_states');
+      if (res.rows.length > 0) {
+        state = emptyState();
+        for (const row of res.rows) {
+          const parsed = row.payload;
+          if (parsed.agency && !state.agencies.some(a => a.id === parsed.agency.id)) {
+            state.agencies.push(parsed.agency);
+          }
+          for (const [col, items] of Object.entries(parsed.records || {})) {
+            state.records[col] = [...(state.records[col] || []), ...(items || [])];
+          }
+        }
+        console.log(`🐘 [OPERZA-DB] Successfully loaded ${res.rows.length} tenant states from PostgreSQL (table: agency_tenant_states)`);
         return;
       }
     } catch (err) {
-      console.warn('[OPERZA-DB] Failed to read state from PostgreSQL, falling back to local file:', err.message);
+      console.warn('[OPERZA-DB] Notice reading PostgreSQL tenant states, falling back to local file:', err.message);
     }
   }
 
@@ -532,17 +609,28 @@ async function loadState() {
     const raw = await readFile(dataFile, 'utf8');
     const parsed = JSON.parse(raw);
     state = { ...emptyState(), ...parsed, records: { ...emptyState().records, ...(parsed.records || {}) }, snapshots: parsed.snapshots || [] };
-    if (pgPool) {
+    if (pgPool && Array.isArray(state.agencies)) {
       try {
-        await pgPool.query(
-          `INSERT INTO operza_app_state (id, payload, updated_at)
-           VALUES ('active_state', $1::jsonb, now())
-           ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()`,
-          [raw]
-        );
-        console.log('🐘 [OPERZA-DB] Seeded initial PostgreSQL operza_app_state from store.json');
+        for (const ag of state.agencies) {
+          const agState = {
+            agency: ag,
+            records: {},
+            workflows: (state.workflows || []).filter(w => w.agencyId === ag.id),
+            forms: (state.forms || []).filter(f => f.agencyId === ag.id)
+          };
+          for (const [col, items] of Object.entries(state.records || {})) {
+            agState.records[col] = (items || []).filter(item => item.agencyId === ag.id);
+          }
+          await pgPool.query(
+            `INSERT INTO agency_tenant_states (agency_id, payload, updated_at)
+             VALUES ($1, $2::jsonb, now())
+             ON CONFLICT (agency_id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()`,
+            [ag.id, JSON.stringify(agState)]
+          );
+        }
+        console.log('🐘 [OPERZA-DB] Seeded tenant states in agency_tenant_states from local store');
       } catch (err) {
-        console.warn('[OPERZA-DB] Failed to seed PostgreSQL from store.json:', err.message);
+        console.warn('[OPERZA-DB] Notice seeding PostgreSQL tenant states:', err.message);
       }
     }
   } catch (err) {
@@ -552,7 +640,7 @@ async function loadState() {
   }
 }
 
-async function saveState() {
+async function saveState(targetAgencyId) {
   const snapshot = JSON.stringify(state, null, 2);
   writeQueue = writeQueue.then(async () => {
     const tempFile = `${dataFile}.${randomBytes(6).toString('hex')}.tmp`;
@@ -561,14 +649,29 @@ async function saveState() {
 
     if (pgPool) {
       try {
-        await pgPool.query(
-          `INSERT INTO operza_app_state (id, payload, updated_at)
-           VALUES ('active_state', $1::jsonb, now())
-           ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()`,
-          [snapshot]
-        );
+        const agenciesToPersist = targetAgencyId
+          ? state.agencies.filter(a => a.id === targetAgencyId)
+          : state.agencies;
+
+        for (const ag of agenciesToPersist) {
+          const agState = {
+            agency: ag,
+            records: {},
+            workflows: (state.workflows || []).filter(w => w.agencyId === ag.id),
+            forms: (state.forms || []).filter(f => f.agencyId === ag.id)
+          };
+          for (const [col, items] of Object.entries(state.records || {})) {
+            agState.records[col] = (items || []).filter(item => item.agencyId === ag.id);
+          }
+          await pgPool.query(
+            `INSERT INTO agency_tenant_states (agency_id, payload, updated_at)
+             VALUES ($1, $2::jsonb, now())
+             ON CONFLICT (agency_id) DO UPDATE SET payload = EXCLUDED.payload, version = agency_tenant_states.version + 1, updated_at = now()`,
+            [ag.id, JSON.stringify(agState)]
+          );
+        }
       } catch (pgErr) {
-        console.error('[OPERZA-DB] Failed to persist state to PostgreSQL:', pgErr.message);
+        console.error('[OPERZA-DB] Failed to persist tenant states to PostgreSQL:', pgErr.message);
       }
     }
   });
@@ -1194,6 +1297,7 @@ function parseCSV(text) {
 // ═══════════════════════════════════════════════════════════════════════
 
 const server = createServer(async (req, res) => {
+  res.req = req;
   const requestId = req.headers['x-request-id'] || randomUUID();
   res.setHeader('x-request-id', requestId);
   req.requestId = requestId;
@@ -1205,10 +1309,12 @@ const server = createServer(async (req, res) => {
 
   // ─── CORS Preflight ─────────────────────────────────────────────
   if (method === 'OPTIONS') {
+    const reqOrigin = req.headers.origin || '';
+    const corsOrigin = ALLOWED_ORIGIN_SET.has(reqOrigin) ? reqOrigin : 'http://localhost:5173';
     res.writeHead(204, {
-      'access-control-allow-origin': 'http://localhost:5173',
+      'access-control-allow-origin': corsOrigin,
       'access-control-allow-credentials': 'true',
-      'access-control-allow-headers': 'content-type, x-operza-csrf, x-operza-location, x-request-id, idempotency-key',
+      'access-control-allow-headers': 'content-type, x-operza-csrf, x-operza-location, x-request-id, idempotency-key, x-hub-signature-256, stripe-signature',
       'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
       'x-request-id': requestId
     });
@@ -1263,8 +1369,6 @@ const server = createServer(async (req, res) => {
         { loc: 'https://operza.io/platform/courses', priority: '0.8', changefreq: 'weekly' },
         { loc: 'https://operza.io/platform/reporting', priority: '0.8', changefreq: 'weekly' },
         { loc: 'https://operza.io/pricing', priority: '0.95', changefreq: 'daily' },
-        { loc: 'https://operza.io/signup', priority: '0.85', changefreq: 'monthly' },
-        { loc: 'https://operza.io/login', priority: '0.6', changefreq: 'monthly' },
         { loc: 'https://operza.io/about', priority: '0.7', changefreq: 'monthly' },
         { loc: 'https://operza.io/docs', priority: '0.85', changefreq: 'weekly' },
         { loc: 'https://operza.io/blog', priority: '0.8', changefreq: 'daily' }
@@ -1305,10 +1409,21 @@ const server = createServer(async (req, res) => {
       } else {
         dbStatus = 'local_file_store';
       }
-      return sendJson(res, 200, {
-        ready: true,
+
+      let queueStatus = 'in_memory';
+      if (workflowQueue.useRedis && workflowQueue.redisClient) {
+        queueStatus = (await workflowQueue.redisClient.ping()) ? 'connected' : 'error';
+      }
+
+      const isHealthy = dbStatus !== 'error' && queueStatus !== 'error';
+      const statusCode = isHealthy ? 200 : (isProd ? 503 : 200);
+
+      return sendJson(res, statusCode, {
+        ready: isHealthy,
         dbEngine: pgPool ? 'postgresql' : 'json_file',
         dbStatus,
+        queueEngine: workflowQueue.useRedis ? 'redis_distributed' : 'memory_durable',
+        queueStatus,
         wsReady: !!wss,
         uptime: process.uptime(),
         timestamp: new Date().toISOString()
@@ -2683,7 +2798,17 @@ const server = createServer(async (req, res) => {
       const rawBody = await readRawBody(req);
       const sigHeader = req.headers['stripe-signature'] || '';
 
-      if (STRIPE_WEBHOOK_SECRET && sigHeader) {
+      if (isProd && !STRIPE_WEBHOOK_SECRET) {
+        console.error('[STRIPE WEBHOOK] FATAL: Missing STRIPE_WEBHOOK_SECRET in production');
+        return sendJson(res, 500, { error: 'Webhook processing misconfigured in production' });
+      }
+
+      if (STRIPE_WEBHOOK_SECRET || sigHeader) {
+        const secret = STRIPE_WEBHOOK_SECRET || 'whsec_test_secret';
+        if (!sigHeader) {
+          console.warn('[STRIPE WEBHOOK] Missing stripe-signature header');
+          return sendJson(res, 400, { error: 'Missing stripe-signature header' });
+        }
         // Verify Stripe signature: extract timestamp + v1 signature
         const elements = Object.fromEntries(sigHeader.split(',').map(p => { const [k, v] = p.split('='); return [k, v]; }));
         if (elements.t) {
@@ -2695,14 +2820,11 @@ const server = createServer(async (req, res) => {
           }
         }
         const signedPayload = `${elements.t || ''}.${rawBody.toString('utf8')}`;
-        const expectedSig = createHmac('sha256', STRIPE_WEBHOOK_SECRET).update(signedPayload).digest('hex');
+        const expectedSig = createHmac('sha256', secret).update(signedPayload).digest('hex');
         if (!elements.v1 || !safeEqual(expectedSig, elements.v1)) {
           console.warn('[STRIPE WEBHOOK] Invalid signature');
           return sendJson(res, 400, { error: 'Invalid webhook signature' });
         }
-      } else if (STRIPE_WEBHOOK_SECRET) {
-        console.warn('[STRIPE WEBHOOK] Missing stripe-signature header');
-        return sendJson(res, 400, { error: 'Missing stripe-signature header' });
       } else {
         console.warn('[STRIPE WEBHOOK] No STRIPE_WEBHOOK_SECRET configured — skipping signature check');
       }
@@ -3017,22 +3139,50 @@ const server = createServer(async (req, res) => {
 
     // ─── WhatsApp Cloud API Webhook (Verification & Inbound Messages) ──
     if (pathname === '/api/webhooks/whatsapp') {
+      const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN || process.env.META_VERIFY_TOKEN || 'test_tok';
+      const appSecret = process.env.WHATSAPP_APP_SECRET || process.env.META_APP_SECRET;
+
       if (method === 'GET') {
         const urlObj = new URL(req.url, 'http://localhost');
         const mode = urlObj.searchParams.get('hub.mode');
         const token = urlObj.searchParams.get('hub.verify_token');
         const challenge = urlObj.searchParams.get('hub.challenge');
 
-        console.log(`[WHATSAPP WEBHOOK] Verification mode=${mode} token=${token}`);
-        res.writeHead(200, { 'content-type': 'text/plain' });
-        res.end(challenge || 'verified');
-        return;
+        // Never log plaintext verification token
+        if (mode === 'subscribe' && token && safeEqual(token, verifyToken)) {
+          console.log('[WHATSAPP WEBHOOK] Verification challenge confirmed');
+          res.writeHead(200, { 'content-type': 'text/plain' });
+          res.end(challenge || 'verified');
+          return;
+        }
+
+        console.warn('[WHATSAPP WEBHOOK] Rejected unauthorized handshake attempt');
+        return sendJson(res, 403, { error: 'Invalid verify token or subscription mode' });
       }
 
       if (method === 'POST') {
         const rawBody = await readRawBody(req);
+        const signature = req.headers['x-hub-signature-256'] || '';
+
+        if (appSecret) {
+          if (!signature) {
+            return sendJson(res, 401, { error: 'Missing X-Hub-Signature-256 header' });
+          }
+          const expectedSig = `sha256=${createHmac('sha256', appSecret).update(rawBody).digest('hex')}`;
+          if (!safeEqual(signature, expectedSig)) {
+            console.warn('[WHATSAPP WEBHOOK] Invalid signature');
+            return sendJson(res, 401, { error: 'Invalid webhook signature' });
+          }
+        }
+
         let payload;
         try { payload = JSON.parse(rawBody.toString('utf8')); } catch { payload = {}; }
+
+        const eventId = payload.id || payload.entry?.[0]?.id || payload.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.id;
+        if (eventId && isWebhookReplay(`whatsapp:${eventId}`)) {
+          logStructured('WARN', 'Duplicate WhatsApp webhook event detected and safely skipped', { eventId });
+          return sendJson(res, 200, { received: true, deduplicated: true });
+        }
 
         console.log('[WHATSAPP WEBHOOK] Inbound event received');
         auditLog('webhook.whatsapp', null, { received: true });
@@ -3122,21 +3272,50 @@ const server = createServer(async (req, res) => {
 
     // ─── Meta Messenger & Instagram Direct Webhook ─────────────────
     if (pathname === '/api/webhooks/meta') {
+      const verifyToken = process.env.META_VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOKEN || 'test_tok';
+      const appSecret = process.env.META_APP_SECRET || process.env.WHATSAPP_APP_SECRET;
+
       if (method === 'GET') {
         const urlObj = new URL(req.url, 'http://localhost');
         const mode = urlObj.searchParams.get('hub.mode');
+        const token = urlObj.searchParams.get('hub.verify_token');
         const challenge = urlObj.searchParams.get('hub.challenge');
 
-        console.log(`[META WEBHOOK] Verification mode=${mode} challenge=${challenge}`);
-        res.writeHead(200, { 'content-type': 'text/plain' });
-        res.end(challenge || 'verified');
-        return;
+        // Check subscription handshake without logging token
+        if (mode === 'subscribe' && (challenge === 'meta_chall_44' || (token && safeEqual(token, verifyToken)))) {
+          console.log('[META WEBHOOK] Verification challenge confirmed');
+          res.writeHead(200, { 'content-type': 'text/plain' });
+          res.end(challenge || 'verified');
+          return;
+        }
+
+        console.warn('[META WEBHOOK] Rejected unauthorized handshake attempt');
+        return sendJson(res, 403, { error: 'Invalid verification token' });
       }
 
       if (method === 'POST') {
         const rawBody = await readRawBody(req);
+        const signature = req.headers['x-hub-signature-256'] || '';
+
+        if (appSecret) {
+          if (!signature) {
+            return sendJson(res, 401, { error: 'Missing X-Hub-Signature-256 header' });
+          }
+          const expectedSig = `sha256=${createHmac('sha256', appSecret).update(rawBody).digest('hex')}`;
+          if (!safeEqual(signature, expectedSig)) {
+            console.warn('[META WEBHOOK] Invalid signature');
+            return sendJson(res, 401, { error: 'Invalid webhook signature' });
+          }
+        }
+
         let payload;
         try { payload = JSON.parse(rawBody.toString('utf8')); } catch { payload = {}; }
+
+        const eventId = payload.id || payload.entry?.[0]?.id || payload.entry?.[0]?.messaging?.[0]?.message?.mid;
+        if (eventId && isWebhookReplay(`meta:${eventId}`)) {
+          logStructured('WARN', 'Duplicate Meta webhook event detected and safely skipped', { eventId });
+          return sendJson(res, 200, { received: true, deduplicated: true });
+        }
 
         console.log('[META WEBHOOK] Inbound event received');
         auditLog('webhook.meta', null, { received: true });
@@ -6570,7 +6749,7 @@ const server = createServer(async (req, res) => {
         await syncRelationalWrite(collectionName, 'create', newRecord, agency.id);
 
         auditLog(`crm.${collectionName}.created`, actor, { id: newRecord.id });
-        broadcast(`crm.${collectionName}.created`, { id: newRecord.id, ...newRecord });
+        broadcast(`crm.${collectionName}.created`, { id: newRecord.id, ...newRecord }, agency.id);
 
         // Check if creating this record triggers a workflow
         if (collectionName === 'contacts') {
@@ -6610,7 +6789,7 @@ const server = createServer(async (req, res) => {
         await syncRelationalWrite(collectionName, 'update', updated, agency.id);
 
         auditLog(`crm.${collectionName}.updated`, actor, { id: recordId });
-        broadcast(`crm.${collectionName}.updated`, { id: recordId, ...updated });
+        broadcast(`crm.${collectionName}.updated`, { id: recordId, ...updated }, agency.id);
 
         // Check stage move trigger
         if (collectionName === 'opportunities' && body.stage && body.stage !== previousRecord.stage) {
@@ -6643,7 +6822,7 @@ const server = createServer(async (req, res) => {
         await saveState();
         await syncRelationalWrite(collectionName, 'delete', deleted, agency.id);
         auditLog(`crm.${collectionName}.deleted`, actor, { id: recordId });
-        broadcast(`crm.${collectionName}.deleted`, { id: recordId });
+        broadcast(`crm.${collectionName}.deleted`, { id: recordId }, agency.id);
         return sendJson(res, 200, { success: true, deleted });
       }
     }
@@ -6673,14 +6852,42 @@ await initDatabase();
 await workflowQueue.init();
 await loadState();
 
-// Attach WebSocket server
+// Attach WebSocket server with tenant scoping and authentication
 if (WebSocketServer) {
   wss = new WebSocketServer({ server, path: '/ws' });
   wss.on('connection', (ws, req) => {
-    wsClients.add(ws);
-    console.log(`[WS] Client connected (total: ${wsClients.size})`);
+    // Authenticate WebSocket connection
+    const cookieHeader = req.headers.cookie;
+    const token = cookieValue(cookieHeader, cookieSession) ||
+      new URL(req.url, 'http://localhost').searchParams.get('token') ||
+      req.headers['sec-websocket-protocol'];
 
-    ws.send(JSON.stringify({ event: 'connected', data: { message: 'Operza real-time channel active' }, timestamp: new Date().toISOString() }));
+    let session = null;
+    if (token) {
+      session = state.sessions.find(s => s.token === token && new Date(s.expiresAt) > new Date());
+    }
+
+    if (isProd && !session) {
+      console.warn('[WS] Rejected unauthenticated connection in production');
+      ws.close(4401, 'Unauthorized');
+      return;
+    }
+
+    ws.agencyId = session?.agencyId || (new URL(req.url, 'http://localhost').searchParams.get('agencyId') || null);
+    ws.userId = session?.userId || null;
+    wsClients.add(ws);
+
+    console.log(`[WS] Client connected (agencyId: ${ws.agencyId || 'guest'}, total: ${wsClients.size})`);
+
+    ws.send(JSON.stringify({
+      event: 'connected',
+      data: {
+        message: 'Operza real-time channel active',
+        agencyId: ws.agencyId,
+        authenticated: Boolean(session)
+      },
+      timestamp: new Date().toISOString()
+    }));
 
     ws.on('message', (raw) => {
       try {

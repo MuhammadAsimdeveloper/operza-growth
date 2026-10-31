@@ -60,16 +60,14 @@ const expectedPages = [
   'https://operza.io/pricing',
   'https://operza.io/about',
   'https://operza.io/docs',
-  'https://operza.io/blog',
-  'https://operza.io/login',
-  'https://operza.io/signup'
+  'https://operza.io/blog'
 ];
 
 for (const url of expectedPages) {
   assert(sitemapContent.includes(`<loc>${url}</loc>`), `sitemap includes canonical URL: ${url}`);
 }
 
-// Disallowed private paths check in sitemap
+// Disallowed private paths check in sitemap (including noindex auth routes)
 const forbiddenInSitemap = [
   '/dashboard',
   '/contacts',
@@ -80,7 +78,9 @@ const forbiddenInSitemap = [
   '/templates',
   '/portal/client',
   '/settings',
-  '/api/'
+  '/api/',
+  '/login',
+  '/signup'
 ];
 
 let privateRouteInSitemap = false;
@@ -90,7 +90,7 @@ for (const badRoute of forbiddenInSitemap) {
     break;
   }
 }
-assert(!privateRouteInSitemap, 'sitemap.xml contains 0 private or authenticated application routes');
+assert(!privateRouteInSitemap, 'sitemap.xml contains 0 private or noindex application routes (/login, /signup, /dashboard, etc.)');
 
 // Check priority and changefreq tags
 const locMatches = sitemapContent.match(/<loc>/g) || [];
@@ -98,7 +98,7 @@ const priorityMatches = sitemapContent.match(/<priority>/g) || [];
 const changefreqMatches = sitemapContent.match(/<changefreq>/g) || [];
 const lastmodMatches = sitemapContent.match(/<lastmod>/g) || [];
 
-assert(locMatches.length === 14, `sitemap contains exactly 14 URLs (found: ${locMatches.length})`);
+assert(locMatches.length === 12, `sitemap contains exactly 12 public canonical URLs (found: ${locMatches.length})`);
 assert(priorityMatches.length === locMatches.length, 'Every sitemap entry has a <priority> directive');
 assert(changefreqMatches.length === locMatches.length, 'Every sitemap entry has a <changefreq> directive');
 assert(lastmodMatches.length === locMatches.length, 'Every sitemap entry has a valid <lastmod> timestamp');
@@ -215,6 +215,12 @@ for (const pageFile of marketingPages) {
     foundCanonicals.add(canon);
   }
 }
+
+// Check that auth views (Login & Signup) enforce noindex to prevent indexing low-value auth pages
+const loginContent = fs.readFileSync(path.join(ROOT_DIR, 'apps/web/src/pages/Login.tsx'), 'utf8');
+const signupContent = fs.readFileSync(path.join(ROOT_DIR, 'apps/web/src/pages/Signup.tsx'), 'utf8');
+assert(loginContent.includes('robots="noindex, follow"'), 'Login.tsx explicitly sets robots="noindex, follow"');
+assert(signupContent.includes('robots="noindex, follow"'), 'Signup.tsx explicitly sets robots="noindex, follow"');
 
 console.log('');
 

@@ -46,8 +46,8 @@ export const SCHEMA_SOFTWARE_APPLICATION = {
     '@type': 'AggregateOffer',
     priceCurrency: 'USD',
     lowPrice: '97.00',
-    highPrice: '497.00',
-    offerCount: '3',
+    highPrice: '997.00',
+    offerCount: '4',
   },
   featureList: [
     'Multi-Tenant Agency CRM with Row-Level Security',

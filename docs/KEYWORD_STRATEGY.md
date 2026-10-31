@@ -109,7 +109,7 @@ Long-tail queries reflect high purchase intent and specific architectural requir
 6. **"Self-hosted marketing automation software"**
    - *Target URL:* `/docs` & `/pricing`
    - *Intent:* Technical Evaluation
-   - *Key Angle:* Docker containerization, Node.js + PostgreSQL + BullMQ architecture, complete data sovereignty.
+   - *Key Angle:* Docker containerization, Node.js + PostgreSQL + Durable Redis Queue architecture, complete data sovereignty.
 
 7. **"Multi-client CRM for marketing agencies"**
    - *Target URL:* `/platform/crm`
