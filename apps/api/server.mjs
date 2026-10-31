@@ -5743,6 +5743,34 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 201, { success: true, execution });
     }
 
+    // POST /api/workflows/:id/duplicate — clone workflow definition with fresh IDs
+    if (method === 'POST' && pathname.startsWith('/api/workflows/') && pathname.endsWith('/duplicate')) {
+      const workflowId = pathname.replace('/api/workflows/', '').replace('/duplicate', '').trim();
+      const flow = (state.records.workflows || []).find(
+        w => w.id === workflowId && w.agencyId === agency.id && w.locationId === activeLocation.id
+      );
+      if (!flow) return sendJson(res, 404, { error: 'Workflow not found' });
+
+      const clonedId = randomUUID();
+      const clonedFlow = {
+        ...JSON.parse(JSON.stringify(flow)),
+        id: clonedId,
+        name: `${flow.name} (Copy)`,
+        status: 'draft',
+        version: (flow.version || 1) + 1,
+        enrolled: 0,
+        completed: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      state.records.workflows = state.records.workflows || [];
+      state.records.workflows.push(clonedFlow);
+      await saveState();
+      auditLog('workflow.duplicate', actor, { originalId: flow.id, clonedId });
+      broadcast('workflow.created', { id: clonedId, name: clonedFlow.name });
+      return sendJson(res, 201, { success: true, workflow: clonedFlow });
+    }
+
 
 // 
 
@@ -5855,6 +5883,51 @@ const server = createServer(async (req, res) => {
       await saveState();
       auditLog('crm.contacts.merge', actor, { primaryId, mergedIds: merged });
       return sendJson(res, 200, { success: true, primaryId, mergedCount: merged.length, mergedIds: merged });
+    }
+
+    // GET /api/crm/contacts/duplicates — detect duplicate contact clusters by email or phone
+    if (method === 'GET' && pathname === '/api/crm/contacts/duplicates') {
+      const contacts = (state.records.contacts || []).filter(
+        c => c.agencyId === agency.id && c.locationId === activeLocation.id
+      );
+      const emailMap = new Map();
+      const phoneMap = new Map();
+      const duplicateGroups = [];
+
+      for (const c of contacts) {
+        if (c.email) {
+          const em = String(c.email).toLowerCase().trim();
+          if (!emailMap.has(em)) emailMap.set(em, []);
+          emailMap.get(em).push(c);
+        }
+        if (c.phone) {
+          const ph = normalizeE164(c.phone);
+          if (!phoneMap.has(ph)) phoneMap.set(ph, []);
+          phoneMap.get(ph).push(c);
+        }
+      }
+
+      const seenIds = new Set();
+      for (const [email, list] of emailMap.entries()) {
+        if (list.length > 1) {
+          const key = list.map(c => c.id).sort().join(':');
+          if (!seenIds.has(key)) {
+            seenIds.add(key);
+            duplicateGroups.push({ reason: 'email', matchKey: email, contacts: list });
+          }
+        }
+      }
+      for (const [phone, list] of phoneMap.entries()) {
+        if (list.length > 1) {
+          const key = list.map(c => c.id).sort().join(':');
+          if (!seenIds.has(key)) {
+            seenIds.add(key);
+            duplicateGroups.push({ reason: 'phone', matchKey: phone, contacts: list });
+          }
+        }
+      }
+
+      return sendJson(res, 200, { duplicates: duplicateGroups, count: duplicateGroups.length });
     }
 
 // 

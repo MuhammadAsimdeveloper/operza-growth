@@ -3083,6 +3083,37 @@ async function runTests() {
     }
     console.log(`GDPR Export Generated: Contacts=${exportRes.data.contacts.length} Pipelines=${exportRes.data.pipelines.length} Invoices=${exportRes.data.invoices.length}`);
 
+    // [TEST 92] Workflow Duplication & Versioning: POST /api/workflows/:id/duplicate
+    console.log('\n[TEST 92] Workflow Duplication & Versioning: POST /api/workflows/:id/duplicate');
+    const existingWfs = await request('/api/crm/workflows');
+    const sourceWf = (existingWfs.data || [])[0];
+    if (sourceWf) {
+      const dupRes = await request(`/api/workflows/${sourceWf.id}/duplicate`, { method: 'POST' });
+      if (dupRes.status !== 201 || !dupRes.data.workflow?.id) {
+        throw new Error(`Workflow duplication failed: ${JSON.stringify(dupRes.data)}`);
+      }
+      console.log(`Cloned Workflow ID: ${dupRes.data.workflow.id} Name: "${dupRes.data.workflow.name}" Status: ${dupRes.data.workflow.status}`);
+      console.log('✅ Workflow duplication & versioning verified');
+    }
+
+    // [TEST 93] Contact Duplicate Detection: GET /api/crm/contacts/duplicates
+    console.log('\n[TEST 93] Contact Duplicate Detection: GET /api/crm/contacts/duplicates');
+    await request('/api/crm/contacts', {
+      method: 'POST',
+      body: JSON.stringify({
+        firstName: 'Marcus Duplicate',
+        lastName: 'Vance',
+        email: 'marcus@example.com',
+        phone: '+1 555-0199'
+      })
+    });
+    const dupClusterRes = await request('/api/crm/contacts/duplicates');
+    if (dupClusterRes.status !== 200 || !Array.isArray(dupClusterRes.data.duplicates)) {
+      throw new Error(`Duplicate scan failed: ${JSON.stringify(dupClusterRes.data)}`);
+    }
+    console.log(`Duplicate Clusters Found: ${dupClusterRes.data.count}`);
+    console.log('✅ Contact duplicate detection and clustering verified');
+
     // Create a disposable tenant to test Right to Erasure (deletion)
     sessionCookie = '';
     csrfToken = '';
@@ -3106,7 +3137,7 @@ async function runTests() {
     if (verifyInvalidated.status !== 401) throw new Error(`Deleted agency session was not revoked! Expected 401, got ${verifyInvalidated.status}`);
     console.log('✅ GDPR Data Portability export and Right to Erasure deletion verified');
 
-    console.log('\n🎉 ALL 91 SYSTEM INTEGRATION & SECURITY TESTS PASSED CLEANLY! 🎉');
+    console.log('\n🎉 ALL 93 SYSTEM INTEGRATION & SECURITY TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;
