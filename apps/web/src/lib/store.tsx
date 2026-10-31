@@ -207,10 +207,12 @@ export type Action =
   | { type: 'call/log'; call: CallRecord }
   | { type: 'call/handled'; id: string }
   | { type: 'call/delete'; id: string }
+  | { type: 'number/add'; number: PhoneNumber }
+  | { type: 'number/delete'; id: string }
   | {
       type: 'number/update';
       id: string;
-      patch: Partial<Pick<PhoneNumber, 'label' | 'assignedTo' | 'status' | 'voice' | 'sms'>>;
+      patch: Partial<PhoneNumber>;
     }
   | { type: 'snapshot/create'; id: string; name: string }
   | { type: 'snapshot/restore'; id: string }
@@ -1185,6 +1187,18 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
     case 'call/delete':
       return { ...state, calls: state.calls.filter((c) => c.id !== action.id) };
 
+    case 'number/add':
+      return {
+        ...state,
+        phoneNumbers: [action.number, ...state.phoneNumbers],
+      };
+
+    case 'number/delete':
+      return {
+        ...state,
+        phoneNumbers: state.phoneNumbers.filter((n) => n.id !== action.id),
+      };
+
     case 'number/update':
       return {
         ...state,
@@ -1830,6 +1844,18 @@ function auditMeta(
         action: 'Call log entry deleted',
         entity: 'Phone',
         detail: contactName(byId(state.calls, action.id)?.contactId ?? ''),
+      };
+    case 'number/add':
+      return {
+        action: 'Phone number provisioned',
+        entity: 'Phone',
+        detail: `${action.number.label} · ${action.number.number}`,
+      };
+    case 'number/delete':
+      return {
+        action: 'Phone number released',
+        entity: 'Phone',
+        detail: action.id,
       };
     case 'number/update': {
       const number = byId(state.phoneNumbers, action.id);

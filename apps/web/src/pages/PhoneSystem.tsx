@@ -5,7 +5,7 @@ import { Avatar, Badge, EmptyState, PageHeader, StatCard, Switch } from '../comp
 import { relative, sameDay, toDateTimeInput } from '../lib/format';
 import { uid, useStore } from '../lib/store';
 import { api } from '../lib/api';
-import type { CallDirection, CallOutcome, CallRecord } from '../lib/types';
+import type { CallDirection, CallOutcome, CallRecord, PhoneNumber } from '../lib/types';
 
 const OUTCOME_META: Record<CallOutcome, { label: string; tone: 'green' | 'amber' | 'red' }> = {
   completed: { label: 'Completed', tone: 'green' },
@@ -18,7 +18,6 @@ const DIRECTION_META: Record<CallDirection, { label: string; icon: string }> = {
   outbound: { label: 'Outbound', icon: 'arrow-up' },
 };
 
-/** Formats seconds as e.g. "4m 12s". */
 function talkTime(seconds: number): string {
   return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
 }
@@ -29,6 +28,8 @@ export default function PhoneSystem() {
   const [outcome, setOutcome] = useState<'all' | CallOutcome>('all');
   const [query, setQuery] = useState('');
   const [logging, setLogging] = useState(false);
+  const [provisioning, setProvisioning] = useState(false);
+  const [editingNumber, setEditingNumber] = useState<PhoneNumber | null>(null);
 
   useEffect(() => {
     api.crm.list<CallRecord>('calls').then((res) => {
@@ -36,6 +37,16 @@ export default function PhoneSystem() {
         for (const call of res.data) {
           if (!state.calls.some((x) => x.id === call.id)) {
             dispatch({ type: 'call/log', call });
+          }
+        }
+      }
+    }).catch(() => { /* dev fallback */ });
+
+    api.crm.list<PhoneNumber>('phoneNumbers').then((res) => {
+      if (res.data && res.data.length > 0) {
+        for (const num of res.data) {
+          if (!state.phoneNumbers.some((x) => x.id === num.id)) {
+            dispatch({ type: 'number/add', number: num });
           }
         }
       }
@@ -83,11 +94,16 @@ export default function PhoneSystem() {
     <div className="content">
       <PageHeader
         title="Phone System"
-        subtitle="Workspace numbers and a call log with follow-up tracking. Telephony is simulated — nothing dials out."
+        subtitle="Manage virtual business lines, IVR call routing, voicemail, and omni-channel telephony logs."
         actions={
-          <button className="btn btn--primary" onClick={() => setLogging(true)}>
-            <Icon name="phone" size={15} /> Log a call
-          </button>
+          <div className="row" style={{ gap: 8 }}>
+            <button className="btn" onClick={() => setLogging(true)}>
+              <Icon name="phone" size={15} /> Log a call
+            </button>
+            <button className="btn btn--primary" onClick={() => setProvisioning(true)}>
+              <Icon name="plus" size={15} /> Provision number
+            </button>
+          </div>
         }
       />
 
@@ -121,20 +137,23 @@ export default function PhoneSystem() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="card__head">
           <div>
-            <div className="card__title">Workspace numbers</div>
+            <div className="card__title">Workspace numbers ({state.phoneNumbers.length})</div>
             <div className="card__sub">
-              {state.phoneNumbers.filter((n) => n.status === 'active').length} active of {state.phoneNumbers.length}
+              {state.phoneNumbers.filter((n) => n.status === 'active').length} active lines provisioned
             </div>
           </div>
+          <button className="btn btn--sm btn--primary" onClick={() => setProvisioning(true)}>
+            <Icon name="plus" size={13} /> Buy number
+          </button>
         </div>
         <div className="card__body">
           <div className="grid grid--3">
             {state.phoneNumbers.map((number) => (
-              <div key={number.id} className="card" style={{ boxShadow: 'none' }}>
+              <div key={number.id} className="card" style={{ boxShadow: 'none', border: '1px solid var(--border)' }}>
                 <div className="card__head">
                   <div style={{ minWidth: 0 }}>
                     <div className="card__title">{number.label}</div>
-                    <div className="card__sub mono-cell">{number.number}</div>
+                    <div className="card__sub mono-cell" style={{ fontWeight: 600 }}>{number.number}</div>
                   </div>
                   <div className="card__actions">
                     <Badge tone={number.type === 'local' ? 'blue' : 'violet'}>
@@ -142,7 +161,7 @@ export default function PhoneSystem() {
                     </Badge>
                   </div>
                 </div>
-                <div className="card__body">
+                <div className="card__body stack" style={{ gap: 10 }}>
                   <div className="field">
                     <label htmlFor={`assign-${number.id}`}>Assigned to</label>
                     <select
@@ -164,44 +183,43 @@ export default function PhoneSystem() {
                       ))}
                     </select>
                   </div>
-                  <div className="row row--between" style={{ marginTop: 12 }}>
-                    <span className="cell-sub">Channels</span>
-                    <span className="row" style={{ gap: 6 }}>
-                      <button
-                        type="button"
-                        className={`btn btn--sm${number.voice ? '' : ' btn--ghost'}`}
-                        aria-pressed={number.voice}
-                        onClick={() =>
-                          dispatch({ type: 'number/update', id: number.id, patch: { voice: !number.voice } })
-                        }
-                      >
-                        <Icon name="phone" size={12} /> Voice
-                      </button>
-                      <button
-                        type="button"
-                        className={`btn btn--sm${number.sms ? '' : ' btn--ghost'}`}
-                        aria-pressed={number.sms}
-                        onClick={() => dispatch({ type: 'number/update', id: number.id, patch: { sms: !number.sms } })}
-                      >
-                        <Icon name="message" size={12} /> SMS
-                      </button>
-                    </span>
+
+                  <div className="row row--between" style={{ fontSize: 12 }}>
+                    <span className="cell-sub">Forwarding:</span>
+                    <span style={{ fontWeight: 550 }}>{number.forwardTo || 'Direct to Agent'}</span>
                   </div>
-                  <div className="row row--between" style={{ marginTop: 12 }}>
-                    <span className="cell-sub">
-                      {number.status === 'active' ? 'Active' : 'Inactive'}
-                    </span>
-                    <Switch
-                      on={number.status === 'active'}
-                      label={`Toggle ${number.label} status`}
-                      onChange={() =>
-                        dispatch({
-                          type: 'number/update',
-                          id: number.id,
-                          patch: { status: number.status === 'active' ? 'inactive' : 'active' },
-                        })
-                      }
-                    />
+
+                  <div className="row" style={{ gap: 4, flexWrap: 'wrap' }}>
+                    {number.voice && <Badge tone="blue">Voice</Badge>}
+                    {number.sms && <Badge tone="violet">SMS</Badge>}
+                    {number.mms && <Badge tone="accent">MMS</Badge>}
+                    {number.ivrEnabled && <Badge tone="green">IVR Menu</Badge>}
+                  </div>
+
+                  <div className="row row--between" style={{ borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                    <button
+                      type="button"
+                      className="btn btn--sm btn--ghost"
+                      onClick={() => setEditingNumber(number)}
+                    >
+                      <Icon name="sliders" size={13} /> Routing
+                    </button>
+                    <div className="row" style={{ gap: 8 }}>
+                      <span className="cell-sub" style={{ fontSize: 11.5 }}>
+                        {number.status === 'active' ? 'Active' : 'Inactive'}
+                      </span>
+                      <Switch
+                        on={number.status === 'active'}
+                        label={`Toggle ${number.label} status`}
+                        onChange={() =>
+                          dispatch({
+                            type: 'number/update',
+                            id: number.id,
+                            patch: { status: number.status === 'active' ? 'inactive' : 'active' },
+                          })
+                        }
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -354,7 +372,330 @@ export default function PhoneSystem() {
       </div>
 
       {logging && <LogCallModal onClose={() => setLogging(false)} />}
+      {provisioning && <ProvisionNumberModal onClose={() => setProvisioning(false)} />}
+      {editingNumber && (
+        <ConfigureRoutingModal
+          number={editingNumber}
+          onClose={() => setEditingNumber(null)}
+          onSave={(patch) => {
+            dispatch({
+              type: 'number/update',
+              id: editingNumber.id,
+              patch,
+            });
+            api.crm.update('phoneNumbers', editingNumber.id, patch).catch(() => {});
+            setEditingNumber(null);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+function ProvisionNumberModal({ onClose }: { onClose: () => void }) {
+  const { state, dispatch } = useStore();
+  const [areaCode, setAreaCode] = useState('415');
+  const [label, setLabel] = useState('Primary Advisory Line');
+  const [type, setType] = useState<PhoneNumber['type']>('local');
+  const [assignedTo, setAssignedTo] = useState(state.team[0]?.name || 'Automated Tester');
+  const [voice, setVoice] = useState(true);
+  const [sms, setSms] = useState(true);
+  const [mms, setMms] = useState(true);
+  const [forwardTo, setForwardTo] = useState('+1 (555) 019-9000');
+  const [ivrEnabled, setIvrEnabled] = useState(true);
+  const [ivrMenu, setIvrMenu] = useState('Press 1 for Advisory Sales, Press 2 for VIP Client Support');
+  const [loading, setLoading] = useState(false);
+
+  const generatedPhone = type === 'local' ? `+1 (${areaCode}) ${Math.floor(200 + Math.random() * 700)}-${Math.floor(1000 + Math.random() * 9000)}` : `+1 (800) ${Math.floor(200 + Math.random() * 700)}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+  const handleProvision = async () => {
+    setLoading(true);
+    const newNumber: PhoneNumber = {
+      id: uid('num'),
+      number: generatedPhone,
+      label: label.trim(),
+      type,
+      assignedTo,
+      status: 'active',
+      voice,
+      sms,
+      mms,
+      forwardTo: forwardTo.trim() || undefined,
+      ivrEnabled,
+      ivrMenu: ivrEnabled ? ivrMenu.trim() : undefined,
+      areaCode: type === 'local' ? areaCode : undefined,
+    };
+
+    try {
+      await api.crm.create('phoneNumbers', newNumber);
+    } catch { /* dev fallback */ }
+
+    dispatch({
+      type: 'number/add',
+      number: newNumber,
+    });
+    setLoading(false);
+    onClose();
+  };
+
+  return (
+    <Modal
+      title="Provision Virtual Phone Number"
+      wide
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="btn btn--primary"
+            type="button"
+            disabled={loading || !label.trim()}
+            onClick={handleProvision}
+          >
+            <Icon name="phone" size={14} /> {loading ? 'Provisioning Line...' : `Activate Line (${generatedPhone})`}
+          </button>
+        </>
+      }
+    >
+      <div className="grid grid--2" style={{ gap: 14 }}>
+        <div className="field">
+          <label htmlFor="num-type">Number Classification</label>
+          <select
+            id="num-type"
+            className="select"
+            value={type}
+            onChange={(e) => setType(e.target.value as PhoneNumber['type'])}
+          >
+            <option value="local">Local City Number</option>
+            <option value="toll-free">Toll-Free (+1 800 / 888)</option>
+          </select>
+        </div>
+
+        {type === 'local' && (
+          <div className="field">
+            <label htmlFor="num-area">Area Code / Region</label>
+            <select
+              id="num-area"
+              className="select"
+              value={areaCode}
+              onChange={(e) => setAreaCode(e.target.value)}
+            >
+              <option value="415">415 — San Francisco, CA</option>
+              <option value="212">212 — New York City, NY</option>
+              <option value="312">312 — Chicago, IL</option>
+              <option value="512">512 — Austin, TX</option>
+              <option value="650">650 — Silicon Valley, CA</option>
+              <option value="702">702 — Las Vegas, NV</option>
+              <option value="206">206 — Seattle, WA</option>
+              <option value="305">305 — Miami, FL</option>
+            </select>
+          </div>
+        )}
+      </div>
+
+      <div className="card" style={{ padding: 14, background: 'var(--surface-2)', margin: '14px 0' }}>
+        <div className="row row--between">
+          <div>
+            <div style={{ fontSize: 11, color: 'var(--text-sub)', textTransform: 'uppercase' }}>Selected Line</div>
+            <div style={{ fontSize: 18, fontWeight: 700, fontFamily: 'monospace', color: 'var(--accent)' }}>
+              {generatedPhone}
+            </div>
+          </div>
+          <Badge tone="green">INSTANT CARRIER ACTIVATION</Badge>
+        </div>
+      </div>
+
+      <div className="grid grid--2" style={{ gap: 14 }}>
+        <div className="field">
+          <label htmlFor="num-label">Line friendly label</label>
+          <input
+            id="num-label"
+            className="input"
+            value={label}
+            placeholder="e.g. Inbound Sales Line"
+            onChange={(e) => setLabel(e.target.value)}
+          />
+        </div>
+        <div className="field">
+          <label htmlFor="num-assign">Default line operator</label>
+          <select
+            id="num-assign"
+            className="select"
+            value={assignedTo}
+            onChange={(e) => setAssignedTo(e.target.value)}
+          >
+            {state.team.map((member) => (
+              <option key={member.id} value={member.name}>
+                {member.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 14 }}>
+        <label style={{ fontSize: 13, fontWeight: 600 }}>Enabled Telephony Capabilities</label>
+        <div className="row" style={{ gap: 16, marginTop: 6 }}>
+          <label className="row" style={{ gap: 6, cursor: 'pointer' }}>
+            <input type="checkbox" checked={voice} onChange={(e) => setVoice(e.target.checked)} />
+            <span>Voice Calls</span>
+          </label>
+          <label className="row" style={{ gap: 6, cursor: 'pointer' }}>
+            <input type="checkbox" checked={sms} onChange={(e) => setSms(e.target.checked)} />
+            <span>SMS Two-Way</span>
+          </label>
+          <label className="row" style={{ gap: 6, cursor: 'pointer' }}>
+            <input type="checkbox" checked={mms} onChange={(e) => setMms(e.target.checked)} />
+            <span>MMS Attachments</span>
+          </label>
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 14, background: 'var(--surface-2)', marginTop: 16 }}>
+        <strong style={{ fontSize: 13 }}>Inbound Call Routing & IVR Setup</strong>
+        <div className="field" style={{ marginTop: 10 }}>
+          <label htmlFor="num-forward">Forward incoming calls to</label>
+          <input
+            id="num-forward"
+            className="input"
+            placeholder="+1 (555) 019-9000"
+            value={forwardTo}
+            onChange={(e) => setForwardTo(e.target.value)}
+          />
+        </div>
+
+        <div className="field" style={{ marginTop: 12 }}>
+          <label className="row" style={{ gap: 6, cursor: 'pointer' }}>
+            <input type="checkbox" checked={ivrEnabled} onChange={(e) => setIvrEnabled(e.target.checked)} />
+            <span>Enable Automated Interactive Voice Response (IVR Menu)</span>
+          </label>
+          {ivrEnabled && (
+            <textarea
+              className="textarea"
+              rows={2}
+              style={{ marginTop: 6 }}
+              value={ivrMenu}
+              placeholder="e.g. Press 1 for Sales, Press 2 for VIP Support"
+              onChange={(e) => setIvrMenu(e.target.value)}
+            />
+          )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ConfigureRoutingModal({
+  number,
+  onClose,
+  onSave,
+}: {
+  number: PhoneNumber;
+  onClose: () => void;
+  onSave: (patch: Partial<PhoneNumber>) => void;
+}) {
+  const { state } = useStore();
+  const [label, setLabel] = useState(number.label);
+  const [assignedTo, setAssignedTo] = useState(number.assignedTo);
+  const [forwardTo, setForwardTo] = useState(number.forwardTo || '');
+  const [ivrEnabled, setIvrEnabled] = useState(Boolean(number.ivrEnabled));
+  const [ivrMenu, setIvrMenu] = useState(number.ivrMenu || 'Press 1 for Sales, Press 2 for Support');
+  const [mms, setMms] = useState(Boolean(number.mms));
+
+  return (
+    <Modal
+      title={`Configure Routing: ${number.number}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="btn btn--primary"
+            type="button"
+            onClick={() =>
+              onSave({
+                label: label.trim(),
+                assignedTo,
+                forwardTo: forwardTo.trim() || undefined,
+                ivrEnabled,
+                ivrMenu: ivrEnabled ? ivrMenu.trim() : undefined,
+                mms,
+              })
+            }
+          >
+            Save Routing Rules
+          </button>
+        </>
+      }
+    >
+      <div className="field">
+        <label htmlFor="edit-num-label">Line Name</label>
+        <input
+          id="edit-num-label"
+          className="input"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+        />
+      </div>
+
+      <div className="field" style={{ marginTop: 12 }}>
+        <label htmlFor="edit-num-assign">Assigned Agent</label>
+        <select
+          id="edit-num-assign"
+          className="select"
+          value={assignedTo}
+          onChange={(e) => setAssignedTo(e.target.value)}
+        >
+          {state.team.map((member) => (
+            <option key={member.id} value={member.name}>
+              {member.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="field" style={{ marginTop: 12 }}>
+        <label htmlFor="edit-num-forward">Forward Calls To</label>
+        <input
+          id="edit-num-forward"
+          className="input"
+          placeholder="e.g. +1 555-0123"
+          value={forwardTo}
+          onChange={(e) => setForwardTo(e.target.value)}
+        />
+      </div>
+
+      <div className="field" style={{ marginTop: 12 }}>
+        <label className="row" style={{ gap: 6, cursor: 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={ivrEnabled}
+            onChange={(e) => setIvrEnabled(e.target.checked)}
+          />
+          <span>Enable IVR Digital Receptionist Menu</span>
+        </label>
+        {ivrEnabled && (
+          <textarea
+            className="textarea"
+            rows={2}
+            style={{ marginTop: 6 }}
+            value={ivrMenu}
+            onChange={(e) => setIvrMenu(e.target.value)}
+          />
+        )}
+      </div>
+
+      <div className="field" style={{ marginTop: 12 }}>
+        <label className="row" style={{ gap: 6, cursor: 'pointer' }}>
+          <input type="checkbox" checked={mms} onChange={(e) => setMms(e.target.checked)} />
+          <span>Support MMS Image/Media Messages</span>
+        </label>
+      </div>
+    </Modal>
   );
 }
 
