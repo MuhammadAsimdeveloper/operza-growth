@@ -7,7 +7,7 @@ import { Avatar, Badge, EmptyState } from '../components/ui';
 import { CHANNEL_META, uid, useStore } from '../lib/store';
 import { relative, timeOf } from '../lib/format';
 import { resolveMerge } from '../lib/merge';
-import type { Channel, Snippet } from '../lib/types';
+import type { Channel, Contact, Snippet } from '../lib/types';
 
 const FILTERS = ['all', 'unread', 'starred'] as const;
 type Filter = (typeof FILTERS)[number];
@@ -22,7 +22,8 @@ export default function Conversations() {
   const [draft, setDraft] = useState('');
   const [subject, setSubject] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
-    const [composing, setComposing] = useState(false);
+  const [composing, setComposing] = useState(false);
+  const [widgetModalOpen, setWidgetModalOpen] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
   const [aiDrafting, setAiDrafting] = useState(false);
 
@@ -37,14 +38,26 @@ export default function Conversations() {
       ws.onmessage = (event) => {
         try {
           const msg = JSON.parse(event.data);
-          if (msg.type === 'message.received') {
-            console.log('[Operza Live Ingress Message]', msg);
+          if (msg.type === 'message.received' || msg.type === 'crm.conversation.message_received') {
+            const data = msg.data || msg;
+            if (data.contactName && data.content) {
+              const matchedContact = state.contacts.find((ct) => `${ct.firstName} ${ct.lastName}`.trim().toLowerCase() === data.contactName.trim().toLowerCase());
+              const existingConv = matchedContact ? state.conversations.find((c) => c.contactId === matchedContact.id) : null;
+              if (existingConv) {
+                dispatch({
+                  type: 'conversation/send',
+                  id: existingConv.id,
+                  body: data.content,
+                  subject: data.subject,
+                });
+              }
+            }
           }
         } catch {}
       };
     } catch {}
     return () => ws?.close();
-  }, []);
+  }, [state.conversations, dispatch]);
 
   const askAiDraft = () => {
     if (!selected) return;
@@ -162,14 +175,23 @@ export default function Conversations() {
               <Badge tone="accent">
                 {state.conversations.reduce((s, c) => s + c.unread, 0)} unread
               </Badge>
-              <button
-                className="icon-btn"
-                style={{ marginLeft: 'auto' }}
-                aria-label="New conversation"
-                onClick={() => setComposing(true)}
-              >
-                <Icon name="edit" size={16} />
-              </button>
+              <div className="row" style={{ marginLeft: 'auto', gap: 4 }}>
+                <button
+                  className="icon-btn"
+                  title="Webchat Widget Setup"
+                  aria-label="Webchat Widget Setup"
+                  onClick={() => setWidgetModalOpen(true)}
+                >
+                  <Icon name="globe" size={15} />
+                </button>
+                <button
+                  className="icon-btn"
+                  aria-label="New conversation"
+                  onClick={() => setComposing(true)}
+                >
+                  <Icon name="edit" size={16} />
+                </button>
+              </div>
             </div>
             <div className="search">
               <Icon name="search" size={15} />
@@ -190,7 +212,7 @@ export default function Conversations() {
               {CHANNELS.map((ch) => (
                 <option key={ch} value={ch}>
                   {CHANNEL_META[ch].label}
-                  {channelUnread[ch] ? ` Â· ${channelUnread[ch]} unread` : ''}
+                  {channelUnread[ch] ? ` · ${channelUnread[ch]} unread` : ''}
                 </option>
               ))}
             </select>
@@ -261,7 +283,7 @@ export default function Conversations() {
                   {selectedContact.firstName} {selectedContact.lastName}
                 </div>
                 <div className="cell-sub">
-                  {CHANNEL_META[selected.channel].label} Â·{' '}
+                  {CHANNEL_META[selected.channel].label} ·{' '}
                   {selected.channel === 'email'
                     ? selectedContact.email
                     : selected.channel === 'sms' || selected.channel === 'whatsapp'
@@ -278,7 +300,9 @@ export default function Conversations() {
                 >
                   <Icon name="star" size={16} />
                 </button>
-                <span className="badge" style={{ background: wsConnected ? 'rgba(34, 197, 94, 0.15)' : 'rgba(148, 163, 184, 0.15)', color: wsConnected ? '#22c55e' : '#94a3b8', fontSize: 11 }}>{wsConnected ? '?? Live Sync' : '? Standby'}</span>
+                <span className="badge" style={{ background: wsConnected ? 'rgba(34, 197, 94, 0.15)' : 'rgba(148, 163, 184, 0.15)', color: wsConnected ? '#22c55e' : '#94a3b8', fontSize: 11 }}>
+                  {wsConnected ? '● Live Sync' : '○ Standby'}
+                </span>
                 <Link className="btn btn--sm" to={`/contacts/${selectedContact.id}`}>
                   <Icon name="user" size={14} /> View contact
                 </Link>
@@ -294,7 +318,7 @@ export default function Conversations() {
                   {m.subject && <div className="bubble__subject">{m.subject}</div>}
                   {m.body}
                   <div className="bubble__meta">
-                    {m.direction === 'out' ? 'Asim R. Â· ' : ''}
+                    {m.direction === 'out' ? 'Operza Agent · ' : ''}
                     {timeOf(m.at)}
                   </div>
                 </div>
@@ -307,239 +331,340 @@ export default function Conversations() {
               {selected.channel === 'email' && (
                 <input
                   className="composer__subject"
-                  placeholder="Subject lineâ€¦"
+                  placeholder="Subject line..."
                   aria-label="Email subject"
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
                 />
               )}
               <div className="composer__row">
-              <div className="composer__snippets">
-                <button
-                  className="icon-btn"
-                  aria-label="Insert snippet"
-                  aria-expanded={pickerOpen}
-                  onClick={() => setPickerOpen((v) => !v)}
-                >
-                  <Icon name="zap" size={17} />
-                </button>
-                {pickerOpen && (
-                  <>
-                    <div className="popover-backdrop" onClick={() => setPickerOpen(false)} />
-                    <div className="popover" role="menu" aria-label="Snippets">
-                      <div className="popover__head">Insert a snippet</div>
+                <div className="composer__snippets">
+                  <button
+                    className="icon-btn"
+                    aria-label="Insert snippet"
+                    title="Insert saved snippet"
+                    onClick={() => setPickerOpen((o) => !o)}
+                  >
+                    <Icon name="lightning" size={16} />
+                  </button>
+                  {pickerOpen && (
+                    <div className="snippet-picker">
+                      <div className="snippet-picker__title">Insert snippet</div>
                       {snippetsForChannel.length === 0 ? (
-                        <div className="hint" style={{ padding: '6px 10px 10px' }}>
-                          No snippets for this channel yet.
+                        <div className="cell-sub" style={{ padding: '8px 12px' }}>
+                          No snippets for this channel.
                         </div>
                       ) : (
-                        snippetsForChannel.map((snippet) => (
+                        snippetsForChannel.map((s) => (
                           <button
-                            key={snippet.id}
+                            key={s.id}
                             type="button"
-                            role="menuitem"
-                            className="popover__item"
-                            onClick={() => insertSnippet(snippet)}
+                            className="snippet-picker__item"
+                            onClick={() => insertSnippet(s)}
                           >
-                            <span className="popover__label">
-                              {snippet.label}
-                              {snippet.channel && (
-                                <Badge>{CHANNEL_META[snippet.channel].label}</Badge>
-                              )}
-                            </span>
-                            {snippet.subject && (
-                              <span className="popover__subject">
-                                {resolveMerge(snippet.subject, selectedContact, state.customValues)}
-                              </span>
-                            )}
-                            <span className="popover__body">
-                              {resolveMerge(snippet.body, selectedContact, state.customValues)}
-                            </span>
+                            <span className="snippet-picker__label">{s.label}</span>
+                            <span className="snippet-picker__preview">{s.body}</span>
                           </button>
                         ))
                       )}
-                      <Link className="popover__manage" to="/snippets" onClick={() => setPickerOpen(false)}>
-                        Manage snippets
-                      </Link>
                     </div>
-                  </>
-                )}
-              </div>
-              <textarea
-                placeholder={`Reply via ${CHANNEL_META[selected.channel].label}â€¦`}
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    send();
-                  }
-                }}
-                rows={1}
-              />
-              <button type="button" className="btn btn--secondary" onClick={askAiDraft} disabled={aiDrafting} title="Use Operza AI Copilot to draft a response" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <Icon name="sparkles" size={14} /> {aiDrafting ? "Drafting…" : "AI Draft"}
-              </button>
-              <button
-                className="btn btn--primary"
-                onClick={send}
-                disabled={!draft.trim() || (selected.channel === 'whatsapp' && smsChars > 1024)}
-              >
-                <Icon name="send" size={15} /> Send
-              </button>
-              </div>
-              {selected.channel === 'sms' && (
-                <div className="composer__hint">
-                  <span>{smsChars} characters</span>
-                  <span>
-                    {smsSegments} SMS segment{smsSegments === 1 ? '' : 's'}
-                  </span>
+                  )}
                 </div>
-              )}
-              {selected.channel === 'whatsapp' && (
-                <div className="composer__hint">
-                  <span>{smsChars} / 1024 characters</span>
-                  <span>{smsChars > 1024 ? 'Over the WhatsApp limit' : 'Within the WhatsApp limit'}</span>
+
+                <textarea
+                  className="composer__input"
+                  rows={2}
+                  placeholder={`Reply via ${CHANNEL_META[selected.channel].label}...`}
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                      e.preventDefault();
+                      send();
+                    }
+                  }}
+                />
+
+                <div className="row" style={{ gap: 6 }}>
+                  <button
+                    className="btn btn--sm btn--ghost"
+                    title="Generate AI reply draft"
+                    disabled={aiDrafting}
+                    onClick={askAiDraft}
+                  >
+                    <Icon name="sparkles" size={14} /> {aiDrafting ? 'Drafting...' : 'AI Draft'}
+                  </button>
+                  <button
+                    className="btn btn--primary"
+                    disabled={!draft.trim()}
+                    onClick={send}
+                  >
+                    <Icon name="send" size={14} /> Send
+                  </button>
+                </div>
+              </div>
+
+              {selected.channel === 'sms' && (
+                <div className="composer__footer row row--between">
+                  <span className="cell-sub">
+                    {smsChars} chars · {smsSegments} segment{smsSegments === 1 ? '' : 's'}
+                  </span>
+                  <span className="cell-sub">Press Ctrl+Enter to send</span>
                 </div>
               )}
             </div>
           </section>
         ) : (
-          <section className="thread">
+          <section className="thread thread--empty">
             <EmptyState
-              icon={<Icon name="message" size={22} />}
+              icon={<Icon name="message" size={24} />}
               title="Select a conversation"
-              text="Pick a thread on the left to read and reply."
+              text="Choose a thread from the list or start a new conversation."
+              action={
+                <button className="btn btn--sm btn--primary" onClick={() => setComposing(true)}>
+                  New conversation
+                </button>
+              }
             />
           </section>
         )}
       </div>
 
-      {composing && <NewConversation onClose={() => setComposing(false)} onStarted={startConversation} />}
+      {composing && (
+        <NewConversationModal
+          contacts={state.contacts}
+          onClose={() => setComposing(false)}
+          onStart={startConversation}
+        />
+      )}
+
+      {widgetModalOpen && (
+        <WebchatWidgetModal onClose={() => setWidgetModalOpen(false)} />
+      )}
     </div>
   );
 }
 
-function NewConversation({
+function WebchatWidgetModal({ onClose }: { onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const [visitorName, setVisitorName] = useState('Alex Mercer');
+  const [visitorEmail, setVisitorEmail] = useState('alex@ventureflow.io');
+  const [testMsg, setTestMsg] = useState('Hello! We need automated lead routing for our 12-person agency.');
+  const [testResult, setTestResult] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
+
+  const scriptCode = `<script src="${window.location.origin}/widget/operza.js"></script>`;
+
+  const copyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(scriptCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {}
+  };
+
+  const handleSimulateVisitor = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch('/api/widget/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          visitorName,
+          visitorEmail,
+          message: testMsg,
+        }),
+      });
+      const data = await res.json();
+      if (data.reply) {
+        setTestResult(`Success! Lead created. AI Copilot auto-replied: "${data.reply}"`);
+      } else {
+        setTestResult('Success! Inbound lead received and synced to inbox.');
+      }
+    } catch (err: any) {
+      setTestResult(`Test error: ${err.message || 'Failed'}`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <Modal title="Embeddable Webchat Lead Capture Widget" wide onClose={onClose}>
+      <div className="stack" style={{ gap: 14 }}>
+        <p style={{ margin: 0, fontSize: 13, color: 'var(--text-sub)', lineHeight: 1.5 }}>
+          Convert website visitors into paying CRM clients automatically. Add this single lightweight script tag before the closing <code>&lt;/body&gt;</code> tag on any website, Webflow, WordPress, Shopify, or React application.
+        </p>
+
+        <div className="card" style={{ padding: 12, background: 'var(--surface-2)', border: '1px solid var(--border)' }}>
+          <div className="row row--between" style={{ marginBottom: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 600 }}>Embed Script Tag</span>
+            <button className="btn btn--sm btn--primary" onClick={copyCode}>
+              <Icon name="copy" size={13} /> {copied ? 'Copied to Clipboard!' : 'Copy Snippet'}
+            </button>
+          </div>
+          <pre
+            style={{
+              margin: 0,
+              padding: '10px 14px',
+              background: '#090d16',
+              color: '#38bdf8',
+              borderRadius: 6,
+              fontSize: 12,
+              fontFamily: 'monospace',
+              overflowX: 'auto',
+            }}
+          >
+            {scriptCode}
+          </pre>
+        </div>
+
+        <div className="card" style={{ padding: 14, background: 'var(--surface-2)' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+            Simulate Inbound Visitor Test
+          </div>
+          <div className="grid grid--2" style={{ gap: 10 }}>
+            <div className="field">
+              <label>Visitor Name</label>
+              <input
+                className="input"
+                value={visitorName}
+                onChange={(e) => setVisitorName(e.target.value)}
+              />
+            </div>
+            <div className="field">
+              <label>Visitor Email</label>
+              <input
+                className="input"
+                value={visitorEmail}
+                onChange={(e) => setVisitorEmail(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="field" style={{ marginTop: 10 }}>
+            <label>Inquiry Message</label>
+            <input
+              className="input"
+              value={testMsg}
+              onChange={(e) => setTestMsg(e.target.value)}
+            />
+          </div>
+          <div className="row row--between" style={{ marginTop: 12 }}>
+            <button
+              className="btn btn--sm btn--primary"
+              disabled={testing || !testMsg.trim()}
+              onClick={handleSimulateVisitor}
+            >
+              <Icon name="send" size={13} /> {testing ? 'Sending...' : 'Test Inbound Lead Capture'}
+            </button>
+            {testResult && (
+              <span style={{ fontSize: 12, color: 'var(--green)', fontWeight: 550 }}>
+                {testResult}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function NewConversationModal({
+  contacts,
   onClose,
-  onStarted,
+  onStart,
 }: {
+  contacts: Contact[];
   onClose: () => void;
-  onStarted: (id: string) => void;
+  onStart: (id: string) => void;
 }) {
-  const { state, dispatch } = useStore();
-  const [contactId, setContactId] = useState('');
+  const { dispatch } = useStore();
+  const [contactId, setContactId] = useState(contacts[0]?.id ?? '');
   const [channel, setChannel] = useState<Channel>('sms');
-  const [subject, setSubject] = useState('');
-  const [body, setBody] = useState('');
+  const [message, setMessage] = useState('');
 
-  const contacts = useMemo(
-    () =>
-      [...state.contacts].sort((a, b) =>
-        `${a.firstName} ${a.lastName}`.localeCompare(`${b.firstName} ${b.lastName}`),
-      ),
-    [state.contacts],
-  );
-  const existing = state.conversations.find(
-    (c) => c.contactId === contactId && c.channel === channel,
-  );
-  const canSend = contactId !== '' && body.trim().length > 0;
+  const contact = contacts.find((c) => c.id === contactId);
+  const canSend = Boolean(contact && message.trim());
 
-  const start = () => {
-    if (!canSend) return;
-    const id = uid('cv');
+  const handleStart = () => {
+    if (!contact || !canSend) return;
+    const newId = uid('conv');
     dispatch({
       type: 'conversation/start',
-      id,
-      contactId,
+      id: newId,
+      contactId: contact.id,
       channel,
-      body: body.trim(),
-      subject: channel === 'email' && subject.trim() ? subject.trim() : undefined,
+      body: message.trim(),
     });
-    onStarted(existing?.id ?? id);
+    api.conversations.sendMessage(newId, {
+      content: message.trim(),
+      channel,
+    }).catch(() => {});
+    onStart(newId);
   };
 
   return (
     <Modal
-      title="New conversation"
+      title="New Conversation"
       onClose={onClose}
       footer={
         <>
           <button className="btn" type="button" onClick={onClose}>
             Cancel
           </button>
-          <button className="btn btn--primary" type="button" disabled={!canSend} onClick={start}>
-            <Icon name="send" size={14} /> Start conversation
+          <button
+            className="btn btn--primary"
+            type="button"
+            disabled={!canSend}
+            onClick={handleStart}
+          >
+            Start Conversation
           </button>
         </>
       }
     >
-      <div className="grid grid--2">
-        <div className="field">
-          <label htmlFor="conversation-contact">Contact</label>
-          <select
-            id="conversation-contact"
-            className="select"
-            value={contactId}
-            onChange={(e) => setContactId(e.target.value)}
-          >
-            <option value="" disabled>
-              Choose a contactâ€¦
-            </option>
-            {contacts.map((contact) => (
-              <option key={contact.id} value={contact.id}>
-                {contact.firstName} {contact.lastName}
-                {contact.company ? ` â€” ${contact.company}` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="conversation-channel">Channel</label>
-          <select
-            id="conversation-channel"
-            className="select"
-            value={channel}
-            onChange={(e) => setChannel(e.target.value as Channel)}
-          >
-            {CHANNELS.map((ch) => (
-              <option key={ch} value={ch}>
-                {CHANNEL_META[ch].label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-      {channel === 'email' && (
-        <div className="field">
-          <label htmlFor="conversation-subject">Subject</label>
-          <input
-            id="conversation-subject"
-            className="input"
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-            placeholder="What is this about?"
-          />
-        </div>
-      )}
       <div className="field">
-        <label htmlFor="conversation-body">First message</label>
+        <label htmlFor="new-conv-contact">Contact</label>
+        <select
+          id="new-conv-contact"
+          className="select"
+          value={contactId}
+          onChange={(e) => setContactId(e.target.value)}
+        >
+          {contacts.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.firstName} {c.lastName} — {c.company || c.email}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="field" style={{ marginTop: 12 }}>
+        <label htmlFor="new-conv-channel">Channel</label>
+        <select
+          id="new-conv-channel"
+          className="select"
+          value={channel}
+          onChange={(e) => setChannel(e.target.value as Channel)}
+        >
+          <option value="sms">SMS Text</option>
+          <option value="email">Email</option>
+          <option value="whatsapp">WhatsApp</option>
+          <option value="webchat">Webchat</option>
+        </select>
+      </div>
+
+      <div className="field" style={{ marginTop: 12 }}>
+        <label htmlFor="new-conv-msg">First Message</label>
         <textarea
-          id="conversation-body"
-          className="input"
-          rows={4}
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="Write the opening messageâ€¦"
+          id="new-conv-msg"
+          className="textarea"
+          rows={3}
+          placeholder="Hi there, thanks for connecting with us..."
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
         />
       </div>
-      {existing && (
-        <div className="callout">
-          This contact already has {channel === 'sms' ? 'an SMS' : `a ${CHANNEL_META[channel].label}`} thread
-          â€” the message will be added to it instead of starting a new one.
-        </div>
-      )}
     </Modal>
   );
 }
-
