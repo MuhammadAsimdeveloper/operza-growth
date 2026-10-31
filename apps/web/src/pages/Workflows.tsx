@@ -3,6 +3,7 @@ import { api } from '../lib/api';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, PageHeader, StatCard, StatusBadge, Switch } from '../components/ui';
+import { WorkflowCanvas } from '../components/WorkflowCanvas';
 import { num, pct, relative } from '../lib/format';
 import { uid, useStore } from '../lib/store';
 import type {
@@ -279,6 +280,7 @@ export default function Workflows() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [viewingRun, setViewingRun] = useState<any | null>(null);
   const [realRuns, setRealRuns] = useState<any[]>([]);
+  const [viewMode, setViewMode] = useState<'graph' | 'tree'>('graph');
 
   const fetchRuns = () => {
     api.workflows
@@ -531,6 +533,26 @@ export default function Workflows() {
                   </div>
                 </div>
                 <div className="card__actions">
+                  <div style={{ display: 'inline-flex', background: 'var(--surface-3)', borderRadius: 6, padding: 2, marginRight: 4 }}>
+                    <button
+                      type="button"
+                      className={`btn btn--xs ${viewMode === 'graph' ? 'btn--primary' : 'btn--subtle'}`}
+                      style={{ padding: '4px 8px', fontSize: 11, border: 'none' }}
+                      onClick={() => setViewMode('graph')}
+                      title="Visual Nodal Canvas (n8n Mode)"
+                    >
+                      <Icon name="share" size={11} /> Visual Graph
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn btn--xs ${viewMode === 'tree' ? 'btn--primary' : 'btn--subtle'}`}
+                      style={{ padding: '4px 8px', fontSize: 11, border: 'none' }}
+                      onClick={() => setViewMode('tree')}
+                      title="Step List (GHL Mode)"
+                    >
+                      <Icon name="sliders" size={11} /> Step List
+                    </button>
+                  </div>
                   <Badge tone={selected.status === 'published' ? 'green' : 'default'} dot>
                     {selected.status}
                   </Badge>
@@ -547,22 +569,30 @@ export default function Workflows() {
                   </button>
                 </div>
               </div>
-              <div className="card__body">
-                <div className="flow">
-                  <span className="flow__trigger">
-                    <Icon name={TRIGGER_ICON[selected.trigger.kind]} size={13} /> {triggerText(selected.trigger)}
-                  </span>
-                  {renderSteps(selected.actions)}
-                  <button type="button" className="flow__add" onClick={() => addStep()}>
-                    <Icon name="plus" size={14} /> Add step
-                  </button>
-                  <div className="flow__node" style={{ borderStyle: 'dashed', color: 'var(--text-3)' }}>
-                    <span className="flow__node-icon" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-                      <Icon name="check" size={13} />
+              <div className="card__body" style={{ padding: viewMode === 'graph' ? 0 : undefined }}>
+                {viewMode === 'graph' ? (
+                  <WorkflowCanvas
+                    workflow={selected}
+                    onEditStep={(step) => editStep(step)}
+                    onAddStep={() => addStep()}
+                  />
+                ) : (
+                  <div className="flow">
+                    <span className="flow__trigger">
+                      <Icon name={TRIGGER_ICON[selected.trigger.kind]} size={13} /> {triggerText(selected.trigger)}
                     </span>
-                    <div>Goal reached â€” exit workflow</div>
+                    {renderSteps(selected.actions)}
+                    <button type="button" className="flow__add" onClick={() => addStep()}>
+                      <Icon name="plus" size={14} /> Add step
+                    </button>
+                    <div className="flow__node" style={{ borderStyle: 'dashed', color: 'var(--text-3)' }}>
+                      <span className="flow__node-icon" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+                        <Icon name="check" size={13} />
+                      </span>
+                      <div>Goal reached — exit workflow</div>
+                    </div>
                   </div>
-                </div>
+                )}
                 <div className="divider" style={{ margin: '14px 0' }} />
                 <div className="row row--between">
                   <span className="hint">Completion rate</span>

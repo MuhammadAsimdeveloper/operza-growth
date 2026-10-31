@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, PageHeader, StatCard, StatusBadge, Switch } from '../components/ui';
+import { VisualPageBuilder } from '../components/VisualPageBuilder';
 import { uid, useStore } from '../lib/store';
 import { currency, num, pct } from '../lib/format';
 import { api } from '../lib/api';
@@ -208,6 +209,7 @@ function FunnelBuilder({ funnel, onClose }: { funnel: Site; onClose: () => void 
   const [path, setPath] = useState('');
   const [bumpProductId, setBumpProductId] = useState('');
   const [preview, setPreview] = useState(false);
+  const [editingCanvasPage, setEditingCanvasPage] = useState<SitePage | null>(null);
 
   const activeProducts = state.products.filter((p) => p.active);
   const checkout = funnel.checkout;
@@ -334,7 +336,16 @@ function FunnelBuilder({ funnel, onClose }: { funnel: Site; onClose: () => void 
                   {num(page.optins)} opt-ins · {pct(page.optins, page.visits || 1)}
                 </div>
               </div>
-              <div className="row" style={{ gap: 2 }}>
+              <div className="row" style={{ gap: 4 }}>
+                <button
+                  type="button"
+                  className="btn btn--xs btn--primary"
+                  style={{ display: 'inline-flex', gap: 4, padding: '3px 8px', fontSize: 11 }}
+                  onClick={() => setEditingCanvasPage(page)}
+                  title="Open Visual Funnel Page Builder"
+                >
+                  <Icon name="edit" size={12} /> Design Canvas
+                </button>
                 <button
                   type="button"
                   className="icon-btn"
@@ -621,6 +632,14 @@ function FunnelBuilder({ funnel, onClose }: { funnel: Site; onClose: () => void 
       )}
 
       {preview && <FunnelCheckoutPreview funnel={funnel} onClose={() => setPreview(false)} />}
+      {editingCanvasPage && (
+        <VisualPageBuilder
+          pageName={editingCanvasPage.name}
+          pagePath={editingCanvasPage.path}
+          onSave={() => setEditingCanvasPage(null)}
+          onClose={() => setEditingCanvasPage(null)}
+        />
+      )}
     </Modal>
   );
 }

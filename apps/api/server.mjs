@@ -5,6 +5,7 @@ import { readFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { executeStep, calculateChecksum } from '../../packages/workflow-engine/src/engine.mjs';
+import { workflowQueue } from './queue.mjs';
 
 // Conditionally load ws — gracefully degrade if not installed
 let WebSocketServer;
@@ -367,6 +368,85 @@ async function initDatabase() {
   } catch (err) {
     console.error('[OPERZA-DB] PostgreSQL connection check failed, falling back to local file storage:', err.message);
     pgPool = null;
+  }
+}
+
+async function syncRelationalWrite(collectionName, action, record, agencyId) {
+  if (!pgPool) return;
+  try {
+    const client = await pgPool.connect();
+    try {
+      if (agencyId) {
+        await client.query("SELECT set_config('app.current_agency_id', $1, true)", [String(agencyId)]);
+      }
+      if (collectionName === 'contacts') {
+        if (action === 'delete') {
+          await client.query('DELETE FROM contacts WHERE id = $1', [record.id]);
+        } else {
+          await client.query(`
+            INSERT INTO contacts (id, agency_id, location_id, first_name, last_name, email, phone, company, status, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (id) DO UPDATE SET
+              first_name = EXCLUDED.first_name,
+              last_name = EXCLUDED.last_name,
+              email = EXCLUDED.email,
+              phone = EXCLUDED.phone,
+              company = EXCLUDED.company,
+              status = EXCLUDED.status,
+              updated_at = EXCLUDED.updated_at
+          `, [
+            record.id, record.agencyId, record.locationId,
+            record.firstName || '', record.lastName || '', record.email || '',
+            record.phone || '', record.company || '', record.status || 'lead',
+            record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
+          ]);
+        }
+      } else if (collectionName === 'tasks') {
+        if (action === 'delete') {
+          await client.query('DELETE FROM tasks WHERE id = $1', [record.id]);
+        } else {
+          await client.query(`
+            INSERT INTO tasks (id, agency_id, location_id, title, status, priority, due_date, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (id) DO UPDATE SET
+              title = EXCLUDED.title,
+              status = EXCLUDED.status,
+              priority = EXCLUDED.priority,
+              due_date = EXCLUDED.due_date,
+              updated_at = EXCLUDED.updated_at
+          `, [
+            record.id, record.agencyId, record.locationId,
+            record.title || '', record.status || 'pending', record.priority || 'medium',
+            record.dueDate || new Date().toISOString(),
+            record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
+          ]);
+        }
+      } else if (collectionName === 'opportunities') {
+        if (action === 'delete') {
+          await client.query('DELETE FROM opportunities WHERE id = $1', [record.id]);
+        } else {
+          await client.query(`
+            INSERT INTO opportunities (id, agency_id, location_id, name, stage, value, status, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (id) DO UPDATE SET
+              name = EXCLUDED.name,
+              stage = EXCLUDED.stage,
+              value = EXCLUDED.value,
+              status = EXCLUDED.status,
+              updated_at = EXCLUDED.updated_at
+          `, [
+            record.id, record.agencyId, record.locationId,
+            record.name || 'Opportunity', record.stage || 'lead', Number(record.value) || 0,
+            record.status || 'open',
+            record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
+          ]);
+        }
+      }
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.warn(`[OPERZA-RELATIONAL] Sync notice for ${collectionName}:`, err.message);
   }
 }
 
@@ -1138,6 +1218,52 @@ const server = createServer(async (req, res) => {
           totalLocations: (state.locations || []).length,
           records: entityCounts
         },
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    // ─── Queue & Relational Database Admin Telemetry ───────────────
+    if (pathname === '/api/admin/queue/status') {
+      return sendJson(res, 200, {
+        queue: workflowQueue.getMetrics(),
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    if (method === 'POST' && pathname === '/api/admin/queue/test-job') {
+      const body = await readBody(req);
+      const delayMs = Number(body.delayMs) || 0;
+      let job;
+      if (delayMs > 0) {
+        job = await workflowQueue.enqueueDelayed('test_queue', body.data || { test: true }, delayMs);
+      } else {
+        job = await workflowQueue.enqueue('test_queue', body.data || { test: true });
+      }
+      return sendJson(res, 201, { success: true, job, metrics: workflowQueue.getMetrics() });
+    }
+
+    if (pathname === '/api/admin/db/status') {
+      let pgInfo = { connected: false, engine: 'json_file' };
+      if (pgPool) {
+        try {
+          const testRes = await pgPool.query('SELECT current_database(), version()');
+          const tablesRes = await pgPool.query(`
+            SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'
+          `);
+          pgInfo = {
+            connected: true,
+            engine: 'postgresql_relational',
+            database: testRes.rows[0]?.current_database,
+            tableCount: tablesRes.rows.length,
+            tables: tablesRes.rows.map(r => r.table_name)
+          };
+        } catch (err) {
+          pgInfo = { connected: false, error: err.message };
+        }
+      }
+      return sendJson(res, 200, {
+        db: pgInfo,
+        inMemoryCollections: Object.keys(state.records || {}).length,
         timestamp: new Date().toISOString()
       });
     }
@@ -5857,6 +5983,7 @@ const server = createServer(async (req, res) => {
         };
         list.push(newRecord);
         await saveState();
+        await syncRelationalWrite(collectionName, 'create', newRecord, agency.id);
 
         auditLog(`crm.${collectionName}.created`, actor, { id: newRecord.id });
         broadcast(`crm.${collectionName}.created`, { id: newRecord.id, ...newRecord });
@@ -5888,6 +6015,7 @@ const server = createServer(async (req, res) => {
         };
         list[index] = updated;
         await saveState();
+        await syncRelationalWrite(collectionName, 'update', updated, agency.id);
 
         auditLog(`crm.${collectionName}.updated`, actor, { id: recordId });
         broadcast(`crm.${collectionName}.updated`, { id: recordId, ...updated });
@@ -5921,6 +6049,7 @@ const server = createServer(async (req, res) => {
         if (index === -1) return sendJson(res, 404, { error: 'Record not found' });
         const deleted = list.splice(index, 1)[0];
         await saveState();
+        await syncRelationalWrite(collectionName, 'delete', deleted, agency.id);
         auditLog(`crm.${collectionName}.deleted`, actor, { id: recordId });
         broadcast(`crm.${collectionName}.deleted`, { id: recordId });
         return sendJson(res, 200, { success: true, deleted });
@@ -5939,6 +6068,7 @@ const server = createServer(async (req, res) => {
 // ═══════════════════════════════════════════════════════════════════════
 
 await initDatabase();
+await workflowQueue.init();
 await loadState();
 
 // Attach WebSocket server

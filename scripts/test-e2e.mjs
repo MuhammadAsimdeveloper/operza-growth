@@ -2356,7 +2356,34 @@ async function runTests() {
     }
     console.log('✅ Client portal interactive invoice payment and LMS curriculum progression verified');
 
-    console.log('\n🎉 ALL 67 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ─── TEST 68: Relational Query Cutover & Durable Queue Telemetry ───────
+    console.log('\n[TEST 68] Durable Queue & Relational Database Telemetry: GET /api/admin/queue/status & POST /api/admin/queue/test-job');
+    const t68_queueStatusRes = await request('/api/admin/queue/status');
+    console.log(`Queue Status: ${t68_queueStatusRes.status}`, `Engine: ${t68_queueStatusRes.data.queue?.engine}`, `Connected: ${t68_queueStatusRes.data.queue?.connected}`);
+    if (t68_queueStatusRes.status !== 200 || !t68_queueStatusRes.data.queue?.engine) {
+      throw new Error(`Queue status failed: ${JSON.stringify(t68_queueStatusRes.data)}`);
+    }
+
+    const t68_jobRes = await request('/api/admin/queue/test-job', {
+      method: 'POST',
+      body: JSON.stringify({
+        delayMs: 50,
+        data: { workflowId: 'wf_test_relational', action: 'send_email', recipient: 'ceo@client.com' }
+      })
+    });
+    console.log(`Test Job Dispatch Status: ${t68_jobRes.status}`, `Job ID: ${t68_jobRes.data.job?.id}`);
+    if (t68_jobRes.status !== 201 || !t68_jobRes.data.job?.id) {
+      throw new Error(`Queue test job failed: ${JSON.stringify(t68_jobRes.data)}`);
+    }
+
+    const t68_dbStatusRes = await request('/api/admin/db/status');
+    console.log(`DB Status: ${t68_dbStatusRes.status}`, `Engine: ${t68_dbStatusRes.data.db?.engine}`);
+    if (t68_dbStatusRes.status !== 200 || !t68_dbStatusRes.data.db?.engine) {
+      throw new Error(`DB status failed: ${JSON.stringify(t68_dbStatusRes.data)}`);
+    }
+    console.log('✅ Durable job queue lifecycle and database telemetry verified');
+
+    console.log('\n🎉 ALL 68 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;
