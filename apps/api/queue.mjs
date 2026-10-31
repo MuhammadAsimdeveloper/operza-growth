@@ -145,7 +145,9 @@ export class DurableWorkflowQueue {
     this.redisClient = null;
     this.useRedis = false;
     this.memoryReady = [];
-    this.memoryDelayed = []; // { id, queueName, data, executeAt }
+    this.memoryDelayed = []; // { id, queueName, data, executeAt, attempts, maxRetries }
+    this.memoryDlq = [];     // Dead-letter queue for unrecoverable/exhausted jobs
+    this.idempotencyKeys = new Map(); // idempotencyKey -> { jobId, expiresAt }
   }
 
   async init() {
@@ -163,13 +165,62 @@ export class DurableWorkflowQueue {
     }
   }
 
-  async enqueue(queueName, data) {
+  /**
+   * Calculate exponential backoff with randomized jitter to prevent thundering herds
+   */
+  calculateBackoff(attempt, baseMs = 1000, maxMs = 60000, jitter = 500) {
+    const exp = Math.min(maxMs, baseMs * Math.pow(2, attempt));
+    return Math.floor(exp + Math.random() * jitter);
+  }
+
+  /**
+   * Clean expired idempotency keys
+   */
+  _cleanupIdempotency() {
+    const now = Date.now();
+    for (const [key, record] of this.idempotencyKeys.entries()) {
+      if (record.expiresAt <= now) {
+        this.idempotencyKeys.delete(key);
+      }
+    }
+  }
+
+  async enqueue(queueName, data, options = {}) {
+    this._cleanupIdempotency();
+
+    // Idempotency deduplication check
+    if (options.idempotencyKey) {
+      const existing = this.idempotencyKeys.get(options.idempotencyKey);
+      if (existing && existing.expiresAt > Date.now()) {
+        return {
+          id: existing.jobId,
+          queueName,
+          data,
+          deduplicated: true,
+          enqueuedAt: existing.enqueuedAt
+        };
+      }
+    }
+
+    const jobId = options.id || randomUUID();
     const job = {
-      id: randomUUID(),
+      id: jobId,
       queueName,
       data,
+      attempts: options.attempts || 0,
+      maxRetries: options.maxRetries !== undefined ? options.maxRetries : 3,
+      idempotencyKey: options.idempotencyKey || null,
       enqueuedAt: new Date().toISOString()
     };
+
+    if (options.idempotencyKey) {
+      const ttlMs = options.idempotencyTtlMs || 10 * 60 * 1000; // 10 minutes default
+      this.idempotencyKeys.set(options.idempotencyKey, {
+        jobId,
+        enqueuedAt: job.enqueuedAt,
+        expiresAt: Date.now() + ttlMs
+      });
+    }
 
     if (this.useRedis && this.redisClient?.connected) {
       try {
@@ -184,13 +235,17 @@ export class DurableWorkflowQueue {
     return job;
   }
 
-  async enqueueDelayed(queueName, data, delayMs) {
+  async enqueueDelayed(queueName, data, delayMs, options = {}) {
     const executeAt = Date.now() + Math.max(0, Number(delayMs) || 0);
+    const jobId = options.id || randomUUID();
     const job = {
-      id: randomUUID(),
+      id: jobId,
       queueName,
       data,
       executeAt,
+      attempts: options.attempts || 0,
+      maxRetries: options.maxRetries !== undefined ? options.maxRetries : 3,
+      idempotencyKey: options.idempotencyKey || null,
       enqueuedAt: new Date().toISOString()
     };
 
@@ -210,6 +265,50 @@ export class DurableWorkflowQueue {
 
     this.memoryDelayed.push(job);
     return job;
+  }
+
+  /**
+   * Route failed jobs through exponential backoff or dead-letter queue (DLQ)
+   */
+  async retryJob(job, errorReason = 'Execution failed') {
+    const currentAttempts = (job.attempts || 0) + 1;
+    const maxRetries = job.maxRetries !== undefined ? job.maxRetries : 3;
+
+    if (currentAttempts >= maxRetries) {
+      return this.moveToDeadLetterQueue(job, `Exceeded max retries (${maxRetries}): ${errorReason}`);
+    }
+
+    const backoffMs = this.calculateBackoff(currentAttempts);
+    return this.enqueueDelayed(job.queueName, job.data, backoffMs, {
+      ...job,
+      attempts: currentAttempts
+    });
+  }
+
+  /**
+   * Move an unrecoverable job to the Dead-Letter Queue (DLQ)
+   */
+  async moveToDeadLetterQueue(job, errorReason) {
+    const dlqEntry = {
+      ...job,
+      deadLetteredAt: new Date().toISOString(),
+      errorReason: String(errorReason)
+    };
+
+    if (this.useRedis && this.redisClient?.connected) {
+      try {
+        await this.redisClient.sendCommand([
+          'LPUSH',
+          `operza:q:${job.queueName}:dlq`,
+          JSON.stringify(dlqEntry)
+        ]);
+      } catch {
+        // fallback
+      }
+    }
+
+    this.memoryDlq.push(dlqEntry);
+    return dlqEntry;
   }
 
   async pollReadyJobs(queueName) {
@@ -247,7 +346,9 @@ export class DurableWorkflowQueue {
       connected: this.useRedis ? this.redisClient?.connected : true,
       readyDepth: this.memoryReady.length,
       delayedDepth: this.memoryDelayed.length,
-      totalTracked: this.memoryReady.length + this.memoryDelayed.length
+      dlqDepth: this.memoryDlq.length,
+      idempotencyTracked: this.idempotencyKeys.size,
+      totalTracked: this.memoryReady.length + this.memoryDelayed.length + this.memoryDlq.length
     };
   }
 

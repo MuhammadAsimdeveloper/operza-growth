@@ -327,14 +327,55 @@ function safeEqual(a, b) {
   return aa.length === bb.length && timingSafeEqual(aa, bb);
 }
 
+// ─── Enterprise Structured Logging & Observability ─────────────────────
+function logStructured(level, message, meta = {}) {
+  const logEntry = {
+    timestamp: new Date().toISOString(),
+    level,
+    message,
+    ...meta
+  };
+  if (level === 'ERROR') {
+    console.error(JSON.stringify(logEntry));
+  } else if (level === 'WARN') {
+    console.warn(JSON.stringify(logEntry));
+  } else {
+    console.log(JSON.stringify(logEntry));
+  }
+}
+
+// ─── Webhook Replay Protection Cache (1 hour sliding TTL) ──────────────
+const webhookReplayCache = new Map(); // id -> timestamp
+function isWebhookReplay(eventId) {
+  if (!eventId) return false;
+  const now = Date.now();
+  // Evict older than 1 hour
+  for (const [id, ts] of webhookReplayCache.entries()) {
+    if (now - ts > 3600000) webhookReplayCache.delete(id);
+  }
+  if (webhookReplayCache.has(eventId)) return true;
+  webhookReplayCache.set(eventId, now);
+  return false;
+}
+
 function sendJson(res, status, body, headers = {}) {
+  let reqId = null;
+  try {
+    reqId = res.getHeader('x-request-id');
+  } catch {}
+
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'access-control-allow-origin': 'http://localhost:5173',
     'access-control-allow-credentials': 'true',
-    'access-control-allow-headers': 'content-type, x-operza-csrf, x-operza-location',
+    'access-control-allow-headers': 'content-type, x-operza-csrf, x-operza-location, x-request-id, idempotency-key',
     'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
+    'x-frame-options': 'SAMEORIGIN',
+    'x-xss-protection': '1; mode=block',
+    'referrer-policy': 'strict-origin-when-cross-origin',
+    ...(reqId ? { 'x-request-id': String(reqId) } : {}),
     ...headers
   });
   res.end(JSON.stringify(body));
@@ -1153,6 +1194,10 @@ function parseCSV(text) {
 // ═══════════════════════════════════════════════════════════════════════
 
 const server = createServer(async (req, res) => {
+  const requestId = req.headers['x-request-id'] || randomUUID();
+  res.setHeader('x-request-id', requestId);
+  req.requestId = requestId;
+
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = url.pathname;
   const method = req.method;
@@ -1163,8 +1208,9 @@ const server = createServer(async (req, res) => {
     res.writeHead(204, {
       'access-control-allow-origin': 'http://localhost:5173',
       'access-control-allow-credentials': 'true',
-      'access-control-allow-headers': 'content-type, x-operza-csrf, x-operza-location',
-      'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS'
+      'access-control-allow-headers': 'content-type, x-operza-csrf, x-operza-location, x-request-id, idempotency-key',
+      'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'x-request-id': requestId
     });
     res.end();
     return;
@@ -1253,11 +1299,15 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' && pathname === '/api/admin/queue/test-job') {
       const body = await readBody(req);
       const delayMs = Number(body.delayMs) || 0;
+      const opts = {
+        idempotencyKey: body.idempotencyKey || req.headers['idempotency-key'] || null,
+        maxRetries: body.maxRetries !== undefined ? Number(body.maxRetries) : undefined
+      };
       let job;
       if (delayMs > 0) {
-        job = await workflowQueue.enqueueDelayed('test_queue', body.data || { test: true }, delayMs);
+        job = await workflowQueue.enqueueDelayed('test_queue', body.data || { test: true }, delayMs, opts);
       } else {
-        job = await workflowQueue.enqueue('test_queue', body.data || { test: true });
+        job = await workflowQueue.enqueue('test_queue', body.data || { test: true }, opts);
       }
       return sendJson(res, 201, { success: true, job, metrics: workflowQueue.getMetrics() });
     }
@@ -2533,6 +2583,16 @@ const server = createServer(async (req, res) => {
       const contactId = body.contactId;
       if (!contactId) return sendJson(res, 400, { error: 'contactId required' });
 
+      // Verify contact existence and portal access authorization
+      state.records.contacts = state.records.contacts || [];
+      const targetContact = state.records.contacts.find(c => c.id === contactId);
+      if (!targetContact) {
+        return sendJson(res, 404, { error: 'Contact not found' });
+      }
+      if (targetContact.portalAccess === false) {
+        return sendJson(res, 403, { error: 'Portal access not enabled for this contact' });
+      }
+
       state.records.enrollments = state.records.enrollments || [];
       let enrollment = state.records.enrollments.find(e => e.courseId === courseId && e.contactId === contactId);
       const newProgress = Math.min(100, Math.max(0, Number(body.progress) || 0));
@@ -2572,6 +2632,14 @@ const server = createServer(async (req, res) => {
       if (STRIPE_WEBHOOK_SECRET && sigHeader) {
         // Verify Stripe signature: extract timestamp + v1 signature
         const elements = Object.fromEntries(sigHeader.split(',').map(p => { const [k, v] = p.split('='); return [k, v]; }));
+        if (elements.t) {
+          const timestampSec = Number(elements.t);
+          const currentSec = Math.floor(Date.now() / 1000);
+          if (Math.abs(currentSec - timestampSec) > 300) {
+            console.warn('[STRIPE WEBHOOK] Webhook timestamp outside allowed 300s tolerance window');
+            return sendJson(res, 400, { error: 'Webhook timestamp expired or outside tolerance window' });
+          }
+        }
         const signedPayload = `${elements.t || ''}.${rawBody.toString('utf8')}`;
         const expectedSig = createHmac('sha256', STRIPE_WEBHOOK_SECRET).update(signedPayload).digest('hex');
         if (!elements.v1 || !safeEqual(expectedSig, elements.v1)) {
@@ -2580,12 +2648,18 @@ const server = createServer(async (req, res) => {
         }
       } else if (STRIPE_WEBHOOK_SECRET) {
         console.warn('[STRIPE WEBHOOK] Missing stripe-signature header');
+        return sendJson(res, 400, { error: 'Missing stripe-signature header' });
       } else {
         console.warn('[STRIPE WEBHOOK] No STRIPE_WEBHOOK_SECRET configured — skipping signature check');
       }
 
       let event;
       try { event = JSON.parse(rawBody.toString('utf8')); } catch { return sendJson(res, 400, { error: 'Invalid JSON' }); }
+
+      if (event.id && isWebhookReplay(`stripe:${event.id}`)) {
+        logStructured('WARN', 'Duplicate Stripe webhook event detected and safely skipped', { eventId: event.id });
+        return sendJson(res, 200, { received: true, deduplicated: true });
+      }
 
       const eventType = event.type || 'unknown';
       console.log(`[STRIPE WEBHOOK] Received event: ${eventType} | id: ${event.id || 'N/A'}`);
@@ -2618,15 +2692,6 @@ const server = createServer(async (req, res) => {
       const rawBody = await readRawBody(req);
       const twilioSig = req.headers['x-twilio-signature'] || '';
 
-      if (TWILIO_AUTH_TOKEN && twilioSig) {
-        // Simplified Twilio signature validation logging
-        console.log('[TWILIO WEBHOOK] Signature present, validating...');
-      } else if (TWILIO_AUTH_TOKEN) {
-        console.warn('[TWILIO WEBHOOK] Missing x-twilio-signature header');
-      } else {
-        console.warn('[TWILIO WEBHOOK] No TWILIO_AUTH_TOKEN configured — skipping signature check');
-      }
-
       let payload;
       // Twilio sends form-urlencoded typically, but we accept JSON too
       const contentType = req.headers['content-type'] || '';
@@ -2634,6 +2699,33 @@ const server = createServer(async (req, res) => {
         payload = Object.fromEntries(new URLSearchParams(rawBody.toString('utf8')));
       } else {
         try { payload = JSON.parse(rawBody.toString('utf8')); } catch { payload = {}; }
+      }
+
+      if (TWILIO_AUTH_TOKEN && twilioSig) {
+        // Standard RFC HMAC-SHA1 signature verification for Twilio webhook ingress
+        const twilioUrl = `https://${req.headers.host || 'localhost'}${req.url}`;
+        let sigData = twilioUrl;
+        const sortedKeys = Object.keys(payload).sort();
+        for (const k of sortedKeys) {
+          sigData += k + payload[k];
+        }
+        const expectedTwilioSig = createHmac('sha1', TWILIO_AUTH_TOKEN).update(Buffer.from(sigData, 'utf8')).digest('base64');
+        if (!safeEqual(expectedTwilioSig, twilioSig)) {
+          console.warn('[TWILIO WEBHOOK] Invalid Twilio HMAC signature');
+          return sendJson(res, 403, { error: 'Invalid Twilio signature' });
+        }
+      } else if (TWILIO_AUTH_TOKEN) {
+        console.warn('[TWILIO WEBHOOK] Missing x-twilio-signature header');
+        return sendJson(res, 403, { error: 'Missing x-twilio-signature header' });
+      } else {
+        console.warn('[TWILIO WEBHOOK] No TWILIO_AUTH_TOKEN configured — skipping signature check');
+      }
+
+      if (payload.MessageSid && isWebhookReplay(`twilio:${payload.MessageSid}`)) {
+        logStructured('WARN', 'Duplicate Twilio SMS webhook detected and ignored', { messageSid: payload.MessageSid });
+        res.writeHead(200, { 'content-type': 'text/xml' });
+        res.end('<Response></Response>');
+        return;
       }
 
       const messageType = payload.MessageSid ? 'sms_inbound' : (payload.CallSid ? 'call_status' : 'unknown');
@@ -6406,11 +6498,16 @@ const server = createServer(async (req, res) => {
       // POST /api/crm/:collection (Create)
       if (method === 'POST' && !recordId) {
         const body = await readBody(req);
+        // Security: Prevent client from injecting or overriding tenant context IDs
+        delete body.id;
+        delete body.agencyId;
+        delete body.locationId;
+
         const newRecord = {
+          ...body,
           id: randomUUID(),
           agencyId: agency.id,
           locationId: activeLocation.id,
-          ...body,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
@@ -6437,6 +6534,11 @@ const server = createServer(async (req, res) => {
       // PUT /api/crm/:collection/:id (Update)
       if (method === 'PUT' && recordId) {
         const body = await readBody(req);
+        // Security: Strip tenant injection and ID mutation
+        delete body.id;
+        delete body.agencyId;
+        delete body.locationId;
+
         const index = list.findIndex(r => r.id === recordId && r.agencyId === agency.id && r.locationId === activeLocation.id);
         if (index === -1) return sendJson(res, 404, { error: 'Record not found' });
 
@@ -6444,6 +6546,9 @@ const server = createServer(async (req, res) => {
         const updated = {
           ...list[index],
           ...body,
+          id: recordId,
+          agencyId: agency.id,
+          locationId: activeLocation.id,
           updatedAt: new Date().toISOString()
         };
         list[index] = updated;
@@ -6491,8 +6596,18 @@ const server = createServer(async (req, res) => {
 
     sendJson(res, 404, { error: 'Route not found' });
   } catch (error) {
-    console.error('Server error:', error);
-    sendJson(res, 500, { error: error.message || 'Internal Server Error' });
+    const errorDetails = isProd ? 'Internal Server Error' : (error.message || 'Internal Server Error');
+    logStructured('ERROR', 'Unhandled server error', {
+      error: error.message,
+      stack: isProd ? undefined : error.stack,
+      requestId: req?.requestId,
+      url: req?.url
+    });
+    sendJson(res, 500, {
+      error: errorDetails,
+      code: error.code || 'INTERNAL_SERVER_ERROR',
+      requestId: req?.requestId
+    });
   }
 });
 
