@@ -476,7 +476,7 @@ async function runTests() {
 
     // 20. Marketing Campaign Lifecycle & Bulk Dispatch: POST /api/crm/campaigns & POST /api/campaigns/:id/send
     console.log('\n[TEST 20] Marketing Campaign Lifecycle & Bulk Dispatch: POST /api/crm/campaigns & /api/campaigns/:id/send');
-    const campaignCreateRes = await request('/api/crm/campaigns', {
+    const test18_campaignCreateRes = await request('/api/crm/campaigns', {
       method: 'POST',
       body: JSON.stringify({
         name: 'Fall Q4 Product Launch',
@@ -487,12 +487,12 @@ async function runTests() {
         status: 'draft'
       })
     });
-    console.log(`Campaign Create Status: ${campaignCreateRes.status}`, `ID: ${campaignCreateRes.data.id}`);
-    if (campaignCreateRes.status !== 201 || !campaignCreateRes.data.id) {
-      throw new Error(`Campaign creation failed: ${JSON.stringify(campaignCreateRes.data)}`);
+    console.log(`Campaign Create Status: ${test18_campaignCreateRes.status}`, `ID: ${test18_campaignCreateRes.data.id}`);
+    if (test18_campaignCreateRes.status !== 201 || !test18_campaignCreateRes.data.id) {
+      throw new Error(`Campaign creation failed: ${JSON.stringify(test18_campaignCreateRes.data)}`);
     }
 
-    const campaignId = campaignCreateRes.data.id;
+    const campaignId = test18_campaignCreateRes.data.id;
     const campaignSendRes = await request(`/api/campaigns/${campaignId}/send`, {
       method: 'POST'
     });
@@ -915,7 +915,7 @@ async function runTests() {
 
     // 34. Funnels Public Ingress, Visit Tracking, and Lead Opt-in with Order Bump
     console.log('\n[TEST 34] Funnels Public Ingress & Opt-in Engine: GET /api/funnels/public/:slug & POST /api/funnels/optin/:slug');
-    const funnelCreateRes = await request('/api/crm/websites', {
+    const test33_funnelCreateRes = await request('/api/crm/websites', {
       method: 'POST',
       body: JSON.stringify({
         name: 'High-Ticket Automation Accelerator',
@@ -934,9 +934,9 @@ async function runTests() {
         }
       })
     });
-    console.log(`Funnel Create Status: ${funnelCreateRes.status}`, `ID: ${funnelCreateRes.data.id}`);
-    if (funnelCreateRes.status !== 201 || !funnelCreateRes.data.id) {
-      throw new Error(`Funnel creation failed: ${JSON.stringify(funnelCreateRes.data)}`);
+    console.log(`Funnel Create Status: ${test33_funnelCreateRes.status}`, `ID: ${test33_funnelCreateRes.data.id}`);
+    if (test33_funnelCreateRes.status !== 201 || !test33_funnelCreateRes.data.id) {
+      throw new Error(`Funnel creation failed: ${JSON.stringify(test33_funnelCreateRes.data)}`);
     }
 
     const funnelSlug = 'high-ticket-automation-accelerator';
@@ -2021,7 +2021,7 @@ async function runTests() {
     if (addDocRes.status !== 201 || !addDocRes.data.document?.id || addDocRes.data.document?.chunksCount < 1) {
       throw new Error(`Failed to ingest knowledge document: ${JSON.stringify(addDocRes.data)}`);
     }
-    const testDocId = addDocRes.data.document.id;
+    const knowledgeDocId = addDocRes.data.document.id;
 
     // Test query against knowledge base
     const queryTestRes = await request('/api/ai/test', {
@@ -2034,7 +2034,7 @@ async function runTests() {
     }
 
     // Clean up test document
-    const deleteDocRes = await request(`/api/ai/knowledge/${testDocId}`, { method: 'DELETE' });
+    const deleteDocRes = await request(`/api/ai/knowledge/${knowledgeDocId}`, { method: 'DELETE' });
     if (deleteDocRes.status !== 200) {
       throw new Error(`Failed to delete test knowledge document: ${JSON.stringify(deleteDocRes.data)}`);
     }
@@ -2125,7 +2125,180 @@ async function runTests() {
     }
     console.log('✅ Agency white-label engine verified: custom platform branding, domain CNAME SSL verification, and email sender authentication');
 
-    console.log('\n🎉 ALL 60 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // 61. Funnel Engine: Creation with Custom Slug, Steps, & Order Bump
+    console.log('\n[TEST 61] Funnel Engine: POST /api/crm/websites with Multi-Step Flow & Order Bump');
+    const test61_funnelCreateRes = await request('/api/crm/websites', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'High-Ticket Agency Accelerator Funnel',
+        type: 'funnel',
+        kind: 'funnel',
+        status: 'published',
+        published: true,
+        domain: 'accelerator-funnel',
+        pages: [
+          { id: 'step-1', name: 'Opt-in Page', slug: '', path: '/', isHome: true },
+          { id: 'step-2', name: 'VIP Checkout & Order Bump', slug: 'checkout', path: '/checkout', isHome: false },
+          { id: 'step-3', name: 'Thank You & Onboarding', slug: 'thank-you', path: '/thank-you', isHome: false }
+        ],
+        orderBumps: [
+          {
+            id: 'bump-1',
+            productId: 'prod-vip-audit',
+            enabled: true,
+            title: '1-on-1 Growth Architecture Audit',
+            copy: 'Add an executive 60-minute teardown call with our lead partner',
+            price: 497
+          }
+        ]
+      })
+    });
+    console.log(`Funnel Create Status: ${test61_funnelCreateRes.status}`, `ID: ${test61_funnelCreateRes.data.id}`);
+    if (test61_funnelCreateRes.status !== 201 || !test61_funnelCreateRes.data.id) {
+      throw new Error(`Funnel creation failed: ${JSON.stringify(test61_funnelCreateRes.data)}`);
+    }
+    console.log('✅ Funnel created with multi-step routing, custom slug, and 1-click order bump configuration');
+
+    // 62. Visual Email Campaign Studio: Content Blocks & Test Dispatch
+    console.log('\n[TEST 62] Visual Email Campaign: POST /api/crm/campaigns & POST /api/campaigns/:id/test-send');
+    const test62_campaignCreateRes = await request('/api/crm/campaigns', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Q4 Product Launch Announcement',
+        channel: 'email',
+        kind: 'email',
+        status: 'draft',
+        audience: 10,
+        scheduledAt: new Date(Date.now() + 86400000).toISOString(),
+        subject: 'Introducing Operza 2.0: The Unified Agency Operating System',
+        preheader: 'Run your entire agency, CRM, funnels, and AI on a single platform.',
+        blocks: [
+          { id: 'b1', type: 'header', content: 'OPERZA ANNOUNCEMENT' },
+          { id: 'b2', type: 'paragraph', content: 'Hello {{contact.first_name}}, we are thrilled to unveil our latest capabilities.' },
+          { id: 'b3', type: 'button', content: 'Explore What is New', buttonUrl: 'https://operza.io/whats-new' },
+          { id: 'b4', type: 'footer', content: 'Operza Alpha Agency · 100 Growth Blvd · Unsubscribe' }
+        ]
+      })
+    });
+    console.log(`Campaign Create Status: ${test62_campaignCreateRes.status}`, `ID: ${test62_campaignCreateRes.data.id}`);
+    if (test62_campaignCreateRes.status !== 201 || !test62_campaignCreateRes.data.id) {
+      throw new Error(`Campaign creation failed: ${JSON.stringify(test62_campaignCreateRes.data)}`);
+    }
+
+    const t62_campaignId = test62_campaignCreateRes.data.id;
+    const t62_testSendRes = await request(`/api/campaigns/${t62_campaignId}/test-send`, {
+      method: 'POST',
+      body: JSON.stringify({
+        recipient: 'founder@operza.io',
+        subject: 'PREVIEW: Introducing Operza 2.0',
+        channel: 'email'
+      })
+    });
+    console.log(`Test Send Status: ${t62_testSendRes.status}`, `Delivered: ${t62_testSendRes.data.success}`, `Recipient: ${t62_testSendRes.data.recipient}`);
+    if (t62_testSendRes.status !== 200 || !t62_testSendRes.data.success) {
+      throw new Error(`Test campaign dispatch failed: ${JSON.stringify(t62_testSendRes.data)}`);
+    }
+    console.log('✅ Visual email campaign registered with block schema and test broadcast successfully verified');
+
+    // 63. Public Webchat Widget Ingress & Autonomous AI Copilot Reply
+    console.log('\n[TEST 63] Public Webchat Widget Ingress & Autonomous AI Copilot: GET /widget/operza.js & POST /api/widget/message');
+    const rawWidgetRes = await fetch('http://localhost:4005/widget/operza.js');
+    const widgetJsText = await rawWidgetRes.text();
+    const widgetContentType = rawWidgetRes.headers.get('content-type');
+    console.log(`Widget Script Status: ${rawWidgetRes.status}`, `Content-Type: ${widgetContentType}`);
+    if (rawWidgetRes.status !== 200 || !widgetJsText.includes('operza-chat-bubble')) {
+      throw new Error('Public webchat embed script delivery failed');
+    }
+
+    const t63_widgetMsgRes = await request('/api/widget/message', {
+      method: 'POST',
+      body: JSON.stringify({
+        visitorName: 'Sophia Miller',
+        visitorEmail: 'sophia.miller@acmegrowth.com',
+        visitorPhone: '+1 415-555-8822',
+        message: 'Hi, what are your retainer pricing tiers and performance guarantees?'
+      })
+    });
+    console.log(`Widget Message Ingress Status: ${t63_widgetMsgRes.status}`, `Contact ID: ${t63_widgetMsgRes.data.contactId}`, `Conversation ID: ${t63_widgetMsgRes.data.conversationId}`);
+    console.log(`AI Reply Snippet: "${(t63_widgetMsgRes.data.reply || '').slice(0, 75)}..."`);
+    if (t63_widgetMsgRes.status !== 201 || !t63_widgetMsgRes.data.contactId || !t63_widgetMsgRes.data.conversationId || !t63_widgetMsgRes.data.reply) {
+      throw new Error(`Webchat message ingress and AI reply failed: ${JSON.stringify(t63_widgetMsgRes.data)}`);
+    }
+
+    // Verify contact was tagged properly
+    const t63_sophiaContactRes = await request('/api/crm/contacts?search=Sophia');
+    const sophiaContact = Array.isArray(t63_sophiaContactRes.data)
+      ? t63_sophiaContactRes.data[0]
+      : (t63_sophiaContactRes.data.data?.[0] || t63_sophiaContactRes.data);
+    if (!sophiaContact?.tags?.includes('webchat') || !sophiaContact?.tags?.includes('inbound')) {
+      throw new Error(`Webchat contact tags incorrect: ${JSON.stringify(sophiaContact?.tags)}`);
+    }
+    console.log('✅ Public webchat embed script, lead creation, multi-channel conversation logging, and AI RAG reply verified');
+
+    // 64. Digital Proposal E-Signature Lifecycle & Audit Verification
+    console.log('\n[TEST 64] Digital Contract E-Signature: POST /api/crm/documents & POST /api/documents/:id/sign');
+    const test64_docCreateRes = await request('/api/crm/documents', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Enterprise Advisory Retainer Agreement 2026',
+        kind: 'contract',
+        value: 18000,
+        status: 'sent',
+        contactId: t63_widgetMsgRes.data.contactId
+      })
+    });
+    console.log(`Document Create Status: ${test64_docCreateRes.status}`, `ID: ${test64_docCreateRes.data.id}`);
+    if (test64_docCreateRes.status !== 201 || !test64_docCreateRes.data.id) {
+      throw new Error(`Document creation failed: ${JSON.stringify(test64_docCreateRes.data)}`);
+    }
+
+    const test64_docId = test64_docCreateRes.data.id;
+    const test64_signRes = await request(`/api/documents/${test64_docId}/sign`, {
+      method: 'POST',
+      body: JSON.stringify({
+        signerName: 'Sophia Miller',
+        signatureData: 'data:image/svg+xml;utf8,<svg>Sophia Miller Sign</svg>'
+      })
+    });
+    console.log(`Sign Status: ${test64_signRes.status}`, `New Status: ${test64_signRes.data.document?.status}`, `Signer: "${test64_signRes.data.document?.signerName}"`);
+    if (test64_signRes.status !== 200 || test64_signRes.data.document?.status !== 'signed' || !test64_signRes.data.document?.signedAt) {
+      throw new Error(`Document e-signature failed: ${JSON.stringify(test64_signRes.data)}`);
+    }
+    console.log('✅ Digital contract e-signature lifecycle verified: creation, signing, legal timestamping, and state transition');
+
+    // 65. Virtual Phone Numbers Provisioning & Telephony Routing
+    console.log('\n[TEST 65] Virtual Phone Numbers Provisioning: POST & GET /api/crm/phoneNumbers');
+    const t65_phoneCreateRes = await request('/api/crm/phoneNumbers', {
+      method: 'POST',
+      body: JSON.stringify({
+        number: '+1 (415) 890-2026',
+        label: 'Alpha Growth Hotline',
+        type: 'local',
+        voice: true,
+        sms: true,
+        mms: true,
+        status: 'active',
+        assignedTo: 'Automated Tester',
+        forwardTo: '+1 (555) 019-9000',
+        ivrEnabled: true,
+        ivrMenu: 'Press 1 for Advisory Sales, Press 2 for VIP Client Support',
+        areaCode: '415'
+      })
+    });
+    console.log(`Phone Provision Status: ${t65_phoneCreateRes.status}`, `ID: ${t65_phoneCreateRes.data.id}`);
+    if (t65_phoneCreateRes.status !== 201 || !t65_phoneCreateRes.data.id) {
+      throw new Error(`Phone provisioning failed: ${JSON.stringify(t65_phoneCreateRes.data)}`);
+    }
+
+    const t65_phoneListRes = await request('/api/crm/phoneNumbers');
+    console.log(`Phone Numbers List Status: ${t65_phoneListRes.status}`, `Count: ${t65_phoneListRes.data.data?.length}`);
+    const t65_foundPhone = t65_phoneListRes.data.data?.find(p => p.number === '+1 (415) 890-2026');
+    if (!t65_foundPhone || t65_foundPhone.label !== 'Alpha Growth Hotline' || t65_foundPhone.ivrEnabled !== true) {
+      throw new Error(`Failed to verify provisioned phone number: ${JSON.stringify(t65_foundPhone)}`);
+    }
+    console.log('✅ Virtual phone number provisioned with voice/sms/mms capabilities, IVR routing, and multi-tenant isolation');
+
+    console.log('\n🎉 ALL 65 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

@@ -210,6 +210,16 @@ export interface CampaignSegment {
   createdWithinDays: number | null;
 }
 
+export interface EmailBlock {
+  id: string;
+  type: 'header' | 'hero_image' | 'paragraph' | 'button' | 'divider' | 'footer';
+  content?: string;
+  buttonText?: string;
+  buttonUrl?: string;
+  imageUrl?: string;
+  align?: 'left' | 'center' | 'right';
+}
+
 export interface Campaign {
   id: ID;
   name: string;
@@ -221,6 +231,9 @@ export interface Campaign {
   clicked: number;
   scheduledAt: string;
   segment?: CampaignSegment;
+  subject?: string;
+  preheader?: string;
+  blocks?: EmailBlock[];
 }
 
 export type PostStatus = 'draft' | 'scheduled' | 'published';
@@ -542,6 +555,10 @@ export interface ContractDoc {
   value: number;
   status: DocumentStatus;
   updatedAt: string;
+  signedAt?: string;
+  signerName?: string;
+  signatureData?: string;
+  pdfUrl?: string;
 }
 
 export type MediaKind = 'image' | 'video' | 'document';
@@ -707,6 +724,12 @@ export interface PhoneNumber {
   status: PhoneNumberStatus;
   voice: boolean;
   sms: boolean;
+  mms?: boolean;
+  forwardTo?: string;
+  ivrEnabled?: boolean;
+  ivrMenu?: string;
+  recordingEnabled?: boolean;
+  areaCode?: string;
 }
 
 export type CallDirection = 'inbound' | 'outbound';

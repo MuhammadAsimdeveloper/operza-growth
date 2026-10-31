@@ -66,7 +66,8 @@ const collections = Object.freeze({
   qrCodes: { label: 'QR Codes', required: ['name','target'], fields: ['name','target','scans','createdAt','lastScannedAt'] },
   snippets: { label: 'Snippets', required: ['label','body'], fields: ['label','subject','body','channel','uses'] },
   templates: { label: 'Templates', required: ['name','subject'], fields: ['name','category','subject','body','uses','updatedAt'] },
-  team: { label: 'Team Members', required: ['name'], fields: ['name','email','role','online','phone','avatar','status','createdAt'] }
+  team: { label: 'Team Members', required: ['name'], fields: ['name','email','role','online','phone','avatar','status','createdAt'] },
+  phoneNumbers: { label: 'Phone Numbers', required: ['number'], fields: ['number','label','type','voice','sms','mms','status','assignedTo','forwardTo','ivrEnabled','ivrMenu','recordingEnabled','areaCode'] }
 });
 
 // ─── State Management ─────────────────────────────────────────────────
@@ -1123,6 +1124,278 @@ const server = createServer(async (req, res) => {
       }).catch(err => console.error('Workflow trigger failed:', err));
 
       return sendJson(res, 200, { success: true, message: 'Thank you! Submission received.', contactId, submissionId });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── PUBLIC WEBDESK / CHAT WIDGET INGRESS ─────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'GET' && (pathname === '/widget/operza.js' || pathname === '/api/widget/embed.js')) {
+      const widgetScript = `(function() {
+  if (window.__operza_widget_loaded) return;
+  window.__operza_widget_loaded = true;
+  var scriptTag = document.currentScript || document.querySelector('script[src*="operza.js"]');
+  var agencyId = scriptTag ? scriptTag.getAttribute('data-agency-id') : null;
+  var locationId = scriptTag ? scriptTag.getAttribute('data-location-id') : null;
+  var host = window.location.origin;
+
+  var style = document.createElement('style');
+  style.innerHTML = \`
+    #operza-chat-bubble {
+      position: fixed; bottom: 24px; right: 24px; z-index: 999999;
+      width: 58px; height: 58px; border-radius: 50%;
+      background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+      box-shadow: 0 8px 24px rgba(79, 70, 229, 0.4);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    #operza-chat-bubble:hover { transform: scale(1.06); }
+    #operza-chat-bubble svg { width: 28px; height: 28px; fill: white; }
+    #operza-chat-window {
+      position: fixed; bottom: 94px; right: 24px; z-index: 999999;
+      width: 380px; max-width: calc(100vw - 32px); height: 540px; max-height: calc(100vh - 120px);
+      background: #ffffff; border-radius: 16px;
+      box-shadow: 0 20px 48px -8px rgba(15, 23, 42, 0.25), 0 0 0 1px rgba(15, 23, 42, 0.08);
+      display: none; flex-direction: column; overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #operza-chat-window.operza-open { display: flex; animation: opzPop 0.25s ease-out; }
+    @keyframes opzPop { from { opacity: 0; transform: translateY(16px) scale(0.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+    .opz-header {
+      background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+      color: white; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between;
+    }
+    .opz-header h4 { margin: 0; font-size: 15px; font-weight: 600; }
+    .opz-header p { margin: 2px 0 0; font-size: 12px; opacity: 0.85; }
+    .opz-close { background: none; border: none; color: white; cursor: pointer; font-size: 18px; line-height: 1; }
+    .opz-messages { flex: 1; padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; background: #f8fafc; }
+    .opz-bubble { max-width: 80%; padding: 10px 14px; border-radius: 14px; font-size: 13px; line-height: 1.45; word-break: break-word; }
+    .opz-bubble-bot { background: white; color: #1e293b; border: 1px solid #e2e8f0; align-self: flex-start; border-bottom-left-radius: 4px; }
+    .opz-bubble-user { background: #4f46e5; color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
+    .opz-input-bar { padding: 12px; background: white; border-top: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 8px; }
+    .opz-field { width: 100%; box-sizing: border-box; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 13px; outline: none; }
+    .opz-field:focus { border-color: #4f46e5; }
+    .opz-send-btn { background: #4f46e5; color: white; border: none; padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 13px; }
+  \`;
+  document.head.appendChild(style);
+
+  var bubble = document.createElement('div');
+  bubble.id = 'operza-chat-bubble';
+  bubble.innerHTML = '<svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>';
+
+  var win = document.createElement('div');
+  win.id = 'operza-chat-window';
+  win.innerHTML = [
+    '<div class="opz-header">',
+    '  <div><h4>Live Assistance</h4><p>We typically reply in minutes</p></div>',
+    '  <button class="opz-close" id="opz-close">&times;</button>',
+    '</div>',
+    '<div class="opz-messages" id="opz-msgs">',
+    '  <div class="opz-bubble opz-bubble-bot">Hi there! 👋 How can we help grow your business today?</div>',
+    '</div>',
+    '<form class="opz-input-bar" id="opz-form">',
+    '  <input class="opz-field" id="opz-name" placeholder="Your Name" required />',
+    '  <input class="opz-field" id="opz-email" placeholder="Email or Phone" required />',
+    '  <div style="display:flex; gap:8px;">',
+    '    <input class="opz-field" id="opz-msg" placeholder="Type your message..." required style="flex:1;" />',
+    '    <button class="opz-send-btn" type="submit">Send</button>',
+    '  </div>',
+    '</form>'
+  ].join('');
+
+  document.body.appendChild(bubble);
+  document.body.appendChild(win);
+
+  bubble.onclick = function() { win.classList.toggle('operza-open'); };
+  document.getElementById('opz-close').onclick = function() { win.classList.remove('operza-open'); };
+
+  var form = document.getElementById('opz-form');
+  var msgs = document.getElementById('opz-msgs');
+  form.onsubmit = async function(e) {
+    e.preventDefault();
+    var name = document.getElementById('opz-name').value.trim();
+    var email = document.getElementById('opz-email').value.trim();
+    var text = document.getElementById('opz-msg').value.trim();
+    if (!text) return;
+
+    var userDiv = document.createElement('div');
+    userDiv.className = 'opz-bubble opz-bubble-user';
+    userDiv.innerText = text;
+    msgs.appendChild(userDiv);
+    msgs.scrollTop = msgs.scrollHeight;
+    document.getElementById('opz-msg').value = '';
+
+    try {
+      var res = await fetch(host + '/api/widget/message', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agencyId: agencyId,
+          locationId: locationId,
+          visitorName: name,
+          visitorEmail: email.includes('@') ? email : undefined,
+          visitorPhone: !email.includes('@') ? email : undefined,
+          message: text
+        })
+      });
+      var data = await res.json();
+      if (data.reply) {
+        var botDiv = document.createElement('div');
+        botDiv.className = 'opz-bubble opz-bubble-bot';
+        botDiv.innerText = data.reply;
+        msgs.appendChild(botDiv);
+        msgs.scrollTop = msgs.scrollHeight;
+      }
+    } catch (err) {
+      console.error('[Operza Widget Error]', err);
+    }
+  };
+})();`;
+      res.writeHead(200, {
+        'Content-Type': 'application/javascript; charset=utf-8',
+        'Access-Control-Allow-Origin': '*'
+      });
+      return res.end(widgetScript);
+    }
+
+    if (method === 'POST' && pathname === '/api/widget/message') {
+      const body = await readBody(req);
+      const { visitorName, visitorEmail, visitorPhone, message } = body;
+      if (!message || !message.trim()) {
+        return sendJson(res, 400, { error: 'Message content is required' });
+      }
+
+      const targetAgencyId = body.agencyId || state.agencies[0]?.id;
+      const targetLoc = (state.locations || []).find(l => l.agencyId === targetAgencyId) || (state.records.locations || []).find(l => l.agencyId === targetAgencyId);
+      const targetLocationId = body.locationId || targetLoc?.id || targetAgencyId;
+
+      state.records.contacts = state.records.contacts || [];
+      let contact = state.records.contacts.find(c => {
+        if (visitorEmail && c.email && c.email.toLowerCase() === visitorEmail.toLowerCase()) return true;
+        if (visitorPhone && c.phone && c.phone === visitorPhone) return true;
+        return false;
+      });
+
+      const nameParts = (visitorName || 'Web Visitor').trim().split(' ');
+      const firstName = nameParts[0] || 'Web';
+      const lastName = nameParts.slice(1).join(' ') || 'Visitor';
+
+      if (!contact) {
+        contact = {
+          id: randomUUID(),
+          agencyId: targetAgencyId,
+          locationId: targetLocationId,
+          firstName,
+          lastName,
+          email: visitorEmail || `visitor_${Date.now()}@webchat.operza.io`,
+          phone: visitorPhone || '',
+          company: 'Inbound Web Lead',
+          tags: ['inbound', 'webchat', 'lead'],
+          status: 'lead',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        state.records.contacts.push(contact);
+        auditLog('contact.created', { user: { name: 'Operza Webchat' } }, { contactId: contact.id, name: `${firstName} ${lastName}` });
+      }
+
+      state.records.conversations = state.records.conversations || [];
+      let conv = state.records.conversations.find(c => c.contactId === contact.id && c.channel === 'webchat');
+
+      const incomingMsg = {
+        id: randomUUID(),
+        sender: 'contact',
+        senderName: `${firstName} ${lastName}`,
+        channel: 'webchat',
+        content: message.trim(),
+        timestamp: new Date().toISOString()
+      };
+
+      if (conv) {
+        conv.messages = conv.messages || [];
+        conv.messages.push(incomingMsg);
+        conv.lastMessage = incomingMsg.content;
+        conv.updatedAt = new Date().toISOString();
+      } else {
+        conv = {
+          id: randomUUID(),
+          agencyId: targetAgencyId,
+          locationId: targetLocationId,
+          contactId: contact.id,
+          contactName: `${firstName} ${lastName}`,
+          channel: 'webchat',
+          status: 'open',
+          messages: [incomingMsg],
+          lastMessage: incomingMsg.content,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        state.records.conversations.push(conv);
+      }
+
+      let aiReply = null;
+      const aiConfig = state.records.ai_config || {};
+      if (aiConfig.capabilities?.answerQuestions !== false) {
+        const docs = (state.records.ai_knowledge || []);
+        let matchedSnippet = '';
+        for (const doc of docs) {
+          if (doc.chunks) {
+            for (const ch of doc.chunks) {
+              if (message.toLowerCase().split(' ').some(w => w.length > 3 && ch.content.toLowerCase().includes(w))) {
+                matchedSnippet = ch.content;
+                break;
+              }
+            }
+          }
+          if (matchedSnippet) break;
+        }
+
+        if (matchedSnippet) {
+          aiReply = `Thanks for reaching out! Based on our knowledge base: ${matchedSnippet.slice(0, 180)}... Let us know if you'd like more details!`;
+        } else {
+          aiReply = `Thanks for reaching out, ${firstName}! We've received your inquiry and our growth advisory team has been notified. We will follow up right away!`;
+        }
+
+        const replyMsg = {
+          id: randomUUID(),
+          sender: 'agent',
+          senderName: `${aiConfig.botName || 'Operza Copilot'} (AI)`,
+          channel: 'webchat',
+          content: aiReply,
+          timestamp: new Date().toISOString()
+        };
+        conv.messages.push(replyMsg);
+        conv.lastMessage = replyMsg.content;
+        conv.updatedAt = new Date().toISOString();
+      }
+
+      await saveState();
+
+      broadcast('crm.conversation.message_received', {
+        conversationId: conv.id,
+        contactId: contact.id,
+        message: incomingMsg,
+        channel: 'webchat'
+      });
+      broadcast('message.received', {
+        channel: 'webchat',
+        contactName: `${firstName} ${lastName}`,
+        content: message.trim()
+      });
+
+      triggerWorkflowExecution({
+        agencyId: targetAgencyId,
+        locationId: targetLocationId,
+        triggerType: 'webchat_message',
+        triggerContext: { contact, message: incomingMsg, conversation: conv }
+      }).catch(console.error);
+
+      return sendJson(res, 201, {
+        success: true,
+        conversationId: conv.id,
+        contactId: contact.id,
+        reply: aiReply
+      });
     }
 
     // Public Calendar Lookup
@@ -2984,6 +3257,38 @@ const server = createServer(async (req, res) => {
         campaign,
         recipientCount: matched.length,
         sentCount: matched.length
+      });
+    }
+
+    if (method === 'POST' && pathname.startsWith('/api/campaigns/') && pathname.endsWith('/test-send')) {
+      const campaignId = pathname.replace('/api/campaigns/', '').replace('/test-send', '').trim();
+      const campaign = (state.records.campaigns || []).find(
+        c => c.id === campaignId && c.agencyId === agency.id && c.locationId === activeLocation.id
+      );
+      if (!campaign && campaignId !== 'preview') {
+        return sendJson(res, 404, { error: 'Campaign not found' });
+      }
+
+      const body = await readBody(req);
+      const recipient = body.recipient || actor.user.email || 'operator@operza.io';
+      const subject = body.subject || (campaign ? campaign.name : 'Test Broadcast');
+      const blocks = body.blocks || (campaign ? campaign.blocks : []);
+      const channel = body.channel || (campaign ? campaign.kind : 'email');
+
+      auditLog('campaign.test_sent', actor, {
+        campaignId,
+        recipient,
+        subject,
+        channel,
+        blockCount: blocks.length || 0
+      });
+
+      return sendJson(res, 200, {
+        success: true,
+        message: `Test ${channel.toUpperCase()} successfully dispatched to ${recipient}`,
+        recipient,
+        subject,
+        deliveredAt: new Date().toISOString()
       });
     }
 

@@ -165,6 +165,11 @@ export const api = {
   },
   campaigns: {
     send: (id: string) => request(`/api/campaigns/${id}/send`, { method: 'POST' }),
+    testSend: (id: string, data: { recipient: string; subject?: string; channel?: string; blocks?: any[] }) =>
+      request<{ success: boolean; message: string; recipient: string; deliveredAt: string }>(`/api/campaigns/${id}/test-send`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
   conversations: {
     sendMessage: (id: string, data: { content: string; channel?: string; subject?: string }) =>
@@ -182,8 +187,8 @@ export const api = {
       request(`/api/links/click/${slug}${contactId ? `?contactId=${encodeURIComponent(contactId)}` : ''}`),
   },
   documents: {
-    sign: (id: string, signerName?: string) =>
-      request(`/api/documents/${id}/sign`, { method: 'POST', body: JSON.stringify({ signerName }) }),
+    sign: (id: string, signerName?: string, signatureData?: string) =>
+      request(`/api/documents/${id}/sign`, { method: 'POST', body: JSON.stringify({ signerName, signatureData }) }),
   },
   subscriptions: {
     list: () => request<{ data: any[] }>('/api/subscriptions'),
