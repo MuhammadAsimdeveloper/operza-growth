@@ -1,0 +1,16 @@
+{
+  "name": "Operza Enterprise Business Operating System",
+  "short_name": "Operza",
+  "description": "All-in-one business management software, multi-tenant agency CRM, and workflow automation platform.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4f46e5",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

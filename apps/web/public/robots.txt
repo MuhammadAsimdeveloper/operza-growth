@@ -1,0 +1,67 @@
+# Operza Production Robots.txt
+# Crawler configuration for Googlebot, Bingbot, DuckDuckBot, and AI crawlers
+
+User-agent: *
+Allow: /
+Allow: /platform/
+Allow: /pricing
+Allow: /about
+Allow: /docs
+Allow: /blog
+Allow: /login
+Allow: /signup
+Allow: /f/
+Allow: /book/
+Allow: /pay/
+Allow: /review/
+Allow: /funnel/
+Allow: /v/
+
+# Disallow private authenticated workspace routes and client data
+Disallow: /dashboard
+Disallow: /conversations
+Disallow: /phone
+Disallow: /calendars
+Disallow: /contacts
+Disallow: /tasks
+Disallow: /opportunities
+Disallow: /reputation
+Disallow: /smart-lists
+Disallow: /payments
+Disallow: /store
+Disallow: /products
+Disallow: /payment-links
+Disallow: /coupons
+Disallow: /custom-values
+Disallow: /audit-log
+Disallow: /orders
+Disallow: /subscriptions
+Disallow: /documents
+Disallow: /campaigns
+Disallow: /social
+Disallow: /prospecting
+Disallow: /media
+Disallow: /templates
+Disallow: /links
+Disallow: /affiliates
+Disallow: /funnels
+Disallow: /websites
+Disallow: /forms
+Disallow: /blogs
+Disallow: /qr-codes
+Disallow: /portal
+Disallow: /workflows
+Disallow: /memberships
+Disallow: /reporting
+Disallow: /settings
+Disallow: /sub-accounts
+Disallow: /snapshots
+Disallow: /integrations
+Disallow: /ai-trainer
+Disallow: /developers
+Disallow: /branding
+Disallow: /api/
+Disallow: /client-portal/
+
+# Search Engine Sitemap Index
+Sitemap: https://operza.io/sitemap.xml

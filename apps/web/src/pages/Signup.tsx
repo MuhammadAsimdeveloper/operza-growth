@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
+import { SEO } from '../components/SEO';
 
 export default function Signup() {
   const { signup, isAuthenticated, isLoading } = useAuth();
@@ -41,6 +42,12 @@ export default function Signup() {
 
   return (
     <div style={styles.wrapper}>
+      <SEO
+        title="Start 14-Day Free Trial — Agency Workspace"
+        description="Create your Operza agency account. Full access to CRM pipelines, 2D visual workflows, funnels, omnichannel conversations, and white-label client portal."
+        canonical="/signup"
+        robots="noindex, follow"
+      />
       <div style={styles.container}>
         {/* Brand */}
         <div style={styles.brand}>

@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
+import { SEO } from '../components/SEO';
 
 export default function Login() {
   const { login, isAuthenticated, isLoading } = useAuth();
@@ -35,6 +36,12 @@ export default function Login() {
 
   return (
     <div style={styles.wrapper}>
+      <SEO
+        title="Sign In to Agency Workspace"
+        description="Securely sign in to your Operza multi-tenant agency CRM workspace and client portal."
+        canonical="/login"
+        robots="noindex, follow"
+      />
       <div style={styles.container}>
         {/* Brand */}
         <div style={styles.brand}>

@@ -1227,6 +1227,60 @@ const server = createServer(async (req, res) => {
   }
 
   try {
+    // ─── Technical SEO Endpoints (Robots & Sitemap Fallback) ─────────
+    if (pathname === '/robots.txt') {
+      res.writeHead(200, {
+        'content-type': 'text/plain; charset=utf-8',
+        'cache-control': 'public, max-age=86400',
+        ...CORS_HEADERS
+      });
+      return res.end(
+        'User-agent: *\n' +
+        'Allow: /\n' +
+        'Allow: /platform/\n' +
+        'Allow: /pricing\n' +
+        'Allow: /about\n' +
+        'Allow: /docs\n' +
+        'Allow: /blog\n' +
+        'Allow: /login\n' +
+        'Allow: /signup\n' +
+        'Disallow: /dashboard\n' +
+        'Disallow: /api/\n' +
+        'Disallow: /portal\n' +
+        'Disallow: /settings\n' +
+        'Sitemap: https://operza.io/sitemap.xml\n'
+      );
+    }
+
+    if (pathname === '/sitemap.xml') {
+      const publicUrls = [
+        { loc: 'https://operza.io/', priority: '1.0', changefreq: 'daily' },
+        { loc: 'https://operza.io/platform/crm', priority: '0.9', changefreq: 'weekly' },
+        { loc: 'https://operza.io/platform/automation', priority: '0.9', changefreq: 'weekly' },
+        { loc: 'https://operza.io/platform/funnels', priority: '0.9', changefreq: 'weekly' },
+        { loc: 'https://operza.io/platform/conversations', priority: '0.9', changefreq: 'weekly' },
+        { loc: 'https://operza.io/platform/portal', priority: '0.9', changefreq: 'weekly' },
+        { loc: 'https://operza.io/platform/courses', priority: '0.8', changefreq: 'weekly' },
+        { loc: 'https://operza.io/platform/reporting', priority: '0.8', changefreq: 'weekly' },
+        { loc: 'https://operza.io/pricing', priority: '0.95', changefreq: 'daily' },
+        { loc: 'https://operza.io/signup', priority: '0.85', changefreq: 'monthly' },
+        { loc: 'https://operza.io/login', priority: '0.6', changefreq: 'monthly' },
+        { loc: 'https://operza.io/about', priority: '0.7', changefreq: 'monthly' },
+        { loc: 'https://operza.io/docs', priority: '0.85', changefreq: 'weekly' },
+        { loc: 'https://operza.io/blog', priority: '0.8', changefreq: 'daily' }
+      ];
+      const xml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
+        publicUrls.map((u) => `  <url>\n    <loc>${u.loc}</loc>\n    <lastmod>${new Date().toISOString().split('T')[0]}</lastmod>\n    <changefreq>${u.changefreq}</changefreq>\n    <priority>${u.priority}</priority>\n  </url>`).join('\n') +
+        '\n</urlset>';
+      res.writeHead(200, {
+        'content-type': 'application/xml; charset=utf-8',
+        'cache-control': 'public, max-age=86400',
+        ...CORS_HEADERS
+      });
+      return res.end(xml);
+    }
+
     // ─── Health, Readiness & Observability Telemetry ─────────────────
     if (pathname === '/health') {
       return sendJson(res, 200, {
