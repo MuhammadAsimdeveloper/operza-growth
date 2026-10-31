@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Operza — an original, from-scratch agency CRM workspace that mirrors the module layout of an all-in-one marketing platform. Educational project.",
+  "description": "Operza — Enterprise Business Operating System & Multi-Tenant Agency CRM Web Application.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

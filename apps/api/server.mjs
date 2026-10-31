@@ -6936,13 +6936,25 @@ server.listen(port, host, () => {
 });
 
 // Graceful process shutdown handling
-function handleGracefulShutdown(signal) {
+async function handleGracefulShutdown(signal) {
   console.log(`\n🛑 Received ${signal}, closing Operza Unified API gracefully...`);
   for (const client of wsClients) {
     try {
       client.close(1001, 'Server shutting down');
     } catch { /* ignore */ }
   }
+
+  try {
+    await writeQueue;
+  } catch { /* ignore */ }
+
+  if (workflowQueue?.redisClient) {
+    try {
+      workflowQueue.redisClient.close();
+      console.log('✅ Redis connection closed.');
+    } catch { /* ignore */ }
+  }
+
   server.close(async () => {
     console.log('✅ HTTP server closed.');
     if (pgPool) {

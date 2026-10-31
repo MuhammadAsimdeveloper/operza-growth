@@ -1,0 +1,40 @@
+# Version control & local tooling
+.git
+.github
+.gemini
+.idea
+.vscode
+
+# Dependencies
+node_modules
+*/node_modules
+*/*/node_modules
+
+# Environment & credentials
+.env
+.env.*
+*.local
+*.pem
+*.key
+
+# Application runtime state & tmp files
+data/*.tmp
+data/store.json
+apps/api/data/*.tmp
+apps/api/data/store.json
+
+# Build outputs & caches
+dist
+apps/web/dist
+.cache
+.turbo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# System files
+.DS_Store
+Thumbs.db

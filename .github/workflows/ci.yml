@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    branches: [master, main, 'repair/**']
   pull_request:
     branches: [master, main]
 
@@ -31,8 +31,11 @@ jobs:
       - name: Install Monorepo Dependencies
         run: npm ci
 
-      - name: Typecheck & Build Web Application
+      - name: Static Type Check
+        run: npm run typecheck
+
+      - name: Production Bundle Build
         run: npm run build
 
-      - name: Run End-to-End System Tests (68 Integration Tests)
+      - name: Run Full Test Suite (200 Tests: Unit, SEO, Integration & Security)
         run: npm test
