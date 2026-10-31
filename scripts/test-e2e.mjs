@@ -2383,7 +2383,174 @@ async function runTests() {
     }
     console.log('✅ Durable job queue lifecycle and database telemetry verified');
 
-    console.log('\n🎉 ALL 68 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ─── TEST 69: WhatsApp Cloud API & Meta Messenger Webhook Ingress ───
+    console.log('\n[TEST 69] WhatsApp Cloud API & Meta Messenger Webhook Ingress: /api/webhooks/whatsapp & /api/webhooks/meta');
+    
+    // WhatsApp challenge verification
+    const waVerifyRes = await request('/api/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=test_tok&hub.challenge=wa_chall_99');
+    console.log(`WhatsApp Verification Status: ${waVerifyRes.status}`);
+    if (waVerifyRes.status !== 200) {
+      throw new Error(`WhatsApp verification challenge failed with status ${waVerifyRes.status}`);
+    }
+
+    // WhatsApp inbound message
+    const waMsgRes = await request('/api/webhooks/whatsapp', {
+      method: 'POST',
+      body: JSON.stringify({
+        from: '+15559876543',
+        name: 'Elena Rostova',
+        message: 'Hello Operza, I need an enterprise automation consultation.'
+      })
+    });
+    console.log(`WhatsApp Inbound Status: ${waMsgRes.status}`, `Contact ID: ${waMsgRes.data.contactId}`);
+    if (waMsgRes.status !== 200 || !waMsgRes.data.contactId) {
+      throw new Error(`WhatsApp inbound message failed: ${JSON.stringify(waMsgRes.data)}`);
+    }
+
+    // Meta challenge verification
+    const metaVerifyRes = await request('/api/webhooks/meta?hub.mode=subscribe&hub.challenge=meta_chall_44');
+    console.log(`Meta Verification Status: ${metaVerifyRes.status}`);
+    if (metaVerifyRes.status !== 200) {
+      throw new Error(`Meta verification challenge failed with status ${metaVerifyRes.status}`);
+    }
+
+    // Meta direct message
+    const metaMsgRes = await request('/api/webhooks/meta', {
+      method: 'POST',
+      body: JSON.stringify({
+        senderId: 'ig_user_4492',
+        handle: '@elena_ventures',
+        text: 'Inquiring about your white-label agency portal blueprint.'
+      })
+    });
+    console.log(`Meta Inbound Status: ${metaMsgRes.status}`, `Contact ID: ${metaMsgRes.data.contactId}`);
+    if (metaMsgRes.status !== 200 || !metaMsgRes.data.contactId) {
+      throw new Error(`Meta inbound message failed: ${JSON.stringify(metaMsgRes.data)}`);
+    }
+    console.log('✅ WhatsApp Cloud API and Meta Messenger webhooks verified (conversations logged & contacts created)');
+
+    // ─── TEST 70: A2P 10DLC Carrier Registration Wizard & Compliance Lifecycle ───
+    console.log('\n[TEST 70] A2P 10DLC Carrier Registration & Trust Hub: GET & POST /api/telephony/a2p/*');
+    const a2pInitialRes = await request('/api/telephony/a2p/status');
+    console.log(`Initial A2P Status: ${a2pInitialRes.status}`, `Status: ${a2pInitialRes.data.status}`);
+    if (a2pInitialRes.status !== 200) {
+      throw new Error(`A2P status lookup failed: ${JSON.stringify(a2pInitialRes.data)}`);
+    }
+
+    const a2pRegisterRes = await request('/api/telephony/a2p/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        legalBusinessName: 'Operza Enterprise Advisory Inc',
+        ein: '84-9182736',
+        entityType: 'Corporation',
+        vertical: 'Technology Consulting',
+        address: '500 Innovation Blvd, Suite 1200',
+        city: 'San Francisco',
+        state: 'CA',
+        postalCode: '94105',
+        campaignType: 'customer_care',
+        sampleMessages: [
+          'Hi [Name], your onboarding strategy call is confirmed for 3 PM PST. Reply STOP to cancel.'
+        ],
+        optInWorkflow: 'Leads check an explicit opt-in box on public booking calendar forms.'
+      })
+    });
+    console.log(`A2P Registration Status: ${a2pRegisterRes.status}`, `Brand: ${a2pRegisterRes.data.tcrBrandId}`, `Campaign: ${a2pRegisterRes.data.campaignSid}`);
+    if (a2pRegisterRes.status !== 201 || !a2pRegisterRes.data.tcrBrandId || a2pRegisterRes.data.status !== 'VERIFIED_10DLC') {
+      throw new Error(`A2P registration failed: ${JSON.stringify(a2pRegisterRes.data)}`);
+    }
+
+    const a2pUpdatedRes = await request('/api/telephony/a2p/status');
+    console.log(`Updated A2P Status: ${a2pUpdatedRes.status}`, `Throughput: ${a2pUpdatedRes.data.throughputMPS} MPS`);
+    if (a2pUpdatedRes.status !== 200 || a2pUpdatedRes.data.status !== 'VERIFIED_10DLC') {
+      throw new Error(`A2P status confirmation failed: ${JSON.stringify(a2pUpdatedRes.data)}`);
+    }
+    console.log('✅ A2P 10DLC carrier compliance lifecycle verified (TCR Brand, Campaign SID, throughput limits)');
+
+    // ─── TEST 71: Bi-directional Snapshot Diff & Selective Push Sync ───
+    console.log('\n[TEST 71] Bi-directional Snapshot Diff & Selective Sync: /api/agency/snapshots/:id/diff & /sync');
+    const snapListRes = await request('/api/agency/snapshots');
+    if (!snapListRes.data.snapshots || snapListRes.data.snapshots.length === 0) {
+      throw new Error('No snapshots found for diff test');
+    }
+    const testSnapshot = snapListRes.data.snapshots[0];
+    const targetLoc = locationsRes.data.locations[0];
+
+    const diffRes = await request(`/api/agency/snapshots/${testSnapshot.id}/diff/${targetLoc.id}`);
+    console.log(`Snapshot Diff Status: ${diffRes.status}`, `Blueprint Items: ${diffRes.data.summary?.totalBlueprintItems}`);
+    if (diffRes.status !== 200 || !diffRes.data.summary) {
+      throw new Error(`Snapshot diff failed: ${JSON.stringify(diffRes.data)}`);
+    }
+
+    const syncRes = await request(`/api/agency/snapshots/${testSnapshot.id}/sync/${targetLoc.id}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        resources: ['workflows', 'forms']
+      })
+    });
+    console.log(`Selective Sync Status: ${syncRes.status}`, `Synced:`, syncRes.data.synced);
+    if (syncRes.status !== 200 || syncRes.data.synced?.workflows === undefined) {
+      throw new Error(`Selective sync failed: ${JSON.stringify(syncRes.data)}`);
+    }
+    console.log('✅ Bi-directional snapshot diff and selective push sync verified across sub-accounts');
+
+    // ─── TEST 72: Public Live Funnel Ingress & Dynamic Order Bump Checkout ───
+    console.log('\n[TEST 72] Public Live Funnel Ingress & Order Bump Checkout: /api/funnels/public/* & /optin/*');
+    const t72_funnelCreateRes = await request('/api/crm/websites', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Autonomous Scale Masterclass',
+        slug: 'scale-masterclass',
+        kind: 'funnel',
+        published: true,
+        checkout: {
+          price: 297,
+          bumpPrice: 47,
+          bumpTitle: 'VIP Execution Blueprint'
+        },
+        pages: [
+          {
+            id: 'page_optin',
+            name: 'Opt-in Step',
+            slug: 'main',
+            blocks: [
+              { id: 'b1', type: 'headline', content: 'Scale to 7-Figures with Operza' },
+              { id: 'b2', type: 'countdown', content: 'Enrollment Closing In:' }
+            ]
+          }
+        ]
+      })
+    });
+    console.log(`Funnel Created Status: ${t72_funnelCreateRes.status}`, `ID: ${t72_funnelCreateRes.data.id}`);
+    if (t72_funnelCreateRes.status !== 201) {
+      throw new Error(`Funnel creation failed: ${JSON.stringify(t72_funnelCreateRes.data)}`);
+    }
+
+    // Public lookup & visit counter
+    const t72_publicLookupRes = await request('/api/funnels/public/scale-masterclass');
+    console.log(`Public Funnel Lookup Status: ${t72_publicLookupRes.status}`, `Name: "${t72_publicLookupRes.data.name}"`, `Visits: ${t72_publicLookupRes.data.visits}`);
+    if (t72_publicLookupRes.status !== 200 || t72_publicLookupRes.data.visits !== 1) {
+      throw new Error(`Public funnel lookup failed: ${JSON.stringify(t72_publicLookupRes.data)}`);
+    }
+
+    // Lead opt-in with accepted order bump ($297 + $47 = $344)
+    const t72_optinRes = await request('/api/funnels/optin/scale-masterclass', {
+      method: 'POST',
+      body: JSON.stringify({
+        firstName: 'Victoria',
+        lastName: 'Sterling',
+        email: 'victoria@sterlinggrowth.io',
+        phone: '+1 (555) 777-8888',
+        bumpAccepted: true
+      })
+    });
+    console.log(`Funnel Opt-In Status: ${t72_optinRes.status}`, `Order: ${t72_optinRes.data.order?.orderNumber}`, `Total: $${t72_optinRes.data.order?.amount}`);
+    if (t72_optinRes.status !== 201 || t72_optinRes.data.order?.amount !== 344) {
+      throw new Error(`Funnel opt-in or order bump calculation failed: ${JSON.stringify(t72_optinRes.data)}`);
+    }
+    console.log('✅ Public live funnel ingress, visit tracking, opt-in lead creation, and 1-click order bump calculation verified');
+
+    console.log('\n🎉 ALL 72 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

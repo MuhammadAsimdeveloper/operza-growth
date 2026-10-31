@@ -46,6 +46,12 @@ export default function Snapshots() {
   const { state, dispatch } = useStore();
   const [creating, setCreating] = useState(false);
   const [deploying, setDeploying] = useState<Snapshot | null>(null);
+  const [diffing, setDiffing] = useState<Snapshot | null>(null);
+  const [diffTargetLoc, setDiffTargetLoc] = useState('');
+  const [diffData, setDiffData] = useState<any>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [selectedCats, setSelectedCats] = useState<string[]>(['workflows', 'pipelines', 'forms', 'calendars', 'paymentLinks']);
   const [locations, setLocations] = useState<{ id: string; name: string }[]>([]);
   const [confirm, setConfirm] = useState<{ kind: 'restore' | 'delete'; snapshot: Snapshot } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -61,6 +67,43 @@ export default function Snapshots() {
       active = false;
     };
   }, []);
+
+  const fetchDiff = (snapshotId: string, locId: string) => {
+    setDiffLoading(true);
+    api.agency.diffSnapshot(snapshotId, locId)
+      .then((res) => {
+        setDiffData(res);
+      })
+      .catch((err) => {
+        console.error('Diff error:', err);
+      })
+      .finally(() => {
+        setDiffLoading(false);
+      });
+  };
+
+  const handleOpenDiff = (snapshot: Snapshot) => {
+    setDiffing(snapshot);
+    const firstTarget = locations[0]?.id || '';
+    setDiffTargetLoc(firstTarget);
+    if (firstTarget) {
+      fetchDiff(snapshot.id, firstTarget);
+    }
+  };
+
+  const handleExecuteSync = async () => {
+    if (!diffing || !diffTargetLoc) return;
+    setSyncLoading(true);
+    try {
+      const res = await api.agency.syncSnapshot(diffing.id, diffTargetLoc, selectedCats);
+      setNotice(`Selective sync completed! Updated resources: ${Object.entries(res.synced || {}).map(([k, v]) => `${v} ${k}`).join(', ')}.`);
+      setDiffing(null);
+    } catch (err: any) {
+      setNotice(`Sync failed: ${err.message || 'unknown error'}`);
+    } finally {
+      setSyncLoading(false);
+    }
+  };
 
   const totalSize = state.snapshots.reduce((sum, snapshot) => sum + sizeOf(snapshot), 0);
   const latest = state.snapshots[0];
@@ -172,6 +215,16 @@ export default function Snapshots() {
                           }}
                         >
                           <Icon name="send" size={13} /> Deploy
+                        </button>
+                        <button
+                          className="btn btn--sm btn--ghost"
+                          title="Compare and selectively sync blueprint updates to a client workspace"
+                          onClick={() => {
+                            setNotice(null);
+                            handleOpenDiff(snapshot);
+                          }}
+                        >
+                          <Icon name="sliders" size={13} /> Diff & Sync
                         </button>
                         <button
                           className="btn btn--sm"
@@ -307,6 +360,135 @@ export default function Snapshots() {
               <div className="callout">{contentsOf(confirm.snapshot)}</div>
             </>
           )}
+        </Modal>
+      )}
+
+      {diffing && (
+        <Modal
+          title={`Bi-Directional Diff & Sync: ${diffing.name}`}
+          onClose={() => setDiffing(null)}
+          wide
+          footer={
+            <>
+              <button className="btn" type="button" onClick={() => setDiffing(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn btn--primary"
+                type="button"
+                disabled={syncLoading || selectedCats.length === 0}
+                onClick={handleExecuteSync}
+              >
+                {syncLoading ? 'Syncing Updates...' : `Push Selected Updates (${selectedCats.length} categories)`}
+              </button>
+            </>
+          }
+        >
+          <div className="stack" style={{ gap: 14 }}>
+            <div className="row row--between" style={{ alignItems: 'center' }}>
+              <div style={{ flex: 1 }}>
+                <label className="field-label" style={{ fontSize: 12 }}>Select Client Sub-Account to Diff Against:</label>
+                <select
+                  className="select"
+                  value={diffTargetLoc}
+                  onChange={(e) => {
+                    const newLoc = e.target.value;
+                    setDiffTargetLoc(newLoc);
+                    if (diffing && newLoc) fetchDiff(diffing.id, newLoc);
+                  }}
+                >
+                  {locations.map((loc) => (
+                    <option key={loc.id} value={loc.id}>
+                      {loc.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {diffLoading ? (
+              <div style={{ padding: '30px 0', textAlign: 'center', color: 'var(--text-muted)' }}>
+                Comparing snapshot blueprint against workspace resources...
+              </div>
+            ) : diffData ? (
+              <div className="stack" style={{ gap: 12 }}>
+                <div className="grid grid--3">
+                  <div className="card" style={{ padding: 10 }}>
+                    <div className="cell-sub" style={{ fontSize: 11 }}>NEW IN SNAPSHOT</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--green)' }}>
+                      {diffData.summary?.newCount ?? 0} items
+                    </div>
+                  </div>
+                  <div className="card" style={{ padding: 10 }}>
+                    <div className="cell-sub" style={{ fontSize: 11 }}>MODIFIED / VERSION GAP</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--amber)' }}>
+                      {diffData.summary?.modifiedCount ?? 0} items
+                    </div>
+                  </div>
+                  <div className="card" style={{ padding: 10 }}>
+                    <div className="cell-sub" style={{ fontSize: 11 }}>ALREADY SYNCED</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--blue)' }}>
+                      {diffData.summary?.syncedCount ?? 0} items
+                    </div>
+                  </div>
+                </div>
+
+                <div className="field">
+                  <label className="field-label" style={{ fontSize: 12 }}>Select Resources to Push:</label>
+                  <div className="row" style={{ gap: 12, flexWrap: 'wrap' }}>
+                    {['workflows', 'pipelines', 'forms', 'calendars', 'paymentLinks'].map((cat) => (
+                      <label key={cat} className="row" style={{ gap: 6, fontSize: 12.5, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedCats.includes(cat)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedCats([...selectedCats, cat]);
+                            } else {
+                              setSelectedCats(selectedCats.filter(c => c !== cat));
+                            }
+                          }}
+                        />
+                        <span style={{ textTransform: 'capitalize', fontWeight: 550 }}>{cat}</span>
+                        <span className="cell-sub">({diffData.diff?.[cat]?.length || 0})</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="table-wrap" style={{ maxHeight: 220, overflowY: 'auto' }}>
+                  <table className="table">
+                    <thead>
+                      <tr>
+                        <th>Resource</th>
+                        <th>Category</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.entries(diffData.diff || {}).flatMap(([cat, items]: [string, any]) =>
+                        items.map((item: any, idx: number) => (
+                          <tr key={`${cat}-${idx}`}>
+                            <td style={{ fontWeight: 550, fontSize: 12 }}>{item.name}</td>
+                            <td className="cell-sub" style={{ textTransform: 'capitalize', fontSize: 11.5 }}>{cat}</td>
+                            <td>
+                              {item.status === 'new' && <Badge tone="green">New in Blueprint</Badge>}
+                              {item.status === 'modified' && <Badge tone="amber">Modified</Badge>}
+                              {item.status === 'synced' && <Badge tone="blue">Synced</Badge>}
+                            </td>
+                            <td className="cell-sub" style={{ fontSize: 11.5 }}>
+                              {item.action === 'create' ? 'Will create' : item.action === 'update' ? 'Will update' : 'Skip (Identical)'}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
+          </div>
         </Modal>
       )}
     </div>

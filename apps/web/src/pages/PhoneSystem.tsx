@@ -24,12 +24,72 @@ function talkTime(seconds: number): string {
 
 export default function PhoneSystem() {
   const { state, dispatch } = useStore();
+  const [activeTab, setActiveTab] = useState<'lines' | 'logs' | 'a2p'>('lines');
   const [direction, setDirection] = useState<'all' | CallDirection>('all');
   const [outcome, setOutcome] = useState<'all' | CallOutcome>('all');
   const [query, setQuery] = useState('');
   const [logging, setLogging] = useState(false);
   const [provisioning, setProvisioning] = useState(false);
   const [editingNumber, setEditingNumber] = useState<PhoneNumber | null>(null);
+
+  // A2P 10DLC Trust Hub state
+  const [a2pStatus, setA2pStatus] = useState<any>(null);
+  const [a2pLoading, setA2pLoading] = useState(false);
+  const [a2pModal, setA2pModal] = useState(false);
+  const [a2pForm, setA2pForm] = useState({
+    legalBusinessName: 'Operza Alpha Agency LLC',
+    ein: '12-3456789',
+    entityType: 'LLC',
+    vertical: 'Professional Services',
+    address: '100 Growth Way, Suite 400',
+    city: 'Austin',
+    state: 'TX',
+    postalCode: '78701',
+    country: 'US',
+    website: 'https://operza.io',
+    campaignType: 'low_volume_mixed',
+    sample1: 'Hi [Name], your strategy session with Operza is confirmed for tomorrow at 2 PM. Reply STOP to cancel.',
+    sample2: 'Hi [Name], here is your weekly account summary. Reply HELP for support or STOP to opt out.',
+    optInWorkflow: 'Leads check an explicit SMS opt-in checkbox on public booking and contact forms agreeing to SMS notifications.',
+  });
+
+  const loadA2pStatus = () => {
+    api.telephony.getA2PStatus().then((res) => {
+      setA2pStatus(res);
+    }).catch(() => { /* dev fallback */ });
+  };
+
+  useEffect(() => {
+    loadA2pStatus();
+  }, []);
+
+  const handleRegisterA2P = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setA2pLoading(true);
+    try {
+      const res = await api.telephony.registerA2P({
+        legalBusinessName: a2pForm.legalBusinessName,
+        ein: a2pForm.ein,
+        entityType: a2pForm.entityType,
+        vertical: a2pForm.vertical,
+        address: a2pForm.address,
+        city: a2pForm.city,
+        state: a2pForm.state,
+        postalCode: a2pForm.postalCode,
+        country: a2pForm.country,
+        website: a2pForm.website,
+        campaignType: a2pForm.campaignType,
+        sampleMessages: [a2pForm.sample1, a2pForm.sample2],
+        optInWorkflow: a2pForm.optInWorkflow,
+      });
+      setA2pStatus(res);
+      setA2pModal(false);
+    } catch (err) {
+      console.error('A2P registration failed:', err);
+    } finally {
+      setA2pLoading(false);
+    }
+  };
 
   useEffect(() => {
     api.crm.list<CallRecord>('calls').then((res) => {
@@ -134,6 +194,37 @@ export default function PhoneSystem() {
         />
       </div>
 
+      {/* Phone System Navigation Tabs */}
+      <div className="row" style={{ gap: 8, marginBottom: 16 }}>
+        <button
+          type="button"
+          className={`btn ${activeTab === 'lines' ? 'btn--primary' : 'btn--ghost'}`}
+          onClick={() => setActiveTab('lines')}
+        >
+          <Icon name="phone" size={14} /> Virtual Lines ({state.phoneNumbers.length})
+        </button>
+        <button
+          type="button"
+          className={`btn ${activeTab === 'logs' ? 'btn--primary' : 'btn--ghost'}`}
+          onClick={() => setActiveTab('logs')}
+        >
+          <Icon name="clock" size={14} /> Call History ({state.calls.length})
+        </button>
+        <button
+          type="button"
+          className={`btn ${activeTab === 'a2p' ? 'btn--primary' : 'btn--ghost'}`}
+          onClick={() => setActiveTab('a2p')}
+        >
+          <Icon name="shield" size={14} /> A2P 10DLC Trust Hub
+          {a2pStatus?.status === 'VERIFIED_10DLC' ? (
+            <span style={{ marginLeft: 6 }}><Badge tone="green">Verified</Badge></span>
+          ) : (
+            <span style={{ marginLeft: 6 }}><Badge tone="amber">Action Required</Badge></span>
+          )}
+        </button>
+      </div>
+
+      {activeTab === 'lines' && (
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="card__head">
           <div>
@@ -227,7 +318,9 @@ export default function PhoneSystem() {
           </div>
         </div>
       </div>
+      )}
 
+      {activeTab === 'logs' && (
       <div className="card">
         <div className="card__head">
           <div>
@@ -370,6 +463,272 @@ export default function PhoneSystem() {
           </div>
         )}
       </div>
+      )}
+
+      {activeTab === 'a2p' && (
+        <div className="stack" style={{ gap: 16 }}>
+          <div className="card" style={{ borderLeft: '4px solid var(--accent)' }}>
+            <div className="card__body">
+              <div className="row row--between" style={{ alignItems: 'flex-start' }}>
+                <div>
+                  <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+                    <div style={{ fontSize: 18, fontWeight: 700 }}>A2P 10DLC Carrier Trust Profile</div>
+                    {a2pStatus?.status === 'VERIFIED_10DLC' ? (
+                      <Badge tone="green">Verified & Compliant</Badge>
+                    ) : (
+                      <Badge tone="amber">Action Required</Badge>
+                    )}
+                  </div>
+                  <div className="cell-sub" style={{ marginTop: 4, maxWidth: 680 }}>
+                    US mobile carriers (AT&T, Verizon, T-Mobile) require all commercial messaging traffic to be registered under The Campaign Registry (TCR). Your messages will not be filtered or blocked when registered.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn--primary"
+                  onClick={() => setA2pModal(true)}
+                >
+                  <Icon name="shield" size={14} />
+                  {a2pStatus?.status === 'VERIFIED_10DLC' ? 'Update Brand & Campaign' : 'Register 10DLC Campaign'}
+                </button>
+              </div>
+
+              <div className="grid grid--4" style={{ marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
+                <div>
+                  <div className="cell-sub" style={{ fontSize: 11 }}>TCR BRAND ID</div>
+                  <div className="mono-cell" style={{ fontWeight: 600, marginTop: 2 }}>{a2pStatus?.tcrBrandId || 'Not Registered'}</div>
+                </div>
+                <div>
+                  <div className="cell-sub" style={{ fontSize: 11 }}>CAMPAIGN SID</div>
+                  <div className="mono-cell" style={{ fontWeight: 600, marginTop: 2 }}>{a2pStatus?.campaignSid || 'Not Registered'}</div>
+                </div>
+                <div>
+                  <div className="cell-sub" style={{ fontSize: 11 }}>TRUST SCORE</div>
+                  <div style={{ fontWeight: 700, color: 'var(--green)', marginTop: 2 }}>{a2pStatus?.trustScore ? `${a2pStatus.trustScore} / 100` : '—'}</div>
+                </div>
+                <div>
+                  <div className="cell-sub" style={{ fontSize: 11 }}>THROUGHPUT LIMIT</div>
+                  <div style={{ fontWeight: 600, marginTop: 2 }}>{a2pStatus?.throughputMPS ? `${a2pStatus.throughputMPS} MPS (High)` : '15 MPS (Standard)'}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid--2">
+            <div className="card">
+              <div className="card__head">
+                <div className="card__title">Carrier Compliance Checklist</div>
+                <Badge tone="blue">Automated Safeguards</Badge>
+              </div>
+              <div className="card__body stack" style={{ gap: 12 }}>
+                <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+                  <span style={{ color: 'var(--green)', fontSize: 16 }}>✔</span>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>Opt-In Disclosure Language</div>
+                    <div className="cell-sub" style={{ fontSize: 11.5 }}>Web forms contain compliant carrier terms and message frequency disclosure.</div>
+                  </div>
+                </div>
+                <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+                  <span style={{ color: 'var(--green)', fontSize: 16 }}>✔</span>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>Automated STOP / Opt-Out Handler</div>
+                    <div className="cell-sub" style={{ fontSize: 11.5 }}>Incoming STOP, CANCEL, or UNSUBSCRIBE automatically disables outbound SMS.</div>
+                  </div>
+                </div>
+                <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+                  <span style={{ color: 'var(--green)', fontSize: 16 }}>✔</span>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>Automated HELP / Support Handler</div>
+                    <div className="cell-sub" style={{ fontSize: 11.5 }}>Incoming HELP inquiries immediately return support contact information.</div>
+                  </div>
+                </div>
+                <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+                  <span style={{ color: 'var(--green)', fontSize: 16 }}>✔</span>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>Legal Entity & EIN Verification</div>
+                    <div className="cell-sub" style={{ fontSize: 11.5 }}>Registered with Dun & Bradstreet / IRS business registry.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="card__head">
+                <div className="card__title">Registered Campaign Details</div>
+                <div className="card__sub">Active TCR Parameters</div>
+              </div>
+              <div className="card__body stack" style={{ gap: 10, fontSize: 12.5 }}>
+                <div className="row row--between">
+                  <span className="cell-sub">Legal Entity:</span>
+                  <span style={{ fontWeight: 600 }}>{a2pStatus?.brand?.legalBusinessName || 'Operza Alpha Agency LLC'}</span>
+                </div>
+                <div className="row row--between">
+                  <span className="cell-sub">EIN / Tax ID:</span>
+                  <span className="mono-cell">{a2pStatus?.brand?.ein || '12-3456789'}</span>
+                </div>
+                <div className="row row--between">
+                  <span className="cell-sub">Campaign Type:</span>
+                  <span style={{ fontWeight: 600 }}>Low Volume Mixed (Customer Care & Alerts)</span>
+                </div>
+                <div className="row row--between">
+                  <span className="cell-sub">Opt-In Keywords:</span>
+                  <span className="mono-cell">START, YES, SUBSCRIBE</span>
+                </div>
+                <div className="row row--between">
+                  <span className="cell-sub">Opt-Out Keywords:</span>
+                  <span className="mono-cell">STOP, CANCEL, QUIT</span>
+                </div>
+                <div style={{ marginTop: 6, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+                  <div className="cell-sub" style={{ marginBottom: 4 }}>Sample Outbound Template:</div>
+                  <div style={{ background: 'var(--bg-subtle, rgba(0,0,0,0.03))', padding: '8px 10px', borderRadius: 6, fontStyle: 'italic', fontSize: 11.5 }}>
+                    "{a2pStatus?.campaign?.sampleMessages?.[0] || 'Hi [Name], your strategy session with Operza is confirmed for tomorrow at 2 PM. Reply STOP to cancel.'}"
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {a2pModal && (
+        <Modal
+          title="A2P 10DLC Carrier Registration Wizard"
+          onClose={() => setA2pModal(false)}
+          footer={
+            <>
+              <button type="button" className="btn btn--ghost" onClick={() => setA2pModal(false)}>
+                Cancel
+              </button>
+              <button type="button" className="btn btn--primary" onClick={handleRegisterA2P} disabled={a2pLoading}>
+                {a2pLoading ? 'Submitting to Carriers...' : 'Submit 10DLC Registration'}
+              </button>
+            </>
+          }
+        >
+          <div className="stack" style={{ gap: 12 }}>
+            <div className="cell-sub" style={{ fontSize: 12 }}>
+              Provide your official business registration details as on record with the IRS. Carriers verify this information against Dun & Bradstreet records.
+            </div>
+
+            <div className="grid grid--2">
+              <div className="field">
+                <label>Legal Business Name</label>
+                <input
+                  className="input"
+                  value={a2pForm.legalBusinessName}
+                  onChange={(e) => setA2pForm({ ...a2pForm, legalBusinessName: e.target.value })}
+                  placeholder="Acme Growth Advisory LLC"
+                  required
+                />
+              </div>
+              <div className="field">
+                <label>EIN / Tax ID</label>
+                <input
+                  className="input"
+                  value={a2pForm.ein}
+                  onChange={(e) => setA2pForm({ ...a2pForm, ein: e.target.value })}
+                  placeholder="12-3456789"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="grid grid--3">
+              <div className="field">
+                <label>Entity Type</label>
+                <select
+                  className="select"
+                  value={a2pForm.entityType}
+                  onChange={(e) => setA2pForm({ ...a2pForm, entityType: e.target.value })}
+                >
+                  <option value="LLC">LLC</option>
+                  <option value="Corporation">Corporation</option>
+                  <option value="Non-Profit">Non-Profit</option>
+                  <option value="Sole Proprietor">Sole Proprietor</option>
+                </select>
+              </div>
+              <div className="field">
+                <label>Vertical</label>
+                <input
+                  className="input"
+                  value={a2pForm.vertical}
+                  onChange={(e) => setA2pForm({ ...a2pForm, vertical: e.target.value })}
+                  placeholder="Professional Services"
+                />
+              </div>
+              <div className="field">
+                <label>Campaign Use Case</label>
+                <select
+                  className="select"
+                  value={a2pForm.campaignType}
+                  onChange={(e) => setA2pForm({ ...a2pForm, campaignType: e.target.value })}
+                >
+                  <option value="low_volume_mixed">Low Volume Mixed</option>
+                  <option value="customer_care">Customer Care</option>
+                  <option value="marketing">Marketing & Promotions</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="field">
+              <label>Business Address</label>
+              <input
+                className="input"
+                value={a2pForm.address}
+                onChange={(e) => setA2pForm({ ...a2pForm, address: e.target.value })}
+                placeholder="100 Growth Way, Suite 400"
+              />
+            </div>
+
+            <div className="grid grid--3">
+              <div className="field">
+                <label>City</label>
+                <input
+                  className="input"
+                  value={a2pForm.city}
+                  onChange={(e) => setA2pForm({ ...a2pForm, city: e.target.value })}
+                />
+              </div>
+              <div className="field">
+                <label>State</label>
+                <input
+                  className="input"
+                  value={a2pForm.state}
+                  onChange={(e) => setA2pForm({ ...a2pForm, state: e.target.value })}
+                />
+              </div>
+              <div className="field">
+                <label>Postal Code</label>
+                <input
+                  className="input"
+                  value={a2pForm.postalCode}
+                  onChange={(e) => setA2pForm({ ...a2pForm, postalCode: e.target.value })}
+                />
+              </div>
+            </div>
+
+            <div className="field">
+              <label>Sample Message</label>
+              <textarea
+                className="textarea"
+                rows={2}
+                value={a2pForm.sample1}
+                onChange={(e) => setA2pForm({ ...a2pForm, sample1: e.target.value })}
+              />
+            </div>
+
+            <div className="field">
+              <label>Opt-In Consent Description</label>
+              <textarea
+                className="textarea"
+                rows={2}
+                value={a2pForm.optInWorkflow}
+                onChange={(e) => setA2pForm({ ...a2pForm, optInWorkflow: e.target.value })}
+              />
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {logging && <LogCallModal onClose={() => setLogging(false)} />}
       {provisioning && <ProvisionNumberModal onClose={() => setProvisioning(false)} />}

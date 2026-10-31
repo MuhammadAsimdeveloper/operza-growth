@@ -128,6 +128,10 @@ export const api = {
       request(`/api/agency/snapshots/${id}/restore`, { method: 'POST' }),
     deleteSnapshot: (id: string) =>
       request(`/api/agency/snapshots/${id}`, { method: 'DELETE' }),
+    diffSnapshot: (id: string, targetLocationId: string) =>
+      request<{ summary: any; diff: any; snapshotName: string; targetLocationName: string }>(`/api/agency/snapshots/${id}/diff/${targetLocationId}`),
+    syncSnapshot: (id: string, targetLocationId: string, resources?: string[]) =>
+      request(`/api/agency/snapshots/${id}/sync/${targetLocationId}`, { method: 'POST', body: JSON.stringify({ resources }) }),
   },
   dashboard: {
     getStats: () => request('/api/dashboard/stats'),
@@ -232,6 +236,10 @@ export const api = {
   calls: {
     setHandled: (id: string, handled = true) =>
       request(`/api/calls/handled/${id}`, { method: 'PUT', body: JSON.stringify({ handled }) }),
+  },
+  telephony: {
+    getA2PStatus: () => request<any>('/api/telephony/a2p/status'),
+    registerA2P: (data: any) => request('/api/telephony/a2p/register', { method: 'POST', body: JSON.stringify(data) }),
   },
   coupons: {
     validate: (code: string, subtotal?: number, agencyId?: string) =>

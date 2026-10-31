@@ -6,7 +6,7 @@
 **GoHighLevel Agency CRM + n8n Visual Automation + Autonomous AI Copilot**
 
 [![CI Status](https://github.com/MuhammadAsimdeveloper/operza-growth/actions/workflows/ci.yml/badge.svg)](https://github.com/MuhammadAsimdeveloper/operza-growth/actions)
-[![Tests Passing](https://img.shields.io/badge/Tests-68%2F68%20Passed-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
+[![Tests Passing](https://img.shields.io/badge/Tests-72%2F72%20Passed-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
 [![Node.js Version](https://img.shields.io/badge/Node.js-%3E%3D20.0.0-339933.svg?style=flat-square&logo=node.js)](package.json)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6.svg?style=flat-square&logo=typescript)](apps/web)
 [![React](https://img.shields.io/badge/React-19.0-61dafb.svg?style=flat-square&logo=react)](apps/web)
@@ -129,12 +129,15 @@ flowchart TD
 | :--- | :---: | :---: | :---: |
 | **Open Source & Self-Hostable** | ❌ Closed SaaS | ⚠️ Fair-Code (n8n license) | ✅ **100% MIT Open Source** |
 | **Visual Workflow Graph Canvas** | ❌ Linear tree only | ✅ Full 2D Node Canvas | ✅ **Full 2D Node Canvas + Step Toggle** |
+| **Node Payload Pinning & Step Inspector** | ❌ Not available | ✅ Built-in Inspector | ✅ **Built-in n8n Payload Drawer** |
 | **In-Browser WYSIWYG Funnel Builder** | ✅ Prop-heavy builder | ❌ Not available | ✅ **Built-in Responsive Visual Builder** |
+| **Public Live Funnel & 1-Click Bump** | ✅ Built-in | ❌ Not available | ✅ **Native Live Ingress & Bump Engine** |
 | **Multi-Tenant Agency & Sub-Accounts** | ✅ Available ($497/mo) | ❌ Single tenant | ✅ **Native PostgreSQL RLS Tenancy** |
-| **Agency Blueprints & Snapshots** | ✅ Proprietary | ❌ Manual JSON export | ✅ **Native 1-Click Snapshot Engine** |
+| **Agency Blueprints & Push Diff Sync** | ✅ Proprietary | ❌ Manual JSON export | ✅ **Bi-Directional Diff & Selective Push** |
 | **Durable Redis Queue (BullMQ)** | ❌ Black box | ✅ Redis backed | ✅ **Native RESP TCP + Zero-Config Fallback** |
 | **Autonomous AI Copilot & Token Streaming** | ⚠️ Add-on credits | ⚠️ Community nodes | ✅ **Built-in SSE Streaming + Approval Gates** |
-| **Omnichannel Unified Inbox & Telephony** | ✅ Built-in | ❌ Requires integrations | ✅ **Built-in Twilio + Webchat + Email** |
+| **Omnichannel Messaging (SMS, WhatsApp, Meta)**| ✅ Built-in | ❌ Requires integrations | ✅ **Twilio + WhatsApp + Meta + Email** |
+| **A2P 10DLC Carrier Compliance Hub** | ✅ Built-in | ❌ Not available | ✅ **Built-in TCR Brand & Campaign Hub** |
 | **White-Label Client Portal & LMS** | ✅ Built-in | ❌ Not available | ✅ **Built-in LMS + Invoices + Portal** |
 | **Software Cost** | 💸 \$97 – \$497+ / month | 💸 \$20 – \$50+ / month | 🆓 **\$0 Free & Fully Self-Hostable** |
 
@@ -275,10 +278,10 @@ Operza provides an exhaustive, RESTful API and WebSocket event hub:
 
 ## 🧪 Verification & Testing
 
-Operza features an exhaustive end-to-end integration test harness (`scripts/test-e2e.mjs`) covering all 68 core workflows, database writes, and public ingress points.
+Operza features an exhaustive end-to-end integration test harness (`scripts/test-e2e.mjs`) covering all 72 core workflows, database writes, and public ingress points.
 
 ```bash
-# Run the complete 68-step integration test suite:
+# Run the complete 72-step integration test suite:
 npm test
 
 # Run frontend TypeScript typechecking & bundle build:
@@ -291,10 +294,10 @@ Expected test result:
 🧪 Starting Operza End-to-End System Verification
 =====================================================
 ...
-[TEST 68] Durable Queue & Relational Database Telemetry: GET /api/admin/queue/status & POST /api/admin/queue/test-job
-✅ Durable job queue lifecycle and database telemetry verified
+[TEST 72] Public Live Funnel Ingress & Order Bump Checkout: /api/funnels/public/* & /optin/*
+✅ Public live funnel ingress, visit tracking, opt-in lead creation, and 1-click order bump calculation verified
 
-🎉 ALL 68 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉
+🎉 ALL 72 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉
 ```
 
 ---

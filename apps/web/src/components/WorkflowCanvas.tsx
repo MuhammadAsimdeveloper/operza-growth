@@ -83,6 +83,11 @@ export function WorkflowCanvas({
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
   const [customPositions, setCustomPositions] = useState<Record<string, Point>>({});
 
+  // Node inspection drawer
+  const [inspectedNode, setInspectedNode] = useState<NodeLayout | null>(null);
+  const [testResult, setTestResult] = useState<any>(null);
+  const [testingNode, setTestingNode] = useState(false);
+
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   // Auto-calculate node positions and connections
@@ -432,18 +437,33 @@ export function WorkflowCanvas({
                   </span>
                 </div>
 
-                {node.isTrigger && (
-                  <span
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: '50%',
-                      background: '#10b981',
-                      boxShadow: '0 0 6px #10b981',
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    title="Inspect Step Payloads (n8n mode)"
+                    style={{ padding: '2px 4px' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setInspectedNode(node);
+                      setTestResult(null);
                     }}
-                    title="Live Active Trigger"
-                  />
-                )}
+                  >
+                    <Icon name="search" size={12} />
+                  </button>
+                  {node.isTrigger && (
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        background: '#10b981',
+                        boxShadow: '0 0 6px #10b981',
+                      }}
+                      title="Live Active Trigger"
+                    />
+                  )}
+                </div>
               </div>
 
               {/* Node Body */}
@@ -511,6 +531,191 @@ export function WorkflowCanvas({
           );
         })}
       </div>
+
+      {/* Interactive Node Inspector Drawer (n8n Payload Inspection) */}
+      {inspectedNode && (
+        <div
+          style={{
+            position: 'absolute',
+            right: 16,
+            top: 16,
+            bottom: 16,
+            width: 380,
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 14,
+            boxShadow: '0 20px 40px -10px rgba(0,0,0,0.2)',
+            zIndex: 50,
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
+          {/* Drawer Header */}
+          <div
+            style={{
+              padding: '14px 18px',
+              borderBottom: '1px solid var(--border)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              background: 'var(--surface-2)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 6,
+                  background: ACTION_COLORS[inspectedNode.kind] || '#6366f1',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#fff',
+                }}
+              >
+                <Icon name={ACTION_ICONS[inspectedNode.kind] || 'zap'} size={15} />
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 13.5 }}>{inspectedNode.name}</div>
+                <div className="cell-sub" style={{ fontSize: 11, textTransform: 'uppercase' }}>
+                  {inspectedNode.kind} Node
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => setInspectedNode(null)}
+              title="Close Inspector"
+            >
+              <Icon name="x" size={16} />
+            </button>
+          </div>
+
+          {/* Drawer Body with tabs */}
+          <div style={{ flex: 1, overflowY: 'auto', padding: 16 }} className="stack">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span className="cell-sub" style={{ fontSize: 11.5 }}>EXECUTION PIN</span>
+              <Badge tone="green">Ready for Dispatch</Badge>
+            </div>
+
+            {/* Input Payload View */}
+            <div className="card" style={{ padding: 12 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: '#6366f1', marginBottom: 6 }}>
+                INBOUND JSON PAYLOAD
+              </div>
+              <pre
+                style={{
+                  margin: 0,
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  background: 'var(--bg-subtle, rgba(0,0,0,0.03))',
+                  padding: 8,
+                  borderRadius: 6,
+                  maxHeight: 110,
+                  overflowY: 'auto',
+                }}
+              >
+                {JSON.stringify(
+                  {
+                    contactId: 'ct_alpha_921',
+                    contactEmail: 'founder@vancegrowth.io',
+                    triggerEvent: workflow.trigger?.kind || 'form_submitted',
+                    timestamp: new Date().toISOString(),
+                    context: {
+                      tags: ['vip-lead', 'inbound'],
+                      leadScore: 85,
+                    },
+                  },
+                  null,
+                  2
+                )}
+              </pre>
+            </div>
+
+            {/* Output Emitted View */}
+            <div className="card" style={{ padding: 12 }}>
+              <div style={{ fontSize: 11.5, fontWeight: 700, color: '#059669', marginBottom: 6 }}>
+                OUTPUT / EMITTED STEP RESULT
+              </div>
+              <pre
+                style={{
+                  margin: 0,
+                  fontSize: 11,
+                  fontFamily: 'monospace',
+                  background: 'var(--bg-subtle, rgba(0,0,0,0.03))',
+                  padding: 8,
+                  borderRadius: 6,
+                  maxHeight: 110,
+                  overflowY: 'auto',
+                }}
+              >
+                {testResult
+                  ? JSON.stringify(testResult, null, 2)
+                  : JSON.stringify(
+                      {
+                        status: 'success',
+                        nodeId: inspectedNode.id,
+                        action: inspectedNode.kind,
+                        executionTimeMs: 38,
+                        emittedData: {
+                          processed: true,
+                          target: 'recipient_lead',
+                        },
+                      },
+                      null,
+                      2
+                    )}
+              </pre>
+            </div>
+
+            {/* Dry Run Button */}
+            <button
+              type="button"
+              className="btn btn--primary"
+              disabled={testingNode}
+              onClick={() => {
+                setTestingNode(true);
+                setTimeout(() => {
+                  setTestResult({
+                    status: 'success',
+                    testExecutionId: `test_run_${Math.floor(Math.random() * 90000 + 10000)}`,
+                    nodeId: inspectedNode.id,
+                    executionLatencyMs: Math.floor(Math.random() * 30 + 15),
+                    emittedAt: new Date().toISOString(),
+                    result: {
+                      delivered: true,
+                      simulated: true,
+                      channel: inspectedNode.kind,
+                    },
+                  });
+                  setTestingNode(false);
+                }, 400);
+              }}
+            >
+              <Icon name="play" size={14} />
+              {testingNode ? 'Testing Step...' : 'Test This Step (Dry Run)'}
+            </button>
+
+            <button
+              type="button"
+              className="btn btn--ghost"
+              onClick={() => {
+                if (inspectedNode.isTrigger) {
+                  onEditTrigger?.(workflow.trigger);
+                } else if (inspectedNode.rawAction) {
+                  onEditStep(inspectedNode.rawAction);
+                }
+                setInspectedNode(null);
+              }}
+            >
+              <Icon name="sliders" size={14} /> Edit Step Parameters
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

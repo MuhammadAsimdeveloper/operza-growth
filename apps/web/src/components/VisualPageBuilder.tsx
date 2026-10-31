@@ -35,6 +35,8 @@ export interface FunnelBlock {
   columnB?: string;
 }
 
+export type BuilderElement = FunnelBlock;
+
 const DEFAULT_BLOCKS: FunnelBlock[] = [
   {
     id: 'b_head_1',

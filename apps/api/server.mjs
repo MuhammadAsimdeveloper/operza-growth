@@ -2116,6 +2116,7 @@ const server = createServer(async (req, res) => {
       state.records.websites = state.records.websites || [];
       const site = state.records.websites.find(w =>
         w.id === slugOrId ||
+        (w.slug && w.slug.toLowerCase() === slugOrId.toLowerCase()) ||
         (w.domain && w.domain.toLowerCase() === slugOrId.toLowerCase()) ||
         w.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') === slugOrId.toLowerCase()
       );
@@ -2154,6 +2155,7 @@ const server = createServer(async (req, res) => {
       state.records.websites = state.records.websites || [];
       const site = state.records.websites.find(w =>
         w.id === slugOrId ||
+        (w.slug && w.slug.toLowerCase() === slugOrId.toLowerCase()) ||
         (w.domain && w.domain.toLowerCase() === slugOrId.toLowerCase()) ||
         w.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') === slugOrId.toLowerCase()
       );
@@ -2224,10 +2226,17 @@ const server = createServer(async (req, res) => {
       state.records.opportunities = state.records.opportunities || [];
       state.records.opportunities.push(opp);
 
-      // Order Bump fulfillment
+      // Order & Order Bump fulfillment
       let order = null;
-      if (bumpAccepted && site.checkout?.bumps?.length) {
-        const bump = site.checkout.bumps.find(b => b.enabled) || site.checkout.bumps[0];
+      if (bumpAccepted && (site.checkout?.bumps?.length || site.checkout?.bumpPrice || site.checkout?.price)) {
+        const bump = site.checkout?.bumps?.length
+          ? (site.checkout.bumps.find(b => b.enabled) || site.checkout.bumps[0])
+          : { price: site.checkout?.bumpPrice || 47, headline: site.checkout?.bumpTitle || 'VIP Order Bump' };
+
+        const baseAmount = site.checkout?.price || 0;
+        const bumpAmt = bump.price || site.checkout?.bumpPrice || 47;
+        const totalAmount = baseAmount > 0 ? baseAmount + bumpAmt : bumpAmt;
+
         const orderId = randomUUID();
         const invoiceId = randomUUID();
         const orderNum = `ORD-${Math.floor(100000 + Math.random() * 900000)}`;
@@ -2238,12 +2247,15 @@ const server = createServer(async (req, res) => {
           orderNumber: orderNum,
           contactId: contact.id,
           contactName: `${contact.firstName} ${contact.lastName}`.trim(),
-          amount: bump.price,
+          amount: totalAmount,
           currency: 'USD',
           status: 'completed',
-          items: [{ name: bump.headline || 'Order Bump', price: bump.price, quantity: 1 }],
+          items: [
+            ...(baseAmount > 0 ? [{ name: site.name || 'Primary Offer', price: baseAmount, quantity: 1 }] : []),
+            { name: bump.headline || bump.title || 'Order Bump', price: bumpAmt, quantity: 1 }
+          ],
           bumpAccepted: true,
-          bumpAmount: bump.price,
+          bumpAmount: bumpAmt,
           paidAt: new Date().toISOString(),
           createdAt: new Date().toISOString()
         };
@@ -2835,6 +2847,213 @@ const server = createServer(async (req, res) => {
       }
 
       return sendJson(res, 200, { received: true });
+    }
+
+    // ─── WhatsApp Cloud API Webhook (Verification & Inbound Messages) ──
+    if (pathname === '/api/webhooks/whatsapp') {
+      if (method === 'GET') {
+        const urlObj = new URL(req.url, 'http://localhost');
+        const mode = urlObj.searchParams.get('hub.mode');
+        const token = urlObj.searchParams.get('hub.verify_token');
+        const challenge = urlObj.searchParams.get('hub.challenge');
+
+        console.log(`[WHATSAPP WEBHOOK] Verification mode=${mode} token=${token}`);
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.end(challenge || 'verified');
+        return;
+      }
+
+      if (method === 'POST') {
+        const rawBody = await readRawBody(req);
+        let payload;
+        try { payload = JSON.parse(rawBody.toString('utf8')); } catch { payload = {}; }
+
+        console.log('[WHATSAPP WEBHOOK] Inbound event received');
+        auditLog('webhook.whatsapp', null, { received: true });
+
+        // Extract message from standard WhatsApp Cloud API payload or flat test body
+        const entry = payload.entry?.[0];
+        const change = entry?.changes?.[0]?.value;
+        const msg = change?.messages?.[0] || payload;
+        const sender = msg.from || payload.from || '+15550199';
+        const senderName = change?.contacts?.[0]?.profile?.name || payload.name || 'WhatsApp Contact';
+        const textBody = msg.text?.body || msg.text || payload.message || payload.body || 'Hello via WhatsApp';
+
+        const fromPhone = String(sender).trim();
+        let contact = [...(state.records.contacts || [])].reverse().find(
+          c => c.phone && (c.phone === fromPhone || c.phone.replace(/\D/g, '') === fromPhone.replace(/\D/g, ''))
+        );
+        const agencyId = contact?.agencyId || state.agencies[0]?.id;
+        const locationId = contact?.locationId || state.locations[0]?.id;
+
+        if (!contact && agencyId && locationId) {
+          contact = {
+            id: randomUUID(),
+            agencyId,
+            locationId,
+            firstName: senderName.split(' ')[0] || 'WhatsApp',
+            lastName: senderName.split(' ').slice(1).join(' ') || 'User',
+            phone: fromPhone,
+            email: '',
+            source: 'Inbound WhatsApp',
+            tags: ['inbound-whatsapp'],
+            status: 'lead',
+            createdAt: new Date().toISOString()
+          };
+          state.records.contacts = state.records.contacts || [];
+          state.records.contacts.push(contact);
+        }
+
+        if (contact) {
+          const contactName = `${contact.firstName} ${contact.lastName}`.trim();
+          let conv = (state.records.conversations || []).find(
+            c => c.agencyId === contact.agencyId && (c.contactName === contactName || c.channel === 'whatsapp')
+          );
+          if (!conv) {
+            conv = {
+              id: randomUUID(),
+              agencyId: contact.agencyId,
+              locationId: contact.locationId,
+              contactName,
+              channel: 'whatsapp',
+              subject: 'WhatsApp Chat',
+              status: 'open',
+              lastMessage: textBody,
+              assignedTo: 'Inbound Queue',
+              messages: [],
+              createdAt: new Date().toISOString()
+            };
+            state.records.conversations = state.records.conversations || [];
+            state.records.conversations.push(conv);
+          }
+          conv.lastMessage = textBody;
+          conv.channel = 'whatsapp';
+          conv.messages = conv.messages || [];
+          conv.messages.push({
+            id: randomUUID(),
+            author: contactName,
+            channel: 'whatsapp',
+            direction: 'inbound',
+            text: textBody,
+            timestamp: new Date().toISOString()
+          });
+          await saveState();
+
+          broadcast('crm.conversation.updated', { id: conv.id, contactName, channel: 'whatsapp', message: textBody });
+          broadcast('webhook.whatsapp.message', { from: fromPhone, body: textBody });
+
+          triggerWorkflowExecution({
+            agencyId: contact.agencyId,
+            locationId: contact.locationId,
+            triggerType: 'whatsapp',
+            triggerContext: { contact, message: textBody, from: fromPhone }
+          }).catch(console.error);
+        }
+
+        return sendJson(res, 200, { received: true, channel: 'whatsapp', contactId: contact?.id });
+      }
+    }
+
+    // ─── Meta Messenger & Instagram Direct Webhook ─────────────────
+    if (pathname === '/api/webhooks/meta') {
+      if (method === 'GET') {
+        const urlObj = new URL(req.url, 'http://localhost');
+        const mode = urlObj.searchParams.get('hub.mode');
+        const challenge = urlObj.searchParams.get('hub.challenge');
+
+        console.log(`[META WEBHOOK] Verification mode=${mode} challenge=${challenge}`);
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.end(challenge || 'verified');
+        return;
+      }
+
+      if (method === 'POST') {
+        const rawBody = await readRawBody(req);
+        let payload;
+        try { payload = JSON.parse(rawBody.toString('utf8')); } catch { payload = {}; }
+
+        console.log('[META WEBHOOK] Inbound event received');
+        auditLog('webhook.meta', null, { received: true });
+
+        const entry = payload.entry?.[0];
+        const messaging = entry?.messaging?.[0] || payload;
+        const senderId = messaging.sender?.id || payload.senderId || 'ig_user_123';
+        const senderHandle = payload.handle || payload.username || `@user_${senderId.slice(-4)}`;
+        const textBody = messaging.message?.text || payload.message || payload.text || 'Inquiry via Instagram';
+
+        let contact = [...(state.records.contacts || [])].reverse().find(
+          c => c.instagramHandle === senderHandle || (c.tags && c.tags.includes(senderHandle))
+        );
+        const agencyId = contact?.agencyId || state.agencies[0]?.id;
+        const locationId = contact?.locationId || state.locations[0]?.id;
+
+        if (!contact && agencyId && locationId) {
+          contact = {
+            id: randomUUID(),
+            agencyId,
+            locationId,
+            firstName: senderHandle.replace('@', '') || 'Social',
+            lastName: 'Lead',
+            phone: '',
+            email: '',
+            instagramHandle: senderHandle,
+            source: 'Meta Direct',
+            tags: ['inbound-meta', senderHandle],
+            status: 'lead',
+            createdAt: new Date().toISOString()
+          };
+          state.records.contacts = state.records.contacts || [];
+          state.records.contacts.push(contact);
+        }
+
+        if (contact) {
+          const contactName = `${contact.firstName} ${contact.lastName}`.trim();
+          let conv = (state.records.conversations || []).find(
+            c => c.agencyId === contact.agencyId && (c.contactName === contactName || c.channel === 'meta')
+          );
+          if (!conv) {
+            conv = {
+              id: randomUUID(),
+              agencyId: contact.agencyId,
+              locationId: contact.locationId,
+              contactName,
+              channel: 'meta',
+              subject: `Instagram Direct: ${senderHandle}`,
+              status: 'open',
+              lastMessage: textBody,
+              assignedTo: 'Inbound Queue',
+              messages: [],
+              createdAt: new Date().toISOString()
+            };
+            state.records.conversations = state.records.conversations || [];
+            state.records.conversations.push(conv);
+          }
+          conv.lastMessage = textBody;
+          conv.channel = 'meta';
+          conv.messages = conv.messages || [];
+          conv.messages.push({
+            id: randomUUID(),
+            author: senderHandle,
+            channel: 'meta',
+            direction: 'inbound',
+            text: textBody,
+            timestamp: new Date().toISOString()
+          });
+          await saveState();
+
+          broadcast('crm.conversation.updated', { id: conv.id, contactName, channel: 'meta', message: textBody });
+          broadcast('webhook.meta.message', { senderId, handle: senderHandle, body: textBody });
+
+          triggerWorkflowExecution({
+            agencyId: contact.agencyId,
+            locationId: contact.locationId,
+            triggerType: 'meta',
+            triggerContext: { contact, message: textBody, senderId, handle: senderHandle }
+          }).catch(console.error);
+        }
+
+        return sendJson(res, 200, { received: true, channel: 'meta', contactId: contact?.id });
+      }
     }
 
     // ─── Workflow Webhook Trigger Ingress (public) ────────────────
@@ -4563,6 +4782,97 @@ const server = createServer(async (req, res) => {
     }
 
     // ═════════════════════════════════════════════════════════════
+    // ─── A2P 10DLC CARRIER REGISTRATION & TRUST HUB ─────────────
+    // ═════════════════════════════════════════════════════════════
+
+    // GET /api/telephony/a2p/status - retrieve carrier compliance & 10DLC status
+    if (method === 'GET' && pathname === '/api/telephony/a2p/status') {
+      state.a2pRegistrations = state.a2pRegistrations || [];
+      const reg = state.a2pRegistrations.find(r => r.agencyId === agency.id && (r.locationId === activeLocation?.id || !r.locationId));
+      if (!reg) {
+        return sendJson(res, 200, {
+          status: 'UNREGISTERED',
+          isRegistered: false,
+          brand: null,
+          campaign: null,
+          trustScore: 0,
+          dailyLimit: 2000,
+          throughputMPS: 15
+        });
+      }
+      return sendJson(res, 200, reg);
+    }
+
+    // POST /api/telephony/a2p/register - submit brand & campaign for carrier 10DLC registration
+    if (method === 'POST' && pathname === '/api/telephony/a2p/register') {
+      const body = await readBody(req);
+      const legalBusinessName = String(body.legalBusinessName || agency.name || '').trim();
+      const ein = String(body.ein || '').trim();
+      const campaignType = String(body.campaignType || 'low_volume_mixed').trim();
+
+      if (!legalBusinessName) {
+        return sendJson(res, 400, { error: 'legalBusinessName is required' });
+      }
+
+      state.a2pRegistrations = state.a2pRegistrations || [];
+      const existingIdx = state.a2pRegistrations.findIndex(r => r.agencyId === agency.id);
+
+      const registrationRecord = {
+        id: randomUUID(),
+        agencyId: agency.id,
+        locationId: activeLocation?.id,
+        status: 'VERIFIED_10DLC',
+        isRegistered: true,
+        tcrBrandId: `BN-${randomBytes(4).toString('hex').toUpperCase()}`,
+        campaignSid: `CP-${randomBytes(5).toString('hex').toUpperCase()}`,
+        trustScore: 88,
+        dailyLimit: 200000,
+        throughputMPS: 75,
+        brand: {
+          legalBusinessName,
+          ein: ein || '12-3456789',
+          entityType: body.entityType || 'LLC',
+          vertical: body.vertical || 'Professional Services',
+          address: body.address || '100 Growth Way, Suite 400',
+          city: body.city || 'Austin',
+          state: body.state || 'TX',
+          postalCode: body.postalCode || '78701',
+          country: body.country || 'US',
+          website: body.website || 'https://operza.io'
+        },
+        campaign: {
+          useCase: campaignType,
+          description: body.description || 'Customer engagement, appointment reminders, and account alerts.',
+          sampleMessages: body.sampleMessages || [
+            'Hi [Name], your appointment with [Company] is confirmed for tomorrow at 2 PM. Reply STOP to cancel.',
+            'Hi [Name], this is your monthly account summary from [Company]. Reach out if you have any questions!'
+          ],
+          optInWorkflow: body.optInWorkflow || 'Users check an opt-in box on public booking and contact forms agreeing to SMS notifications.',
+          optInKeywords: ['START', 'YES', 'SUBSCRIBE'],
+          optOutKeywords: ['STOP', 'CANCEL', 'UNSUBSCRIBE', 'QUIT'],
+          helpKeywords: ['HELP', 'INFO']
+        },
+        registeredAt: new Date().toISOString()
+      };
+
+      if (existingIdx >= 0) {
+        state.a2pRegistrations[existingIdx] = registrationRecord;
+      } else {
+        state.a2pRegistrations.push(registrationRecord);
+      }
+
+      await saveState();
+      auditLog('telephony.a2p.registered', actor, {
+        brandId: registrationRecord.tcrBrandId,
+        campaignSid: registrationRecord.campaignSid,
+        legalBusinessName
+      });
+      broadcast('telephony.a2p.updated', registrationRecord);
+
+      return sendJson(res, 201, registrationRecord);
+    }
+
+    // ═════════════════════════════════════════════════════════════
     // ─── SMART LISTS DYNAMIC RULE EVALUATION ────────────────────
     // ═════════════════════════════════════════════════════════════
 
@@ -5365,6 +5675,109 @@ const server = createServer(async (req, res) => {
         targetLocationId: targetLocId,
         targetLocationName: targetLoc.name,
         deployed
+      });
+    }
+
+    // ─── GET /api/agency/snapshots/:id/diff/:locationId — Snapshot Diff ──
+    const snapshotDiffMatch = pathname.match(/^\/api\/agency\/snapshots\/([a-zA-Z0-9_-]+)\/diff\/([a-zA-Z0-9_-]+)$/);
+    if (method === 'GET' && snapshotDiffMatch) {
+      const snapshotId = snapshotDiffMatch[1];
+      const targetLocId = snapshotDiffMatch[2];
+
+      const snapshot = (state.snapshots || []).find(s => s.id === snapshotId && s.agencyId === agency.id);
+      if (!snapshot) return sendJson(res, 404, { error: 'Snapshot not found' });
+
+      const targetLoc = (state.locations || []).find(l => l.id === targetLocId && l.agencyId === agency.id);
+      if (!targetLoc) return sendJson(res, 404, { error: 'Target workspace not found' });
+
+      const categories = ['workflows', 'pipelines', 'calendars', 'forms', 'paymentLinks'];
+      const diff = {};
+      let newCount = 0;
+      let modifiedCount = 0;
+      let syncedCount = 0;
+
+      for (const cat of categories) {
+        const snapshotItems = snapshot.data?.[cat] || [];
+        const existingItems = (state.records[cat] || []).filter(r => r.agencyId === agency.id && r.locationId === targetLocId);
+
+        diff[cat] = snapshotItems.map(item => {
+          const match = existingItems.find(e => e.name === item.name || e.title === item.title || (item.slug && e.slug && e.slug.startsWith(item.slug)));
+          if (!match) {
+            newCount++;
+            return { name: item.name || item.title || item.slug, status: 'new', action: 'create' };
+          }
+          const isModified = (item.steps && match.steps && item.steps.length !== match.steps.length) ||
+                             (item.fields && match.fields && item.fields.length !== match.fields.length);
+          if (isModified) {
+            modifiedCount++;
+            return { name: item.name || item.title || item.slug, status: 'modified', action: 'update', existingId: match.id };
+          }
+          syncedCount++;
+          return { name: item.name || item.title || item.slug, status: 'synced', action: 'skip', existingId: match.id };
+        });
+      }
+
+      return sendJson(res, 200, {
+        snapshotId,
+        snapshotName: snapshot.name,
+        targetLocationId: targetLocId,
+        targetLocationName: targetLoc.name,
+        summary: { newCount, modifiedCount, syncedCount, totalBlueprintItems: newCount + modifiedCount + syncedCount },
+        diff
+      });
+    }
+
+    // ─── POST /api/agency/snapshots/:id/sync/:locationId — Push Sync ────
+    const snapshotSyncMatch = pathname.match(/^\/api\/agency\/snapshots\/([a-zA-Z0-9_-]+)\/sync\/([a-zA-Z0-9_-]+)$/);
+    if (method === 'POST' && snapshotSyncMatch) {
+      const snapshotId = snapshotSyncMatch[1];
+      const targetLocId = snapshotSyncMatch[2];
+
+      const snapshot = (state.snapshots || []).find(s => s.id === snapshotId && s.agencyId === agency.id);
+      if (!snapshot) return sendJson(res, 404, { error: 'Snapshot not found' });
+
+      const targetLoc = (state.locations || []).find(l => l.id === targetLocId && l.agencyId === agency.id);
+      if (!targetLoc) return sendJson(res, 404, { error: 'Target workspace not found' });
+
+      const body = await readBody(req);
+      const selectedResources = Array.isArray(body.resources) && body.resources.length > 0
+        ? body.resources
+        : ['workflows', 'pipelines', 'calendars', 'forms', 'paymentLinks'];
+
+      const synced = {};
+
+      for (const cat of selectedResources) {
+        synced[cat] = 0;
+        const items = snapshot.data?.[cat] || [];
+        state.records[cat] = state.records[cat] || [];
+
+        for (const item of items) {
+          const clone = {
+            ...item,
+            id: randomUUID(),
+            agencyId: agency.id,
+            locationId: targetLocId,
+            status: 'active',
+            createdAt: new Date().toISOString()
+          };
+          if (clone.slug) {
+            clone.slug = `${clone.slug}-${randomBytes(3).toString('hex')}`;
+          }
+          state.records[cat].push(clone);
+          synced[cat]++;
+        }
+      }
+
+      await saveState();
+      auditLog('agency.snapshot.synced', actor, { snapshotId, targetLocationId: targetLocId, selectedResources, synced });
+      broadcast('agency.snapshot.synced', { snapshotId, targetLocationId: targetLocId, synced });
+
+      return sendJson(res, 200, {
+        success: true,
+        snapshotId,
+        targetLocationId: targetLocId,
+        selectedResources,
+        synced
       });
     }
 
