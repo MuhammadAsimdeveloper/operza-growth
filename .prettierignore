@@ -1,0 +1,10 @@
+node_modules/
+dist/
+build/
+coverage/
+data/
+*.log
+*.tmp
+apps/api/data/
+.turbo/
+package-lock.json

@@ -1,18 +1,52 @@
+# Dependencies
 node_modules/
+.pnp
+.pnp.js
+
+# Build artifacts & caches
 dist/
 build/
+.turbo/
+*.tsbuildinfo
+
+# Environment and sensitive variables
 .env
 .env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs & Debugging
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-.DS_Store
-Thumbs.db
+
+# Test & Coverage artifacts
+coverage/
+.nyc_output/
+
+# Application runtime persistence & temporary files
+data/
 data/store.json
 apps/api/data/*.json
 apps/api/data/*.tmp
 *.tmp
-coverage/
-.turbo/
+*.bak
+
+# IDE & Editor Files
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

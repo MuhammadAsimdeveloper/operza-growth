@@ -2,8 +2,33 @@
   "name": "operza",
   "version": "1.0.0",
   "private": true,
-  "description": "Operza - Unified Business Automation, Agency CRM & AI Operating System",
+  "description": "Operza — The Open-Source Unified Business OS, Multi-Tenant Agency CRM & Intelligent Workflow Orchestrator (GoHighLevel & n8n Alternative)",
   "type": "module",
+  "homepage": "https://github.com/MuhammadAsimdeveloper/operza-growth#readme",
+  "bugs": {
+    "url": "https://github.com/MuhammadAsimdeveloper/operza-growth/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MuhammadAsimdeveloper/operza-growth.git"
+  },
+  "license": "MIT",
+  "author": "Operza Contributors",
+  "keywords": [
+    "crm",
+    "agency-crm",
+    "gohighlevel-alternative",
+    "n8n-alternative",
+    "workflow-automation",
+    "visual-builder",
+    "funnel-builder",
+    "ai-copilot",
+    "row-level-security",
+    "multi-tenant",
+    "typescript",
+    "react-19",
+    "redis-queue"
+  ],
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -13,11 +38,16 @@
     "dev:api": "npm --workspace=@operza/api run dev",
     "dev:web": "npm --workspace=@operza/web run dev",
     "build": "npm --workspace=@operza/web run build",
+    "typecheck": "npm --workspace=@operza/web run typecheck",
     "db:migrate": "npm --workspace=@operza/db run db:migrate",
     "test": "node scripts/test-e2e.mjs",
-    "test:e2e": "node scripts/test-e2e.mjs"
+    "test:e2e": "node scripts/test-e2e.mjs",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
   }
 }
