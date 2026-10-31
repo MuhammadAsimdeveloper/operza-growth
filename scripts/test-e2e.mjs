@@ -2998,7 +2998,115 @@ async function runTests() {
     }
     console.log('✅ File upload security, path traversal sanitization, and size quota enforcement verified');
 
-    console.log('\n🎉 ALL 88 SYSTEM INTEGRATION & SECURITY TESTS PASSED CLEANLY! 🎉');
+    // [TEST 89] Internationalization: E.164 Phone Normalization & Global Currency Profile
+    console.log('\n[TEST 89] Internationalization: E.164 Phone Normalization & Global Profile: /api/agency/profile');
+    const { normalizeE164, isValidE164 } = await import('../apps/api/providers/sms.mjs');
+    if (normalizeE164('0300 1234567') !== '+923001234567') throw new Error(`PK E.164 normalization failed: ${normalizeE164('0300 1234567')}`);
+    if (normalizeE164('0044 20 7946 0958') !== '+442079460958') throw new Error(`UK E.164 normalization failed: ${normalizeE164('0044 20 7946 0958')}`);
+    if (normalizeE164('(555) 234-5678') !== '+15552345678') throw new Error(`US E.164 normalization failed: ${normalizeE164('(555) 234-5678')}`);
+    if (!isValidE164('+923001234567')) throw new Error('Valid E.164 was rejected');
+
+    const updateProfile = await request('/api/agency/profile', {
+      method: 'PUT',
+      body: JSON.stringify({
+        timezone: 'Asia/Karachi',
+        currency: 'PKR',
+        country: 'PK',
+        locale: 'ur-PK'
+      })
+    });
+    if (updateProfile.status !== 200 || updateProfile.data.profile.currency !== 'PKR') {
+      throw new Error(`Failed to update agency international profile: ${JSON.stringify(updateProfile.data)}`);
+    }
+    console.log(`Global Profile: Timezone="${updateProfile.data.profile.timezone}" Currency="${updateProfile.data.profile.currency}" Country="${updateProfile.data.profile.country}"`);
+    console.log('✅ Internationalization, E.164 phone normalization, and multi-currency profile verified');
+
+    // [TEST 90] Password Reset Lifecycle & Email Provider Integration
+    console.log('\n[TEST 90] Password Reset Lifecycle: /api/auth/forgot-password & /api/auth/reset-password');
+    const resetTestEmail = `pwdreset_${Date.now()}@operza.test`;
+    const setupSignup = await request('/api/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Reset Test User',
+        email: resetTestEmail,
+        password: 'Password123!',
+        agencyName: 'Reset Test Agency'
+      })
+    });
+    if (setupSignup.status !== 201) throw new Error('Setup signup failed for Test 90');
+
+    await request('/api/test/emails', { method: 'DELETE' });
+
+    const forgotRes = await request('/api/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email: resetTestEmail })
+    });
+    if (forgotRes.status !== 200) throw new Error(`Forgot password failed: ${forgotRes.status}`);
+
+    const emailCheckRes = await request('/api/test/emails');
+    const sentEmails = emailCheckRes.data?.emails || [];
+    if (sentEmails.length === 0) {
+      throw new Error('Password reset email was not dispatched through email provider!');
+    }
+    const resetEmail = sentEmails[0];
+    const tokenMatch = resetEmail.text.match(/Token:\s*([a-f0-9]{64})/i);
+    if (!tokenMatch) throw new Error(`Could not extract reset token from email: ${resetEmail.text}`);
+    const resetToken = tokenMatch[1];
+    console.log(`Password Reset Token Generated: ${resetToken.slice(0, 16)}...`);
+
+    const resetRes = await request('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token: resetToken, newPassword: 'BrandNewSecurePassword2026!' })
+    });
+    if (resetRes.status !== 200) throw new Error(`Reset password execution failed: ${resetRes.status}`);
+
+    // Verify login with old password fails
+    const oldLogin = await request('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email: resetTestEmail, password: 'Password123!' })
+    });
+    if (oldLogin.status !== 401) throw new Error(`Old password should fail with 401, got ${oldLogin.status}`);
+
+    // Verify login with new password succeeds
+    const newLogin = await request('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email: resetTestEmail, password: 'BrandNewSecurePassword2026!' })
+    });
+    if (newLogin.status !== 200) throw new Error(`New password login failed: ${newLogin.status}`);
+    console.log('✅ Password reset lifecycle and email provider verification completed');
+
+    // [TEST 91] GDPR Data Portability & Right to Erasure
+    console.log('\n[TEST 91] GDPR Data Portability & Right to Erasure: /api/agency/export & /api/agency/account');
+    const exportRes = await request('/api/agency/export');
+    if (exportRes.status !== 200 || !exportRes.data.contacts || !exportRes.data.pipelines) {
+      throw new Error(`GDPR data export failed: ${JSON.stringify(exportRes.data)}`);
+    }
+    console.log(`GDPR Export Generated: Contacts=${exportRes.data.contacts.length} Pipelines=${exportRes.data.pipelines.length} Invoices=${exportRes.data.invoices.length}`);
+
+    // Create a disposable tenant to test Right to Erasure (deletion)
+    sessionCookie = '';
+    csrfToken = '';
+    const disposableSignup = await request('/api/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Disposable User',
+        email: `disposable_${Date.now()}@operza.test`,
+        password: 'Password123!',
+        agencyName: 'Disposable Agency'
+      })
+    });
+    if (disposableSignup.status !== 201) throw new Error('Disposable agency signup failed');
+
+    // Delete the disposable agency under GDPR Right to Erasure
+    const deleteRes = await request('/api/agency/account', { method: 'DELETE' });
+    if (deleteRes.status !== 200) throw new Error(`GDPR account deletion failed: ${deleteRes.status}`);
+
+    // Verify sessions are invalidated
+    const verifyInvalidated = await request('/api/crm/contacts');
+    if (verifyInvalidated.status !== 401) throw new Error(`Deleted agency session was not revoked! Expected 401, got ${verifyInvalidated.status}`);
+    console.log('✅ GDPR Data Portability export and Right to Erasure deletion verified');
+
+    console.log('\n🎉 ALL 91 SYSTEM INTEGRATION & SECURITY TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

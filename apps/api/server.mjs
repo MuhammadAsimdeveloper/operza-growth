@@ -26,6 +26,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { executeStep, calculateChecksum } from '../../packages/workflow-engine/src/engine.mjs';
 import { workflowQueue } from './queue.mjs';
+import { getEmailProvider } from './providers/email.mjs';
+import { getSmsProvider, normalizeE164, isValidE164 } from './providers/sms.mjs';
+import { getPaymentProvider, formatCurrencyAmount, SUPPORTED_CURRENCIES, isSupportedCurrency } from './providers/payments.mjs';
 
 // Conditionally load ws — gracefully degrade if not installed
 let WebSocketServer;
@@ -143,8 +146,8 @@ const RATE_LIMIT_AUTH_MAX = Number(process.env.RATE_LIMIT_AUTH_MAX) || (isProd ?
 
 function getRateLimitKey(ip) { return ip || 'unknown'; }
 
-function normalizePhone(p) {
-  return String(p || '').replace(/\D/g, '');
+function normalizePhone(p, defaultCountryCode = '+1') {
+  return normalizeE164(p, defaultCountryCode);
 }
 
 function generateQrSvg(target, size = 256) {
@@ -987,6 +990,7 @@ async function executeWorkflowInstance({ flow, agencyId, locationId, triggerType
   const crmActions = {
     sendEmail: async ({ to, subject, body }) => {
       console.log(`[OPERZA WORKFLOW EMAIL] To: ${to} | Subject: ${subject}`);
+      await getEmailProvider().sendEmail({ to, subject, text: body, html: body }).catch(console.error);
       const contact = triggerContext.contact;
       const contactName = contact ? `${contact.firstName} ${contact.lastName}` : (to || 'Customer');
       let conv = (state.records.conversations || []).find(
@@ -1024,6 +1028,8 @@ async function executeWorkflowInstance({ flow, agencyId, locationId, triggerType
     },
     sendSms: async ({ to, message }) => {
       console.log(`[OPERZA WORKFLOW SMS] To: ${to} | Message: ${message}`);
+      const normalizedTo = normalizeE164(to);
+      await getSmsProvider().sendSms({ to: normalizedTo, message }).catch(console.error);
       const contact = triggerContext.contact;
       const contactName = contact ? `${contact.firstName} ${contact.lastName}` : (to || 'Customer');
       let conv = (state.records.conversations || []).find(
@@ -1745,6 +1751,15 @@ const server = createServer(async (req, res) => {
         inMemoryCollections: Object.keys(state.records || {}).length,
         timestamp: new Date().toISOString()
       });
+    }
+
+    // ─── Test Harness Diagnostics (only enabled in test mode) ───────
+    if (isTest && pathname === '/api/test/emails') {
+      if (method === 'DELETE') {
+        getEmailProvider().clear();
+        return sendJson(res, 200, { success: true });
+      }
+      return sendJson(res, 200, { emails: getEmailProvider().sentEmails || [] });
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -3687,9 +3702,21 @@ const server = createServer(async (req, res) => {
       const agencyId = randomUUID();
       const locationId = randomUUID();
 
-      const user = { id: userId, name: name.trim(), email: emailKey, passwordHash, status: 'active', createdAt: new Date().toISOString() };
-      const agency = { id: agencyId, name: (agencyName || `${name.trim()}'s Agency`).trim(), slug: emailKey.split('@')[0], status: 'active', createdAt: new Date().toISOString() };
-      const location = { id: locationId, agencyId, name: 'Main Workspace', timezone: 'UTC', status: 'active', createdAt: new Date().toISOString() };
+      const timezone = body.timezone ? String(body.timezone).trim() : 'UTC';
+      const currency = (body.currency && isSupportedCurrency(body.currency)) ? String(body.currency).toUpperCase().trim() : 'USD';
+      const country = body.country ? String(body.country).toUpperCase().trim().slice(0, 2) : 'US';
+      const locale = body.locale ? String(body.locale).trim() : 'en-US';
+
+      const consent = {
+        termsAcceptedAt: new Date().toISOString(),
+        privacyPolicyAcceptedAt: new Date().toISOString(),
+        marketingOptIn: Boolean(body.marketingOptIn),
+        ip: clientIp
+      };
+
+      const user = { id: userId, name: name.trim(), email: emailKey, passwordHash, status: 'active', consent, createdAt: new Date().toISOString() };
+      const agency = { id: agencyId, name: (agencyName || `${name.trim()}'s Agency`).trim(), slug: emailKey.split('@')[0], status: 'active', plan: 'trial', timezone, currency, country, locale, createdAt: new Date().toISOString() };
+      const location = { id: locationId, agencyId, name: 'Main Workspace', timezone, status: 'active', createdAt: new Date().toISOString() };
       const membership = { id: randomUUID(), agencyId, userId, role: 'owner', status: 'active', createdAt: new Date().toISOString() };
 
       state.users.push(user);
@@ -3988,6 +4015,68 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' && pathname === '/api/auth/logout') {
       clearSessionCookies(res);
       return sendJson(res, 200, { success: true });
+    }
+
+    // AUTH: Forgot Password Request (Dispatches tokenized reset email via provider)
+    if (method === 'POST' && pathname === '/api/auth/forgot-password') {
+      const body = await readBody(req);
+      const email = String(body.email || '').toLowerCase().trim();
+      if (!email) return sendJson(res, 400, { error: 'Email address is required' });
+
+      const user = state.users.find(u => u.email === email && u.status === 'active');
+      if (user) {
+        const resetToken = randomBytes(32).toString('hex');
+        user.resetTokenHash = hash(resetToken);
+        user.resetTokenExpiresAt = Date.now() + 3600000; // 1-hour expiry
+        await saveState();
+
+        await getEmailProvider().sendEmail({
+          to: user.email,
+          subject: 'Reset Your Operza Password',
+          text: `You requested a password reset for Operza. Reset Token: ${resetToken}. This link expires in 1 hour.`,
+          html: `<p>You requested a password reset for your Operza account.</p><p>Reset Token: <code>${resetToken}</code></p><p>This token is valid for 1 hour.</p>`
+        }).catch(console.error);
+      }
+
+      // Always return 200 to prevent user enumeration
+      return sendJson(res, 200, {
+        success: true,
+        message: 'If an active account exists with this email address, a password reset instruction has been sent.'
+      });
+    }
+
+    // AUTH: Reset Password with Verified Token
+    if (method === 'POST' && pathname === '/api/auth/reset-password') {
+      const body = await readBody(req);
+      const { token, newPassword } = body;
+      if (!token || !newPassword) {
+        return sendJson(res, 400, { error: 'Reset token and new password are required' });
+      }
+      if (String(newPassword).length < 8) {
+        return sendJson(res, 400, { error: 'Password must be at least 8 characters in length' });
+      }
+
+      const tokenHash = hash(token);
+      const user = state.users.find(u => u.resetTokenHash === tokenHash && u.resetTokenExpiresAt > Date.now());
+      if (!user) {
+        return sendJson(res, 400, { error: 'Invalid or expired password reset token' });
+      }
+
+      const salt = randomBytes(16);
+      const passBuf = await scrypt(newPassword, salt, 64);
+      user.passwordHash = `${salt.toString('hex')}:${passBuf.toString('hex')}`;
+      delete user.resetTokenHash;
+      delete user.resetTokenExpiresAt;
+
+      // Invalidate existing sessions for this user for security
+      state.sessions = (state.sessions || []).filter(s => s.userId !== user.id);
+      await saveState();
+
+      auditLog('auth.password_reset', { user }, { userId: user.id });
+      return sendJson(res, 200, {
+        success: true,
+        message: 'Password has been updated successfully. Please log in with your new credentials.'
+      });
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -5820,8 +5909,10 @@ const server = createServer(async (req, res) => {
         email: agency.email || actor.user?.email || 'support@operza.io',
         phone: agency.phone || '+1 800-555-0100',
         website: agency.website || 'https://operza.io',
-        timezone: agency.timezone || 'America/Los_Angeles',
-        currency: agency.currency || 'USD'
+        timezone: agency.timezone || 'UTC',
+        currency: agency.currency || 'USD',
+        country: agency.country || 'US',
+        locale: agency.locale || 'en-US'
       });
     }
 
@@ -5829,10 +5920,15 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       if (body.name) agency.name = body.name.trim();
       if (body.email) agency.email = body.email.trim();
-      if (body.phone) agency.phone = body.phone.trim();
+      if (body.phone) agency.phone = normalizeE164(body.phone);
       if (body.website) agency.website = body.website.trim();
       if (body.timezone) agency.timezone = body.timezone.trim();
-      if (body.currency) agency.currency = body.currency.trim();
+      if (body.currency) {
+        const curr = String(body.currency).toUpperCase().trim();
+        if (isSupportedCurrency(curr)) agency.currency = curr;
+      }
+      if (body.country) agency.country = String(body.country).toUpperCase().trim().slice(0, 2);
+      if (body.locale) agency.locale = String(body.locale).trim();
 
       await saveState();
       broadcast('agency.profile.updated', { agencyId: agency.id, name: agency.name });
@@ -5846,8 +5942,82 @@ const server = createServer(async (req, res) => {
           phone: agency.phone,
           website: agency.website,
           timezone: agency.timezone,
-          currency: agency.currency
+          currency: agency.currency,
+          country: agency.country,
+          locale: agency.locale
         }
+      });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── GDPR & DATA PRIVACY: PORTABILITY & RIGHT TO ERASURE ──────
+    // ═════════════════════════════════════════════════════════════
+
+    // GET /api/agency/export — GDPR Article 20 Data Portability Export
+    if (method === 'GET' && pathname === '/api/agency/export') {
+      const exportBundle = {
+        exportedAt: new Date().toISOString(),
+        formatVersion: '2.0.0',
+        complianceStandard: 'GDPR / CCPA Data Portability Specification',
+        agency: {
+          id: agency.id,
+          name: agency.name,
+          email: agency.email,
+          phone: agency.phone,
+          website: agency.website,
+          timezone: agency.timezone,
+          currency: agency.currency,
+          country: agency.country,
+          locale: agency.locale,
+          createdAt: agency.createdAt
+        },
+        locations: (state.locations || []).filter(l => l.agencyId === agency.id),
+        team: (state.records.team || []).filter(t => t.agencyId === agency.id).map(t => ({ id: t.id, name: t.name, email: t.email, role: t.role, createdAt: t.createdAt })),
+        contacts: (state.records.contacts || []).filter(c => c.agencyId === agency.id),
+        pipelines: (state.records.pipelines || []).filter(p => p.agencyId === agency.id),
+        opportunities: (state.records.opportunities || []).filter(o => o.agencyId === agency.id),
+        invoices: (state.records.invoices || []).filter(i => i.agencyId === agency.id),
+        orders: (state.records.orders || []).filter(o => o.agencyId === agency.id),
+        conversations: (state.records.conversations || []).filter(c => c.agencyId === agency.id),
+        workflows: (state.records.workflows || []).filter(w => w.agencyId === agency.id),
+        forms: (state.records.forms || []).filter(f => f.agencyId === agency.id),
+        documents: (state.records.documents || []).filter(d => d.agencyId === agency.id)
+      };
+
+      auditLog('gdpr.data_export', actor, { agencyId: agency.id });
+      return sendJson(res, 200, exportBundle);
+    }
+
+    // DELETE /api/agency/account — GDPR Article 17 Right to Erasure
+    if (method === 'DELETE' && pathname === '/api/agency/account') {
+      if (actor.membership.role !== 'owner') {
+        return sendJson(res, 403, { error: 'Only the agency owner can request permanent account erasure.' });
+      }
+
+      // Purge all agency-owned tenant data from memory and persistent store
+      for (const col of Object.keys(state.records || {})) {
+        if (Array.isArray(state.records[col])) {
+          state.records[col] = state.records[col].filter(item => item.agencyId !== agency.id);
+        }
+      }
+
+      state.locations = (state.locations || []).filter(l => l.agencyId !== agency.id);
+      state.memberships = (state.memberships || []).filter(m => m.agencyId !== agency.id);
+      state.workflows = (state.workflows || []).filter(w => w.agencyId !== agency.id);
+
+      agency.status = 'deleted';
+      agency.deletedAt = new Date().toISOString();
+
+      // Invalidate all active sessions for this agency
+      state.sessions = (state.sessions || []).filter(s => s.agencyId !== agency.id);
+
+      await saveState();
+      clearSessionCookies(res);
+
+      auditLog('gdpr.right_to_be_forgotten', actor, { agencyId: agency.id });
+      return sendJson(res, 200, {
+        success: true,
+        message: 'Agency account and all associated customer data have been permanently erased in compliance with GDPR standards.'
       });
     }
 
