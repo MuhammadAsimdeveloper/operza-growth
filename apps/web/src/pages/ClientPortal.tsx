@@ -130,6 +130,18 @@ export default function ClientPortal() {
                         <button
                           type="button"
                           className="btn btn--sm"
+                          title="Copy public client portal direct URL"
+                          onClick={() => {
+                            const url = `${window.location.origin}/portal/${m.id}`;
+                            navigator.clipboard.writeText(url);
+                            alert(`Client Portal URL copied to clipboard:\n${url}`);
+                          }}
+                        >
+                          <Icon name="link" size={12} /> Link
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn--sm"
                           aria-label={`Preview portal for ${m.firstName}`}
                           onClick={() => handleOpenPreview(m.id)}
                         >

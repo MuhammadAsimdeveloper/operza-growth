@@ -2298,7 +2298,65 @@ async function runTests() {
     }
     console.log('✅ Virtual phone number provisioned with voice/sms/mms capabilities, IVR routing, and multi-tenant isolation');
 
-    console.log('\n🎉 ALL 65 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ─── TEST 66: Container Health, Readiness & Observability Metrics ──────
+    console.log('\n[TEST 66] Container Health, Readiness & Observability Telemetry: GET /ready & GET /metrics');
+    const t66_readyRes = await request('/ready');
+    console.log(`Readiness Probe Status: ${t66_readyRes.status}`, `Ready: ${t66_readyRes.data.ready}`, `DB: ${t66_readyRes.data.dbEngine}`);
+    if (t66_readyRes.status !== 200 || !t66_readyRes.data.ready || !t66_readyRes.data.dbEngine) {
+      throw new Error(`Readiness probe failed: ${JSON.stringify(t66_readyRes.data)}`);
+    }
+
+    const t66_metricsRes = await request('/metrics');
+    console.log(`Metrics Status: ${t66_metricsRes.status}`, `Memory RSS: ${t66_metricsRes.data.memory?.rssMb} MB`, `WS Clients: ${t66_metricsRes.data.connections?.wsClients}`);
+    if (t66_metricsRes.status !== 200 || typeof t66_metricsRes.data.memory?.rssMb !== 'number' || typeof t66_metricsRes.data.connections?.wsClients !== 'number') {
+      throw new Error(`Metrics probe failed: ${JSON.stringify(t66_metricsRes.data)}`);
+    }
+    console.log('✅ Production container readiness and observability metrics telemetry verified');
+
+    // ─── TEST 67: Client Portal Interactive Commerce & Learning Execution ──
+    console.log('\n[TEST 67] Client Portal Operations: POST /api/portal/invoices/:id/pay & POST /api/portal/courses/:id/progress');
+    const t67_invRes = await request('/api/crm/invoices', {
+      method: 'POST',
+      body: JSON.stringify({
+        number: `INV-PORTAL-${Date.now().toString().slice(-4)}`,
+        contactId: testContactId,
+        contactName: 'Marcus Aurelius',
+        amount: 2500,
+        status: 'unpaid',
+        dueDate: '2026-11-15',
+        description: 'Monthly Growth Operations Retainer'
+      })
+    });
+    console.log(`Portal Invoice Created Status: ${t67_invRes.status}`, `Invoice ID: ${t67_invRes.data.id}`);
+
+    const t67_payRes = await request(`/api/portal/invoices/${t67_invRes.data.id}/pay`, {
+      method: 'POST',
+      body: JSON.stringify({ paymentMethod: 'card' })
+    });
+    console.log(`Portal Invoice Pay Status: ${t67_payRes.status}`, `New Status: ${t67_payRes.data.invoice?.status}`, `Order: ${t67_payRes.data.order?.orderNumber}`);
+    if (t67_payRes.status !== 200 || t67_payRes.data.invoice?.status !== 'paid' || !t67_payRes.data.order?.id) {
+      throw new Error(`Portal invoice pay failed: ${JSON.stringify(t67_payRes.data)}`);
+    }
+
+    const t67_progressRes = await request(`/api/portal/courses/course_agency_scaling_101/progress`, {
+      method: 'POST',
+      body: JSON.stringify({ contactId: testContactId, progress: 85 })
+    });
+    console.log(`Portal Course Progress Status: ${t67_progressRes.status}`, `Progress: ${t67_progressRes.data.enrollment?.progress}%`);
+    if (t67_progressRes.status !== 200 || t67_progressRes.data.enrollment?.progress !== 85) {
+      throw new Error(`Portal course progress failed: ${JSON.stringify(t67_progressRes.data)}`);
+    }
+
+    // Verify summary reflects paid invoice and updated progress
+    const t67_summaryRes = await request(`/api/portal/summary/${testContactId}`);
+    const t67_paidInv = t67_summaryRes.data.invoices?.find(i => i.id === t67_invRes.data.id);
+    const t67_course = t67_summaryRes.data.courses?.find(c => c.courseId === 'course_agency_scaling_101');
+    if (!t67_paidInv || t67_paidInv.status !== 'paid' || !t67_course || t67_course.progress !== 85) {
+      throw new Error(`Portal summary verification failed: ${JSON.stringify(t67_summaryRes.data)}`);
+    }
+    console.log('✅ Client portal interactive invoice payment and LMS curriculum progression verified');
+
+    console.log('\n🎉 ALL 67 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

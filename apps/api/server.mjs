@@ -15,6 +15,29 @@ try {
   console.warn('[OPERZA] ws package not installed — WebSocket server disabled. Run: npm install ws');
 }
 
+// Conditionally load pg for PostgreSQL dual-mode persistence
+let pgPool = null;
+try {
+  if (process.env.DATABASE_URL) {
+    const pgModule = await import('pg');
+    const Pool = pgModule.default?.Pool || pgModule.Pool;
+    if (Pool) {
+      pgPool = new Pool({
+        connectionString: process.env.DATABASE_URL,
+        ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
+        max: Number(process.env.PG_MAX_POOL || 10),
+        idleTimeoutMillis: 30000,
+        connectionTimeoutMillis: 5000
+      });
+      pgPool.on('error', (err) => {
+        console.error('[OPERZA-DB] Unexpected PostgreSQL pool error:', err.message);
+      });
+    }
+  }
+} catch (err) {
+  console.warn('[OPERZA-DB] pg module not available or error initializing pool:', err.message);
+}
+
 const scrypt = promisify(scryptCallback);
 const root = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT || 4000);
@@ -322,12 +345,65 @@ function clearSessionCookies(res) {
   ]);
 }
 
+async function initDatabase() {
+  if (!pgPool) {
+    console.log('📦 [OPERZA-DB] Running in zero-config JSON file mode (data/store.json).');
+    return;
+  }
+  try {
+    const client = await pgPool.connect();
+    try {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS operza_app_state (
+          id text PRIMARY KEY,
+          payload jsonb NOT NULL,
+          updated_at timestamptz NOT NULL DEFAULT now()
+        );
+      `);
+      console.log('🐘 [OPERZA-DB] Connected to PostgreSQL. Initialized table: operza_app_state');
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('[OPERZA-DB] PostgreSQL connection check failed, falling back to local file storage:', err.message);
+    pgPool = null;
+  }
+}
+
 async function loadState() {
   await mkdir(path.dirname(dataFile), { recursive: true });
+
+  if (pgPool) {
+    try {
+      const res = await pgPool.query("SELECT payload FROM operza_app_state WHERE id = 'active_state'");
+      if (res.rows.length > 0 && res.rows[0].payload) {
+        const parsed = res.rows[0].payload;
+        state = { ...emptyState(), ...parsed, records: { ...emptyState().records, ...(parsed.records || {}) }, snapshots: parsed.snapshots || [] };
+        console.log('🐘 [OPERZA-DB] Successfully loaded state from PostgreSQL (table: operza_app_state)');
+        return;
+      }
+    } catch (err) {
+      console.warn('[OPERZA-DB] Failed to read state from PostgreSQL, falling back to local file:', err.message);
+    }
+  }
+
   try {
     const raw = await readFile(dataFile, 'utf8');
     const parsed = JSON.parse(raw);
     state = { ...emptyState(), ...parsed, records: { ...emptyState().records, ...(parsed.records || {}) }, snapshots: parsed.snapshots || [] };
+    if (pgPool) {
+      try {
+        await pgPool.query(
+          `INSERT INTO operza_app_state (id, payload, updated_at)
+           VALUES ('active_state', $1::jsonb, now())
+           ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()`,
+          [raw]
+        );
+        console.log('🐘 [OPERZA-DB] Seeded initial PostgreSQL operza_app_state from store.json');
+      } catch (err) {
+        console.warn('[OPERZA-DB] Failed to seed PostgreSQL from store.json:', err.message);
+      }
+    }
   } catch (err) {
     if (err.code !== 'ENOENT') console.error('Error loading state:', err);
     state = emptyState();
@@ -341,6 +417,19 @@ async function saveState() {
     const tempFile = `${dataFile}.${randomBytes(6).toString('hex')}.tmp`;
     await writeFile(tempFile, snapshot, 'utf8');
     await rename(tempFile, dataFile);
+
+    if (pgPool) {
+      try {
+        await pgPool.query(
+          `INSERT INTO operza_app_state (id, payload, updated_at)
+           VALUES ('active_state', $1::jsonb, now())
+           ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = now()`,
+          [snapshot]
+        );
+      } catch (pgErr) {
+        console.error('[OPERZA-DB] Failed to persist state to PostgreSQL:', pgErr.message);
+      }
+    }
   });
   return writeQueue;
 }
@@ -992,7 +1081,7 @@ const server = createServer(async (req, res) => {
   }
 
   try {
-    // ─── Health Check ─────────────────────────────────────────────
+    // ─── Health, Readiness & Observability Telemetry ─────────────────
     if (pathname === '/health') {
       return sendJson(res, 200, {
         name: 'Operza Unified API',
@@ -1000,6 +1089,55 @@ const server = createServer(async (req, res) => {
         version: '2.0.0',
         wsEnabled: !!wss,
         uptime: process.uptime(),
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    if (pathname === '/ready') {
+      let dbStatus = 'disconnected';
+      if (pgPool) {
+        try {
+          const testRes = await pgPool.query('SELECT 1');
+          if (testRes.rows.length > 0) dbStatus = 'connected';
+        } catch {
+          dbStatus = 'error';
+        }
+      } else {
+        dbStatus = 'local_file_store';
+      }
+      return sendJson(res, 200, {
+        ready: true,
+        dbEngine: pgPool ? 'postgresql' : 'json_file',
+        dbStatus,
+        wsReady: !!wss,
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    if (pathname === '/metrics') {
+      const mem = process.memoryUsage();
+      const entityCounts = {};
+      for (const [key, list] of Object.entries(state.records || {})) {
+        entityCounts[key] = (list || []).length;
+      }
+      return sendJson(res, 200, {
+        uptime: process.uptime(),
+        memory: {
+          rssMb: Math.round(mem.rss / 1024 / 1024 * 100) / 100,
+          heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024 * 100) / 100,
+          heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024 * 100) / 100
+        },
+        connections: {
+          wsClients: wsClients.size
+        },
+        database: {
+          engine: pgPool ? 'postgresql' : 'json_file',
+          totalUsers: (state.users || []).length,
+          totalAgencies: (state.agencies || []).length,
+          totalLocations: (state.locations || []).length,
+          records: entityCounts
+        },
         timestamp: new Date().toISOString()
       });
     }
@@ -2194,6 +2332,74 @@ const server = createServer(async (req, res) => {
         documents,
         appointments
       });
+    }
+
+    // Public Client Portal Invoice Payment Ingress
+    if (method === 'POST' && pathname.startsWith('/api/portal/invoices/') && pathname.endsWith('/pay')) {
+      const invoiceId = pathname.replace('/api/portal/invoices/', '').replace('/pay', '').trim();
+      state.records.invoices = state.records.invoices || [];
+      const invoice = state.records.invoices.find(i => i.id === invoiceId);
+      if (!invoice) return sendJson(res, 404, { error: 'Invoice not found' });
+
+      const body = await readBody(req);
+      invoice.status = 'paid';
+      invoice.paidAt = new Date().toISOString();
+      invoice.paymentMethod = body.paymentMethod || 'card';
+
+      state.records.orders = state.records.orders || [];
+      const order = {
+        id: randomUUID(),
+        orderNumber: `ORD-${Date.now().toString().slice(-6)}`,
+        invoiceId: invoice.id,
+        contactId: invoice.contactId || null,
+        contactName: invoice.contactName || 'Portal Client',
+        amount: invoice.amount || 0,
+        currency: invoice.currency || 'USD',
+        status: 'completed',
+        paidAt: invoice.paidAt,
+        source: 'Client Portal Checkout'
+      };
+      state.records.orders.unshift(order);
+
+      await saveState();
+      broadcast('invoice.paid', { invoiceId: invoice.id, status: 'paid', amount: invoice.amount });
+      broadcast('order.created', order);
+
+      return sendJson(res, 200, { success: true, invoice, order });
+    }
+
+    // Public Client Portal Course Progress Ingress
+    if (method === 'POST' && pathname.startsWith('/api/portal/courses/') && pathname.endsWith('/progress')) {
+      const courseId = pathname.replace('/api/portal/courses/', '').replace('/progress', '').trim();
+      const body = await readBody(req);
+      const contactId = body.contactId;
+      if (!contactId) return sendJson(res, 400, { error: 'contactId required' });
+
+      state.records.enrollments = state.records.enrollments || [];
+      let enrollment = state.records.enrollments.find(e => e.courseId === courseId && e.contactId === contactId);
+      const newProgress = Math.min(100, Math.max(0, Number(body.progress) || 0));
+
+      if (enrollment) {
+        enrollment.progress = newProgress;
+        enrollment.status = newProgress >= 100 ? 'completed' : 'active';
+        enrollment.updatedAt = new Date().toISOString();
+      } else {
+        enrollment = {
+          id: randomUUID(),
+          courseId,
+          contactId,
+          progress: newProgress,
+          status: newProgress >= 100 ? 'completed' : 'active',
+          startedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        state.records.enrollments.push(enrollment);
+      }
+
+      await saveState();
+      broadcast('enrollment.updated', enrollment);
+
+      return sendJson(res, 200, { success: true, enrollment });
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -5732,6 +5938,7 @@ const server = createServer(async (req, res) => {
 // ─── STARTUP ──────────────────────────────────────────────────────────
 // ═══════════════════════════════════════════════════════════════════════
 
+await initDatabase();
 await loadState();
 
 // Attach WebSocket server
@@ -5771,5 +5978,32 @@ console.log('⏰ Schedule trigger loop started (60s interval)');
 server.listen(port, host, () => {
   console.log(`🚀 Operza Unified API Server v2.0 running at http://${host}:${port}`);
   console.log(`   Health: http://localhost:${port}/health`);
+  console.log(`   Readiness: http://localhost:${port}/ready`);
+  console.log(`   Metrics: http://localhost:${port}/metrics`);
   console.log(`   WebSocket: ws://localhost:${port}/ws`);
 });
+
+// Graceful process shutdown handling
+function handleGracefulShutdown(signal) {
+  console.log(`\n🛑 Received ${signal}, closing Operza Unified API gracefully...`);
+  for (const client of wsClients) {
+    try {
+      client.close(1001, 'Server shutting down');
+    } catch { /* ignore */ }
+  }
+  server.close(async () => {
+    console.log('✅ HTTP server closed.');
+    if (pgPool) {
+      try {
+        await pgPool.end();
+        console.log('✅ PostgreSQL pool terminated.');
+      } catch (err) {
+        console.error('Error closing PG pool:', err.message);
+      }
+    }
+    process.exit(0);
+  });
+}
+
+process.on('SIGINT', () => handleGracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => handleGracefulShutdown('SIGTERM'));

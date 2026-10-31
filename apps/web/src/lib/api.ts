@@ -289,6 +289,16 @@ export const api = {
         `/api/crm/contacts/${contactId}/portal-access`,
         { method: 'PUT', body: JSON.stringify({ portalAccess }) }
       ),
+    payInvoice: (invoiceId: string, paymentMethod = 'card') =>
+      request<{ success: boolean; invoice: any; order: any }>(
+        `/api/portal/invoices/${invoiceId}/pay`,
+        { method: 'POST', body: JSON.stringify({ paymentMethod }) }
+      ),
+    updateCourseProgress: (contactId: string, courseId: string, progress: number) =>
+      request<{ success: boolean; enrollment: any }>(
+        `/api/portal/courses/${courseId}/progress`,
+        { method: 'POST', body: JSON.stringify({ contactId, progress }) }
+      ),
   },
   team: {
     list: () => request<{ team: any[] }>('/api/agency/team'),
