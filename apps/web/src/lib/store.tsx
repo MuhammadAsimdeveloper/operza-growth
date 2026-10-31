@@ -176,6 +176,7 @@ export type Action =
   | { type: 'plan/update'; id: string; patch: Partial<SaasPlan> }
   | { type: 'document/add'; document: ContractDoc }
   | { type: 'document/status'; id: string; status: ContractDoc['status'] }
+  | { type: 'document/update'; id: string; patch: Partial<ContractDoc> }
   | { type: 'media/add'; asset: MediaAsset }
   | { type: 'media/delete'; id: string }
   | { type: 'prospect/status'; id: string; status: 'new' | 'contacted' | 'qualified' | 'skipped' }
@@ -1006,6 +1007,14 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
         ),
       };
 
+    case 'document/update':
+      return {
+        ...state,
+        documents: state.documents.map((d) =>
+          d.id === action.id ? { ...d, ...action.patch, updatedAt: new Date().toISOString() } : d,
+        ),
+      };
+
     case 'media/add':
       return { ...state, media: [action.asset, ...state.media] };
 
@@ -1414,6 +1423,12 @@ function auditMeta(
     case 'document/status':
       return {
         action: `Document marked ${action.status}`,
+        entity: 'Document',
+        detail: byId(state.documents, action.id)?.name,
+      };
+    case 'document/update':
+      return {
+        action: 'Document updated',
         entity: 'Document',
         detail: byId(state.documents, action.id)?.name,
       };
