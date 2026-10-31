@@ -6,7 +6,7 @@
 **Unified Multi-Tenant CRM + Visual Node Automation + Autonomous AI Copilot**
 
 [![CI Status](https://github.com/MuhammadAsimdeveloper/operza-growth/actions/workflows/ci.yml/badge.svg)](https://github.com/MuhammadAsimdeveloper/operza-growth/actions)
-[![Tests Passing](https://img.shields.io/badge/Tests-72%2F72%20Passed-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
+[![Tests Passing](https://img.shields.io/badge/Tests-202%2F202%20Passed-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
 [![Node.js Version](https://img.shields.io/badge/Node.js-%3E%3D20.0.0-339933.svg?style=flat-square&logo=node.js)](package.json)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6.svg?style=flat-square&logo=typescript)](apps/web)
 [![React](https://img.shields.io/badge/React-19.0-61dafb.svg?style=flat-square&logo=react)](apps/web)
@@ -17,7 +17,7 @@
   <a href="#-quickstart-in-30-seconds">Quickstart</a> •
   <a href="#-system-architecture">Architecture</a> •
   <a href="#-core-capabilities--modules">Core Capabilities</a> •
-  <a href="#-enterprise-architecture-comparison-matrix">Comparison Matrix</a> •
+  <a href="#-production-documentation--runbooks">Documentation</a> •
   <a href="#-rest--websocket-api-directory">API Reference</a> •
   <a href="#-contributing">Contributing</a>
 </p>
@@ -235,6 +235,23 @@ operza/
 ├── SECURITY.md                 # Vulnerability disclosure policy & SLA
 └── LICENSE                     # MIT Open Source License
 ```
+
+---
+
+## 📚 Production Documentation & Operational Runbooks
+
+Operza includes an authoritative suite of operational manuals, architectural blueprints, and financial runbooks in `docs/`:
+
+1. [**System Architecture & Topology**](docs/ARCHITECTURE.md) — Comprehensive service topology, presentation layer, API runtime, and persistence architecture.
+2. [**Security Architecture & Threat Model**](docs/SECURITY.md) — Zero-trust multi-tenancy, Row-Level Security, HMAC webhook validation, and cryptographic standards.
+3. [**Production Deployment Manual**](docs/DEPLOYMENT.md) — Docker Compose production deployment, environment setup, and zero-downtime rollback procedures.
+4. [**Environment Reference**](docs/ENVIRONMENT.md) — Complete environment variable specification, secrets generation, and plan limit configurations.
+5. [**Database Architecture & Schema**](docs/DATABASE.md) — PostgreSQL 16 relational tables, role privilege boundaries, RLS policies, and advisory locked migrations.
+6. [**Backup & Disaster Recovery Runbook**](docs/BACKUP-RESTORE.md) — Automated SHA-256 manifest backup engine, point-in-time restore, and retention policies.
+7. [**Automated Testing & QA Guide**](docs/TESTING.md) — 4-tier test pyramid (202 automated checks), static typecheck, and k6 load testing suites.
+8. [**Operations & SRE Runbook**](docs/OPERATIONS.md) — Observability probes, Prometheus metrics, connection pool triage, and incident response playbooks.
+9. [**Pre-Launch Sign-Off Checklist**](docs/LAUNCH-CHECKLIST.md) — 22-point evidence-backed launch readiness certification matrix.
+10. [**AWS Cost Plan & Zero-Spend Runway**](docs/AWS-COST-PLAN.md) — $15/month Lightsail production architecture targeting $100 AWS credit runway with $0 development spend.
 
 ---
 

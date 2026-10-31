@@ -55,18 +55,30 @@ async function request(urlPath, options = {}) {
   });
 
   const cookieHeaders = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get('set-cookie')].filter(Boolean);
+  const cookieMap = new Map();
+  if (sessionCookie) {
+    sessionCookie.split(';').forEach(p => {
+      const idx = p.indexOf('=');
+      if (idx > -1) {
+        cookieMap.set(p.slice(0, idx).trim(), p.slice(idx + 1).trim());
+      }
+    });
+  }
   for (const c of cookieHeaders) {
     for (const part of c.split(';')) {
       const trimmed = part.trim();
-      if (trimmed.startsWith('operza_session=')) {
-        sessionCookie = (sessionCookie ? sessionCookie + '; ' : '') + trimmed;
-      }
-      if (trimmed.startsWith('operza_csrf=')) {
-        csrfToken = decodeURIComponent(trimmed.split('=')[1]);
-        sessionCookie = (sessionCookie ? sessionCookie + '; ' : '') + trimmed;
+      const idx = trimmed.indexOf('=');
+      if (idx > -1) {
+        const k = trimmed.slice(0, idx).trim();
+        const v = trimmed.slice(idx + 1).trim();
+        if (k === 'operza_session' || k === 'operza_csrf') {
+          cookieMap.set(k, v);
+          if (k === 'operza_csrf') csrfToken = decodeURIComponent(v);
+        }
       }
     }
   }
+  sessionCookie = Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
 
   const data = await res.json().catch(() => ({}));
   return { status: res.status, data, res };
@@ -2898,7 +2910,95 @@ async function runTests() {
     }
     console.log('✅ WebSocket cross-tenant real-time isolation verified: Zero event leakage across tenants');
 
-    console.log('\n🎉 ALL 86 SYSTEM INTEGRATION & SECURITY TESTS PASSED CLEANLY! 🎉');
+    // [TEST 87] Server-Side Plan Limit Enforcement & Subscription Metering
+    console.log('\n[TEST 87] Server-Side Plan Limit Enforcement: /api/agency/usage & /api/agency/subscription/plan');
+    sessionCookie = tenantACookie;
+    csrfToken = tenantACsrf;
+
+    const usageRes = await request('/api/agency/usage');
+    if (usageRes.status !== 200) throw new Error(`GET /api/agency/usage failed with status ${usageRes.status}`);
+    const usageData = usageRes.data;
+    if (!usageData.limits || !usageData.usage || typeof usageData.limits.maxContacts !== 'number') {
+      throw new Error(`Invalid usage response payload: ${JSON.stringify(usageData)}`);
+    }
+
+    // Switch to trial plan to test strict limit boundaries
+    const switchRes = await request('/api/agency/subscription/plan', {
+      method: 'POST',
+      body: JSON.stringify({ plan: 'trial' })
+    });
+    if (switchRes.status !== 200) throw new Error(`Plan switch failed: ${switchRes.status}`);
+
+    // Trial plan allows max 2 team members
+    const invite1 = await request('/api/agency/team/invite', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Associate 1', email: 'associate1@operza.test', role: 'user' })
+    });
+    console.log(`Team Member 1 Invite Status: ${invite1.status}`);
+
+    // Third team member should exceed the 2-seat trial limit
+    const inviteExceeded = await request('/api/agency/team/invite', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Associate 2', email: 'associate2@operza.test', role: 'user' })
+    });
+    console.log(`Team Member Exceeding Limit Status: ${inviteExceeded.status}`);
+    if (inviteExceeded.status !== 403) {
+      throw new Error(`CRITICAL: Server failed to enforce plan limit! Expected 403, got ${inviteExceeded.status}`);
+    }
+
+    // Upgrade to growth plan and verify invitation succeeds
+    await request('/api/agency/subscription/plan', {
+      method: 'POST',
+      body: JSON.stringify({ plan: 'growth' })
+    });
+    const inviteAfterUpgrade = await request('/api/agency/team/invite', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Associate 2', email: 'associate2@operza.test', role: 'user' })
+    });
+    if (inviteAfterUpgrade.status !== 201) {
+      throw new Error(`Expected successful invite after upgrade, got ${inviteAfterUpgrade.status}`);
+    }
+    console.log('✅ Server-side plan limits, subscription metering, and tier upgrades verified');
+
+    // [TEST 88] File Upload Security, Path Traversal Sanitization & Quota Enforcement
+    console.log('\n[TEST 88] File Upload Security: /api/media/upload with Malicious Extension & Path Traversal');
+    
+    // Attempt uploading a dangerous executable script
+    const maliciousUpload = await request('/api/media/upload', {
+      method: 'POST',
+      body: JSON.stringify({ name: '../../bin/exploit.sh', kind: 'file', mimeType: 'application/x-sh' })
+    });
+    console.log(`Malicious Script Upload Status: ${maliciousUpload.status}`);
+    if (maliciousUpload.status !== 400) {
+      throw new Error(`Security failure: Malicious executable upload was not rejected with HTTP 400!`);
+    }
+
+    // Attempt uploading safe image with path traversal in name
+    const sanitizedUpload = await request('/api/media/upload', {
+      method: 'POST',
+      body: JSON.stringify({ name: '../../../var/log/logo.png', kind: 'image', mimeType: 'image/png' })
+    });
+    if (sanitizedUpload.status !== 201) {
+      throw new Error(`Expected 201 for valid image, got ${sanitizedUpload.status}`);
+    }
+    const sanitizedData = sanitizedUpload.data;
+    if (sanitizedData.asset.name.includes('/') || sanitizedData.asset.name.includes('\\') || sanitizedData.asset.name.includes('..')) {
+      throw new Error(`Security failure: Filename was not properly sanitized: ${sanitizedData.asset.name}`);
+    }
+    console.log(`Sanitized Filename: "${sanitizedData.asset.name}"`);
+
+    // Attempt uploading file exceeding 25MB limit
+    const hugeUpload = await request('/api/media/upload', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'oversized_asset.png', sizeKb: 30000 })
+    });
+    console.log(`Oversized Upload Status: ${hugeUpload.status}`);
+    if (hugeUpload.status !== 400) {
+      throw new Error(`Security failure: Oversized upload was not rejected with HTTP 400!`);
+    }
+    console.log('✅ File upload security, path traversal sanitization, and size quota enforcement verified');
+
+    console.log('\n🎉 ALL 88 SYSTEM INTEGRATION & SECURITY TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

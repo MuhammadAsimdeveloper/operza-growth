@@ -379,6 +379,201 @@ async function isWebhookReplay(eventId) {
   return false;
 }
 
+// ─── Plan Limits & Server-Side Subscription Enforcement ───────────────
+const PLAN_LIMITS = {
+  trial: {
+    key: 'trial',
+    name: 'Free Trial',
+    maxContacts: Number(process.env.PLAN_TRIAL_MAX_CONTACTS) || 500,
+    maxTeamMembers: Number(process.env.PLAN_TRIAL_MAX_TEAM_MEMBERS) || 2,
+    maxActiveWorkflows: Number(process.env.PLAN_TRIAL_MAX_ACTIVE_WORKFLOWS) || 3,
+    maxMonthlyWorkflowExecutions: Number(process.env.PLAN_TRIAL_MAX_MONTHLY_EXECUTIONS) || 500,
+    maxStorageMb: Number(process.env.PLAN_TRIAL_MAX_STORAGE_MB) || 250,
+    trialDays: 14
+  },
+  starter: {
+    key: 'starter',
+    name: 'Starter Plan',
+    maxContacts: Number(process.env.PLAN_STARTER_MAX_CONTACTS) || 2500,
+    maxTeamMembers: Number(process.env.PLAN_STARTER_MAX_TEAM_MEMBERS) || 3,
+    maxActiveWorkflows: Number(process.env.PLAN_STARTER_MAX_ACTIVE_WORKFLOWS) || 10,
+    maxMonthlyWorkflowExecutions: Number(process.env.PLAN_STARTER_MAX_MONTHLY_EXECUTIONS) || 2500,
+    maxStorageMb: Number(process.env.PLAN_STARTER_MAX_STORAGE_MB) || 1000
+  },
+  paid: {
+    key: 'paid',
+    name: 'Paid Standard',
+    maxContacts: Number(process.env.PLAN_PAID_MAX_CONTACTS) || 5000,
+    maxTeamMembers: Number(process.env.PLAN_PAID_MAX_TEAM_MEMBERS) || 5,
+    maxActiveWorkflows: Number(process.env.PLAN_PAID_MAX_ACTIVE_WORKFLOWS) || 20,
+    maxMonthlyWorkflowExecutions: Number(process.env.PLAN_PAID_MAX_MONTHLY_EXECUTIONS) || 5000,
+    maxStorageMb: Number(process.env.PLAN_PAID_MAX_STORAGE_MB) || 2048
+  },
+  growth: {
+    key: 'growth',
+    name: 'Growth Agency',
+    maxContacts: Number(process.env.PLAN_GROWTH_MAX_CONTACTS) || 5000,
+    maxTeamMembers: Number(process.env.PLAN_GROWTH_MAX_TEAM_MEMBERS) || 5,
+    maxActiveWorkflows: Number(process.env.PLAN_GROWTH_MAX_ACTIVE_WORKFLOWS) || 20,
+    maxMonthlyWorkflowExecutions: Number(process.env.PLAN_GROWTH_MAX_MONTHLY_EXECUTIONS) || 5000,
+    maxStorageMb: Number(process.env.PLAN_GROWTH_MAX_STORAGE_MB) || 2048
+  },
+  pro: {
+    key: 'pro',
+    name: 'Enterprise Pro',
+    maxContacts: Number(process.env.PLAN_PRO_MAX_CONTACTS) || 25000,
+    maxTeamMembers: Number(process.env.PLAN_PRO_MAX_TEAM_MEMBERS) || 25,
+    maxActiveWorkflows: Number(process.env.PLAN_PRO_MAX_ACTIVE_WORKFLOWS) || 100,
+    maxMonthlyWorkflowExecutions: Number(process.env.PLAN_PRO_MAX_MONTHLY_EXECUTIONS) || 25000,
+    maxStorageMb: Number(process.env.PLAN_PRO_MAX_STORAGE_MB) || 10240
+  }
+};
+
+function getAgencyPlan(agencyId) {
+  const ag = (state.agencies || []).find(a => a.id === agencyId);
+  const planKey = (ag && (ag.plan || ag.planId)) ? String(ag.plan || ag.planId).toLowerCase() : 'growth';
+  return PLAN_LIMITS[planKey] || PLAN_LIMITS.growth;
+}
+
+function getAgencyUsage(agencyId) {
+  const plan = getAgencyPlan(agencyId);
+  const ag = (state.agencies || []).find(a => a.id === agencyId);
+  
+  const contactsCount = (state.records.contacts || []).filter(c => c.agencyId === agencyId).length;
+  const teamCount = (state.records.team || []).filter(t => t.agencyId === agencyId).length;
+  const workflowsCount = (state.records.workflows || []).filter(w => w.agencyId === agencyId && w.status === 'published').length;
+  
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  state.workflowUsage = state.workflowUsage || {};
+  const monthlyKey = `${agencyId}:${currentMonth}`;
+  const monthlyExecutions = state.workflowUsage[monthlyKey] || 0;
+  
+  const mediaItems = (state.records.media || []).filter(m => m.agencyId === agencyId);
+  const storageKb = mediaItems.reduce((acc, m) => acc + (Number(m.sizeKb) || 0), 0);
+  const storageMb = Math.round((storageKb / 1024) * 100) / 100;
+
+  const createdDate = ag?.createdAt ? new Date(ag.createdAt) : new Date();
+  const daysSinceCreation = Math.floor((Date.now() - createdDate.getTime()) / (86400 * 1000));
+  const isTrial = (plan.key === 'trial' || ag?.status === 'trial');
+  const trialDaysRemaining = isTrial ? Math.max(0, 14 - daysSinceCreation) : null;
+  const isTrialExpired = isTrial && daysSinceCreation > 14;
+
+  return {
+    planKey: plan.key,
+    planName: plan.name,
+    subscriptionStatus: isTrialExpired ? 'trial_expired' : (ag?.status || 'active'),
+    isTrial,
+    trialDaysRemaining,
+    isTrialExpired,
+    limits: {
+      maxContacts: plan.maxContacts,
+      maxTeamMembers: plan.maxTeamMembers,
+      maxActiveWorkflows: plan.maxActiveWorkflows,
+      maxMonthlyWorkflowExecutions: plan.maxMonthlyWorkflowExecutions,
+      maxStorageMb: plan.maxStorageMb
+    },
+    usage: {
+      contacts: contactsCount,
+      teamMembers: teamCount,
+      activeWorkflows: workflowsCount,
+      monthlyWorkflowExecutions: monthlyExecutions,
+      storageMb
+    },
+    percentUsed: {
+      contacts: Math.round((contactsCount / plan.maxContacts) * 100),
+      teamMembers: Math.round((teamCount / plan.maxTeamMembers) * 100),
+      activeWorkflows: Math.round((workflowsCount / plan.maxActiveWorkflows) * 100),
+      monthlyWorkflowExecutions: Math.round((monthlyExecutions / plan.maxMonthlyWorkflowExecutions) * 100),
+      storage: Math.round((storageMb / plan.maxStorageMb) * 100)
+    }
+  };
+}
+
+function checkPlanLimit(agencyId, resourceType, increment = 1) {
+  const usage = getAgencyUsage(agencyId);
+  if (usage.isTrialExpired) {
+    return {
+      allowed: false,
+      code: 'TRIAL_EXPIRED',
+      error: 'Your 14-day free trial has expired. Please upgrade to a paid plan to continue creating resources.'
+    };
+  }
+
+  if (resourceType === 'contacts') {
+    if (usage.usage.contacts + increment > usage.limits.maxContacts) {
+      return {
+        allowed: false,
+        code: 'PLAN_LIMIT_EXCEEDED',
+        error: `Plan limit reached: maximum contacts limit of ${usage.limits.maxContacts} reached for your ${usage.planName}. Please upgrade your plan.`,
+        current: usage.usage.contacts,
+        limit: usage.limits.maxContacts
+      };
+    }
+  } else if (resourceType === 'teamMembers') {
+    if (usage.usage.teamMembers + increment > usage.limits.maxTeamMembers) {
+      return {
+        allowed: false,
+        code: 'PLAN_LIMIT_EXCEEDED',
+        error: `Plan limit reached: maximum team member seats of ${usage.limits.maxTeamMembers} reached for your ${usage.planName}. Please upgrade your plan.`,
+        current: usage.usage.teamMembers,
+        limit: usage.limits.maxTeamMembers
+      };
+    }
+  } else if (resourceType === 'activeWorkflows') {
+    if (usage.usage.activeWorkflows + increment > usage.limits.maxActiveWorkflows) {
+      return {
+        allowed: false,
+        code: 'PLAN_LIMIT_EXCEEDED',
+        error: `Plan limit reached: maximum active workflows limit of ${usage.limits.maxActiveWorkflows} reached for your ${usage.planName}.`,
+        current: usage.usage.activeWorkflows,
+        limit: usage.limits.maxActiveWorkflows
+      };
+    }
+  } else if (resourceType === 'monthlyWorkflowExecutions') {
+    if (usage.usage.monthlyWorkflowExecutions + increment > usage.limits.maxMonthlyWorkflowExecutions) {
+      return {
+        allowed: false,
+        code: 'PLAN_LIMIT_EXCEEDED',
+        error: `Monthly workflow execution quota of ${usage.limits.maxMonthlyWorkflowExecutions} exceeded for your ${usage.planName}. Resets at next calendar billing cycle.`,
+        current: usage.usage.monthlyWorkflowExecutions,
+        limit: usage.limits.maxMonthlyWorkflowExecutions
+      };
+    }
+  } else if (resourceType === 'storageMb') {
+    if (usage.usage.storageMb + increment > usage.limits.maxStorageMb) {
+      return {
+        allowed: false,
+        code: 'STORAGE_LIMIT_EXCEEDED',
+        error: `Storage capacity of ${usage.limits.maxStorageMb} MB reached for your ${usage.planName}. Please upgrade your plan or remove old media assets.`,
+        current: usage.usage.storageMb,
+        limit: usage.limits.maxStorageMb
+      };
+    }
+  }
+
+  return { allowed: true };
+}
+
+const DISALLOWED_FILE_EXTENSIONS = new Set([
+  '.exe', '.bat', '.cmd', '.sh', '.bash', '.php', '.phtml', '.js', '.mjs', '.vbs', '.ps1', '.py', '.rb', '.com', '.msi'
+]);
+
+function sanitizeFileName(rawName) {
+  if (!rawName || typeof rawName !== 'string') return `file-${Date.now()}.png`;
+  const base = path.basename(rawName).replace(/\0/g, '');
+  const sanitized = base.replace(/[^a-zA-Z0-9._-]/g, '_');
+  return sanitized.length > 0 ? sanitized : `file-${Date.now()}.png`;
+}
+
+function isSafeFileType(fileName, mimeType) {
+  const ext = path.extname(fileName || '').toLowerCase();
+  if (DISALLOWED_FILE_EXTENSIONS.has(ext)) return false;
+  if (mimeType && (mimeType.includes('executable') || mimeType.includes('javascript') || mimeType.includes('x-sh') || mimeType.includes('x-php'))) {
+    return false;
+  }
+  return true;
+}
+
 const ALLOWED_ORIGIN_SET = new Set([
   'http://localhost:5173',
   'http://localhost:3000',
@@ -713,7 +908,7 @@ function getActor(req) {
   if (!session) return null;
 
   const user = state.users.find(u => u.id === session.userId && u.status === 'active');
-  const agency = state.agencies.find(a => a.id === session.agencyId && a.status === 'active');
+  const agency = state.agencies.find(a => a.id === session.agencyId && (a.status === 'active' || a.status === 'trial'));
   const membership = state.memberships.find(m => m.agencyId === session.agencyId && m.userId === session.userId && m.status === 'active');
   const locations = state.locations.filter(l => l.agencyId === session.agencyId && l.status === 'active');
   if (!user || !agency || !membership || locations.length === 0) return null;
@@ -771,6 +966,21 @@ async function executeWorkflowInstance({ flow, agencyId, locationId, triggerType
     createdAt: new Date().toISOString()
   };
   state.workflowExecutions.push(execution);
+
+  // Server-side monthly workflow execution quota check
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  state.workflowUsage = state.workflowUsage || {};
+  const monthlyKey = `${agencyId}:${currentMonth}`;
+  const execCheck = checkPlanLimit(agencyId, 'monthlyWorkflowExecutions', 1);
+  if (!execCheck.allowed) {
+    execution.status = 'failed';
+    execution.error = execCheck.error;
+    execution.completedAt = new Date().toISOString();
+    broadcast('workflow.execution.failed', { executionId, workflowId: flow.id, error: execCheck.error });
+    auditLog('workflow.execution.quota_exceeded', { agency: { id: agencyId } }, { workflowId: flow.id, error: execCheck.error });
+    return execution;
+  }
+  state.workflowUsage[monthlyKey] = (state.workflowUsage[monthlyKey] || 0) + 1;
 
   broadcast('workflow.execution.started', { executionId, workflowId: flow.id, workflowName: flow.name });
 
@@ -1332,7 +1542,7 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = url.pathname;
   const method = req.method;
-  const clientIp = req.socket.remoteAddress || '';
+  const clientIp = (req.headers['x-forwarded-for'] ? String(req.headers['x-forwarded-for']).split(',')[0].trim() : '') || req.socket.remoteAddress || '';
 
   // ─── CORS Preflight ─────────────────────────────────────────────
   if (method === 'OPTIONS') {
@@ -1350,13 +1560,16 @@ const server = createServer(async (req, res) => {
   }
 
   // ─── Global Rate Limiting ───────────────────────────────────────
+  const isProbeRoute = pathname === '/health' || pathname === '/ready' || pathname === '/live' || pathname === '/metrics';
   const isAuthRoute = pathname.startsWith('/api/auth/');
-  const rateLimit = checkRateLimit(clientIp, isAuthRoute ? RATE_LIMIT_AUTH_MAX : RATE_LIMIT_MAX_REQUESTS);
-  if (!rateLimit.allowed) {
-    return sendJson(res, 429, { error: 'Too many requests. Please slow down.' }, {
-      'retry-after': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)),
-      'x-ratelimit-remaining': '0'
-    });
+  if (!isProbeRoute) {
+    const rateLimit = checkRateLimit(clientIp, isAuthRoute ? RATE_LIMIT_AUTH_MAX : RATE_LIMIT_MAX_REQUESTS);
+    if (!rateLimit.allowed) {
+      return sendJson(res, 429, { error: 'Too many requests. Please slow down.' }, {
+        'retry-after': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)),
+        'x-ratelimit-remaining': '0'
+      });
+    }
   }
 
   try {
@@ -5025,11 +5238,17 @@ const server = createServer(async (req, res) => {
     // Upload Media Asset
     if (method === 'POST' && pathname === '/api/media/upload') {
       const body = await readBody(req);
-      const name = body.name || `upload-${Date.now()}.png`;
+      const rawName = body.name || `upload-${Date.now()}.png`;
+      const name = sanitizeFileName(rawName);
       const folder = body.folder || 'Unsorted';
       const kind = body.kind || 'image';
       const mimeType = body.mimeType || (kind === 'image' ? 'image/png' : kind === 'video' ? 'video/mp4' : 'application/pdf');
       const data = body.data || null;
+
+      // Disallow dangerous executable or script extensions
+      if (!isSafeFileType(name, mimeType)) {
+        return sendJson(res, 400, { error: 'Disallowed file type or extension. Executable, script, or server-side formats are strictly rejected.' });
+      }
 
       let sizeKb = body.sizeKb;
       if (!sizeKb) {
@@ -5040,6 +5259,17 @@ const server = createServer(async (req, res) => {
         } else {
           sizeKb = Math.round(50 + Math.random() * 200);
         }
+      }
+
+      // Enforce 25MB single file limit
+      if (sizeKb > 25 * 1024) {
+        return sendJson(res, 400, { error: 'File size exceeds maximum allowable limit of 25 MB.' });
+      }
+
+      // Enforce cumulative storage quota for agency plan
+      const storageCheck = checkPlanLimit(agency.id, 'storageMb', sizeKb / 1024);
+      if (!storageCheck.allowed) {
+        return sendJson(res, 403, { error: storageCheck.error, code: storageCheck.code });
       }
 
       const assetId = randomUUID();
@@ -5452,6 +5682,11 @@ const server = createServer(async (req, res) => {
       if (!csvText) return sendJson(res, 400, { error: 'csv field with CSV text is required' });
 
       const rows = parseCSV(csvText);
+      // Enforce plan contact capacity
+      const contactCheck = checkPlanLimit(agency.id, 'contacts', rows.length);
+      if (!contactCheck.allowed) {
+        return sendJson(res, 403, { error: contactCheck.error, code: contactCheck.code });
+      }
       const imported = [];
       for (const row of rows) {
         const contact = {
@@ -5617,6 +5852,52 @@ const server = createServer(async (req, res) => {
     }
 
     // ═════════════════════════════════════════════════════════════
+    // ─── AGENCY: SUBSCRIPTIONS, LIMITS & USAGE METERING ───────────
+    // ═════════════════════════════════════════════════════════════
+
+    // GET /api/agency/usage — retrieve server-side metered resource utilization vs limits
+    if (method === 'GET' && pathname === '/api/agency/usage') {
+      const usage = getAgencyUsage(agency.id);
+      return sendJson(res, 200, usage);
+    }
+
+    // GET /api/agency/subscription — subscription status, tier & trial expiration
+    if (method === 'GET' && pathname === '/api/agency/subscription') {
+      const plan = getAgencyPlan(agency.id);
+      const usage = getAgencyUsage(agency.id);
+      return sendJson(res, 200, {
+        planId: plan.key,
+        planName: plan.name,
+        status: usage.subscriptionStatus,
+        isTrial: usage.isTrial,
+        trialDaysRemaining: usage.trialDaysRemaining,
+        isTrialExpired: usage.isTrialExpired,
+        limits: usage.limits,
+        usage: usage.usage,
+        percentUsed: usage.percentUsed
+      });
+    }
+
+    // POST /api/agency/subscription/plan — switch / upgrade plan
+    if (method === 'POST' && pathname === '/api/agency/subscription/plan') {
+      const body = await readBody(req);
+      const targetPlan = String(body.plan || body.planId || '').toLowerCase().trim();
+      if (!PLAN_LIMITS[targetPlan]) {
+        return sendJson(res, 400, { error: `Invalid plan. Supported plans: ${Object.keys(PLAN_LIMITS).join(', ')}` });
+      }
+
+      agency.plan = targetPlan;
+      agency.planId = targetPlan;
+      await saveState();
+
+      auditLog('agency.subscription.plan_changed', actor, { plan: targetPlan });
+      broadcast('agency.subscription.updated', { agencyId: agency.id, plan: targetPlan });
+
+      const updatedUsage = getAgencyUsage(agency.id);
+      return sendJson(res, 200, { success: true, plan: targetPlan, ...updatedUsage });
+    }
+
+    // ═════════════════════════════════════════════════════════════
     // ─── AGENCY: TEAM ACCESS & ROLE GOVERNANCE ───────────────────
     // ═════════════════════════════════════════════════════════════
 
@@ -5650,6 +5931,12 @@ const server = createServer(async (req, res) => {
       const role = body.role === 'admin' ? 'admin' : 'user';
       if (!name || !email) {
         return sendJson(res, 400, { error: 'Name and email are required' });
+      }
+
+      // Enforce team seats limit for current agency plan
+      const teamCheck = checkPlanLimit(agency.id, 'teamMembers', 1);
+      if (!teamCheck.allowed) {
+        return sendJson(res, 403, { error: teamCheck.error, code: teamCheck.code });
       }
 
       state.records.team = state.records.team || [];
@@ -6763,6 +7050,20 @@ const server = createServer(async (req, res) => {
         delete body.agencyId;
         delete body.locationId;
 
+        // Enforce plan limits on key resources
+        if (collectionName === 'contacts') {
+          const contactCheck = checkPlanLimit(agency.id, 'contacts', 1);
+          if (!contactCheck.allowed) {
+            return sendJson(res, 403, { error: contactCheck.error, code: contactCheck.code });
+          }
+        }
+        if (collectionName === 'workflows' && body.status === 'published') {
+          const wfCheck = checkPlanLimit(agency.id, 'activeWorkflows', 1);
+          if (!wfCheck.allowed) {
+            return sendJson(res, 403, { error: wfCheck.error, code: wfCheck.code });
+          }
+        }
+
         const newRecord = {
           ...body,
           id: randomUUID(),
@@ -6803,6 +7104,14 @@ const server = createServer(async (req, res) => {
         if (index === -1) return sendJson(res, 404, { error: 'Record not found' });
 
         const previousRecord = { ...list[index] };
+
+        // Enforce active workflows limit if transitioning from draft to published
+        if (collectionName === 'workflows' && body.status === 'published' && previousRecord.status !== 'published') {
+          const wfCheck = checkPlanLimit(agency.id, 'activeWorkflows', 1);
+          if (!wfCheck.allowed) {
+            return sendJson(res, 403, { error: wfCheck.error, code: wfCheck.code });
+          }
+        }
         const updated = {
           ...list[index],
           ...body,

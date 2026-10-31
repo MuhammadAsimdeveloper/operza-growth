@@ -1,143 +1,91 @@
-# Operza — Production Deployment Guide
+# Operza Production Deployment Manual
 
-## 1. System Requirements
+## 1. Prerequisites
 
-### Hardware Sizing Guidelines
-
-| Scale Tier | Concurrent Users | CPU Cores | Memory | Storage | Recommended Architecture |
-|---|---|---|---|---|---|
-| **Starter Agency** | 1–50 | 2 vCPU | 4 GB | 50 GB SSD | Single VM (Docker Compose) |
-| **Growth Agency** | 50–500 | 4 vCPU | 8 GB | 200 GB NVMe | Clustered Postgres + Redis + 2x API Nodes |
-| **Enterprise / Multi-Tenant** | 500+ | 8+ vCPU | 16+ GB | 500+ GB NVMe | Managed AWS Aurora Postgres / Redis + ECS / K8s |
+- Docker 24.0+ & Docker Compose v2.20+
+- Host Operating System: Linux (Ubuntu 22.04 LTS / Debian 12 / Amazon Linux 2023)
+- Minimum Host Specs: 2 vCPU, 2 GB RAM, 40+ GB SSD volume
+- Domain Name configured with DNS A-record pointing to host public IP (or routed via Cloudflare)
 
 ---
 
-## 2. Environment Configuration
+## 2. Docker Compose Production Deployment
 
-Create a production `.env` file based on `.env.example`:
+### Step 1: Clone Repository & Checkout Release Branch
+```bash
+git clone https://github.com/MuhammadAsimdeveloper/operza-growth.git /opt/operza
+cd /opt/operza
+git checkout release/production-launch
+```
 
+### Step 2: Configure Production Environment Secrets
+Copy `.env.example` to `.env`:
 ```bash
 cp .env.example .env
 ```
-
-### Critical Environment Variables
-
-```ini
-# Runtime Environment
+Generate high-entropy production secrets:
+```bash
+# Generate 64-character cryptographic hex secrets
+node -e "console.log('SESSION_SECRET=' + require('crypto').randomBytes(32).toString('hex'))"
+node -e "console.log('JWT_SECRET=' + require('crypto').randomBytes(32).toString('hex'))"
+node -e "console.log('POSTGRES_PASSWORD=' + require('crypto').randomBytes(24).toString('hex'))"
+```
+Configure `.env` with production values:
+```env
 NODE_ENV=production
 PORT=4000
-HOST=0.0.0.0
-
-# Database Persistence (PostgreSQL 16)
-DATABASE_URL=postgresql://operza_app:<STRONG_PASSWORD>@postgres:5432/operza_db
-PG_MAX_POOL=20
-DATABASE_SSL=false
-
-# Distributed Queue (Redis 7.x)
-REDIS_URL=redis://:<STRONG_REDIS_PASSWORD>@redis:6379
-
-# Cryptography & Sessions (Must be at least 32 characters)
-SESSION_SECRET=<GENERATE_64_CHAR_RANDOM_HEX>
-
-# Omnichannel Ingress Webhook Secrets
-STRIPE_WEBHOOK_SECRET=whsec_...
-TWILIO_AUTH_TOKEN=...
-SENDGRID_WEBHOOK_KEY=...
-
-# Rate Limiting
-RATE_LIMIT_MAX_REQUESTS=180
-RATE_LIMIT_AUTH_MAX=15
+DATABASE_URL=postgres://operza_app:<POSTGRES_PASSWORD>@postgres:5432/operza_db
+MIGRATION_DATABASE_URL=postgres://operza_migrator:<POSTGRES_PASSWORD>@postgres:5432/operza_db
+REDIS_URL=redis://redis:6379
+SESSION_SECRET=<YOUR_GENERATED_SESSION_SECRET>
+JWT_SECRET=<YOUR_GENERATED_JWT_SECRET>
+ALLOWED_ORIGINS=https://operza.io,https://www.operza.io
+RATE_LIMIT_MAX_REQUESTS=120
+RATE_LIMIT_AUTH_MAX=10
 ```
 
----
-
-## 3. Production Deployment with Docker Compose
-
-Operza provides a hardened production compose specification (`docker-compose.prod.yml`).
-
-### Step 1: Initialize Database Roles and Schema
-```bash
-# Start Postgres to apply migrations
-docker compose -f docker-compose.prod.yml up -d postgres
-docker compose -f docker-compose.prod.yml exec postgres psql -U operza_admin -d operza_db -f /docker-entrypoint-initdb.d/01-bootstrap-roles.sql
-
-# Run database migrations
-npm --workspace=@operza/db run migrate
-```
-
-### Step 2: Launch Complete Production Stack
+### Step 3: Launch Production Container Stack
 ```bash
 docker compose -f docker-compose.prod.yml up -d --build
 ```
 
-### Step 3: Verify Container Health
+### Step 4: Verify Service Health & Telemetry
 ```bash
+# Verify all containers are running and healthy
 docker compose -f docker-compose.prod.yml ps
+
+# Inspect deep health endpoint
+curl -s http://localhost:4000/health | jq .
 ```
-
-All services (`operza-prod-postgres`, `operza-prod-redis`, `operza-prod-api`, `operza-prod-web`) should show status `Up (healthy)`.
-
----
-
-## 4. Reverse Proxy & SSL Configuration (Nginx Example)
-
-```nginx
-server {
-    listen 80;
-    server_name app.operza.io;
-    return 301 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name app.operza.io;
-
-    ssl_certificate /etc/letsencrypt/live/app.operza.io/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/app.operza.io/privkey.pem;
-
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-
-    # Security Headers
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-
-    # Frontend Assets
-    location / {
-        proxy_pass http://127.0.0.1:80;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # API Proxy
-    location /api/ {
-        proxy_pass http://127.0.0.1:4000;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # WebSocket Proxy
-    location /ws {
-        proxy_pass http://127.0.0.1:4000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_read_timeout 86400s;
-    }
+Expected output:
+```json
+{
+  "name": "Operza Unified API",
+  "status": "healthy",
+  "version": "2.0.0",
+  "wsEnabled": true,
+  "database": {
+    "status": "connected",
+    "latencyMs": 1.2
+  },
+  "redis": {
+    "status": "connected"
+  }
 }
 ```
 
 ---
 
-## 5. Health Probes & Monitoring
+## 3. Zero-Downtime Rollback Procedure
 
-- **Liveness Probe**: `GET http://localhost:4000/health` (HTTP 200)
-- **Readiness Probe**: `GET http://localhost:4000/ready` (Verifies DB connection pool & Redis readiness)
-- **Telemetry Metrics**: `GET http://localhost:4000/metrics` (Memory RSS, heap, entity counts, queue depth)
+If a deployed release experiences an unforeseen failure, execute an immediate atomic rollback:
+```bash
+# 1. Roll back Git pointer to previous known stable tag
+git checkout <PREVIOUS_STABLE_COMMIT_OR_TAG>
+
+# 2. Rebuild and restart application containers
+docker compose -f docker-compose.prod.yml up -d --build --no-deps api web worker
+
+# 3. Restore database snapshot if schema migration requires rollback
+npm run db:restore backups/latest_stable
+```
