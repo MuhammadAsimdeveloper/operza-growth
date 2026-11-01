@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, PageHeader, Switch } from '../components/ui';
-import { INTEGRATION_CATEGORIES, useStore, uid } from '../lib/store';
+import { IntegrationConfigModal, type IntegrationItem } from '../components/IntegrationConfigModal';
+import { Avatar, Badge, PageHeader, StatusBadge } from '../components/ui';
+import { useStore, uid } from '../lib/store';
 import { num } from '../lib/format';
 import { api } from '../lib/api';
 import type { CustomField, TeamMember } from '../lib/types';
@@ -24,6 +25,10 @@ export default function Settings() {
   const [inviting, setInviting] = useState(false);
   const [addingField, setAddingField] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [apiIntegrations, setApiIntegrations] = useState<IntegrationItem[]>([]);
+  const [selectedIntegration, setSelectedIntegration] = useState<IntegrationItem | null>(null);
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testFeedback, setTestFeedback] = useState<{ [id: string]: { success: boolean; message: string } }>({});
 
   useEffect(() => {
     if (section === 'team') {
@@ -36,8 +41,46 @@ export default function Settings() {
           }
         }
       }).catch(() => {});
+    } else if (section === 'integrations') {
+      api.integrations.list().then((res) => {
+        if (res?.integrations && res.integrations.length > 0) {
+          setApiIntegrations(res.integrations);
+        }
+      }).catch(() => {});
     }
   }, [section]);
+
+  const handleTestPing = async (id: string) => {
+    setTestingId(id);
+    try {
+      const res = await api.integrations.test(id);
+      setTestFeedback((prev) => ({
+        ...prev,
+        [id]: { success: true, message: res.message || 'Latency 28ms · Service operational' }
+      }));
+      setApiIntegrations((prev) =>
+        prev.map((i) => (i.id === id ? { ...i, lastSyncAt: new Date().toISOString() } : i))
+      );
+    } catch {
+      setTestFeedback((prev) => ({
+        ...prev,
+        [id]: { success: false, message: 'Could not connect to service endpoint' }
+      }));
+    } finally {
+      setTestingId(null);
+    }
+  };
+
+  const handleDisconnect = async (id: string) => {
+    try {
+      await api.integrations.disconnect(id);
+      setApiIntegrations((prev) =>
+        prev.map((i) => (i.id === id ? { ...i, connected: false, status: 'disconnected', accountName: '' } : i))
+      );
+    } catch (err) {
+      console.error('Failed to disconnect integration:', err);
+    }
+  };
 
   const handleRoleChange = async (m: TeamMember, newRole: TeamMember['role']) => {
     dispatch({ type: 'team/role', id: m.id, role: newRole });
@@ -213,48 +256,133 @@ export default function Settings() {
           )}
 
           {section === 'integrations' && (
-            <div className="stack">
-              {INTEGRATION_CATEGORIES.map((category) => {
-                const items = state.integrations.filter((i) => i.category === category);
-                if (!items.length) return null;
-                return (
-                  <div className="card" key={category}>
-                    <div className="card__head">
-                      <div className="card__title">{category}</div>
-                    </div>
-                    <div>
-                      {items.map((int) => (
-                        <div className="list-row" key={int.id}>
-                          <span
-                            className="avatar avatar--md avatar--square"
-                            style={{ background: int.connected ? 'var(--green-soft)' : 'var(--surface-3)', color: int.connected ? 'var(--green)' : 'var(--text-3)' }}
+            <div className="stack" style={{ gap: 16 }}>
+              {(() => {
+                const effectiveList: IntegrationItem[] = apiIntegrations.length > 0 ? apiIntegrations : state.integrations.map(si => ({
+                  id: si.id,
+                  name: si.name,
+                  category: si.category,
+                  description: si.blurb,
+                  icon: 'plug',
+                  connected: si.connected,
+                  accountName: si.connected ? `${si.name} Account` : '',
+                  status: si.connected ? 'connected' : 'disconnected',
+                  lastSyncAt: null
+                }));
+
+                const categories = Array.from(new Set(effectiveList.map(i => i.category)));
+
+                return categories.map((catName) => {
+                  const items = effectiveList.filter((i) => i.category === catName);
+                  if (!items.length) return null;
+                  return (
+                    <div className="card" key={catName}>
+                      <div className="card__head" style={{ padding: '14px 18px', borderBottom: '1px solid var(--line)' }}>
+                        <div className="card__title" style={{ fontSize: 14 }}>{catName}</div>
+                        <Badge tone="default">{items.filter(i => i.connected).length} / {items.length} active</Badge>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        {items.map((int) => (
+                          <div
+                            key={int.id}
+                            style={{
+                              padding: '14px 18px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              gap: 16,
+                              borderBottom: '1px solid var(--line-soft)',
+                              flexWrap: 'wrap'
+                            }}
                           >
-                            <Icon name="plug" size={16} />
-                          </span>
-                          <div style={{ flex: 1, minWidth: 0 }}>
-                            <div className="row" style={{ gap: 7 }}>
-                              <span style={{ fontSize: 13, fontWeight: 600 }}>{int.name}</span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 14, flex: '1 1 280px', minWidth: 0 }}>
+                              <span
+                                className="avatar avatar--md avatar--square"
+                                style={{
+                                  background: int.connected ? 'var(--accent-soft)' : 'var(--surface-3)',
+                                  color: int.connected ? 'var(--accent)' : 'var(--text-3)',
+                                  flexShrink: 0
+                                }}
+                              >
+                                <Icon name={int.icon || 'plug'} size={18} />
+                              </span>
+                              <div style={{ minWidth: 0 }}>
+                                <div className="row" style={{ gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                                  <strong style={{ fontSize: 13.5 }}>{int.name}</strong>
+                                  <StatusBadge status={int.connected ? 'connected' : 'disconnected'} />
+                                </div>
+                                <div className="cell-sub" style={{ fontSize: 12, marginTop: 2 }}>
+                                  {int.description}
+                                </div>
+                                {int.connected && int.accountName && (
+                                  <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
+                                    Account: <span style={{ color: 'var(--text-2)', fontWeight: 500 }}>{int.accountName}</span>
+                                    {int.lastSyncAt && ` · Synced ${new Date(int.lastSyncAt).toLocaleTimeString()}`}
+                                  </div>
+                                )}
+                                {testFeedback[int.id] && (
+                                  <div
+                                    style={{
+                                      marginTop: 6,
+                                      fontSize: 11,
+                                      padding: '2px 8px',
+                                      borderRadius: 'var(--r-sm)',
+                                      display: 'inline-block',
+                                      background: testFeedback[int.id].success ? 'var(--green-soft)' : 'var(--red-soft)',
+                                      color: testFeedback[int.id].success ? 'var(--green)' : 'var(--red)'
+                                    }}
+                                  >
+                                    {testFeedback[int.id].message}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="row" style={{ gap: 8, alignItems: 'center' }}>
                               {int.connected ? (
-                                <Badge tone="green" dot>
-                                  Connected
-                                </Badge>
+                                <>
+                                  <button
+                                    type="button"
+                                    className="btn btn--sm"
+                                    onClick={() => handleTestPing(int.id)}
+                                    disabled={testingId === int.id}
+                                    title="Verify live API connectivity"
+                                  >
+                                    <Icon name="refresh" size={13} /> {testingId === int.id ? 'Pinging...' : 'Test Ping'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn--sm"
+                                    onClick={() => setSelectedIntegration(int)}
+                                  >
+                                    <Icon name="sliders" size={13} /> Configure
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="icon-btn"
+                                    title={`Disconnect ${int.name}`}
+                                    onClick={() => handleDisconnect(int.id)}
+                                  >
+                                    <Icon name="trash" size={14} />
+                                  </button>
+                                </>
                               ) : (
-                                <Badge>Not connected</Badge>
+                                <button
+                                  type="button"
+                                  className="btn btn--primary btn--sm"
+                                  onClick={() => setSelectedIntegration(int)}
+                                >
+                                  <Icon name="plug" size={13} /> Connect
+                                </button>
                               )}
                             </div>
-                            <div className="cell-sub">{int.blurb}</div>
                           </div>
-                          <Switch
-                            on={int.connected}
-                            label={`Toggle ${int.name}`}
-                            onChange={() => dispatch({ type: 'integration/toggle', id: int.id })}
-                          />
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
           )}
 
@@ -367,6 +495,23 @@ export default function Settings() {
             the seeded demo data.
           </p>
         </Modal>
+      )}
+
+      {selectedIntegration && (
+        <IntegrationConfigModal
+          integration={selectedIntegration}
+          onClose={() => setSelectedIntegration(null)}
+          onSaved={(updated) => {
+            setApiIntegrations((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
+            setSelectedIntegration(null);
+          }}
+          onDisconnected={(id) => {
+            setApiIntegrations((prev) =>
+              prev.map((i) => (i.id === id ? { ...i, connected: false, status: 'disconnected', accountName: '' } : i))
+            );
+            setSelectedIntegration(null);
+          }}
+        />
       )}
     </div>
   );

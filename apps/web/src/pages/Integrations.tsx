@@ -1,35 +1,76 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
-import { Modal } from '../components/Modal';
+import { IntegrationConfigModal, type IntegrationItem } from '../components/IntegrationConfigModal';
 import { Badge, EmptyState, PageHeader, StatCard, StatusBadge } from '../components/ui';
 import { api } from '../lib/api';
 
-interface Integration {
-  id: string;
-  name: string;
-  category: string;
-  description: string;
-  icon: string;
-  connected: boolean;
-  accountName?: string;
-  status: 'connected' | 'disconnected' | 'error';
-  lastSyncAt?: string | null;
-  config?: any;
-}
+const CATEGORIES = [
+  'All',
+  'Payment',
+  'Communications',
+  'AI & Copilot',
+  'Marketing',
+  'Commerce',
+  'Calendar',
+  'Databases',
+  'Automation'
+];
 
-const CATEGORIES = ['All', 'Payment', 'Communications', 'AI & Copilot', 'Automation', 'Calendar', 'Marketing', 'Commerce'];
+const DEFAULT_CATALOGUE: IntegrationItem[] = [
+  // Payment
+  { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, customer portal, and payment links', icon: 'credit-card', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'paypal', name: 'PayPal', category: 'Payment', description: 'Direct checkout, recurring billing, and digital wallet payment processing', icon: 'credit-card', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'authorize_net', name: 'Authorize.Net', category: 'Payment', description: 'Enterprise merchant account payment gateway and fraud detection suite', icon: 'credit-card', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'razorpay', name: 'Razorpay', category: 'Payment', description: 'International multi-currency payment gateway and UPI instant transfers', icon: 'credit-card', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+
+  // Communications
+  { id: 'twilio', name: 'Twilio', category: 'Communications', description: '10DLC verified SMS messaging, toll-free numbers, and voice call tracking', icon: 'phone', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'sendgrid', name: 'SendGrid / SMTP', category: 'Communications', description: 'High-deliverability transactional email delivery, templates, and marketing campaigns', icon: 'mail', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'whatsapp', name: 'WhatsApp Cloud API', category: 'Communications', description: 'Official Meta WhatsApp Business API for automated notifications and 2-way client chat', icon: 'message', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'slack', name: 'Slack', category: 'Communications', description: 'Team workspace notifications for leads, booked appointments, and deal alerts', icon: 'message', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'discord', name: 'Discord', category: 'Communications', description: 'Community channel dispatch, webhook triggers, and team notification bots', icon: 'message', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+
+  // AI & Copilot
+  { id: 'openai', name: 'OpenAI GPT-4o', category: 'AI & Copilot', description: 'Powering Miss Minutes Copilot, autonomous conversation replies, and summary generation', icon: 'sparkles', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'gemini', name: 'Google Gemini', category: 'AI & Copilot', description: 'Multimodal 1.5 Pro & Flash reasoning, vision OCR, and CRM workflow copilot', icon: 'sparkles', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'claude', name: 'Anthropic Claude', category: 'AI & Copilot', description: 'Sonnet 3.5 complex agentic reasoning, code execution nodes, and contract drafting', icon: 'sparkles', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'ollama', name: 'Ollama (Local LLM)', category: 'AI & Copilot', description: 'Self-hosted on-premises open-source LLMs (Llama 3, Mistral, Qwen) with zero cloud egress', icon: 'cpu', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+
+  // Marketing
+  { id: 'meta_ads', name: 'Meta Ads', category: 'Marketing', description: 'Instant lead capture from Facebook & Instagram lead forms directly into CRM contacts', icon: 'facebook', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'google_ads', name: 'Google Ads Conversions', category: 'Marketing', description: 'Offline conversion tracking and enhanced conversions sync for PPC ROI attribution', icon: 'globe', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'tiktok_ads', name: 'TikTok Instant Leads', category: 'Marketing', description: 'Real-time synchronization for TikTok Lead Generation campaign submissions', icon: 'video', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'mailchimp', name: 'Mailchimp', category: 'Marketing', description: 'Bidirectional contact audience synchronization, tags, and newsletter opt-ins', icon: 'mail', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'hubspot', name: 'HubSpot', category: 'Marketing', description: 'Two-way contact and deal synchronization with HubSpot marketing and CRM hub', icon: 'users', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+
+  // Commerce
+  { id: 'shopify', name: 'Shopify', category: 'Commerce', description: 'E-commerce store orders, customer import, cart abandonment, and product sync', icon: 'store', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'woocommerce', name: 'WooCommerce', category: 'Commerce', description: 'WordPress WooCommerce online store orders, webhooks, and customer data sync', icon: 'store', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'wordpress', name: 'WordPress', category: 'Commerce', description: 'Website content management, blog authoring, and form submission capture', icon: 'globe', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'webflow', name: 'Webflow', category: 'Commerce', description: 'Webflow CMS collections, lead forms, and membership webhook triggers', icon: 'globe', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+
+  // Calendar
+  { id: 'google_calendar', name: 'Google Calendar & Meet', category: 'Calendar', description: 'Two-way appointment synchronization, team calendar pooling, and Google Meet link generation', icon: 'calendar', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+
+  // Databases
+  { id: 'google_sheets', name: 'Google Sheets', category: 'Databases', description: 'Real-time two-way spreadsheet sync, row appending, lead lookups, and reporting', icon: 'table', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'airtable', name: 'Airtable', category: 'Databases', description: 'Relational database sync, base automation, record lookups, and rich media capture', icon: 'database', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'notion', name: 'Notion', category: 'Databases', description: 'Knowledge base documentation, CRM contact pages, and collaborative wiki databases', icon: 'file-text', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'github', name: 'GitHub', category: 'Databases', description: 'Repository issue synchronization, commit triggers, and developer release webhooks', icon: 'github', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+
+  // Automation
+  { id: 'zapier', name: 'Zapier', category: 'Automation', description: 'Connect Operza triggers to 5,000+ business applications via REST webhooks', icon: 'zap', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'make', name: 'Make (Integromat)', category: 'Automation', description: 'Complex scenario automations and bidirectional webhook data transformation', icon: 'zap', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+  { id: 'n8n_webhooks', name: 'n8n Community Webhooks', category: 'Automation', description: 'Direct webhook nodes and payload streaming with self-hosted n8n instances', icon: 'cpu', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null }
+];
 
 export default function Integrations() {
-  const [integrations, setIntegrations] = useState<Integration[]>([]);
+  const [integrations, setIntegrations] = useState<IntegrationItem[]>(DEFAULT_CATALOGUE);
   const [category, setCategory] = useState('All');
   const [query, setQuery] = useState('');
-  const [selected, setSelected] = useState<Integration | null>(null);
-  const [apiKeyInput, setApiKeyInput] = useState('');
-  const [accountNameInput, setAccountNameInput] = useState('');
-  const [webhookUrlInput, setWebhookUrlInput] = useState('');
+  const [selected, setSelected] = useState<IntegrationItem | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ id: string; message: string; success: boolean } | null>(null);
-  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -37,18 +78,7 @@ export default function Integrations() {
       if (!active || !res?.integrations) return;
       setIntegrations(res.integrations);
     }).catch(() => {
-      // Default catalogue fallback when offline or initializing (truthful disconnected states)
-      setIntegrations([
-        { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, and payment links', icon: 'credit-card', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
-        { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'SMS messaging, phone numbers, and voice call tracking', icon: 'phone', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
-        { id: 'sendgrid', name: 'SendGrid', category: 'Communications', description: 'Transactional email delivery and marketing campaigns', icon: 'mail', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
-        { id: 'openai', name: 'OpenAI', category: 'AI & Copilot', description: 'Powering autonomous copilot, conversation replies, and summarization', icon: 'sparkles', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
-        { id: 'zapier', name: 'Zapier', category: 'Automation', description: 'Connect Operza triggers to 5,000+ business applications', icon: 'zap', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
-        { id: 'google_calendar', name: 'Google Calendar', category: 'Calendar', description: 'Two-way appointment synchronization and scheduling', icon: 'calendar', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
-        { id: 'slack', name: 'Slack', category: 'Communications', description: 'Real-time notifications for leads, booked appointments, and deals', icon: 'message', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
-        { id: 'meta_ads', name: 'Meta Ads', category: 'Marketing', description: 'Instant lead sync from Facebook & Instagram lead forms', icon: 'facebook', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
-        { id: 'shopify', name: 'Shopify', category: 'Commerce', description: 'E-commerce store orders, customer import, and product sync', icon: 'store', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null }
-      ]);
+      // Retain DEFAULT_CATALOGUE
     });
     return () => { active = false; };
   }, []);
@@ -103,34 +133,9 @@ export default function Integrations() {
     }
   };
 
-  const handleOpenConfig = (item: Integration) => {
+  const handleOpenConfig = (item: IntegrationItem) => {
     setSelected(item);
-    setApiKeyInput('');
-    setAccountNameInput(item.accountName || '');
-    setWebhookUrlInput(item.config?.webhookUrl || '');
     setTestResult(null);
-  };
-
-  const handleSaveConfig = async () => {
-    if (!selected) return;
-    setSaving(true);
-    try {
-      const res = await api.integrations.connect(selected.id, {
-        apiKey: apiKeyInput.trim(),
-        accountName: accountNameInput.trim() || `${selected.name} Account`,
-        webhookUrl: webhookUrlInput.trim()
-      });
-      if (res?.integration) {
-        setIntegrations((prev) =>
-          prev.map((i) => (i.id === selected.id ? res.integration : i))
-        );
-      }
-      setSelected(null);
-    } catch (err) {
-      console.error('Failed to save integration config:', err);
-    } finally {
-      setSaving(false);
-    }
   };
 
   return (
@@ -318,63 +323,20 @@ export default function Integrations() {
       )}
 
       {selected && (
-        <Modal
-          title={`Configure ${selected.name}`}
+        <IntegrationConfigModal
+          integration={selected}
           onClose={() => setSelected(null)}
-          footer={
-            <>
-              <button className="btn" type="button" onClick={() => setSelected(null)} disabled={saving}>
-                Cancel
-              </button>
-              <button className="btn btn--primary" type="button" onClick={handleSaveConfig} disabled={saving}>
-                {saving ? 'Saving...' : 'Save & Connect'}
-              </button>
-            </>
-          }
-        >
-          <div className="stack" style={{ gap: 14 }}>
-            <div className="field">
-              <label htmlFor="cfg-acc">Account or Identifier Label</label>
-              <input
-                id="cfg-acc"
-                className="input"
-                placeholder="e.g. My Agency Live Account"
-                value={accountNameInput}
-                onChange={(e) => setAccountNameInput(e.target.value)}
-              />
-              <span className="hint" style={{ marginTop: 4 }}>
-                A recognizable label to identify this workspace in analytics.
-              </span>
-            </div>
-
-            <div className="field">
-              <label htmlFor="cfg-key">API Key or Access Token</label>
-              <input
-                id="cfg-key"
-                className="input"
-                type="password"
-                placeholder={selected.connected ? '••••••••••••••••••••' : 'Enter live secret or access key'}
-                value={apiKeyInput}
-                onChange={(e) => setApiKeyInput(e.target.value)}
-              />
-              <span className="hint" style={{ marginTop: 4 }}>
-                Encrypted in tenant storage with strict RBAC access controls.
-              </span>
-            </div>
-
-            <div className="field">
-              <label htmlFor="cfg-wh">Webhook Inbound Endpoint (Optional)</label>
-              <input
-                id="cfg-wh"
-                className="input"
-                style={{ fontFamily: 'var(--font-mono)' }}
-                placeholder={`https://operza.agency.test/api/webhooks/${selected.id}`}
-                value={webhookUrlInput}
-                onChange={(e) => setWebhookUrlInput(e.target.value)}
-              />
-            </div>
-          </div>
-        </Modal>
+          onSaved={(updated) => {
+            setIntegrations((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
+            setSelected(null);
+          }}
+          onDisconnected={(id) => {
+            setIntegrations((prev) =>
+              prev.map((i) => (i.id === id ? { ...i, connected: false, status: 'disconnected', accountName: '' } : i))
+            );
+            setSelected(null);
+          }}
+        />
       )}
     </div>
   );

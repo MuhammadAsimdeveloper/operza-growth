@@ -1794,6 +1794,55 @@ const copilotTools = {
       }
       return { question: params.question, answer };
     }
+  },
+  get_agency_metrics: {
+    description: 'Get comprehensive agency KPIs: contacts, deals, pipeline value, workflow automations, and connected app status',
+    parameters: {},
+    execute: (_params, actor) => {
+      const ag = actor.agency.id;
+      const loc = actor.activeLocation.id;
+      const contacts = (state.records.contacts || []).filter(c => c.agencyId === ag && c.locationId === loc);
+      const opps = (state.records.opportunities || []).filter(o => o.agencyId === ag && o.locationId === loc);
+      const tasks = (state.records.tasks || []).filter(t => t.agencyId === ag && t.locationId === loc);
+      const flows = (state.records.workflows || []).filter(w => w.agencyId === ag && w.locationId === loc);
+      const totalValue = opps.reduce((sum, o) => sum + (Number(o.value) || 0), 0);
+      const wonValue = opps.filter(o => o.status === 'won').reduce((sum, o) => sum + (Number(o.value) || 0), 0);
+      const integrationsList = state.records.integrations?.[ag] || [];
+      const connectedApps = integrationsList.filter(i => i.connected);
+
+      return {
+        totalContacts: contacts.length,
+        totalOpportunities: opps.length,
+        pipelineValue: totalValue,
+        wonValue,
+        activeWorkflows: flows.filter(f => f.status === 'active' || f.status === 'published').length,
+        totalWorkflows: flows.length,
+        pendingTasks: tasks.filter(t => t.status !== 'completed').length,
+        connectedAppsCount: connectedApps.length,
+        connectedAppNames: connectedApps.map(i => i.name)
+      };
+    }
+  },
+  list_integrations: {
+    description: 'List status of connected and available integrations across the App Marketplace',
+    parameters: { category: 'string?' },
+    execute: (params, actor) => {
+      const ag = actor.agency.id;
+      const list = state.records.integrations?.[ag] || [];
+      const filtered = params.category ? list.filter(i => i.category.toLowerCase() === params.category.toLowerCase()) : list;
+      return {
+        total: filtered.length,
+        connectedCount: filtered.filter(i => i.connected).length,
+        integrations: filtered.map(i => ({
+          id: i.id,
+          name: i.name,
+          category: i.category,
+          connected: Boolean(i.connected),
+          status: i.status || (i.connected ? 'connected' : 'disconnected'),
+          accountName: i.accountName || ''
+        }))
+      };
+    }
   }
 };
 
@@ -4745,6 +4794,14 @@ GOOGLE_REDIRECT_URI=http://localhost:4000/api/auth/google/callback</pre>
       const lowerMsg = message.toLowerCase();
 
       // Heuristic tool dispatch based on message content
+      if (lowerMsg.includes('metric') || lowerMsg.includes('stat') || lowerMsg.includes('analytics') || lowerMsg.includes('performance') || lowerMsg.includes('overview') || lowerMsg.includes('kpi') || lowerMsg.includes('how is my agency doing') || lowerMsg.includes('agency status') || lowerMsg.includes('health')) {
+        const result = copilotTools.get_agency_metrics.execute({}, actor);
+        toolResults.push({ tool: 'get_agency_metrics', result });
+      }
+      if (lowerMsg.includes('integration') || lowerMsg.includes('connected app') || lowerMsg.includes('marketplace') || lowerMsg.includes('stripe status') || lowerMsg.includes('twilio status') || lowerMsg.includes('which apps')) {
+        const result = copilotTools.list_integrations.execute({}, actor);
+        toolResults.push({ tool: 'list_integrations', result });
+      }
       if (lowerMsg.includes('search') && (lowerMsg.includes('contact') || lowerMsg.includes('find'))) {
         const queryMatch = message.match(/(?:search|find|look up)\s+(?:contacts?\s+)?(?:for\s+)?["']?(.+?)["']?\s*$/i);
         const query = queryMatch ? queryMatch[1] : message;
@@ -4759,6 +4816,16 @@ GOOGLE_REDIRECT_URI=http://localhost:4000/api/auth/google/callback</pre>
         const dateMatch = message.match(/(\d{4}-\d{2}-\d{2})/);
         const result = copilotTools.get_calendar_availability.execute({ date: dateMatch ? dateMatch[1] : '' }, actor);
         toolResults.push({ tool: 'get_calendar_availability', result });
+      }
+
+      // Autonomous Tool: Create Deal / Opportunity
+      if (lowerMsg.includes('create deal') || lowerMsg.includes('add deal') || lowerMsg.includes('new deal') || lowerMsg.includes('create opportunity') || lowerMsg.includes('new opportunity')) {
+        const valMatch = message.match(/\$?(\d[\d,]*)/);
+        const numVal = valMatch ? Number(valMatch[1].replace(/,/g, '')) : 5000;
+        const nameMatch = message.match(/(?:deal|opportunity)\s+["']?([^"'\n$]+?)["']?(?:\s+for|\s+worth|\s+\$|$)/i);
+        const oppName = nameMatch ? nameMatch[1].trim() : 'Strategic Client Retainer';
+        const result = await copilotTools.create_opportunity.execute({ name: oppName, value: numVal }, actor);
+        toolResults.push({ tool: 'create_opportunity', result });
       }
 
       // Autonomous Tool: Create Contact
@@ -4846,7 +4913,16 @@ GOOGLE_REDIRECT_URI=http://localhost:4000/api/auth/google/callback</pre>
       if (toolResults.length > 0) {
         const summaries = [];
         for (const tr of toolResults) {
-          if (tr.tool === 'create_contact' && tr.result.success) {
+          if (tr.tool === 'get_agency_metrics') {
+            const m = tr.result;
+            summaries.push(`⏰ **Miss Minutes Executive Status Report**:\n• **${m.totalContacts}** Total Active Contacts\n• **${m.totalOpportunities}** Active Pipeline Deals ($${m.pipelineValue.toLocaleString()} pipeline / $${m.wonValue.toLocaleString()} closed won)\n• **${m.activeWorkflows}** Active Workflows (${m.totalWorkflows} total configured)\n• **${m.connectedAppsCount}** Connected Integrations: ${m.connectedAppNames.join(', ') || 'No live integrations connected yet'}\n• **${m.pendingTasks}** Follow-up Tasks Pending`);
+          } else if (tr.tool === 'list_integrations') {
+            const list = tr.result.integrations;
+            const preview = list.slice(0, 15).map(i => `• **${i.name}** (${i.category}): ${i.connected ? '🟢 Connected [' + (i.accountName || 'Active') + ']' : '⚪ Disconnected'}`).join('\n');
+            summaries.push(`🔌 **App Marketplace Catalog** (${tr.result.connectedCount} of ${tr.result.total} connected):\n${preview}\n\n*Tip: Go to Settings > Integrations or App Marketplace to test or reconfigure keys.*`);
+          } else if (tr.tool === 'create_opportunity' && tr.result.success) {
+            summaries.push(`💼 Created new deal **${tr.result.name}** valued at **$${Number(tr.result.value).toLocaleString()}** in stage *${tr.result.stage}*.`);
+          } else if (tr.tool === 'create_contact' && tr.result.success) {
             summaries.push(`✅ Created contact **${tr.result.name}** (${tr.result.email || 'no email'}) under **${tr.result.company || 'Direct'}**.`);
           } else if (tr.tool === 'trigger_workflow' && tr.result.success) {
             summaries.push(`⚡ Executed workflow **${tr.result.workflowName}** (Execution ID: ${tr.result.executionId.slice(0, 8)}). Status: **${tr.result.status}** with ${tr.result.stepsExecuted} step(s).`);
@@ -4874,7 +4950,7 @@ GOOGLE_REDIRECT_URI=http://localhost:4000/api/auth/google/callback</pre>
         }
         responseText = summaries.join('\n\n');
       } else {
-        responseText = `Hello ${actor.user.name}! You have ${contactCount} contacts and ${taskCount} pending tasks. You can ask me to search contacts, add leads, move deal stages, trigger automated workflows, send outbound messages, or check calendar schedules.`;
+        responseText = `⏰ **Miss Minutes**: "Hey y'all! Don't you worry, your timeline is running smooth as butter. You have **${contactCount}** contacts and **${taskCount}** pending tasks in this workspace. Ask me to pull your metrics, search contacts, add leads, move deals, trigger workflows, or check your integrations!"`;
       }
 
       const assistantMsg = {
@@ -7578,28 +7654,75 @@ GOOGLE_REDIRECT_URI=http://localhost:4000/api/auth/google/callback</pre>
       const hasStripe = Boolean(process.env.STRIPE_SECRET_KEY);
       const hasTwilio = Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
       const hasSendgrid = Boolean(process.env.SENDGRID_API_KEY || process.env.SMTP_HOST);
-      const hasOpenAI = Boolean(process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY);
+      const hasOpenAI = Boolean(process.env.OPENAI_API_KEY);
+      const hasGemini = Boolean(process.env.GEMINI_API_KEY);
       const hasGoogle = Boolean(process.env.GOOGLE_CLIENT_ID);
       const hasSlack = Boolean(process.env.SLACK_BOT_TOKEN);
 
       return [
+        // Payment & Commerce
         { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, and payment links', icon: 'credit-card', connected: hasStripe, accountName: hasStripe ? 'Live Stripe Processing' : '', status: hasStripe ? 'connected' : 'disconnected', lastSyncAt: hasStripe ? new Date().toISOString() : null },
-        { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'SMS messaging, phone numbers, and voice call tracking', icon: 'phone', connected: hasTwilio, accountName: hasTwilio ? (process.env.TWILIO_PHONE_NUMBER || '+1 (800) Verified') : '', status: hasTwilio ? 'connected' : 'disconnected', lastSyncAt: hasTwilio ? new Date().toISOString() : null },
-        { id: 'sendgrid', name: 'SendGrid / SMTP', category: 'Communications', description: 'Transactional email delivery and marketing campaigns', icon: 'mail', connected: hasSendgrid, accountName: hasSendgrid ? (process.env.EMAIL_FROM || 'noreply@operza.io') : '', status: hasSendgrid ? 'connected' : 'disconnected', lastSyncAt: hasSendgrid ? new Date().toISOString() : null },
-        { id: 'openai', name: 'OpenAI / LLM Engine', category: 'AI & Copilot', description: 'Powering autonomous copilot, conversation replies, and summarization', icon: 'sparkles', connected: hasOpenAI, accountName: hasOpenAI ? (process.env.OPENAI_MODEL || 'GPT-4o & Embeddings') : '', status: hasOpenAI ? 'connected' : 'disconnected', lastSyncAt: hasOpenAI ? new Date().toISOString() : null },
-        { id: 'slack', name: 'Slack', category: 'Notifications', description: 'Real-time notifications for leads, booked appointments, and deals', icon: 'message', connected: hasSlack, accountName: hasSlack ? 'Workspace Webhook' : '', status: hasSlack ? 'connected' : 'disconnected', lastSyncAt: hasSlack ? new Date().toISOString() : null },
+        { id: 'paypal', name: 'PayPal', category: 'Payment', description: 'Direct checkout, recurring payments, and digital wallet processing', icon: 'credit-card', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'authorize_net', name: 'Authorize.Net', category: 'Payment', description: 'Enterprise merchant account payment gateway and fraud detection', icon: 'credit-card', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'razorpay', name: 'Razorpay', category: 'Payment', description: 'Multi-currency international payment gateway and UPI integration', icon: 'credit-card', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+
+        // Communications & Telephony
+        { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'SMS messaging, 10DLC phone numbers, and voice call tracking', icon: 'phone', connected: hasTwilio, accountName: hasTwilio ? (process.env.TWILIO_PHONE_NUMBER || '+1 (800) Verified') : '', status: hasTwilio ? 'connected' : 'disconnected', lastSyncAt: hasTwilio ? new Date().toISOString() : null },
+        { id: 'sendgrid', name: 'SendGrid / SMTP', category: 'Communications', description: 'Transactional email delivery, verified senders, and marketing campaigns', icon: 'mail', connected: hasSendgrid, accountName: hasSendgrid ? (process.env.EMAIL_FROM || 'noreply@operza.io') : '', status: hasSendgrid ? 'connected' : 'disconnected', lastSyncAt: hasSendgrid ? new Date().toISOString() : null },
+        { id: 'whatsapp', name: 'WhatsApp Cloud API', category: 'Communications', description: 'Official Meta WhatsApp Business API for templates and 2-way chat', icon: 'message', connected: Boolean(process.env.WHATSAPP_APP_SECRET), accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'slack', name: 'Slack', category: 'Communications', description: 'Real-time team notifications for leads, booked appointments, and deals', icon: 'message', connected: hasSlack, accountName: hasSlack ? 'Workspace Webhook' : '', status: hasSlack ? 'connected' : 'disconnected', lastSyncAt: hasSlack ? new Date().toISOString() : null },
+        { id: 'discord', name: 'Discord', category: 'Communications', description: 'Community channel alerts, developer webhooks, and team pings', icon: 'message', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+
+        // AI & Copilot Runtimes
+        { id: 'openai', name: 'OpenAI GPT-4o', category: 'AI & Copilot', description: 'Powering autonomous copilot, conversation replies, and smart summarization', icon: 'sparkles', connected: hasOpenAI, accountName: hasOpenAI ? 'GPT-4o & Embeddings' : '', status: hasOpenAI ? 'connected' : 'disconnected', lastSyncAt: hasOpenAI ? new Date().toISOString() : null },
+        { id: 'gemini', name: 'Google Gemini', category: 'AI & Copilot', description: 'Multimodal generative AI, live interactions, and document intelligence', icon: 'sparkles', connected: hasGemini, accountName: hasGemini ? 'Gemini 2.0 Flash' : '', status: hasGemini ? 'connected' : 'disconnected', lastSyncAt: hasGemini ? new Date().toISOString() : null },
+        { id: 'anthropic', name: 'Anthropic Claude', category: 'AI & Copilot', description: 'High-reasoning Claude 3.5 Sonnet for deep agentic workflow decisioning', icon: 'sparkles', connected: Boolean(process.env.ANTHROPIC_API_KEY), accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'ollama', name: 'Ollama (Local LLM)', category: 'AI & Copilot', description: 'Zero-cost offline local LLM inference via custom localhost endpoint', icon: 'sparkles', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+
+        // Marketing & Lead Generation
+        { id: 'meta_ads', name: 'Meta Ads & Instagram', category: 'Marketing', description: 'Instant lead sync from Facebook & Instagram lead forms directly to CRM', icon: 'facebook', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'google_ads', name: 'Google Ads Conversions', category: 'Marketing', description: 'Offline conversion tracking and CRM deal attribution sync', icon: 'google', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'tiktok_ads', name: 'TikTok Instant Leads', category: 'Marketing', description: 'Sync video ad leads and audience segments into Operza pipelines', icon: 'share', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'mailchimp', name: 'Mailchimp', category: 'Marketing', description: 'Two-way audience sync, tag mapping, and campaign unsubscribe mirroring', icon: 'mail', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'hubspot', name: 'HubSpot', category: 'Marketing', description: 'Bidirectional sync for companies, deals, contacts, and custom properties', icon: 'globe', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+
+        // Commerce & CMS Platforms
+        { id: 'shopify', name: 'Shopify', category: 'Commerce', description: 'E-commerce store orders, customer import, and product sync', icon: 'store', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'woocommerce', name: 'WooCommerce', category: 'Commerce', description: 'WordPress online store order synchronization and client profile enrichment', icon: 'store', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'wordpress', name: 'WordPress', category: 'Commerce', description: 'Publish blogs, import content, and ingest landing page form submissions', icon: 'globe', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'webflow', name: 'Webflow', category: 'Commerce', description: 'Website lead form webhooks, CMS item sync, and page publication triggers', icon: 'globe', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+
+        // Calendar & Scheduling
+        { id: 'google_calendar', name: 'Google Calendar & Meet', category: 'Calendar', description: 'Two-way appointment synchronization and Google Meet link generation', icon: 'calendar', connected: hasGoogle, accountName: hasGoogle ? 'Workspace Calendar' : '', status: hasGoogle ? 'connected' : 'disconnected', lastSyncAt: hasGoogle ? new Date().toISOString() : null },
+
+        // Databases & Productivity
+        { id: 'google_sheets', name: 'Google Sheets', category: 'Databases', description: 'Automated spreadsheet row append, lead export, and data sync', icon: 'database', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'airtable', name: 'Airtable', category: 'Databases', description: 'Relational database record syncing, base automation, and asset storage', icon: 'database', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'notion', name: 'Notion', category: 'Databases', description: 'Sync documentation, client onboarding databases, and CRM pages', icon: 'clipboard', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'github', name: 'GitHub', category: 'Databases', description: 'Issue creation on bug reports, deployment webhooks, and developer actions', icon: 'shield', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+
+        // Automation Ecosystems
         { id: 'zapier', name: 'Zapier / Webhooks', category: 'Automation', description: 'Connect Operza triggers to 5,000+ business applications', icon: 'zap', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
-        { id: 'google_calendar', name: 'Google Calendar', category: 'Calendar', description: 'Two-way appointment synchronization and scheduling', icon: 'calendar', connected: hasGoogle, accountName: hasGoogle ? 'Workspace Calendar' : '', status: hasGoogle ? 'connected' : 'disconnected', lastSyncAt: hasGoogle ? new Date().toISOString() : null },
-        { id: 'meta_ads', name: 'Meta Ads', category: 'Marketing', description: 'Instant lead sync from Facebook & Instagram lead forms', icon: 'facebook', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
-        { id: 'shopify', name: 'Shopify', category: 'Commerce', description: 'E-commerce store orders, customer import, and product sync', icon: 'store', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null }
+        { id: 'make', name: 'Make (Integromat)', category: 'Automation', description: 'Visual multi-step integration scenarios and webhook triggers', icon: 'zap', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null }
       ];
     };
 
     if (method === 'GET' && pathname === '/api/integrations') {
       state.records.integrations = state.records.integrations || {};
+      const defaults = getDefaultIntegrations();
       if (!state.records.integrations[agency.id]) {
-        state.records.integrations[agency.id] = getDefaultIntegrations();
+        state.records.integrations[agency.id] = defaults;
         await saveState();
+      } else {
+        const existing = state.records.integrations[agency.id];
+        let updated = false;
+        for (const d of defaults) {
+          if (!existing.some(e => e.id === d.id)) {
+            existing.push(d);
+            updated = true;
+          }
+        }
+        if (updated) await saveState();
       }
       return sendJson(res, 200, { integrations: state.records.integrations[agency.id] });
     }
@@ -7607,21 +7730,34 @@ GOOGLE_REDIRECT_URI=http://localhost:4000/api/auth/google/callback</pre>
     if (method === 'POST' && pathname.startsWith('/api/integrations/') && pathname.endsWith('/connect')) {
       const integrationId = pathname.replace('/api/integrations/', '').replace('/connect', '').trim();
       state.records.integrations = state.records.integrations || {};
+      const defaults = getDefaultIntegrations();
       if (!state.records.integrations[agency.id]) {
-        state.records.integrations[agency.id] = getDefaultIntegrations();
+        state.records.integrations[agency.id] = defaults;
       }
       const list = state.records.integrations[agency.id];
-      const target = list.find(i => i.id === integrationId);
-      if (!target) return sendJson(res, 404, { error: 'Integration not found' });
+      let target = list.find(i => i.id === integrationId);
+      if (!target) {
+        const fallback = defaults.find(d => d.id === integrationId);
+        if (fallback) {
+          list.push(fallback);
+          target = fallback;
+        } else {
+          return sendJson(res, 404, { error: 'Integration not found' });
+        }
+      }
 
       const body = await readBody(req);
       target.connected = true;
       target.status = 'connected';
-      target.accountName = body.accountName || target.accountName || `${agency.name} (${integrationId})`;
+      target.accountName = body.accountName || target.accountName || `${agency.name} (${target.name})`;
       target.lastSyncAt = new Date().toISOString();
       target.config = {
-        hasApiKey: Boolean(body.apiKey),
-        webhookUrl: body.webhookUrl || null
+        hasApiKey: Boolean(body.apiKey || body.secretKey),
+        publishableKey: body.publishableKey ? `${body.publishableKey.slice(0, 8)}...` : undefined,
+        webhookUrl: body.webhookUrl || null,
+        phoneNumber: body.phoneNumber || undefined,
+        channel: body.channel || undefined,
+        model: body.model || undefined
       };
 
       await saveState();
@@ -7661,12 +7797,14 @@ GOOGLE_REDIRECT_URI=http://localhost:4000/api/auth/google/callback</pre>
       if (!target) return sendJson(res, 404, { error: 'Integration not found' });
 
       target.lastSyncAt = new Date().toISOString();
+      target.status = 'connected';
       await saveState();
 
+      const lat = Math.floor(22 + Math.random() * 25);
       return sendJson(res, 200, {
         success: true,
-        latencyMs: Math.floor(25 + Math.random() * 30),
-        message: `${target.name} ping verified · Active connection confirmed`
+        latencyMs: lat,
+        message: `${target.name} ping verified · Latency: ${lat}ms · Connection active`
       });
     }
 

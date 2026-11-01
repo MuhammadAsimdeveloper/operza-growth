@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../lib/api';
-import { Icon } from './Icon';
+import { MissMinutesRobo } from './MissMinutesRobo';
 
 interface Message {
   id: string;
@@ -16,7 +16,7 @@ export function CopilotHub() {
     {
       id: 'welcome',
       sender: 'assistant',
-      text: 'Welcome to Operza Copilot. I can query your contacts, analyze pipelines, summarize inbound leads, and trigger background automations.',
+      text: "Hey y'all! I'm Miss Minutes, your Operza Autonomous Copilot. I manage your agency timeline: searching contacts, tracking pipeline revenue, booking meetings, checking integrations, and triggering workflows. What can I do for you today?",
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
@@ -118,42 +118,13 @@ export function CopilotHub() {
 
   return (
     <div style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 9999 }}>
-      {/* Floating Toggle Button */}
+      {/* Floating Toggle: TVA Miss Minutes Animated Mascot */}
       {!isOpen && (
-        <button
+        <MissMinutesRobo
           onClick={() => setIsOpen(true)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            backgroundColor: '#4f46e5',
-            color: '#ffffff',
-            padding: '12px 18px',
-            borderRadius: '9999px',
-            boxShadow: '0 10px 25px -5px rgba(79, 70, 229, 0.4)',
-            border: 'none',
-            cursor: 'pointer',
-            fontWeight: 600,
-            fontSize: '14px'
-          }}
-        >
-          <Icon name="sparkles" size={18} />
-          <span>Operza Copilot</span>
-          {pendingApprovals.length > 0 && (
-            <span
-              style={{
-                backgroundColor: '#ef4444',
-                color: 'white',
-                borderRadius: '9999px',
-                padding: '2px 8px',
-                fontSize: '11px',
-                marginLeft: '4px'
-              }}
-            >
-              {pendingApprovals.length}
-            </span>
-          )}
-        </button>
+          pendingCount={pendingApprovals.length}
+          isStreaming={isStreaming}
+        />
       )}
 
       {/* Floating Chat Modal */}
@@ -172,25 +143,44 @@ export function CopilotHub() {
             border: '1px solid rgba(255, 255, 255, 0.1)'
           }}
         >
-          {/* Header */}
+          {/* Header with Miss Minutes TVA Aesthetic */}
           <div
             style={{
               padding: '14px 18px',
-              backgroundColor: '#0f172a',
+              backgroundColor: '#0F172A',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              borderBottom: '1px solid rgba(255, 255, 255, 0.08)'
+              borderBottom: '1.5px solid rgba(245, 158, 11, 0.25)',
+              background: 'linear-gradient(180deg, #181E2E 0%, #0F172A 100%)'
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ color: '#818cf8' }}>
-                <Icon name="sparkles" size={18} />
-              </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  background: 'radial-gradient(circle, #FFA028 0%, #E65100 100%)',
+                  border: '1.5px solid #F59E0B',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '18px',
+                  boxShadow: '0 0 10px rgba(245, 158, 11, 0.4)'
+                }}
+              >
+                ⏰
+              </div>
               <div>
-                <div style={{ fontWeight: 600, fontSize: '14px' }}>Operza Copilot Hub</div>
-                <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-                  {isStreaming ? 'Streaming response...' : 'Autonomous Assistant Ready'}
+                <div style={{ fontWeight: 700, fontSize: '14px', color: '#FEF3C7', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span>Miss Minutes</span>
+                  <span style={{ fontSize: '10px', background: 'rgba(245, 158, 11, 0.2)', color: '#F59E0B', padding: '1px 6px', borderRadius: '4px', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
+                    TVA AI
+                  </span>
+                </div>
+                <div style={{ fontSize: '11px', color: '#94A3B8' }}>
+                  {isStreaming ? 'Managing timeline...' : 'Operza Autonomous Copilot Ready'}
                 </div>
               </div>
             </div>
@@ -199,10 +189,13 @@ export function CopilotHub() {
               style={{
                 background: 'transparent',
                 border: 'none',
-                color: '#94a3b8',
+                color: '#94A3B8',
                 cursor: 'pointer',
-                fontSize: '18px'
+                fontSize: '18px',
+                padding: '4px 8px',
+                borderRadius: '6px'
               }}
+              title="Close Copilot"
             >
               ✕
             </button>
@@ -309,26 +302,31 @@ export function CopilotHub() {
             }}
           >
             {[
-              'Pipeline summary',
-              'List workflows',
-              'Pending tasks',
-              'Help with automations',
-              'How to setup Stripe?'
+              '📊 Pipeline summary',
+              '⚡ List workflows',
+              '👥 Search contacts',
+              '➕ Add lead Alex Hunter with alex@apex.io',
+              '🚀 Trigger Inbound Lead Automation',
+              '📅 Check calendar availability',
+              '🔌 Integrations health',
+              '📈 Agency metrics'
             ].map((chip) => (
               <button
                 key={chip}
                 type="button"
-                onClick={() => handleSendWithPrompt(chip)}
+                onClick={() => handleSendWithPrompt(chip.replace(/^[\p{Emoji}\s]+/u, ''))}
                 disabled={isStreaming}
                 style={{
-                  background: 'rgba(255, 255, 255, 0.07)',
-                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  background: 'rgba(245, 158, 11, 0.08)',
+                  border: '1px solid rgba(245, 158, 11, 0.22)',
                   borderRadius: '12px',
-                  color: '#cbd5e1',
-                  padding: '3px 8px',
+                  color: '#FEF3C7',
+                  padding: '4px 10px',
                   fontSize: '11px',
                   whiteSpace: 'nowrap',
-                  cursor: isStreaming ? 'not-allowed' : 'pointer'
+                  cursor: isStreaming ? 'not-allowed' : 'pointer',
+                  fontWeight: 500,
+                  transition: 'all 0.15s ease'
                 }}
               >
                 {chip}

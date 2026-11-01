@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/AuthContext';
 import { SEO } from '../components/SEO';
+import { OperzaLogo } from '../components/OperzaLogo';
 
 export default function Signup() {
   const { signup, verifyOtp, resendOtp, isAuthenticated, isLoading } = useAuth();
@@ -94,11 +95,7 @@ export default function Signup() {
       <div style={styles.container}>
         {/* Brand */}
         <div style={styles.brand}>
-          <div style={styles.brandMark}>OP</div>
-          <div>
-            <div style={styles.brandName}>Operza</div>
-            <div style={styles.brandSub}>Agency Workspace & Automation</div>
-          </div>
+          <OperzaLogo size={38} />
         </div>
 
         {/* Card */}

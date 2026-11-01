@@ -600,8 +600,123 @@
         "updatedAt": "2026-11-01T06:35:44.760Z"
       }
     ],
-    "team": [],
-    "phoneNumbers": []
+    "team": [
+      {
+        "id": "5d2d2812-a390-49b1-9ac9-5fd226515895",
+        "agencyId": "7dd79ae1-11cb-45ba-aa23-b9ac365d816c",
+        "name": "Sanjar khan Abbasi",
+        "email": "khanitexpert786@gmail.com",
+        "role": "admin",
+        "online": true,
+        "status": "active",
+        "createdAt": "2026-11-01T10:04:53.894Z"
+      }
+    ],
+    "phoneNumbers": [],
+    "apiKeys": [],
+    "integrations": {
+      "7dd79ae1-11cb-45ba-aa23-b9ac365d816c": [
+        {
+          "id": "stripe",
+          "name": "Stripe",
+          "category": "Payment",
+          "description": "Credit card processing, subscriptions, and payment links",
+          "icon": "credit-card",
+          "connected": false,
+          "accountName": "",
+          "status": "disconnected",
+          "lastSyncAt": null
+        },
+        {
+          "id": "twilio",
+          "name": "Twilio",
+          "category": "Communications",
+          "description": "SMS messaging, phone numbers, and voice call tracking",
+          "icon": "phone",
+          "connected": false,
+          "accountName": "",
+          "status": "disconnected",
+          "lastSyncAt": null
+        },
+        {
+          "id": "sendgrid",
+          "name": "SendGrid / SMTP",
+          "category": "Communications",
+          "description": "Transactional email delivery and marketing campaigns",
+          "icon": "mail",
+          "connected": false,
+          "accountName": "",
+          "status": "disconnected",
+          "lastSyncAt": null
+        },
+        {
+          "id": "openai",
+          "name": "OpenAI / LLM Engine",
+          "category": "AI & Copilot",
+          "description": "Powering autonomous copilot, conversation replies, and summarization",
+          "icon": "sparkles",
+          "connected": false,
+          "accountName": "",
+          "status": "disconnected",
+          "lastSyncAt": null
+        },
+        {
+          "id": "slack",
+          "name": "Slack",
+          "category": "Notifications",
+          "description": "Real-time notifications for leads, booked appointments, and deals",
+          "icon": "message",
+          "connected": false,
+          "accountName": "",
+          "status": "disconnected",
+          "lastSyncAt": null
+        },
+        {
+          "id": "zapier",
+          "name": "Zapier / Webhooks",
+          "category": "Automation",
+          "description": "Connect Operza triggers to 5,000+ business applications",
+          "icon": "zap",
+          "connected": false,
+          "accountName": "",
+          "status": "disconnected",
+          "lastSyncAt": null
+        },
+        {
+          "id": "google_calendar",
+          "name": "Google Calendar",
+          "category": "Calendar",
+          "description": "Two-way appointment synchronization and scheduling",
+          "icon": "calendar",
+          "connected": false,
+          "accountName": "",
+          "status": "disconnected",
+          "lastSyncAt": null
+        },
+        {
+          "id": "meta_ads",
+          "name": "Meta Ads",
+          "category": "Marketing",
+          "description": "Instant lead sync from Facebook & Instagram lead forms",
+          "icon": "facebook",
+          "connected": false,
+          "accountName": "",
+          "status": "disconnected",
+          "lastSyncAt": null
+        },
+        {
+          "id": "shopify",
+          "name": "Shopify",
+          "category": "Commerce",
+          "description": "E-commerce store orders, customer import, and product sync",
+          "icon": "store",
+          "connected": false,
+          "accountName": "",
+          "status": "disconnected",
+          "lastSyncAt": null
+        }
+      ]
+    }
   },
   "workflowExecutions": [],
   "snapshots": [],

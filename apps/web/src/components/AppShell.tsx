@@ -1,5 +1,6 @@
 import { useAuth } from '../lib/AuthContext';
 import { CopilotHub } from './CopilotHub';
+import { OperzaLogo } from './OperzaLogo';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from './Icon';
@@ -131,11 +132,7 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   return (
     <aside className="sidebar">
       <div className="sidebar__brand">
-        <div className="brand__mark" style={isSuperAdmin ? { background: '#6366f1' } : undefined}>OP</div>
-        <div className="brand__text">
-          <div className="brand__name">Operza</div>
-          <div className="brand__sub">{isSuperAdmin ? 'Platform Control' : 'Agency Workspace'}</div>
-        </div>
+        <OperzaLogo size={34} isSuperAdmin={isSuperAdmin} />
         <button className="icon-btn sidebar__toggle" style={{ marginLeft: 'auto' }} onClick={onNavigate} aria-label="Close navigation">
           <Icon name="x" size={17} />
         </button>
