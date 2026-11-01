@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../lib/api';
 import { MissMinutesRobo } from './MissMinutesRobo';
+import { MissMinutesAvatar } from './MissMinutesAvatar';
 
 interface Message {
   id: string;
@@ -12,6 +13,7 @@ interface Message {
 
 export function CopilotHub() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([
@@ -26,6 +28,11 @@ export function CopilotHub() {
   const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Hide floating widget if user is already inside the full Copilot workspace
+  if (location.pathname === '/copilot') {
+    return null;
+  }
+
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -37,8 +44,10 @@ export function CopilotHub() {
     const checkApprovals = async () => {
       try {
         const runs = await api.workflows.getRuns();
-        const waiting = runs.filter((r: any) => r.status === 'waiting_approval');
-        setPendingApprovals(waiting);
+        if (Array.isArray(runs)) {
+          const waiting = runs.filter((r: any) => r.status === 'waiting_approval');
+          setPendingApprovals(waiting);
+        }
       } catch {
         // Not authenticated or server offline
       }
@@ -134,7 +143,9 @@ export function CopilotHub() {
         <div
           style={{
             width: '380px',
+            maxWidth: 'calc(100vw - 32px)',
             height: '520px',
+            maxHeight: 'calc(100vh - 80px)',
             backgroundColor: '#1e293b',
             color: '#f8fafc',
             borderRadius: '16px',
@@ -158,22 +169,7 @@ export function CopilotHub() {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <div
-                style={{
-                  width: '32px',
-                  height: '32px',
-                  borderRadius: '50%',
-                  background: 'radial-gradient(circle, #FFA028 0%, #E65100 100%)',
-                  border: '1.5px solid #F59E0B',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '18px',
-                  boxShadow: '0 0 10px rgba(245, 158, 11, 0.4)'
-                }}
-              >
-                ⏰
-              </div>
+              <MissMinutesAvatar size={34} animated={isStreaming} />
               <div>
                 <div style={{ fontWeight: 700, fontSize: '14px', color: '#FEF3C7', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <span>Miss Minutes</span>

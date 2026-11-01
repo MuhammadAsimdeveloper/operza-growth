@@ -783,6 +783,7 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
     '/ai-trainer': 'AI Copilot Training',
     '/developers': 'Developer Hub',
     '/branding': 'White-Label Branding',
+    '/copilot': 'Operza Copilot AI',
   };
   const title = titles[location.pathname] ?? 'Workspace';
 
