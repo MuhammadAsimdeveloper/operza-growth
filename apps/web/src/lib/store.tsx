@@ -38,6 +38,7 @@ import type {
   PaymentLink,
   PhoneNumber,
   Product,
+  Prospect,
   QrCode,
   Review,
   ReviewRequest,
@@ -182,6 +183,7 @@ export type Action =
   | { type: 'media/add'; asset: MediaAsset }
   | { type: 'media/delete'; id: string }
   | { type: 'prospect/status'; id: string; status: 'new' | 'contacted' | 'qualified' | 'skipped' }
+  | { type: 'prospect/add'; prospect: Prospect }
   | { type: 'order/status'; id: string; status: 'paid' | 'pending' | 'refunded' }
   | { type: 'order/add'; order: Order }
   | { type: 'subscription/status'; id: string; status: 'active' | 'past_due' | 'canceled' }
@@ -1036,6 +1038,12 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
       return {
         ...state,
         prospects: state.prospects.map((p) => (p.id === action.id ? { ...p, status: action.status } : p)),
+      };
+
+    case 'prospect/add':
+      return {
+        ...state,
+        prospects: [action.prospect, ...state.prospects],
       };
 
     case 'order/add':

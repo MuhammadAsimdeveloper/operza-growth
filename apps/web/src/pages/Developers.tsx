@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, PageHeader, StatCard, StatusBadge } from '../components/ui';
+import { ArchitectureDiagram } from '../components/ArchitectureDiagram';
 import { api } from '../lib/api';
 
 interface ApiKey {
@@ -52,7 +53,7 @@ const AVAILABLE_EVENTS = [
 ];
 
 export default function Developers() {
-  const [activeTab, setActiveTab] = useState<'keys' | 'webhooks' | 'logs'>('keys');
+  const [activeTab, setActiveTab] = useState<'keys' | 'webhooks' | 'logs' | 'architecture'>('keys');
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [webhooks, setWebhooks] = useState<WebhookSub[]>([]);
   const [deliveries, setDeliveries] = useState<WebhookDelivery[]>([]);
@@ -247,6 +248,13 @@ export default function Developers() {
             >
               <Icon name="clipboard" size={14} /> Delivery Logs ({deliveries.length})
             </button>
+            <button
+              type="button"
+              className={activeTab === 'architecture' ? 'is-active' : ''}
+              onClick={() => setActiveTab('architecture')}
+            >
+              <Icon name="globe" size={14} /> Architecture & Data Flow
+            </button>
           </div>
         </div>
 
@@ -432,6 +440,12 @@ export default function Developers() {
                 </table>
               </div>
             )}
+          </div>
+        )}
+
+        {activeTab === 'architecture' && (
+          <div style={{ padding: '0 16px 16px' }}>
+            <ArchitectureDiagram />
           </div>
         )}
       </div>
