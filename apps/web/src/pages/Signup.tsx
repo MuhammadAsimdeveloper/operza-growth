@@ -4,14 +4,18 @@ import { useAuth } from '../lib/AuthContext';
 import { SEO } from '../components/SEO';
 
 export default function Signup() {
-  const { signup, isAuthenticated, isLoading } = useAuth();
+  const { signup, verifyOtp, resendOtp, isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
+  const [step, setStep] = useState<'details' | 'otp'>('details');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [agencyName, setAgencyName] = useState('');
+  const [otp, setOtp] = useState('');
+  const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [resending, setResending] = useState(false);
 
   if (isAuthenticated && !isLoading) {
     const from = (location.state as any)?.from?.pathname ?? '/';
@@ -21,6 +25,7 @@ export default function Signup() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError('');
+    setNotice('');
     if (!name.trim() || !email.trim() || !password.trim()) {
       setError('Please fill in your name, email, and password.');
       return;
@@ -32,11 +37,46 @@ export default function Signup() {
 
     setSubmitting(true);
     try {
-      await signup({ name, email, password, agencyName: agencyName.trim() || undefined });
+      const res = await signup({ name, email, password, agencyName: agencyName.trim() || undefined });
+      if (res?.requireOtp) {
+        setStep('otp');
+        setNotice(res.message || 'Verification code sent to your email.');
+      }
     } catch (err: any) {
       setError(err.message || 'Registration failed. Please try again.');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleVerifyOtp = async (e: FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!otp.trim()) {
+      setError('Please enter the 6-digit verification code.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await verifyOtp(email, otp.trim());
+    } catch (err: any) {
+      setError(err.message || 'Verification failed. Please check the code.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleResendOtp = async () => {
+    setError('');
+    setNotice('');
+    setResending(true);
+    try {
+      await resendOtp(email);
+      setNotice('A fresh verification code has been dispatched to your email.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to resend verification code.');
+    } finally {
+      setResending(false);
     }
   };
 
@@ -61,84 +101,186 @@ export default function Signup() {
         {/* Card */}
         <div className="card" style={styles.card}>
           <div style={styles.cardBody}>
-            <h1 style={styles.heading}>Create your account</h1>
-            <p style={styles.subtitle}>
-              Start automating your marketing, CRM pipelines, and client operations.
-            </p>
+            {step === 'details' ? (
+              <>
+                <h1 style={styles.heading}>Create your account</h1>
+                <p style={styles.subtitle}>
+                  Start automating your marketing, CRM pipelines, and client operations.
+                </p>
 
-            {error && (
-              <div style={styles.error}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="15" y1="9" x2="9" y2="15" />
-                  <line x1="9" y1="9" x2="15" y2="15" />
-                </svg>
-                {error}
-              </div>
+                {error && (
+                  <div style={styles.error}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="15" y1="9" x2="9" y2="15" />
+                      <line x1="9" y1="9" x2="15" y2="15" />
+                    </svg>
+                    {error}
+                  </div>
+                )}
+
+                <form onSubmit={handleSubmit} style={styles.form}>
+                  <div className="field">
+                    <label htmlFor="signup-name">Full name</label>
+                    <input
+                      id="signup-name"
+                      className="input"
+                      type="text"
+                      placeholder="e.g. Sanjar Khan"
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      autoComplete="name"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="signup-agency">Agency or company name</label>
+                    <input
+                      id="signup-agency"
+                      className="input"
+                      type="text"
+                      placeholder="e.g. Apex Growth Studio"
+                      value={agencyName}
+                      onChange={(e) => setAgencyName(e.target.value)}
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="signup-email">Work email address</label>
+                    <input
+                      id="signup-email"
+                      className="input"
+                      type="email"
+                      placeholder="you@agency.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      autoComplete="email"
+                    />
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="signup-password">Password</label>
+                    <input
+                      id="signup-password"
+                      className="input"
+                      type="password"
+                      placeholder="At least 8 characters"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      autoComplete="new-password"
+                    />
+                  </div>
+
+                  <button
+                    className="btn btn--primary btn--block"
+                    type="submit"
+                    disabled={submitting}
+                    style={{ height: 38, fontSize: 13.5, fontWeight: 600, marginTop: 4 }}
+                  >
+                    {submitting ? 'Sending verification code…' : 'Continue with Email Verification'}
+                  </button>
+                </form>
+              </>
+            ) : (
+              <>
+                <div style={{ textAlign: 'center', marginBottom: 16 }}>
+                  <div
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: '50%',
+                      background: 'var(--accent-soft, #e0e7ff)',
+                      color: 'var(--accent, #4f46e5)',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginBottom: 12
+                    }}
+                  >
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect width="20" height="16" x="2" y="4" rx="2" />
+                      <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7" />
+                    </svg>
+                  </div>
+                  <h1 style={styles.heading}>Verify your email</h1>
+                  <p style={styles.subtitle}>
+                    We sent a 6-digit verification code to <strong>{email}</strong>. Enter it below to activate your workspace.
+                  </p>
+                </div>
+
+                {notice && (
+                  <div style={{ ...styles.error, background: 'var(--green-soft, #ecfdf5)', color: 'var(--green, #059669)', borderColor: 'var(--green, #10b981)' }}>
+                    {notice}
+                  </div>
+                )}
+
+                {error && (
+                  <div style={styles.error}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="15" y1="9" x2="9" y2="15" />
+                      <line x1="9" y1="9" x2="15" y2="15" />
+                    </svg>
+                    {error}
+                  </div>
+                )}
+
+                <form onSubmit={handleVerifyOtp} style={styles.form}>
+                  <div className="field">
+                    <label htmlFor="signup-otp" style={{ textAlign: 'center', display: 'block', fontWeight: 600 }}>
+                      6-Digit Security Code
+                    </label>
+                    <input
+                      id="signup-otp"
+                      className="input"
+                      type="text"
+                      maxLength={6}
+                      placeholder="123456"
+                      value={otp}
+                      onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))}
+                      style={{
+                        textAlign: 'center',
+                        fontSize: 24,
+                        fontWeight: 700,
+                        letterSpacing: 8,
+                        height: 48,
+                        borderRadius: 8
+                      }}
+                      autoFocus
+                    />
+                  </div>
+
+                  <button
+                    className="btn btn--primary btn--block"
+                    type="submit"
+                    disabled={submitting || otp.length < 6}
+                    style={{ height: 40, fontSize: 14, fontWeight: 600 }}
+                  >
+                    {submitting ? 'Verifying & Initializing…' : 'Verify & Launch Workspace'}
+                  </button>
+
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12 }}>
+                    <button
+                      type="button"
+                      className="btn btn--subtle btn--sm"
+                      onClick={() => { setStep('details'); setError(''); }}
+                    >
+                      ← Back
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--sm"
+                      onClick={handleResendOtp}
+                      disabled={resending}
+                      style={{ color: 'var(--accent)' }}
+                    >
+                      {resending ? 'Sending…' : 'Resend Code'}
+                    </button>
+                  </div>
+                </form>
+              </>
             )}
-
-            <form onSubmit={handleSubmit} style={styles.form}>
-              <div className="field">
-                <label htmlFor="signup-name">Full name</label>
-                <input
-                  id="signup-name"
-                  className="input"
-                  type="text"
-                  placeholder="e.g. Muhammad Asim"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  autoComplete="name"
-                  autoFocus
-                />
-              </div>
-
-              <div className="field">
-                <label htmlFor="signup-agency">Agency or company name</label>
-                <input
-                  id="signup-agency"
-                  className="input"
-                  type="text"
-                  placeholder="e.g. Asim Tech Advisory"
-                  value={agencyName}
-                  onChange={(e) => setAgencyName(e.target.value)}
-                />
-              </div>
-
-              <div className="field">
-                <label htmlFor="signup-email">Work email address</label>
-                <input
-                  id="signup-email"
-                  className="input"
-                  type="email"
-                  placeholder="you@agency.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  autoComplete="email"
-                />
-              </div>
-
-              <div className="field">
-                <label htmlFor="signup-password">Password</label>
-                <input
-                  id="signup-password"
-                  className="input"
-                  type="password"
-                  placeholder="At least 8 characters"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="new-password"
-                />
-              </div>
-
-              <button
-                className="btn btn--primary btn--block"
-                type="submit"
-                disabled={submitting}
-                style={{ height: 38, fontSize: 13.5, fontWeight: 600, marginTop: 4 }}
-              >
-                {submitting ? 'Creating workspace…' : 'Create workspace'}
-              </button>
-            </form>
           </div>
 
           <div style={styles.footer}>

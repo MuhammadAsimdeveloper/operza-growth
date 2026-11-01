@@ -12,6 +12,12 @@
 
 const BASE = '';
 
+function getCsrfToken(): string {
+  if (typeof document === 'undefined') return '';
+  const match = document.cookie.match(/(?:^|;\s*)operza_csrf=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
 export async function request<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers || {});
   if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
@@ -22,6 +28,12 @@ export async function request<T = any>(endpoint: string, options: RequestInit = 
   const activeLoc = localStorage.getItem('operza_active_location');
   if (activeLoc && !headers.has('x-operza-location')) {
     headers.set('x-operza-location', activeLoc);
+  }
+
+  // Pass CSRF token for mutating requests
+  const csrf = getCsrfToken();
+  if (csrf && !headers.has('x-operza-csrf')) {
+    headers.set('x-operza-csrf', csrf);
   }
 
   const response = await fetch(`${BASE}${endpoint}`, {
@@ -40,12 +52,25 @@ export async function request<T = any>(endpoint: string, options: RequestInit = 
 
 export const api = {
   auth: {
-    signup: (data: { name: string; email: string; password: string; agencyName?: string }) =>
+    signup: (data: { name: string; email: string; password: string; agencyName?: string; skipOtp?: boolean }) =>
       request('/api/auth/signup', { method: 'POST', body: JSON.stringify(data) }),
+    verifyOtp: (data: { email: string; otp: string }) =>
+      request('/api/auth/verify-otp', { method: 'POST', body: JSON.stringify(data) }),
+    resendOtp: (data: { email: string }) =>
+      request('/api/auth/resend-otp', { method: 'POST', body: JSON.stringify(data) }),
     login: (data: { email: string; password: string }) =>
       request('/api/auth/login', { method: 'POST', body: JSON.stringify(data) }),
     session: () => request('/api/auth/session'),
     logout: () => request('/api/auth/logout', { method: 'POST' }),
+  },
+  admin: {
+    getOverview: () => request('/api/admin/overview'),
+    getAgencies: () => request<{ agencies: any[]; count: number }>('/api/admin/agencies'),
+    updateAgency: (id: string, data: { status?: string; plan?: string }) =>
+      request<{ success: boolean; agency: any }>(`/api/admin/agencies/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    getSettings: () => request('/api/admin/settings'),
+    updateSettings: (data: any) =>
+      request('/api/admin/settings', { method: 'POST', body: JSON.stringify(data) }),
   },
   crm: {
     list: <T = any>(collection: string) => request<{ data: T[]; total?: number }>(`/api/crm/${collection}`),

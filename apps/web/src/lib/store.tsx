@@ -68,6 +68,7 @@ export function uid(prefix = 'id'): string {
 }
 
 export type Action =
+  | { type: 'workspace/clearDemo' }
   | { type: 'contact/add'; contact: Contact }
   | { type: 'contact/update'; id: string; patch: Partial<Contact> }
   | { type: 'contact/delete'; id: string }
@@ -1244,8 +1245,11 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
     case 'snapshot/delete':
       return { ...state, snapshots: state.snapshots.filter((s) => s.id !== action.id) };
 
+    case 'workspace/clearDemo':
+      return cleanDemoData(state);
+
     case 'workspace/reset':
-      return seed;
+      return cleanDemoData(seed);
 
     default:
       return state;
@@ -1907,21 +1911,39 @@ export function reducer(state: WorkspaceState, action: Action): WorkspaceState {
   const entry: AuditEntry = {
     id: uid('au'),
     at: new Date().toISOString(),
-    actor: 'Asim R.',
+    actor: (typeof localStorage !== 'undefined' && localStorage.getItem('operza_user_name')) || 'Operator',
     ...meta,
   };
   return { ...next, auditLog: [entry, ...next.auditLog].slice(0, 250) };
 }
 
+export function cleanDemoData(data: WorkspaceState): WorkspaceState {
+  const isDemo = (id?: string) => Boolean(id && (/^[a-z]+\d+$/.test(id) || id === 'c1' || id === 'c2'));
+  return {
+    ...data,
+    contacts: (data.contacts || []).filter((c) => !isDemo(c.id)),
+    opportunities: (data.opportunities || []).filter((o) => !isDemo(o.id) && !isDemo(o.contactId)),
+    conversations: (data.conversations || []).filter((cv) => !isDemo(cv.id) && !isDemo(cv.contactId)),
+    appointments: (data.appointments || []).filter((a) => !isDemo(a.id) && !isDemo(a.contactId)),
+    invoices: (data.invoices || []).filter((i) => !isDemo(i.id) && !isDemo(i.contactId)),
+    tasks: (data.tasks || []).filter((t) => !isDemo(t.id) && !isDemo(t.contactId)),
+    reviews: (data.reviews || []).filter((r) => !isDemo(r.id) && !isDemo(r.contactId)),
+    reviewRequests: (data.reviewRequests || []).filter((rr) => !isDemo(rr.id) && !isDemo(rr.contactId)),
+    workflowRuns: (data.workflowRuns || []).filter((wr) => !isDemo(wr.id) && !isDemo(wr.contactId)),
+    orders: (data.orders || []).filter((od) => !isDemo(od.id) && !isDemo(od.contactId)),
+    calls: (data.calls || []).filter((cl) => !isDemo(cl.id) && !isDemo(cl.contactId)),
+    auditLog: (data.auditLog || []).filter((al) => !isDemo(al.id)),
+  };
+}
+
 function loadInitial(): WorkspaceState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return seed;
+    if (!raw) return cleanDemoData(seed);
     const parsed = JSON.parse(raw) as Partial<WorkspaceState>;
-    // Merge over the seed so a workspace saved by an older build still gets new collections.
-    return parsed.contacts ? { ...seed, ...parsed } : seed;
+    return cleanDemoData({ ...seed, ...parsed });
   } catch {
-    return seed;
+    return cleanDemoData(seed);
   }
 }
 

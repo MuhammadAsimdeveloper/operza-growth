@@ -391,6 +391,12 @@ export interface WorkflowStepConfig {
   dueInDays?: number;
   /** Rule evaluated by condition steps. */
   rule?: ConditionRule;
+  /** JavaScript snippet for code nodes (n8n style). */
+  code?: string;
+  /** AI agent prompt for ai_agent steps. */
+  prompt?: string;
+  /** Multi-way switch branches. */
+  branches?: Array<{ name: string; condition: string }>;
 }
 
 export interface WorkflowAction {

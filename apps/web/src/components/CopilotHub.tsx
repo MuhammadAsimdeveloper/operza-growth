@@ -50,7 +50,16 @@ export function CopilotHub() {
     if (!input.trim() || isStreaming) return;
     const userMsg = input.trim();
     setInput('');
+    await sendMsg(userMsg);
+  };
 
+  const handleSendWithPrompt = async (promptText: string) => {
+    if (!promptText.trim() || isStreaming) return;
+    setInput('');
+    await sendMsg(promptText.trim());
+  };
+
+  const sendMsg = async (userMsg: string) => {
     const userMessageObj: Message = {
       id: `u-${Date.now()}`,
       sender: 'user',
@@ -285,6 +294,45 @@ export function CopilotHub() {
                   {m.timestamp}
                 </div>
               </div>
+            ))}
+          </div>
+
+          {/* Quick Action Chips */}
+          <div
+            style={{
+              padding: '6px 12px',
+              backgroundColor: '#0f172a',
+              display: 'flex',
+              gap: '6px',
+              overflowX: 'auto',
+              borderTop: '1px solid rgba(255, 255, 255, 0.05)'
+            }}
+          >
+            {[
+              'Pipeline summary',
+              'List workflows',
+              'Pending tasks',
+              'Help with automations',
+              'How to setup Stripe?'
+            ].map((chip) => (
+              <button
+                key={chip}
+                type="button"
+                onClick={() => handleSendWithPrompt(chip)}
+                disabled={isStreaming}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.07)',
+                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  borderRadius: '12px',
+                  color: '#cbd5e1',
+                  padding: '3px 8px',
+                  fontSize: '11px',
+                  whiteSpace: 'nowrap',
+                  cursor: isStreaming ? 'not-allowed' : 'pointer'
+                }}
+              >
+                {chip}
+              </button>
             ))}
           </div>
 

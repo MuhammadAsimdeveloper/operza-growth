@@ -263,6 +263,15 @@ export default function PublicFunnel() {
                     </div>
                   );
                 }
+                if (el.type === 'custom_html') {
+                  return (
+                    <div
+                      key={el.id}
+                      dangerouslySetInnerHTML={{ __html: el.htmlCode || el.content || '' }}
+                      style={{ margin: '14px 0' }}
+                    />
+                  );
+                }
                 return null;
               })}
             </div>

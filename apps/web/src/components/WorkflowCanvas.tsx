@@ -62,6 +62,9 @@ const ACTION_ICONS: Record<string, string> = {
   filter: 'filter',
   slack_notify: 'message',
   ai_agent: 'sparkles',
+  code: 'code',
+  switch: 'sliders',
+  merge: 'share',
 };
 
 const ACTION_COLORS: Record<string, string> = {
@@ -76,6 +79,9 @@ const ACTION_COLORS: Record<string, string> = {
   split_test: '#6366f1',
   loop: '#14b8a6',
   ai_agent: '#a855f7',
+  code: '#ea580c',
+  switch: '#8b5cf6',
+  merge: '#0284c7',
 };
 
 export function WorkflowCanvas({

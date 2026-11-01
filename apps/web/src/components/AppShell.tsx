@@ -1,7 +1,7 @@
 import { useAuth } from '../lib/AuthContext';
 import { CopilotHub } from './CopilotHub';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from './Icon';
 import { Avatar } from './ui';
 import { Modal } from './Modal';
@@ -590,10 +590,10 @@ function UserMenu() {
         >
           <div>
             <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text, #0f172a)' }}>
-              {user?.name || 'Muhammad Asim'}
+              {user?.name || 'Operator'}
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-3, #64748b)', marginTop: 2 }}>
-              {user?.email || 'sanjarkhanabbasi786@gmail.com'}
+              {user?.email || 'operator@operza.io'}
             </div>
             <div
               style={{
@@ -606,7 +606,7 @@ function UserMenu() {
                 gap: 6
               }}
             >
-              <Icon name="building" size={13} /> {agency?.name || 'Asim Tech'}
+              <Icon name="building" size={13} /> {agency?.name || 'Agency Workspace'}
             </div>
           </div>
 
@@ -636,6 +636,37 @@ function UserMenu() {
               </select>
             </div>
           )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {user?.role === 'superadmin' && (
+              <Link
+                to="/admin"
+                className="btn btn--ghost btn--sm"
+                onClick={() => setOpen(false)}
+                style={{ width: '100%', justifyContent: 'flex-start', color: '#6366f1', fontWeight: 600 }}
+              >
+                <Icon name="shield" size={14} /> Super Admin Control
+              </Link>
+            )}
+            <Link
+              to="/settings"
+              className="btn btn--ghost btn--sm"
+              onClick={() => setOpen(false)}
+              style={{ width: '100%', justifyContent: 'flex-start' }}
+            >
+              <Icon name="sliders" size={14} /> Workspace Settings
+            </Link>
+            <Link
+              to="/docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn--ghost btn--sm"
+              onClick={() => setOpen(false)}
+              style={{ width: '100%', justifyContent: 'flex-start' }}
+            >
+              <Icon name="help" size={14} /> Documentation & Help
+            </Link>
+          </div>
 
           <hr style={{ border: 'none', borderTop: '1px solid var(--line, #e2e8f0)', margin: '4px 0' }} />
 
@@ -725,9 +756,16 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
         </Tooltip>
 
         <Tooltip label="Help & Documentation">
-          <button className="icon-btn" aria-label="Help">
+          <Link
+            to="/docs"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="icon-btn"
+            aria-label="Help & Documentation"
+            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+          >
             <Icon name="globe" size={18} />
-          </button>
+          </Link>
         </Tooltip>
 
         <NotificationsButton />

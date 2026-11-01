@@ -37,7 +37,9 @@ interface AuthState {
 
 interface AuthActions {
   login: (email: string, password: string) => Promise<void>;
-  signup: (data: { name: string; email: string; password: string; agencyName?: string }) => Promise<void>;
+  signup: (data: { name: string; email: string; password: string; agencyName?: string; skipOtp?: boolean }) => Promise<any>;
+  verifyOtp: (email: string, otp: string) => Promise<void>;
+  resendOtp: (email: string) => Promise<void>;
   logout: () => Promise<void>;
   switchLocation: (locationId: string) => void;
 }
@@ -107,14 +109,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const signup = useCallback(async (data: { name: string; email: string; password: string; agencyName?: string }) => {
+  const signup = useCallback(async (data: { name: string; email: string; password: string; agencyName?: string; skipOtp?: boolean }) => {
     const res = await api.auth.signup(data);
+    if (res?.requireOtp) {
+      return res;
+    }
     const parsed = parseSession(res);
     setState({
       ...parsed,
       isAuthenticated: true,
       isLoading: false,
     });
+    return res;
+  }, []);
+
+  const verifyOtp = useCallback(async (email: string, otp: string) => {
+    const res = await api.auth.verifyOtp({ email, otp });
+    const parsed = parseSession(res);
+    setState({
+      ...parsed,
+      isAuthenticated: true,
+      isLoading: false,
+    });
+  }, []);
+
+  const resendOtp = useCallback(async (email: string) => {
+    await api.auth.resendOtp({ email });
   }, []);
 
   const logout = useCallback(async () => {
@@ -148,10 +168,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ...state,
       login,
       signup,
+      verifyOtp,
+      resendOtp,
       logout,
       switchLocation,
     }),
-    [state, login, signup, logout, switchLocation],
+    [state, login, signup, verifyOtp, resendOtp, logout, switchLocation],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

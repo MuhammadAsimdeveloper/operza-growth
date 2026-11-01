@@ -1581,6 +1581,7 @@ interface TemplateDef {
   description: string;
   trigger: WorkflowTrigger;
   actions: WorkflowAction[];
+  badge?: string;
 }
 
 function TemplateGalleryModal({
@@ -1590,10 +1591,208 @@ function TemplateGalleryModal({
   onClose: () => void;
   onInstall: (t: TemplateDef) => void;
 }) {
+  const [selectedCategory, setSelectedCategory] = useState<string>('All');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
   const templates: TemplateDef[] = [
+    {
+      name: 'Multi-Step AI Autonomous Agent with Reasoning & Memory',
+      category: 'AI & Autonomous Agents',
+      badge: 'n8n Pro',
+      description: 'Autonomous reasoning agent equipped with conversational memory buffer, calculator tool, and grounded knowledge base lookup.',
+      trigger: { kind: 'webhook', detail: 'ai-agent-input' },
+      actions: [
+        {
+          id: uid('act'),
+          kind: 'code',
+          label: 'Normalize Context & Variables',
+          config: {
+            code: '// n8n-style JavaScript Transform\nreturn items.map(item => ({\n  json: {\n    ...item.json,\n    sessionId: item.json.sessionId || "sess_default",\n    userPrompt: (item.json.prompt || "").trim(),\n    timestamp: new Date().toISOString()\n  }\n}));',
+          },
+        },
+        {
+          id: uid('act'),
+          kind: 'ai_agent',
+          label: 'AI Agent Reasoning & Tools',
+          config: {
+            prompt: 'Analyze client request, search knowledge base, execute tool calculations if needed, and form a structured response.',
+          },
+        },
+        {
+          id: uid('act'),
+          kind: 'webhook',
+          label: 'Respond to Caller / Dispatch',
+          config: { method: 'POST', url: 'https://hooks.operza.io/receive/agent-output' },
+        },
+      ],
+    },
+    {
+      name: 'Webhook Ingestion, Schema Validator & Filter',
+      category: 'Webhooks & APIs',
+      badge: 'n8n Core',
+      description: 'Receives external JSON payloads, validates schema headers, filters active records, and tags contacts automatically.',
+      trigger: { kind: 'webhook', detail: 'data-ingest' },
+      actions: [
+        {
+          id: uid('act'),
+          kind: 'code',
+          label: 'Schema Validation & Field Normalization',
+          config: {
+            code: '// Validate incoming webhook JSON\nconst valid = items.every(i => i.json && i.json.email);\nif (!valid) throw new Error("Invalid payload: email required");\nreturn items.map(i => ({ json: { ...i.json, status: "VERIFIED", processedAt: Date.now() } }));',
+          },
+        },
+        {
+          id: uid('act'),
+          kind: 'tag',
+          label: 'Apply verified-webhook Tag',
+          config: { tag: 'verified-webhook' },
+        },
+        {
+          id: uid('act'),
+          kind: 'task',
+          label: 'Create Verified Lead Review Task',
+          config: { title: 'Review verified webhook ingestion' },
+        },
+      ],
+    },
+    {
+      name: 'Scheduled Service Health Monitor & Uptime Alerts',
+      category: 'Core Automation',
+      badge: 'DevOps',
+      description: 'Periodically polls HTTP endpoints, records uptime latency metrics, and triggers alerts on degradation or downtime.',
+      trigger: { kind: 'schedule', every: 15, unit: 'minutes' },
+      actions: [
+        {
+          id: uid('act'),
+          kind: 'webhook',
+          label: 'HTTP Endpoint Health Check',
+          config: { method: 'GET', url: 'https://operza.io/health' },
+        },
+        {
+          id: uid('act'),
+          kind: 'code',
+          label: 'Evaluate Latency & Status Code',
+          config: {
+            code: '// Assess health status\nconst status = $json.statusCode === 200 ? "HEALTHY" : "DEGRADED";\nreturn [{ json: { status, checkedAt: new Date().toISOString() } }];',
+          },
+        },
+        {
+          id: uid('act'),
+          kind: 'email',
+          label: 'Alert Team on Degradation',
+          config: {},
+        },
+      ],
+    },
+    {
+      name: 'Local Database Sync & Batch Data Pipeline',
+      category: 'Data Pipelines',
+      badge: 'ETL',
+      description: 'Extracts rows, executes schema transformations, batches items, and synchronizes state across tenant stores.',
+      trigger: { kind: 'schedule', every: 24, unit: 'hours' },
+      actions: [
+        {
+          id: uid('act'),
+          kind: 'code',
+          label: 'Query Store & Extract Batches',
+          config: {
+            code: '// Batch Extraction\nreturn [{ json: { syncId: "sync-" + Date.now(), batchSize: 50, status: "READY" } }];',
+          },
+        },
+        {
+          id: uid('act'),
+          kind: 'tag',
+          label: 'Tag Synced Contacts',
+          config: { tag: 'batch-synced' },
+        },
+        {
+          id: uid('act'),
+          kind: 'task',
+          label: 'Record ETL Completion Audit Log',
+          config: { title: 'Verify daily database sync batch' },
+        },
+      ],
+    },
+    {
+      name: 'Intelligent Telegram & Discord Conversational Bot',
+      category: 'AI & Autonomous Agents',
+      badge: 'Omnichannel',
+      description: 'Webhook-driven conversational bot that parses inbound community messages, routes commands, and generates smart AI responses.',
+      trigger: { kind: 'webhook', detail: 'community-bot-in' },
+      actions: [
+        {
+          id: uid('act'),
+          kind: 'code',
+          label: 'Parse Bot Command & Message',
+          config: {
+            code: 'const msg = $json.body?.message || "help";\nreturn [{ json: { command: msg.split(" ")[0], query: msg, receivedAt: Date.now() } }];',
+          },
+        },
+        {
+          id: uid('act'),
+          kind: 'ai_agent',
+          label: 'AI Response Generation',
+          config: { prompt: 'Answer community questions accurately and courteously based on Operza product documentation.' },
+        },
+        {
+          id: uid('act'),
+          kind: 'webhook',
+          label: 'Respond to Bot Webhook',
+          config: { method: 'POST', url: 'https://hooks.operza.io/bot/reply' },
+        },
+      ],
+    },
+    {
+      name: 'Daily Executive Summary & Operational Metrics Aggregator',
+      category: 'Core Automation',
+      badge: 'Executive',
+      description: 'Runs every morning, compiles metrics across pipeline deals, new customer signups, and emails a markdown report.',
+      trigger: { kind: 'schedule', every: 1, unit: 'days' },
+      actions: [
+        {
+          id: uid('act'),
+          kind: 'code',
+          label: 'Compile KPI Aggregates',
+          config: {
+            code: 'return [{ json: { reportDate: new Date().toLocaleDateString(), systemHealth: "100%", uptime: "99.99%" } }];',
+          },
+        },
+        {
+          id: uid('act'),
+          kind: 'email',
+          label: 'Deliver Executive Daily Briefing',
+          config: {},
+        },
+      ],
+    },
+    {
+      name: 'Multi-Branch Switch & Priority Lead Routing',
+      category: 'Lead Capture & Nurture',
+      badge: 'Smart Route',
+      description: 'Evaluates new inbound lead attributes, branches high-ticket vs self-serve prospects, and triggers dedicated conversion tracks.',
+      trigger: { kind: 'form', detail: 'High-Ticket Application Form' },
+      actions: [
+        {
+          id: uid('act'),
+          kind: 'switch',
+          label: 'Multi-Way Routing by Deal Size',
+          config: {
+            branches: [
+              { name: 'Enterprise (>$10k)', condition: 'deal_size > 10000' },
+              { name: 'Growth ($2.5k-$10k)', condition: 'deal_size >= 2500' },
+              { name: 'Starter (<$2.5k)', condition: 'deal_size < 2500' },
+            ],
+          },
+        },
+        { id: uid('act'), kind: 'tag', label: 'Tag Enterprise VIP Lead', config: { tag: 'enterprise-vip' } },
+        { id: uid('act'), kind: 'sms', label: 'Send Instant Founder SMS', config: {} },
+        { id: uid('act'), kind: 'task', label: 'Book Immediate Discovery Call', config: { title: 'Call Enterprise VIP Lead within 15 mins' } },
+      ],
+    },
     {
       name: 'Instant Lead Capture & SMS Dispatch',
       category: 'Lead Capture & Nurture',
+      badge: 'Popular',
       description: 'Ingests new website form submissions, tags the contact, sends a welcome SMS, and creates a follow-up task.',
       trigger: { kind: 'form', detail: 'Inbound Contact Form' },
       actions: [
@@ -1605,6 +1804,7 @@ function TemplateGalleryModal({
     {
       name: 'Opportunity Won - Customer Onboarding & Review',
       category: 'Sales Pipeline Automation',
+      badge: 'Retention',
       description: 'Fires when a payment or deal is won. Delivers an onboarding email, waits 24 hours, and creates a client check-in task.',
       trigger: { kind: 'payment', detail: 'Deal Closed / Paid' },
       actions: [
@@ -1616,6 +1816,7 @@ function TemplateGalleryModal({
     {
       name: 'Inbound Webhook to Pipeline & Slack Dispatch',
       category: 'Omnichannel & Integrations',
+      badge: 'Integration',
       description: 'Listens for external inbound lead webhooks, tags the contact, dispatches notifications, and creates an intake task.',
       trigger: { kind: 'webhook', detail: 'External Inbound Lead' },
       actions: [
@@ -1626,14 +1827,53 @@ function TemplateGalleryModal({
     },
   ];
 
+  const categories = ['All', ...Array.from(new Set(templates.map((t) => t.category)))];
+
+  const filtered = templates.filter((tpl) => {
+    const matchCategory = selectedCategory === 'All' || tpl.category === selectedCategory;
+    const matchSearch =
+      searchQuery === '' ||
+      tpl.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      tpl.description.toLowerCase().includes(searchQuery.toLowerCase());
+    return matchCategory && matchSearch;
+  });
+
   return (
-    <Modal title="Pre-built Automation Templates" onClose={onClose} wide>
+    <Modal title="Pre-built Automation Templates & n8n Workflows" onClose={onClose} wide>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <p style={{ color: 'var(--text-3)', fontSize: 13, margin: 0 }}>
-          Install ready-to-use production workflows with triggers, branching, and actions in one click.
-        </p>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
-          {templates.map((tpl) => (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <p style={{ color: 'var(--text-3)', fontSize: 13, margin: 0 }}>
+            Install ready-to-use production workflows with triggers, branching, and actions in one click.
+          </p>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <input
+              type="text"
+              className="field-input"
+              placeholder="Search templates..."
+              style={{ width: 200, padding: '5px 10px', fontSize: 12 }}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+        </div>
+
+        {/* Categories Bar */}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderBottom: '1px solid var(--border)', paddingBottom: 10 }}>
+          {categories.map((cat) => (
+            <button
+              key={cat}
+              type="button"
+              className={`btn btn--xs ${selectedCategory === cat ? 'btn--primary' : 'btn--subtle'}`}
+              style={{ padding: '4px 10px', fontSize: 11.5 }}
+              onClick={() => setSelectedCategory(cat)}
+            >
+              {cat}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(290px, 1fr))', gap: 14, maxHeight: '60vh', overflowY: 'auto', paddingRight: 4 }}>
+          {filtered.map((tpl) => (
             <div
               key={tpl.name}
               className="card"
@@ -1645,16 +1885,30 @@ function TemplateGalleryModal({
                 borderRadius: 10,
                 border: '1px solid var(--border)',
                 background: 'var(--surface-2)',
+                transition: 'border-color 0.2s, box-shadow 0.2s',
               }}
             >
               <div>
-                <span className="badge badge--primary" style={{ fontSize: 10.5, marginBottom: 8, display: 'inline-block' }}>
-                  {tpl.category}
-                </span>
-                <h4 style={{ margin: '0 0 6px 0', fontSize: 14, color: 'var(--text-1)' }}>{tpl.name}</h4>
-                <p style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.4, margin: 0 }}>{tpl.description}</p>
-                <div style={{ fontSize: 11.5, color: 'var(--text-2)', marginTop: 10 }}>
-                  <strong>{tpl.actions.length}</strong> automated steps
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <span className="badge badge--primary" style={{ fontSize: 10.5 }}>
+                    {tpl.category}
+                  </span>
+                  {tpl.badge && (
+                    <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'rgba(99, 102, 241, 0.12)', color: 'var(--primary)' }}>
+                      {tpl.badge}
+                    </span>
+                  )}
+                </div>
+                <h4 style={{ margin: '0 0 6px 0', fontSize: 14, color: 'var(--text-1)', lineHeight: 1.3 }}>{tpl.name}</h4>
+                <p style={{ fontSize: 12, color: 'var(--text-3)', lineHeight: 1.45, margin: 0 }}>{tpl.description}</p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 11.5, color: 'var(--text-2)', marginTop: 12 }}>
+                  <span>
+                    ⚡ Trigger: <strong style={{ textTransform: 'capitalize' }}>{tpl.trigger.kind}</strong>
+                  </span>
+                  <span>·</span>
+                  <span>
+                    <strong>{tpl.actions.length}</strong> automated steps
+                  </span>
                 </div>
               </div>
               <button
@@ -1667,6 +1921,11 @@ function TemplateGalleryModal({
               </button>
             </div>
           ))}
+          {filtered.length === 0 && (
+            <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)' }}>
+              No automation templates matching "{searchQuery}".
+            </div>
+          )}
         </div>
       </div>
     </Modal>

@@ -4,6 +4,7 @@ import { Icon } from '../components/Icon';
 import { Avatar, Badge, EmptyState, PageHeader, StatCard, StatusBadge } from '../components/ui';
 import { Donut, LineChart } from '../components/Chart';
 import { useStore } from '../lib/store';
+import { useAuth } from '../lib/AuthContext';
 import { currency, num, pct, relative, sameDay, timeOf } from '../lib/format';
 import { api } from '../lib/api';
 
@@ -72,10 +73,19 @@ export default function Dashboard() {
 
   const contactOf = (id: string) => contacts.find((c) => c.id === id);
 
+  const { user, agency } = useAuth();
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return 'Good morning';
+    if (hour < 17) return 'Good afternoon';
+    return 'Good evening';
+  };
+  const accountHolderName = user?.name ? user.name.split(' ')[0] : (agency?.name || 'there');
+
   return (
     <div className="content">
       <PageHeader
-        title="Good afternoon, Asim"
+        title={`${getGreeting()}, ${accountHolderName}`}
         subtitle="Here is what is happening across your workspace today."
         actions={
           <>

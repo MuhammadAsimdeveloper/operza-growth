@@ -32,6 +32,7 @@ const PublicPortal = lazy(() => import('./pages/PublicPortal'));
 const PublicFunnel = lazy(() => import('./pages/PublicFunnel'));
 
 // Protected Agency Workspace Pages
+const PlatformAdmin = lazy(() => import('./pages/PlatformAdmin'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
 const Conversations = lazy(() => import('./pages/Conversations'));
 const PhoneSystem = lazy(() => import('./pages/PhoneSystem'));
@@ -193,6 +194,8 @@ export default function App() {
           <Route path="ai-trainer" element={<AiTrainer />} />
           <Route path="developers" element={<Developers />} />
           <Route path="branding" element={<Branding />} />
+          <Route path="admin" element={<PlatformAdmin />} />
+          <Route path="platform-admin" element={<PlatformAdmin />} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>
