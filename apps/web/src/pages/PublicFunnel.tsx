@@ -20,6 +20,7 @@ import { useParams, Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Badge } from '../components/ui';
 import { api } from '../lib/api';
+import { sanitizeCustomHtml } from '../lib/sanitize';
 import type { FunnelBlock } from '../components/VisualPageBuilder';
 
 export default function PublicFunnel() {
@@ -267,7 +268,7 @@ export default function PublicFunnel() {
                   return (
                     <div
                       key={el.id}
-                      dangerouslySetInnerHTML={{ __html: el.htmlCode || el.content || '' }}
+                      dangerouslySetInnerHTML={{ __html: sanitizeCustomHtml(el.htmlCode || el.content || '') }}
                       style={{ margin: '14px 0' }}
                     />
                   );

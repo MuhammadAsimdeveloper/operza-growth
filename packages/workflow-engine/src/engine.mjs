@@ -24,6 +24,109 @@ export function calculateChecksum(state) {
   return createHash('sha256').update(JSON.stringify(state || {})).digest('hex');
 }
 
+/**
+ * SSRF (Server-Side Request Forgery) Defense
+ * Validates that outbound requests are strictly valid public HTTP/HTTPS URLs.
+ * Rejects loopback (127.0.0.0/8, localhost), AWS/cloud metadata (169.254.169.254,
+ * 169.254.0.0/16), RFC 1918 private subnets (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16),
+ * IPv6 loopbacks/private ranges, and non-HTTP protocols.
+ */
+export function isSafeOutboundUrl(urlString) {
+  if (!urlString || typeof urlString !== 'string') {
+    return { safe: false, reason: 'Invalid or missing URL string' };
+  }
+  let parsed;
+  try {
+    parsed = new URL(urlString.trim());
+  } catch {
+    return { safe: false, reason: 'Malformed URL format' };
+  }
+
+  // 1. Enforce strict HTTP/HTTPS protocols (blocks file:, ftp:, gopher:, data:, etc.)
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { safe: false, reason: `Disallowed protocol: ${parsed.protocol}. Only HTTP and HTTPS are permitted.` };
+  }
+
+  const hostname = parsed.hostname.toLowerCase().trim();
+  if (!hostname) {
+    return { safe: false, reason: 'URL hostname is missing' };
+  }
+
+  // Allow loopback bypass only when explicitly enabled for isolated unit test fixtures
+  if (process.env.ALLOW_LOCAL_OUTBOUND_HTTP === 'true') {
+    return { safe: true, url: parsed };
+  }
+
+  // 2. Reject localhost and internal domain names
+  if (
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname.endsWith('.local') ||
+    hostname.endsWith('.internal') ||
+    hostname.endsWith('.onion') ||
+    hostname === '0.0.0.0'
+  ) {
+    return { safe: false, reason: `Outbound access to internal/loopback hostname "${hostname}" is blocked for SSRF protection.` };
+  }
+
+  // 3. IPv4 address classification and private/metadata range blocking
+  const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const octets = [Number(ipv4Match[1]), Number(ipv4Match[2]), Number(ipv4Match[3]), Number(ipv4Match[4])];
+    if (octets.some(o => o < 0 || o > 255)) {
+      return { safe: false, reason: 'Invalid IPv4 address format' };
+    }
+    const [o1, o2, o3, o4] = octets;
+
+    // Loopback 127.0.0.0/8
+    if (o1 === 127) {
+      return { safe: false, reason: 'Loopback IPv4 addresses (127.0.0.0/8) are blocked for SSRF protection.' };
+    }
+    // Cloud link-local metadata (AWS/GCP/Azure IMDS) 169.254.0.0/16 (e.g. 169.254.169.254)
+    if (o1 === 169 && o2 === 254) {
+      return { safe: false, reason: 'Cloud link-local metadata addresses (169.254.0.0/16) are strictly blocked.' };
+    }
+    // RFC 1918 Private Class A (10.0.0.0/8)
+    if (o1 === 10) {
+      return { safe: false, reason: 'Private network Class A addresses (10.0.0.0/8) are blocked.' };
+    }
+    // RFC 1918 Private Class B (172.16.0.0/12: 172.16.0.0 - 172.31.255.255)
+    if (o1 === 172 && o2 >= 16 && o2 <= 31) {
+      return { safe: false, reason: 'Private network Class B addresses (172.16.0.0/12) are blocked.' };
+    }
+    // RFC 1918 Private Class C (192.168.0.0/16)
+    if (o1 === 192 && o2 === 168) {
+      return { safe: false, reason: 'Private network Class C addresses (192.168.0.0/16) are blocked.' };
+    }
+    // Carrier-grade NAT (100.64.0.0/10)
+    if (o1 === 100 && o2 >= 64 && o2 <= 127) {
+      return { safe: false, reason: 'Shared carrier-grade NAT addresses (100.64.0.0/10) are blocked.' };
+    }
+    // Zero-network and broadcast
+    if (o1 === 0 || o1 === 255) {
+      return { safe: false, reason: 'Zero-network and broadcast addresses are blocked.' };
+    }
+  }
+
+  // 4. IPv6 address validation
+  const cleanIpv6 = hostname.replace(/^\[|\]$/g, '');
+  if (
+    cleanIpv6 === '::1' ||
+    cleanIpv6 === '::' ||
+    cleanIpv6.startsWith('fe80:') ||
+    cleanIpv6.startsWith('fc00:') ||
+    cleanIpv6.startsWith('fd00:') ||
+    cleanIpv6.includes('::ffff:127.') ||
+    cleanIpv6.includes('::ffff:169.254.') ||
+    cleanIpv6.includes('::ffff:10.') ||
+    cleanIpv6.includes('::ffff:192.168.')
+  ) {
+    return { safe: false, reason: `Private/loopback IPv6 addresses (${hostname}) are blocked for SSRF protection.` };
+  }
+
+  return { safe: true, url: parsed };
+}
+
 
 // Template Engine — replaces {{path.to.value}} with context data
 
@@ -253,9 +356,13 @@ export async function executeStep({
       }
 
       case 'webhook': {
-        const url = renderTemplate(config.url, ctx);
+        const rawUrl = renderTemplate(config.url, ctx);
+        const urlCheck = isSafeOutboundUrl(rawUrl);
+        if (!urlCheck.safe) {
+          throw new Error(`SSRF Security Error: ${urlCheck.reason}`);
+        }
         const method = config.method || 'POST';
-        const response = await fetch(url, {
+        const response = await fetch(urlCheck.url.toString(), {
           method,
           headers: { 'Content-Type': 'application/json', ...(config.headers || {}) },
           body: method !== 'GET' ? JSON.stringify({ triggerContext, executionId: execution.id }) : undefined,
@@ -279,7 +386,11 @@ export async function executeStep({
 
       // Outbound HTTP webhook dispatch with JSON/text payload negotiation
       case 'http_request': {
-        const url = renderTemplate(config.url, ctx);
+        const rawUrl = renderTemplate(config.url, ctx);
+        const urlCheck = isSafeOutboundUrl(rawUrl);
+        if (!urlCheck.safe) {
+          throw new Error(`SSRF Security Error: ${urlCheck.reason}`);
+        }
         const method = (config.method || 'GET').toUpperCase();
         const headers = { 'Content-Type': 'application/json' };
         if (config.headers) {
@@ -291,7 +402,7 @@ export async function executeStep({
           ? renderTemplate(typeof config.body === 'string' ? config.body : JSON.stringify(config.body), ctx)
           : undefined;
 
-        const res = await fetch(url, { method, headers, body: bodyPayload });
+        const res = await fetch(urlCheck.url.toString(), { method, headers, body: bodyPayload });
         const contentType = res.headers?.get?.('content-type') || '';
         let parsed;
         if (contentType.includes('application/json')) {
@@ -416,7 +527,11 @@ export async function executeStep({
 
       // Outbound Slack webhook notification
       case 'slack_notify': {
-        const webhookUrl = renderTemplate(config.webhookUrl, ctx);
+        const rawUrl = renderTemplate(config.webhookUrl, ctx);
+        const urlCheck = isSafeOutboundUrl(rawUrl);
+        if (!urlCheck.safe) {
+          throw new Error(`SSRF Security Error: ${urlCheck.reason}`);
+        }
         const text = renderTemplate(config.message || config.text, ctx);
         const channel = config.channel ? renderTemplate(config.channel, ctx) : undefined;
         const payload = { text };
@@ -424,7 +539,7 @@ export async function executeStep({
         if (config.username) payload.username = config.username;
         if (config.icon_emoji) payload.icon_emoji = config.icon_emoji;
 
-        const res = await fetch(webhookUrl, {
+        const res = await fetch(urlCheck.url.toString(), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),

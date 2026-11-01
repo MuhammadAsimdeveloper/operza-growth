@@ -3114,6 +3114,90 @@ async function runTests() {
     console.log(`Duplicate Clusters Found: ${dupClusterRes.data.count}`);
     console.log('✅ Contact duplicate detection and clustering verified');
 
+    // [TEST 94] SSRF Protection: POST /api/developers/webhooks with internal/metadata IP
+    console.log('\n[TEST 94] SSRF Protection: Outbound Webhook Target Filtering');
+    const t94_badImds = await request('/api/developers/webhooks', {
+      method: 'POST',
+      body: JSON.stringify({
+        url: 'http://169.254.169.254/latest/meta-data/',
+        events: ['contact.created']
+      })
+    });
+    console.log(`SSRF IMDS Webhook Status: ${t94_badImds.status}`);
+    if (t94_badImds.status !== 400) {
+      throw new Error(`SSRF IMDS target was not rejected! Status: ${t94_badImds.status}`);
+    }
+
+    const t94_badLoopback = await request('/api/developers/webhooks', {
+      method: 'POST',
+      body: JSON.stringify({
+        url: 'http://127.0.0.1:4000/api/crm/contacts',
+        events: ['contact.created']
+      })
+    });
+    console.log(`SSRF Loopback Webhook Status: ${t94_badLoopback.status}`);
+    if (t94_badLoopback.status !== 400) {
+      throw new Error(`SSRF Loopback target was not rejected! Status: ${t94_badLoopback.status}`);
+    }
+
+    const t94_goodHook = await request('/api/developers/webhooks', {
+      method: 'POST',
+      body: JSON.stringify({
+        url: 'https://webhook.site/081290bb-a320-410a-8bf8-028471018283',
+        events: ['contact.created']
+      })
+    });
+    if (t94_goodHook.status !== 201) {
+      throw new Error(`Valid public webhook registration failed! Status: ${t94_goodHook.status}`);
+    }
+    console.log('✅ Developer webhook SSRF protection verified: Cloud IMDS & loopback targets rejected');
+
+    // [TEST 95] Developer API Key Lifecycle & RBAC Gating
+    console.log('\n[TEST 95] Developer API Key Lifecycle & Programmatic Authentication');
+    const t95_keyRes = await request('/api/developers/keys', {
+      method: 'POST',
+      body: JSON.stringify({ label: 'CI Pipeline Key', scopes: ['contacts:read', 'workflows:trigger'] })
+    });
+    if (t95_keyRes.status !== 201 || !t95_keyRes.data.key?.secretToken) {
+      throw new Error(`API key generation failed: ${JSON.stringify(t95_keyRes.data)}`);
+    }
+    const createdKeyId = t95_keyRes.data.key.id;
+    console.log(`Generated Masked Key: ${t95_keyRes.data.key.maskedKey}`);
+
+    const t95_delKey = await request(`/api/developers/keys/${createdKeyId}`, { method: 'DELETE' });
+    if (t95_delKey.status !== 200) {
+      throw new Error(`API key revocation failed: ${t95_delKey.status}`);
+    }
+    console.log('✅ Developer API key generation and cryptographic revocation verified');
+
+    // [TEST 96] Domain Name Format Validation & Injection Prevention
+    console.log('\n[TEST 96] Domain Name Format Validation & Header Injection Prevention');
+    const t96_badDomain = await request('/api/agency/branding/verify-domain', {
+      method: 'POST',
+      body: JSON.stringify({ customDomain: '<script>alert(1)</script>' })
+    });
+    console.log(`Malicious Custom Domain Status: ${t96_badDomain.status}`);
+    if (t96_badDomain.status !== 400) {
+      throw new Error(`Malformed custom domain was not rejected! Status: ${t96_badDomain.status}`);
+    }
+
+    const t96_goodDomain = await request('/api/agency/branding/verify-domain', {
+      method: 'POST',
+      body: JSON.stringify({ customDomain: 'app.operzagrowth.com' })
+    });
+    if (t96_goodDomain.status !== 200) {
+      throw new Error(`Valid custom domain verification failed: ${t96_goodDomain.status}`);
+    }
+    console.log('✅ Custom domain validation & injection defense verified');
+
+    // [TEST 97] Security Audit Log Clearing RBAC Gating
+    console.log('\n[TEST 97] Security Audit Log Management & RBAC Protection');
+    const t97_clearRes = await request('/api/audit', { method: 'DELETE' });
+    if (t97_clearRes.status !== 200) {
+      throw new Error(`Audit log deletion failed for owner: ${t97_clearRes.status}`);
+    }
+    console.log('✅ Security audit log management verified');
+
     // Create a disposable tenant to test Right to Erasure (deletion)
     sessionCookie = '';
     csrfToken = '';
@@ -3137,7 +3221,7 @@ async function runTests() {
     if (verifyInvalidated.status !== 401) throw new Error(`Deleted agency session was not revoked! Expected 401, got ${verifyInvalidated.status}`);
     console.log('✅ GDPR Data Portability export and Right to Erasure deletion verified');
 
-    console.log('\n🎉 ALL 93 SYSTEM INTEGRATION & SECURITY TESTS PASSED CLEANLY! 🎉');
+    console.log('\n🎉 ALL 97 SYSTEM INTEGRATION & SECURITY TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

@@ -25,6 +25,7 @@ import { useState, useEffect } from 'react';
 import { Icon } from './Icon';
 import { Modal } from './Modal';
 import { currency } from '../lib/format';
+import { sanitizeCustomHtml } from '../lib/sanitize';
 
 export interface FunnelBlock {
   id: string;
@@ -1241,7 +1242,7 @@ export function VisualPageBuilder({
 
                   {block.type === 'custom_html' && (
                     <div
-                      dangerouslySetInnerHTML={{ __html: block.htmlCode || block.content || '' }}
+                      dangerouslySetInnerHTML={{ __html: sanitizeCustomHtml(block.htmlCode || block.content || '') }}
                       style={{ margin: '14px 0' }}
                     />
                   )}

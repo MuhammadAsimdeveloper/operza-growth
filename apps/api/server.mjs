@@ -70,12 +70,107 @@ const host = process.env.HOST || '0.0.0.0';
 const dataFile = path.resolve(root, process.env.DATA_FILE || './data/store.json');
 const isProd = process.env.NODE_ENV === 'production';
 const isTest = process.env.NODE_ENV === 'test';
-const secret = String(process.env.SESSION_SECRET || 'operza-local-development-secret-key-32chars');
 
 // Webhook signature secrets (env vars)
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || '';
 const SENDGRID_WEBHOOK_KEY = process.env.SENDGRID_WEBHOOK_KEY || '';
+
+/**
+ * SSRF Defense: Validates that target URLs are strictly valid public HTTP/HTTPS URLs.
+ * Rejects loopback (127.0.0.0/8, localhost), AWS/cloud metadata (169.254.169.254, 169.254.0.0/16),
+ * RFC 1918 private subnets (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16), and non-HTTP schemes.
+ */
+function isSafeOutboundUrl(urlString) {
+  if (!urlString || typeof urlString !== 'string') {
+    return { safe: false, reason: 'Invalid or missing URL string' };
+  }
+  let parsed;
+  try {
+    parsed = new URL(urlString.trim());
+  } catch {
+    return { safe: false, reason: 'Malformed URL format' };
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { safe: false, reason: `Disallowed protocol: ${parsed.protocol}. Only HTTP and HTTPS are permitted.` };
+  }
+
+  const hostname = parsed.hostname.toLowerCase().trim();
+  if (!hostname) {
+    return { safe: false, reason: 'URL hostname is missing' };
+  }
+
+  if (process.env.ALLOW_LOCAL_OUTBOUND_HTTP === 'true') {
+    return { safe: true, url: parsed };
+  }
+
+  if (
+    hostname === 'localhost' ||
+    hostname.endsWith('.localhost') ||
+    hostname.endsWith('.local') ||
+    hostname.endsWith('.internal') ||
+    hostname.endsWith('.onion') ||
+    hostname === '0.0.0.0'
+  ) {
+    return { safe: false, reason: `Outbound access to internal/loopback hostname "${hostname}" is blocked for SSRF protection.` };
+  }
+
+  const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4Match) {
+    const octets = [Number(ipv4Match[1]), Number(ipv4Match[2]), Number(ipv4Match[3]), Number(ipv4Match[4])];
+    if (octets.some(o => o < 0 || o > 255)) {
+      return { safe: false, reason: 'Invalid IPv4 address format' };
+    }
+    const [o1, o2, o3, o4] = octets;
+
+    // Loopback 127.0.0.0/8
+    if (o1 === 127) {
+      return { safe: false, reason: 'Loopback IPv4 addresses (127.0.0.0/8) are blocked for SSRF protection.' };
+    }
+    // Cloud link-local metadata (AWS/GCP/Azure IMDS) 169.254.0.0/16
+    if (o1 === 169 && o2 === 254) {
+      return { safe: false, reason: 'Cloud link-local metadata addresses (169.254.0.0/16) are strictly blocked.' };
+    }
+    // RFC 1918 Private Class A (10.0.0.0/8)
+    if (o1 === 10) {
+      return { safe: false, reason: 'Private network Class A addresses (10.0.0.0/8) are blocked.' };
+    }
+    // RFC 1918 Private Class B (172.16.0.0/12)
+    if (o1 === 172 && o2 >= 16 && o2 <= 31) {
+      return { safe: false, reason: 'Private network Class B addresses (172.16.0.0/12) are blocked.' };
+    }
+    // RFC 1918 Private Class C (192.168.0.0/16)
+    if (o1 === 192 && o2 === 168) {
+      return { safe: false, reason: 'Private network Class C addresses (192.168.0.0/16) are blocked.' };
+    }
+    // Carrier-grade NAT (100.64.0.0/10)
+    if (o1 === 100 && o2 >= 64 && o2 <= 127) {
+      return { safe: false, reason: 'Shared carrier-grade NAT addresses (100.64.0.0/10) are blocked.' };
+    }
+    // Zero-network and broadcast
+    if (o1 === 0 || o1 === 255) {
+      return { safe: false, reason: 'Zero-network and broadcast addresses are blocked.' };
+    }
+  }
+
+  const cleanIpv6 = hostname.replace(/^\[|\]$/g, '');
+  if (
+    cleanIpv6 === '::1' ||
+    cleanIpv6 === '::' ||
+    cleanIpv6.startsWith('fe80:') ||
+    cleanIpv6.startsWith('fc00:') ||
+    cleanIpv6.startsWith('fd00:') ||
+    cleanIpv6.includes('::ffff:127.') ||
+    cleanIpv6.includes('::ffff:169.254.') ||
+    cleanIpv6.includes('::ffff:10.') ||
+    cleanIpv6.includes('::ffff:192.168.')
+  ) {
+    return { safe: false, reason: `Private/loopback IPv6 addresses (${hostname}) are blocked for SSRF protection.` };
+  }
+
+  return { safe: true, url: parsed };
+}
 
 // 
 const collections = Object.freeze({
@@ -4664,10 +4759,13 @@ const server = createServer(async (req, res) => {
             JSON.stringify(typeof log.details === 'object' ? JSON.stringify(log.details) : String(log.details || ''))
           ].join(','));
         }
+        const reqOrigin = req.headers.origin || '';
+        const corsOrigin = ALLOWED_ORIGIN_SET.has(reqOrigin) ? reqOrigin : 'http://localhost:5173';
         res.writeHead(200, {
           'Content-Type': 'text/csv; charset=utf-8',
           'Content-Disposition': 'attachment; filename="operza-audit-log.csv"',
-          'Access-Control-Allow-Origin': '*'
+          'Access-Control-Allow-Origin': corsOrigin,
+          'Access-Control-Allow-Credentials': 'true'
         });
         return res.end(csvRows.join('\n'));
       }
@@ -4676,6 +4774,9 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'DELETE' && (pathname === '/api/audit' || pathname === '/api/audit-logs')) {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Insufficient permissions. Only agency owners and admins can manage audit logs.' });
+      }
       state.audit = state.audit.filter(a => a.agencyId !== agency.id);
       await saveState();
       return sendJson(res, 200, { success: true, message: 'Audit log cleared' });
@@ -6582,6 +6683,9 @@ const server = createServer(async (req, res) => {
 
     // POST /api/agency/subscription/plan — switch / upgrade plan
     if (method === 'POST' && pathname === '/api/agency/subscription/plan') {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can modify subscription plans.' });
+      }
       const body = await readBody(req);
       const targetPlan = String(body.plan || body.planId || '').toLowerCase().trim();
       if (!PLAN_LIMITS[targetPlan]) {
@@ -6627,6 +6731,9 @@ const server = createServer(async (req, res) => {
 
     // POST /api/agency/team/invite — invite / create team member
     if (method === 'POST' && pathname === '/api/agency/team/invite') {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can invite team members.' });
+      }
       const body = await readBody(req);
       const name = (body.name || '').trim();
       const email = (body.email || '').toLowerCase().trim();
@@ -6670,6 +6777,9 @@ const server = createServer(async (req, res) => {
 
     // PUT /api/agency/team/:id/role — update team member role
     if (method === 'PUT' && pathname.startsWith('/api/agency/team/') && pathname.endsWith('/role')) {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can update team member roles.' });
+      }
       const memberId = pathname.replace('/api/agency/team/', '').replace('/role', '').trim();
       const body = await readBody(req);
       const role = body.role === 'admin' ? 'admin' : 'user';
@@ -6690,6 +6800,9 @@ const server = createServer(async (req, res) => {
 
     // DELETE /api/agency/team/:id — remove team member
     if (method === 'DELETE' && pathname.startsWith('/api/agency/team/')) {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can remove team members.' });
+      }
       const memberId = pathname.replace('/api/agency/team/', '').trim();
       state.records.team = state.records.team || [];
       const idx = state.records.team.findIndex(m => m.id === memberId && m.agencyId === agency.id);
@@ -6742,6 +6855,9 @@ const server = createServer(async (req, res) => {
 
     // POST /api/agency/locations — provision a new client sub-account
     if (method === 'POST' && pathname === '/api/agency/locations') {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can create sub-account locations.' });
+      }
       const body = await readBody(req);
       if (!body.name || !body.name.trim()) {
         return sendJson(res, 400, { error: 'Location name is required' });
@@ -6786,6 +6902,9 @@ const server = createServer(async (req, res) => {
 
     // PUT /api/agency/locations/:id — update sub-account details / status
     if (method === 'PUT' && pathname.startsWith('/api/agency/locations/')) {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can update sub-account locations.' });
+      }
       const locId = pathname.replace('/api/agency/locations/', '').trim();
       const loc = (state.locations || []).find(l => l.id === locId && l.agencyId === agency.id);
       if (!loc) return sendJson(res, 404, { error: 'Location not found' });
@@ -6811,6 +6930,9 @@ const server = createServer(async (req, res) => {
 
     // DELETE /api/agency/locations/:id — deactivate client sub-account
     if (method === 'DELETE' && pathname.startsWith('/api/agency/locations/')) {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can deactivate sub-account locations.' });
+      }
       const locId = pathname.replace('/api/agency/locations/', '').trim();
       const loc = (state.locations || []).find(l => l.id === locId && l.agencyId === agency.id);
       if (!loc) return sendJson(res, 404, { error: 'Location not found' });
@@ -6862,6 +6984,9 @@ const server = createServer(async (req, res) => {
 
     // POST /api/agency/snapshots — create new snapshot from workspace
     if (method === 'POST' && pathname === '/api/agency/snapshots') {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can create snapshots.' });
+      }
       const body = await readBody(req);
       const sourceLocId = body.sourceLocationId || activeLocation.id;
       const sourceLoc = (state.locations || []).find(l => l.id === sourceLocId && l.agencyId === agency.id);
@@ -6921,6 +7046,9 @@ const server = createServer(async (req, res) => {
 
     // POST /api/agency/snapshots/:id/deploy — deep-clone snapshot into target client sub-account
     if (method === 'POST' && pathname.startsWith('/api/agency/snapshots/') && pathname.endsWith('/deploy')) {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can deploy snapshots.' });
+      }
       const snapshotId = pathname.replace('/api/agency/snapshots/', '').replace('/deploy', '').trim();
       const snapshot = (state.snapshots || []).find(s => s.id === snapshotId && s.agencyId === agency.id);
       if (!snapshot) return sendJson(res, 404, { error: 'Snapshot not found' });
@@ -7144,6 +7272,9 @@ const server = createServer(async (req, res) => {
 
     // POST /api/agency/snapshots/:id/restore — restore active workspace to snapshot state
     if (method === 'POST' && pathname.startsWith('/api/agency/snapshots/') && pathname.endsWith('/restore')) {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can restore snapshots.' });
+      }
       const snapshotId = pathname.replace('/api/agency/snapshots/', '').replace('/restore', '').trim();
       const snapshot = (state.snapshots || []).find(s => s.id === snapshotId && s.agencyId === agency.id);
       if (!snapshot) return sendJson(res, 404, { error: 'Snapshot not found' });
@@ -7184,6 +7315,9 @@ const server = createServer(async (req, res) => {
 
     // DELETE /api/agency/snapshots/:id — delete a snapshot
     if (method === 'DELETE' && pathname.startsWith('/api/agency/snapshots/')) {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can delete snapshots.' });
+      }
       const snapshotId = pathname.replace('/api/agency/snapshots/', '').trim();
       const idx = (state.snapshots || []).findIndex(s => s.id === snapshotId && s.agencyId === agency.id);
       if (idx === -1) return sendJson(res, 404, { error: 'Snapshot not found' });
@@ -7449,6 +7583,9 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'POST' && pathname === '/api/developers/keys') {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can generate developer API keys.' });
+      }
       const body = await readBody(req);
       const { label = 'Default API Key', scopes = ['contacts:read', 'contacts:write', 'workflows:trigger'] } = body;
       const secret = randomBytes(24).toString('hex');
@@ -7485,6 +7622,9 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'DELETE' && pathname.startsWith('/api/developers/keys/')) {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can revoke developer API keys.' });
+      }
       const keyId = pathname.replace('/api/developers/keys/', '').trim();
       state.records.apiKeys = state.records.apiKeys || [];
       const idx = state.records.apiKeys.findIndex(k => k.id === keyId && k.agencyId === agency.id);
@@ -7503,17 +7643,21 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'POST' && pathname === '/api/developers/webhooks') {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can configure developer webhooks.' });
+      }
       const body = await readBody(req);
       const { url: targetUrl, events = ['contact.created', 'opportunity.stage_changed', 'form.submitted'], secret = '' } = body;
-      if (!targetUrl || !targetUrl.startsWith('http')) {
-        return sendJson(res, 400, { error: 'A valid http/https webhook URL is required' });
+      const urlCheck = isSafeOutboundUrl(targetUrl);
+      if (!urlCheck.safe) {
+        return sendJson(res, 400, { error: `Invalid webhook URL: ${urlCheck.reason}` });
       }
 
       state.records.webhookSubscriptions = state.records.webhookSubscriptions || [];
       const newWebhook = {
         id: randomUUID(),
         agencyId: agency.id,
-        url: targetUrl.trim(),
+        url: urlCheck.url.toString(),
         events: Array.isArray(events) ? events : ['contact.created'],
         secret: secret.trim() || `whsec_${randomBytes(16).toString('hex')}`,
         status: 'active',
@@ -7527,6 +7671,9 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'DELETE' && pathname.startsWith('/api/developers/webhooks/')) {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can delete developer webhooks.' });
+      }
       const webhookId = pathname.replace('/api/developers/webhooks/', '').trim();
       state.records.webhookSubscriptions = state.records.webhookSubscriptions || [];
       const idx = state.records.webhookSubscriptions.findIndex(w => w.id === webhookId && w.agencyId === agency.id);
@@ -7607,6 +7754,9 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'PUT' && pathname === '/api/agency/branding') {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can configure agency branding.' });
+      }
       state.agencyBranding = state.agencyBranding || {};
       const body = await readBody(req);
       const current = state.agencyBranding[agency.id] || getDefaultBranding();
@@ -7622,13 +7772,18 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'POST' && pathname === '/api/agency/branding/verify-domain') {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can verify domains.' });
+      }
       state.agencyBranding = state.agencyBranding || {};
       const current = state.agencyBranding[agency.id] || getDefaultBranding();
       const body = await readBody(req);
       const domainToVerify = body.customDomain || current.customDomain;
-      if (!domainToVerify) return sendJson(res, 400, { error: 'Custom domain is required to verify' });
+      if (!domainToVerify || !/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(domainToVerify.trim())) {
+        return sendJson(res, 400, { error: 'A valid domain hostname is required (e.g. app.myagency.com).' });
+      }
 
-      current.customDomain = domainToVerify;
+      current.customDomain = domainToVerify.trim();
       current.isDomainVerified = true;
       current.sslActive = true;
       current.verifiedAt = new Date().toISOString();
@@ -7640,8 +7795,14 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'POST' && pathname === '/api/agency/branding/verify-email') {
+      if (actor.membership.role !== 'owner' && actor.membership.role !== 'admin') {
+        return sendJson(res, 403, { error: 'Only agency owners and admins can verify email senders.' });
+      }
       state.agencyBranding = state.agencyBranding || {};
       const current = state.agencyBranding[agency.id] || getDefaultBranding();
+      if (!current.senderEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(current.senderEmail.trim())) {
+        return sendJson(res, 400, { error: 'A valid sender email address is required before verification.' });
+      }
       current.isDkimVerified = true;
       current.dkimVerifiedAt = new Date().toISOString();
       state.agencyBranding[agency.id] = current;

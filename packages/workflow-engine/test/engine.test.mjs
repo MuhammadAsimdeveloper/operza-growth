@@ -6,7 +6,8 @@ import {
   withRetry,
   executeStep,
   walkGraph,
-  buildExecutionTimeline
+  buildExecutionTimeline,
+  isSafeOutboundUrl
 } from '../src/engine.mjs';
 
 console.log('=====================================================');
@@ -263,4 +264,33 @@ assert.equal(dosRes.status, 'failed');
 assert.ok(dosRes.error.includes('timed out') || dosRes.error.includes('Code execution failed'));
 console.log('✅ VM sandbox security boundaries and execution timeout verified');
 
-console.log('\n🎉 ALL 13 WORKFLOW ENGINE UNIT TESTS PASSED CLEANLY! 🎉');
+// 14. SSRF Defense & Outbound HTTP Protection
+console.log('[TEST 14] SSRF Defense & Outbound HTTP URL Filtering');
+assert.equal(isSafeOutboundUrl('http://169.254.169.254/latest/meta-data').safe, false, 'Cloud IMDS must be rejected');
+assert.equal(isSafeOutboundUrl('http://127.0.0.1:4000/api').safe, false, 'IPv4 loopback must be rejected');
+assert.equal(isSafeOutboundUrl('http://localhost:8080').safe, false, 'localhost must be rejected');
+assert.equal(isSafeOutboundUrl('http://10.0.0.1/admin').safe, false, 'RFC1918 Class A must be rejected');
+assert.equal(isSafeOutboundUrl('http://172.20.0.1/status').safe, false, 'RFC1918 Class B must be rejected');
+assert.equal(isSafeOutboundUrl('http://192.168.1.1/').safe, false, 'RFC1918 Class C must be rejected');
+assert.equal(isSafeOutboundUrl('file:///etc/passwd').safe, false, 'file protocol must be rejected');
+assert.equal(isSafeOutboundUrl('ftp://ftp.example.com').safe, false, 'ftp protocol must be rejected');
+assert.equal(isSafeOutboundUrl('https://api.stripe.com/v1/charges').safe, true, 'Valid HTTPS must be permitted');
+
+const ssrfStepRes = await executeStep({
+  node: {
+    id: 'n_ssrf',
+    type: 'http_request',
+    config: {
+      url: 'http://169.254.169.254/latest/meta-data/iam/security-credentials/',
+      method: 'GET'
+    }
+  },
+  execution: {},
+  triggerContext: {},
+  variables: {}
+});
+assert.equal(ssrfStepRes.status, 'failed');
+assert.ok(ssrfStepRes.error.includes('SSRF Security Error'), 'Step execution must fail closed on SSRF target');
+console.log('✅ SSRF protection verified: cloud metadata & internal loopback targets blocked');
+
+console.log('\n🎉 ALL 14 WORKFLOW ENGINE UNIT TESTS PASSED CLEANLY! 🎉');
