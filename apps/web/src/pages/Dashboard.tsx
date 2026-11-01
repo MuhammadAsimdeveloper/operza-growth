@@ -3,6 +3,7 @@ import { Link, Navigate } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Avatar, Badge, EmptyState, PageHeader, StatCard, StatusBadge } from '../components/ui';
 import { Donut, LineChart } from '../components/Chart';
+import { OnboardingWizard } from '../components/OnboardingWizard';
 import { useStore } from '../lib/store';
 import { useAuth } from '../lib/AuthContext';
 import { currency, num, pct, relative, sameDay, timeOf } from '../lib/format';
@@ -11,6 +12,14 @@ import { api } from '../lib/api';
 export default function Dashboard() {
   const { state } = useStore();
   const [liveStats, setLiveStats] = useState<any>(null);
+  const [showOnboardingWizard, setShowOnboardingWizard] = useState(false);
+  const [showOnboardingBanner, setShowOnboardingBanner] = useState(() => {
+    try {
+      return localStorage.getItem('operza_onboarding_completed') !== 'true';
+    } catch {
+      return true;
+    }
+  });
 
   useEffect(() => {
     let active = true;
@@ -92,6 +101,14 @@ export default function Dashboard() {
         subtitle="Here is what is happening across your workspace today."
         actions={
           <>
+            <button
+              className="btn btn--ghost"
+              type="button"
+              onClick={() => setShowOnboardingWizard(true)}
+              title="Launch Onboarding Setup Wizard"
+            >
+              <Icon name="sparkles" size={15} /> Quick Setup
+            </button>
             <Link className="btn" to="/reporting">
               <Icon name="chart" size={16} /> View report
             </Link>
@@ -101,6 +118,69 @@ export default function Dashboard() {
           </>
         }
       />
+
+      {showOnboardingBanner && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            background: 'linear-gradient(90deg, rgba(79, 70, 229, 0.08), rgba(6, 182, 212, 0.08))',
+            border: '1px solid rgba(79, 70, 229, 0.25)',
+            borderRadius: 12,
+            padding: '12px 18px',
+            marginBottom: 16,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 8,
+                background: 'var(--accent, #4f46e5)',
+                color: '#fff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <Icon name="sparkles" size={18} />
+            </div>
+            <div>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text)' }}>
+                Welcome to your new Operza Workspace!
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-3)' }}>
+                Launch the 4-step setup wizard to configure your branding, starter blueprints, and activation checklist.
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button className="btn btn--primary btn--sm" onClick={() => setShowOnboardingWizard(true)}>
+              Start Setup Wizard →
+            </button>
+            <button
+              className="icon-btn"
+              onClick={() => {
+                setShowOnboardingBanner(false);
+                try {
+                  localStorage.setItem('operza_onboarding_completed', 'true');
+                } catch { /* fallback */ }
+              }}
+              title="Dismiss banner"
+              aria-label="Dismiss onboarding banner"
+            >
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showOnboardingWizard && (
+        <OnboardingWizard onClose={() => setShowOnboardingWizard(false)} />
+      )}
 
       <div className="grid grid--4" style={{ marginBottom: 14 }}>
         <StatCard

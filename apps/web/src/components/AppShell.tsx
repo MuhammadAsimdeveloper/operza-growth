@@ -1,10 +1,10 @@
 import { useAuth } from '../lib/AuthContext';
 import { CopilotHub } from './CopilotHub';
 import { OperzaLogo } from './OperzaLogo';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { CommandPalette } from './CommandPalette';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from './Icon';
-import { Avatar } from './ui';
 import { Modal } from './Modal';
 import { useStore } from '../lib/store';
 import { relative } from '../lib/format';
@@ -20,9 +20,28 @@ interface NavEntry {
 function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   const { state } = useStore();
   const { user, agency, locations, activeLocation, switchLocation } = useAuth();
+  const location = useLocation();
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-  const unread = state.conversations.reduce((sum, c) => sum + c.unread, 0);
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem('operza_nav_collapsed_groups');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
 
+  const toggleGroup = (groupLabel: string) => {
+    setCollapsedGroups((prev) => {
+      const next = { ...prev, [groupLabel]: !prev[groupLabel] };
+      try {
+        localStorage.setItem('operza_nav_collapsed_groups', JSON.stringify(next));
+      } catch { /* storage fallback */ }
+      return next;
+    });
+  };
+
+  const unread = state.conversations.reduce((sum, c) => sum + c.unread, 0);
   const isSuperAdmin = user?.role === 'superadmin';
 
   const groups: Array<{ label?: string; items: NavEntry[] }> = isSuperAdmin
@@ -205,26 +224,69 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
       )}
 
       <nav className="sidebar__nav">
-        {groups.map((group, gi) => (
-          <div key={group.label ?? `g${gi}`}>
-            {group.label && <div className="nav__group-label">{group.label}</div>}
-            {group.items.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                className={({ isActive }) => `nav__item${isActive ? ' is-active' : ''}`}
-                onClick={onNavigate}
-              >
-                <span className="nav__icon">
-                  <Icon name={item.icon} size={17} />
-                </span>
-                <span className="nav__label">{item.label}</span>
-                {!!item.badge && <span className="nav__count">{item.badge}</span>}
-              </NavLink>
-            ))}
-          </div>
-        ))}
+        {groups.map((group, gi) => {
+          const hasActiveChild = group.items.some(
+            (item) => item.to === location.pathname || (item.to !== '/' && location.pathname.startsWith(item.to))
+          );
+          const isCollapsed = Boolean(group.label && collapsedGroups[group.label] && !hasActiveChild);
+
+          return (
+            <div key={group.label ?? `g${gi}`} className="nav__group">
+              {group.label ? (
+                <button
+                  type="button"
+                  className="nav__group-header"
+                  onClick={() => toggleGroup(group.label!)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    width: '100%',
+                    background: 'none',
+                    border: 'none',
+                    padding: '8px 12px 4px',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                  title={isCollapsed ? `Expand ${group.label}` : `Collapse ${group.label}`}
+                >
+                  <span className="nav__group-label" style={{ margin: 0, padding: 0 }}>
+                    {group.label}
+                  </span>
+                  <span
+                    style={{
+                      color: 'var(--sidebar-text, #94a3b8)',
+                      transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                      transition: 'transform 0.15s ease',
+                      display: 'inline-flex',
+                    }}
+                  >
+                    <Icon name="chevron-down" size={12} />
+                  </span>
+                </button>
+              ) : null}
+              {!isCollapsed && (
+                <div className="nav__group-items">
+                  {group.items.map((item) => (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      end={item.end}
+                      className={({ isActive }) => `nav__item${isActive ? ' is-active' : ''}`}
+                      onClick={onNavigate}
+                    >
+                      <span className="nav__icon">
+                        <Icon name={item.icon} size={17} />
+                      </span>
+                      <span className="nav__label">{item.label}</span>
+                      {!!item.badge && <span className="nav__count">{item.badge}</span>}
+                    </NavLink>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </nav>
 
       <div className="sidebar__footer">
@@ -245,67 +307,26 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   );
 }
 
-function SearchBox() {
-  const { state } = useStore();
-  const navigate = useNavigate();
-  const [query, setQuery] = useState('');
-  const [open, setOpen] = useState(false);
-  const boxRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const results = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return { contacts: [], deals: [] };
-    return {
-      contacts: state.contacts
-        .filter((c) =>
-          `${c.firstName} ${c.lastName} ${c.email} ${c.company}`.toLowerCase().includes(q),
-        )
-        .slice(0, 5),
-      deals: state.opportunities.filter((o) => o.name.toLowerCase().includes(q)).slice(0, 4),
-    };
-  }, [query, state.contacts, state.opportunities]);
-
-  useEffect(() => {
-    const onDown = (e: MouseEvent) => {
-      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        inputRef.current?.focus();
-        setOpen(true);
-      }
-    };
-    document.addEventListener('mousedown', onDown);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, []);
-
-  const go = (path: string) => {
-    setOpen(false);
-    setQuery('');
-    navigate(path);
-  };
-
-  const hasResults = results.contacts.length > 0 || results.deals.length > 0;
-
+function SearchBox({ onOpenCommandPalette }: { onOpenCommandPalette: () => void }) {
   return (
-    <div className="topbar__search" ref={boxRef}>
+    <div
+      className="topbar__search"
+      onClick={onOpenCommandPalette}
+      style={{ cursor: 'pointer', userSelect: 'none' }}
+      title="Open Command Palette (Ctrl+K / ⌘K)"
+      role="button"
+      tabIndex={0}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onOpenCommandPalette();
+        }
+      }}
+    >
       <Icon name="search" size={16} />
-      <input
-        ref={inputRef}
-        placeholder="Search contacts, deals, pages… (Ctrl+K)"
-        value={query}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setOpen(true);
-        }}
-        onFocus={() => setOpen(true)}
-      />
+      <span style={{ fontSize: 13, color: 'var(--text-3)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        Search commands, pages, CRM records…
+      </span>
       <kbd
         style={{
           fontSize: 10,
@@ -321,47 +342,6 @@ function SearchBox() {
       >
         Ctrl K
       </kbd>
-      {open && query.trim() && (
-        <div
-          className="card"
-          style={{ position: 'absolute', top: 40, left: 0, right: 0, zIndex: 50, boxShadow: 'var(--shadow-lg)', overflow: 'hidden' }}
-        >
-          {!hasResults && <div className="empty" style={{ padding: '22px 16px' }}>No matches for “{query}”</div>}
-          {results.contacts.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              className="list-row"
-              style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', borderBottom: '1px solid var(--line)' }}
-              onClick={() => go(`/contacts/${c.id}`)}
-            >
-              <Avatar name={`${c.firstName} ${c.lastName}`} size="sm" />
-              <span style={{ textAlign: 'left', minWidth: 0 }}>
-                <span style={{ display: 'block', fontSize: 13, fontWeight: 600 }}>
-                  {c.firstName} {c.lastName}
-                </span>
-                <span style={{ display: 'block', fontSize: 11.5, color: 'var(--text-3)' }}>{c.company || c.email}</span>
-              </span>
-              <Icon name="chevron-right" size={15} style={{ marginLeft: 'auto', color: 'var(--text-3)' }} />
-            </button>
-          ))}
-          {results.deals.map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              className="list-row"
-              style={{ width: '100%', background: 'none', border: 'none', cursor: 'pointer', borderBottom: '1px solid var(--line)' }}
-              onClick={() => go('/opportunities')}
-            >
-              <span className="nav__icon">
-                <Icon name="kanban" size={16} />
-              </span>
-              <span style={{ textAlign: 'left', fontSize: 13 }}>{o.name}</span>
-              <Icon name="chevron-right" size={15} style={{ marginLeft: 'auto', color: 'var(--text-3)' }} />
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -734,7 +714,13 @@ function UserMenu() {
   );
 }
 
-function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
+function TopBar({
+  onOpenNav,
+  onOpenCommandPalette,
+}: {
+  onOpenNav: () => void;
+  onOpenCommandPalette: () => void;
+}) {
   const location = useLocation();
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('operza-theme');
@@ -793,7 +779,7 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
         <Icon name="menu" size={18} />
       </button>
       <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', minWidth: 90 }}>{title}</span>
-      <SearchBox />
+      <SearchBox onOpenCommandPalette={onOpenCommandPalette} />
       <span className="topbar__spacer" />
       <div className="topbar__actions" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <Tooltip label={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}>
@@ -828,20 +814,39 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
 
 export function AppShell({ children }: { children?: ReactNode }) {
   const [navOpen, setNavOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const location = useLocation();
 
   useEffect(() => {
     setNavOpen(false);
   }, [location.pathname]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setCommandPaletteOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   return (
     <div className={`shell${navOpen ? ' is-nav-open' : ''}`}>
       <Sidebar onNavigate={() => setNavOpen(false)} />
       <div className="scrim" onClick={() => setNavOpen(false)} />
       <div className="main">
-        <TopBar onOpenNav={() => setNavOpen(true)} />
+        <TopBar
+          onOpenNav={() => setNavOpen(true)}
+          onOpenCommandPalette={() => setCommandPaletteOpen(true)}
+        />
         {children ?? <Outlet />}
-      <CopilotHub />
+        <CopilotHub />
+        <CommandPalette
+          isOpen={commandPaletteOpen}
+          onClose={() => setCommandPaletteOpen(false)}
+        />
       </div>
     </div>
   );
