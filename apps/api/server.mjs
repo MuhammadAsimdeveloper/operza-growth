@@ -30,6 +30,21 @@ import { getEmailProvider } from './providers/email.mjs';
 import { getSmsProvider, normalizeE164, isValidE164 } from './providers/sms.mjs';
 import { getPaymentProvider, formatCurrencyAmount, SUPPORTED_CURRENCIES, isSupportedCurrency } from './providers/payments.mjs';
 import { WORKFLOW_CATEGORIES, WORKFLOW_COLLECTIONS, RAW_TEMPLATES } from './workflow-templates.mjs';
+import { MODEL_CATALOG, getActiveProviders } from './ai/providers.mjs';
+import { SPECIALIZED_AGENTS, getAgent } from './ai/agents.mjs';
+import { TOOL_REGISTRY } from './ai/tools.mjs';
+import { getAgencyMemories, addAgencyMemory, deleteAgencyMemory } from './ai/memory.mjs';
+import { getAgencyKnowledge, addKnowledgeDocument, deleteKnowledgeDocument, queryKnowledgeBase } from './ai/rag.mjs';
+import { getAgencyUsageSummary } from './ai/usage.mjs';
+import {
+  listAgencyConversations,
+  createAgencyConversation,
+  getAgencyConversation,
+  updateAgencyConversation,
+  deleteAgencyConversation,
+  recordMessageFeedback
+} from './ai/conversations.mjs';
+import { processCopilotMessage, executePendingApproval } from './ai/orchestrator.mjs';
 
 // Conditionally load ws — gracefully degrade if not installed
 let WebSocketServer;
@@ -4970,6 +4985,240 @@ GOOGLE_REDIRECT_URI=http://localhost:4000/api/auth/google/callback</pre>
         tools: Object.keys(copilotTools),
         historyLength: history.length
       });
+    }
+
+    // ============================================================================
+    // ENTERPRISE COPILOT API SUITE (Conversations, Models, Tools, RAG, Memory, Approvals)
+    // ============================================================================
+
+    // 1. Models & Provider Availability
+    if (method === 'GET' && pathname === '/api/copilot/models') {
+      const integrations = state.records.integrations?.[agency.id] || [];
+      const providers = getActiveProviders(process.env, integrations);
+      return sendJson(res, 200, {
+        models: MODEL_CATALOG,
+        providers
+      });
+    }
+
+    // 2. Specialized Agents
+    if (method === 'GET' && pathname === '/api/copilot/agents') {
+      return sendJson(res, 200, {
+        agents: SPECIALIZED_AGENTS
+      });
+    }
+
+    // 3. Registered Tools & Schemas
+    if (method === 'GET' && pathname === '/api/copilot/tools') {
+      const tools = Object.values(TOOL_REGISTRY).map(t => ({
+        id: t.id,
+        name: t.name,
+        category: t.category,
+        classification: t.classification,
+        description: t.description,
+        parameters: t.parameters,
+        requiredPermission: t.requiredPermission
+      }));
+      return sendJson(res, 200, { tools });
+    }
+
+    // 4. List Conversations
+    if (method === 'GET' && pathname === '/api/copilot/conversations') {
+      const search = url.searchParams.get('search') || '';
+      const pinnedOnly = url.searchParams.get('pinned') === 'true';
+      const conversations = listAgencyConversations(state, agency.id, actor.user.id, { search, pinnedOnly });
+      return sendJson(res, 200, { conversations });
+    }
+
+    // 5. Create Conversation
+    if (method === 'POST' && pathname === '/api/copilot/conversations') {
+      const body = await readBody(req);
+      const conv = await createAgencyConversation(
+        state,
+        agency.id,
+        actor.user.id,
+        {
+          title: body.title,
+          agentId: body.agentId,
+          model: body.model
+        },
+        saveState
+      );
+      auditLog('ai.conversation_created', actor, { conversationId: conv.id });
+      return sendJson(res, 201, { conversation: conv });
+    }
+
+    // 6. Get Single Conversation with Messages
+    if (method === 'GET' && pathname.startsWith('/api/copilot/conversations/') && !pathname.includes('/messages') && !pathname.includes('/approve') && !pathname.includes('/feedback')) {
+      const convId = pathname.replace('/api/copilot/conversations/', '').trim();
+      const conv = getAgencyConversation(state, agency.id, convId);
+      if (!conv) return sendJson(res, 404, { error: 'Conversation not found' });
+      return sendJson(res, 200, { conversation: conv });
+    }
+
+    // 7. Update Conversation (Rename, Pin, Favorite)
+    if (method === 'PUT' && pathname.startsWith('/api/copilot/conversations/') && !pathname.includes('/messages')) {
+      const convId = pathname.replace('/api/copilot/conversations/', '').trim();
+      const body = await readBody(req);
+      const conv = await updateAgencyConversation(state, agency.id, convId, body, saveState);
+      if (!conv) return sendJson(res, 404, { error: 'Conversation not found' });
+      return sendJson(res, 200, { conversation: conv });
+    }
+
+    // 8. Delete Conversation
+    if (method === 'DELETE' && pathname.startsWith('/api/copilot/conversations/')) {
+      const convId = pathname.replace('/api/copilot/conversations/', '').trim();
+      const ok = await deleteAgencyConversation(state, agency.id, convId, saveState);
+      if (!ok) return sendJson(res, 404, { error: 'Conversation not found' });
+      auditLog('ai.conversation_deleted', actor, { conversationId: convId });
+      return sendJson(res, 200, { success: true, deletedId: convId });
+    }
+
+    // 9. Send Message to Conversation (Supports Streaming & Action Gating)
+    if (method === 'POST' && pathname.startsWith('/api/copilot/conversations/') && pathname.endsWith('/messages')) {
+      const convId = pathname.replace('/api/copilot/conversations/', '').replace('/messages', '').trim();
+      const body = await readBody(req);
+      const { message, agentId, model, stream } = body;
+
+      if (!message || !String(message).trim()) {
+        return sendJson(res, 400, { error: 'Message content is required' });
+      }
+
+      if (stream) {
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'cache-control': 'no-cache',
+          'connection': 'keep-alive',
+          'access-control-allow-origin': 'http://localhost:5173',
+          'access-control-allow-credentials': 'true'
+        });
+
+        try {
+          const result = await processCopilotMessage({
+            agencyId: agency.id,
+            actor,
+            conversationId: convId,
+            messageContent: String(message).trim(),
+            agentId,
+            modelOverride: model,
+            state,
+            saveState,
+            auditLog,
+            broadcast,
+            executeWorkflowInstance,
+            stream: true,
+            onToken: (delta) => {
+              res.write(`data: ${JSON.stringify({ delta })}\n\n`);
+            }
+          });
+
+          res.write(`data: ${JSON.stringify({ done: true, message: result.message, pendingApproval: result.pendingApproval })}\n\n`);
+          res.end();
+          return;
+        } catch (err) {
+          res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+          res.end();
+          return;
+        }
+      }
+
+      try {
+        const result = await processCopilotMessage({
+          agencyId: agency.id,
+          actor,
+          conversationId: convId,
+          messageContent: String(message).trim(),
+          agentId,
+          modelOverride: model,
+          state,
+          saveState,
+          auditLog,
+          broadcast,
+          executeWorkflowInstance,
+          stream: false
+        });
+
+        return sendJson(res, 200, {
+          conversationId: convId,
+          message: result.message,
+          agent: result.agent,
+          pendingApproval: result.pendingApproval
+        });
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
+      }
+    }
+
+    // 10. Approve or Reject Pending Action
+    if (method === 'POST' && pathname.startsWith('/api/copilot/conversations/') && pathname.endsWith('/approve')) {
+      const convId = pathname.replace('/api/copilot/conversations/', '').replace('/approve', '').trim();
+      const body = await readBody(req);
+      const { messageId, approved } = body;
+
+      if (!messageId) return sendJson(res, 400, { error: 'messageId is required' });
+
+      try {
+        const approvalResult = await executePendingApproval({
+          agencyId: agency.id,
+          actor,
+          conversationId: convId,
+          messageId,
+          approved: Boolean(approved),
+          state,
+          saveState,
+          auditLog,
+          broadcast,
+          executeWorkflowInstance
+        });
+
+        return sendJson(res, 200, approvalResult);
+      } catch (err) {
+        return sendJson(res, 400, { error: err.message });
+      }
+    }
+
+    // 11. Message Feedback (Thumbs Up / Down)
+    if (method === 'POST' && pathname.startsWith('/api/copilot/conversations/') && pathname.endsWith('/feedback')) {
+      const convId = pathname.replace('/api/copilot/conversations/', '').replace('/feedback', '').trim();
+      const body = await readBody(req);
+      const { messageId, rating, note } = body;
+
+      if (!messageId || !rating) return sendJson(res, 400, { error: 'messageId and rating are required' });
+      const ok = await recordMessageFeedback(state, agency.id, messageId, rating, note, saveState);
+      if (!ok) return sendJson(res, 404, { error: 'Message not found' });
+
+      auditLog('ai.feedback_recorded', actor, { conversationId: convId, messageId, rating });
+      return sendJson(res, 200, { success: true });
+    }
+
+    // 12. Memories (List, Add, Delete)
+    if (method === 'GET' && pathname === '/api/copilot/memories') {
+      const memories = getAgencyMemories(state, agency.id, actor.user.id);
+      return sendJson(res, 200, { memories });
+    }
+
+    if (method === 'POST' && pathname === '/api/copilot/memories') {
+      const body = await readBody(req);
+      if (!body.content || !String(body.content).trim()) {
+        return sendJson(res, 400, { error: 'Memory content is required' });
+      }
+      const mem = await addAgencyMemory(state, agency.id, actor.user.id, body, saveState);
+      auditLog('ai.memory_created', actor, { memoryId: mem.id });
+      return sendJson(res, 201, { memory: mem });
+    }
+
+    if (method === 'DELETE' && pathname.startsWith('/api/copilot/memories/')) {
+      const memoryId = pathname.replace('/api/copilot/memories/', '').trim();
+      const ok = await deleteAgencyMemory(state, agency.id, memoryId, saveState);
+      if (!ok) return sendJson(res, 404, { error: 'Memory not found' });
+      auditLog('ai.memory_deleted', actor, { memoryId });
+      return sendJson(res, 200, { success: true, deletedId: memoryId });
+    }
+
+    // 13. Usage & Cost Metering
+    if (method === 'GET' && pathname === '/api/copilot/usage') {
+      const usage = getAgencyUsageSummary(state, agency.id);
+      return sendJson(res, 200, { usage });
     }
 
 

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { api } from '../lib/api';
 import { MissMinutesRobo } from './MissMinutesRobo';
 
@@ -10,6 +11,7 @@ interface Message {
 }
 
 export function CopilotHub() {
+  const navigate = useNavigate();
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([
@@ -184,21 +186,42 @@ export function CopilotHub() {
                 </div>
               </div>
             </div>
-            <button
-              onClick={() => setIsOpen(false)}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#94A3B8',
-                cursor: 'pointer',
-                fontSize: '18px',
-                padding: '4px 8px',
-                borderRadius: '6px'
-              }}
-              title="Close Copilot"
-            >
-              ✕
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <button
+                onClick={() => {
+                  setIsOpen(false);
+                  navigate('/copilot');
+                }}
+                style={{
+                  background: 'rgba(245, 158, 11, 0.15)',
+                  border: '1px solid rgba(245, 158, 11, 0.3)',
+                  color: '#FEF3C7',
+                  cursor: 'pointer',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  padding: '3px 7px',
+                  borderRadius: '5px'
+                }}
+                title="Open Full AI Workspace"
+              >
+                ⤢ Full Workspace
+              </button>
+              <button
+                onClick={() => setIsOpen(false)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#94A3B8',
+                  cursor: 'pointer',
+                  fontSize: '18px',
+                  padding: '4px 6px',
+                  borderRadius: '6px'
+                }}
+                title="Close Copilot"
+              >
+                ✕
+              </button>
+            </div>
           </div>
 
           {/* Pending Approval Banner */}

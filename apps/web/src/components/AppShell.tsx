@@ -49,6 +49,7 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
         {
           items: [
             { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
+            { to: '/copilot', label: 'Copilot AI', icon: 'sparkles' },
             { to: '/conversations', label: 'Conversations', icon: 'message', badge: unread },
             { to: '/phone', label: 'Phone System', icon: 'phone' },
             { to: '/calendars', label: 'Calendars', icon: 'calendar' },

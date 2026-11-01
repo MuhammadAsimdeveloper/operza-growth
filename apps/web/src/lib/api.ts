@@ -393,7 +393,47 @@ export const api = {
         onComplete();
       };
       return () => eventSource.close();
-    }
+    },
+    // Enterprise Workspace API Methods
+    models: () => request<{ models: any[]; providers: any }>('/api/copilot/models'),
+    agents: () => request<{ agents: any[] }>('/api/copilot/agents'),
+    tools: () => request<{ tools: any[] }>('/api/copilot/tools'),
+    listConversations: (params?: { search?: string; pinned?: boolean }) => {
+      const q = new URLSearchParams();
+      if (params?.search) q.set('search', params.search);
+      if (params?.pinned) q.set('pinned', 'true');
+      const queryStr = q.toString() ? `?${q.toString()}` : '';
+      return request<{ conversations: any[] }>(`/api/copilot/conversations${queryStr}`);
+    },
+    createConversation: (data: { title?: string; agentId?: string; model?: string }) =>
+      request<{ conversation: any }>('/api/copilot/conversations', { method: 'POST', body: JSON.stringify(data) }),
+    getConversation: (id: string) =>
+      request<{ conversation: any }>(`/api/copilot/conversations/${id}`),
+    updateConversation: (id: string, patch: any) =>
+      request<{ conversation: any }>(`/api/copilot/conversations/${id}`, { method: 'PUT', body: JSON.stringify(patch) }),
+    deleteConversation: (id: string) =>
+      request<{ success: boolean; deletedId: string }>(`/api/copilot/conversations/${id}`, { method: 'DELETE' }),
+    sendMessage: (convId: string, data: { message: string; agentId?: string; model?: string }) =>
+      request<{ conversationId: string; message: any; agent: any; pendingApproval: any }>(
+        `/api/copilot/conversations/${convId}/messages`,
+        { method: 'POST', body: JSON.stringify(data) }
+      ),
+    approveAction: (convId: string, data: { messageId: string; approved: boolean }) =>
+      request<{ success: boolean; status: string; message: any; result?: any }>(
+        `/api/copilot/conversations/${convId}/approve`,
+        { method: 'POST', body: JSON.stringify(data) }
+      ),
+    recordFeedback: (convId: string, data: { messageId: string; rating: 'up' | 'down'; note?: string }) =>
+      request<{ success: boolean }>(
+        `/api/copilot/conversations/${convId}/feedback`,
+        { method: 'POST', body: JSON.stringify(data) }
+      ),
+    getMemories: () => request<{ memories: any[] }>('/api/copilot/memories'),
+    addMemory: (data: { key: string; content: string; category?: string }) =>
+      request<{ memory: any }>('/api/copilot/memories', { method: 'POST', body: JSON.stringify(data) }),
+    deleteMemory: (id: string) =>
+      request<{ success: boolean; deletedId: string }>(`/api/copilot/memories/${id}`, { method: 'DELETE' }),
+    getUsage: () => request<{ usage: any }>('/api/copilot/usage'),
   },
   integrations: {
     list: () => request<{ integrations: any[] }>('/api/integrations'),

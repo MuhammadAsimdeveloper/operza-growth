@@ -44,11 +44,12 @@
     "db:migrate": "npm --workspace=@operza/db run db:migrate",
     "db:backup": "node scripts/backup.mjs",
     "db:restore": "node scripts/restore.mjs",
-    "test": "npm --workspace=@operza/workflow-engine test && node scripts/seo-audit/run-seo-checks.mjs && node scripts/test-auth-and-db.mjs && node scripts/test-e2e.mjs",
+    "test": "npm --workspace=@operza/workflow-engine test && node scripts/seo-audit/run-seo-checks.mjs && node scripts/test-auth-and-db.mjs && node scripts/test-e2e.mjs && node scripts/test-copilot-enterprise.mjs",
     "test:auth": "node scripts/test-auth-and-db.mjs",
     "test:unit": "npm --workspace=@operza/workflow-engine test",
     "test:e2e": "node scripts/test-e2e.mjs",
     "test:seo": "node scripts/seo-audit/run-seo-checks.mjs",
+    "test:copilot": "node scripts/test-copilot-enterprise.mjs",
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f"

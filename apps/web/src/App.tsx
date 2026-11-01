@@ -75,6 +75,7 @@ const Reporting = lazy(() => import('./pages/Reporting'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Integrations = lazy(() => import('./pages/Integrations'));
 const AiTrainer = lazy(() => import('./pages/AiTrainer'));
+const Copilot = lazy(() => import('./pages/Copilot'));
 const Developers = lazy(() => import('./pages/Developers'));
 const Branding = lazy(() => import('./pages/Branding'));
 const NotFound = lazy(() => import('./pages/NotFound'));
@@ -192,6 +193,7 @@ export default function App() {
           <Route path="sub-accounts" element={<SubAccounts />} />
           <Route path="snapshots" element={<Snapshots />} />
           <Route path="integrations" element={<Integrations />} />
+          <Route path="copilot" element={<Copilot />} />
           <Route path="ai-trainer" element={<AiTrainer />} />
           <Route path="developers" element={<Developers />} />
           <Route path="branding" element={<Branding />} />

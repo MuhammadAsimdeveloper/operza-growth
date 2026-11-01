@@ -658,7 +658,7 @@
           "connected": false,
           "accountName": "",
           "status": "disconnected",
-          "lastSyncAt": null
+          "lastSyncAt": "2026-11-01T10:43:44.140Z"
         },
         {
           "id": "slack",
