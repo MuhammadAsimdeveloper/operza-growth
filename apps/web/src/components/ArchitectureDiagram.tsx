@@ -46,9 +46,13 @@ export function ArchitectureDiagram() {
           </p>
         </div>
 
-        <div className="tabs" style={{ margin: 0 }}>
+        <div className="tabs" style={{ margin: 0 }} role="tablist" aria-label="Architecture diagram views">
           <button
             type="button"
+            role="tab"
+            id="tab-system"
+            aria-selected={view === 'system'}
+            aria-controls="panel-system"
             className={`tab ${view === 'system' ? 'is-active' : ''}`}
             onClick={() => setView('system')}
           >
@@ -56,6 +60,10 @@ export function ArchitectureDiagram() {
           </button>
           <button
             type="button"
+            role="tab"
+            id="tab-rls"
+            aria-selected={view === 'rls'}
+            aria-controls="panel-rls"
             className={`tab ${view === 'rls' ? 'is-active' : ''}`}
             onClick={() => setView('rls')}
           >
@@ -63,6 +71,10 @@ export function ArchitectureDiagram() {
           </button>
           <button
             type="button"
+            role="tab"
+            id="tab-workflow"
+            aria-selected={view === 'workflow'}
+            aria-controls="panel-workflow"
             className={`tab ${view === 'workflow' ? 'is-active' : ''}`}
             onClick={() => setView('workflow')}
           >
@@ -83,11 +95,19 @@ export function ArchitectureDiagram() {
         }}
       >
         {view === 'system' && (
-          <svg
-            viewBox="0 0 880 440"
-            style={{ width: '100%', height: 'auto', display: 'block', maxHeight: 440 }}
-          >
-            <defs>
+          <div id="panel-system" role="tabpanel" aria-labelledby="tab-system">
+            <svg
+              role="img"
+              aria-label="Operza System Architecture Diagram"
+              aria-describedby="arch-diag-desc"
+              viewBox="0 0 880 440"
+              style={{ width: '100%', height: 'auto', display: 'block', maxHeight: 440 }}
+            >
+              <title id="arch-diag-title">Operza System Architecture Diagram</title>
+              <desc id="arch-diag-desc">
+                Visual representation of 3-tier architecture: Ingress clients, Fastify API Gateway with JWT RLS Context Injector, and PostgreSQL with n8n Workflow Engine.
+              </desc>
+              <defs>
               <linearGradient id="coralGrad" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stopColor="#ff6d5a" stopOpacity="0.8" />
                 <stop offset="100%" stopColor="#ea4b71" stopOpacity="0.8" />
@@ -236,11 +256,12 @@ export function ArchitectureDiagram() {
               </g>
             </g>
           </svg>
-        )}
+        </div>
+      )}
 
-        {view === 'rls' && (
-          <div style={{ padding: 12 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
+      {view === 'rls' && (
+        <div id="panel-rls" role="tabpanel" aria-labelledby="tab-rls" style={{ padding: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 16 }}>
               <div
                 style={{
                   background: 'var(--surface-3, #21262d)',
@@ -293,7 +314,7 @@ export function ArchitectureDiagram() {
         )}
 
         {view === 'workflow' && (
-          <div style={{ padding: 12 }}>
+          <div id="panel-workflow" role="tabpanel" aria-labelledby="tab-workflow" style={{ padding: 12 }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
               <div style={{ background: '#161b22', padding: 14, borderRadius: 8, border: '1px solid #30363d' }}>
                 <span style={{ fontSize: 11, fontWeight: 700, color: '#ff6d5a', display: 'block', marginBottom: 4 }}>STEP 1: INGESTION</span>

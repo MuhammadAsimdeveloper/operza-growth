@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, EmptyState, PageHeader, StatCard } from '../components/ui';
@@ -22,6 +22,22 @@ export default function Prospecting() {
   const [scrapeCount, setScrapeCount] = useState<number>(3);
   const [scraping, setScraping] = useState(false);
   const [scrapeStep, setScrapeStep] = useState<string>('');
+  const timerRefs = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  useEffect(() => {
+    return () => {
+      timerRefs.current.forEach(clearTimeout);
+      timerRefs.current = [];
+    };
+  }, []);
+
+  const cancelScraper = () => {
+    timerRefs.current.forEach(clearTimeout);
+    timerRefs.current = [];
+    setScraping(false);
+    setScrapeStep('');
+    setScraperOpen(false);
+  };
 
   const qualified = prospects.filter((p) => p.status === 'qualified').length;
   const contacted = prospects.filter((p) => p.status === 'contacted').length;
@@ -81,18 +97,66 @@ export default function Prospecting() {
   }
 
   const handleRunScraper = () => {
+    timerRefs.current.forEach(clearTimeout);
+    timerRefs.current = [];
     setScraping(true);
     setScrapeStep('Initializing stealth browser session & spoofing fingerprints...');
-    setTimeout(() => {
+
+    const t1 = setTimeout(() => {
       setScrapeStep('Bypassing Cloudflare Turnstile & adaptive DOM layout traversal...');
-      setTimeout(() => {
+      const t2 = setTimeout(() => {
         setScrapeStep('Extracting decision makers, verified corporate emails, and fit scoring...');
-        setTimeout(() => {
+        const t3 = setTimeout(() => {
+          const raw = scrapeQuery.trim() || 'B2B SaaS';
+          const cleanSlug = raw.toLowerCase().replace(/[^a-z0-9]/g, '') || 'growth';
           const sampleCompanies = [
-            { company: 'Apex Flow AI', person: 'Elena Rostova', email: 'elena@apexflow.ai', industry: 'SaaS', employees: 42, location: 'Austin, TX', score: 94 },
-            { company: 'CloudNexus Ops', person: 'David Sterling', email: 'david@cloudnexus.io', industry: 'Cloud Infrastructure', employees: 88, location: 'London, UK', score: 91 },
-            { company: 'Kinetix Growth Labs', person: 'Marcus Vance', email: 'm.vance@kinetixlabs.com', industry: 'Marketing Tech', employees: 24, location: 'Berlin, DE', score: 87 },
+            {
+              company: `${raw} Solutions`,
+              person: 'Elena Rostova',
+              email: `elena@${cleanSlug}-corp.io`,
+              industry: raw,
+              employees: 42,
+              location: 'Austin, TX',
+              score: 94,
+            },
+            {
+              company: `${raw.split(' ')[0] || 'Vanguard'} Nexus Systems`,
+              person: 'David Sterling',
+              email: `david@${cleanSlug}-tech.com`,
+              industry: raw,
+              employees: 88,
+              location: 'London, UK',
+              score: 91,
+            },
+            {
+              company: `Kinetix ${raw.split(' ')[0] || 'Global'}`,
+              person: 'Marcus Vance',
+              email: `m.vance@kinetix-${cleanSlug}.org`,
+              industry: raw,
+              employees: 24,
+              location: 'Berlin, DE',
+              score: 87,
+            },
+            {
+              company: `${raw} Intelligence`,
+              person: 'Sophia Chen',
+              email: `s.chen@${cleanSlug}-ai.com`,
+              industry: raw,
+              employees: 63,
+              location: 'Singapore, SG',
+              score: 96,
+            },
+            {
+              company: `Beacon ${raw.split(' ')[0] || 'Scale'} Labs`,
+              person: 'Liam O’Connor',
+              email: `liam@beacon-${cleanSlug}.io`,
+              industry: raw,
+              employees: 31,
+              location: 'Dublin, IE',
+              score: 89,
+            },
           ];
+
           sampleCompanies.slice(0, scrapeCount).forEach((s) => {
             dispatch({
               type: 'prospect/add',
@@ -113,8 +177,11 @@ export default function Prospecting() {
           setScraperOpen(false);
           setScrapeStep('');
         }, 900);
+        timerRefs.current.push(t3);
       }, 900);
+      timerRefs.current.push(t2);
     }, 900);
+    timerRefs.current.push(t1);
   };
 
   return (
@@ -254,13 +321,12 @@ export default function Prospecting() {
       {scraperOpen && (
         <Modal
           title="Scrapling Adaptive Lead Scraper"
-          onClose={() => !scraping && setScraperOpen(false)}
+          onClose={cancelScraper}
           footer={
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, width: '100%' }}>
               <button
                 className="btn"
-                onClick={() => setScraperOpen(false)}
-                disabled={scraping}
+                onClick={cancelScraper}
               >
                 Cancel
               </button>
