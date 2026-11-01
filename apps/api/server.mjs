@@ -19,7 +19,7 @@
  */
 
 import { createServer } from 'node:http';
-import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual, randomUUID, createHmac } from 'node:crypto';
+import { createHash, randomBytes, randomInt, scrypt as scryptCallback, timingSafeEqual, randomUUID, createHmac } from 'node:crypto';
 import { promisify } from 'node:util';
 import { readFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -857,9 +857,20 @@ async function loadState() {
 }
 
 async function ensureSuperAdmin() {
-  const adminEmail = (process.env.OPERZA_ADMIN_EMAIL || 'admin@operza.io').toLowerCase().trim();
-  const adminPass = process.env.OPERZA_ADMIN_PASSWORD || 'OperzaAdmin2026!';
-  let adminUser = (state.users || []).find(u => u.email === adminEmail);
+  const adminEmail = (process.env.OPERZA_ADMIN_EMAIL || (isProd ? '' : 'admin@operza.io')).toLowerCase().trim();
+  let adminPass = process.env.OPERZA_ADMIN_PASSWORD;
+
+  if (isProd && (!adminEmail || !adminPass)) {
+    console.log('🛡️ [OPERZA-ADMIN] Superadmin auto-provisioning disabled in production without explicit OPERZA_ADMIN_EMAIL and OPERZA_ADMIN_PASSWORD');
+    return;
+  }
+
+  if (!adminPass) {
+    adminPass = randomBytes(16).toString('hex');
+  }
+
+  const effectiveEmail = adminEmail || 'admin@operza.io';
+  let adminUser = (state.users || []).find(u => u.email === effectiveEmail);
   if (!adminUser) {
     const salt = randomBytes(16);
     const passBuf = await scrypt(adminPass, salt, 64);
@@ -871,7 +882,7 @@ async function ensureSuperAdmin() {
     adminUser = {
       id: adminId,
       name: 'Platform Administrator',
-      email: adminEmail,
+      email: effectiveEmail,
       passwordHash,
       role: 'superadmin',
       status: 'active',
@@ -4078,7 +4089,7 @@ const server = createServer(async (req, res) => {
       // If OTP provided directly, verify and provision
       if (otp) {
         const pending = pendingSignups.get(emailKey);
-        if (!pending || (pending.otp !== String(otp).trim() && String(otp).trim() !== '123456')) {
+        if (!pending || pending.otp !== String(otp).trim()) {
           return sendJson(res, 400, { error: 'Invalid or expired verification code' });
         }
         pendingSignups.delete(emailKey);
@@ -4086,14 +4097,14 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 201, result);
       }
 
-      // If in automated test mode or requested bypass, provision immediately
-      if (isTest || req.headers['x-bypass-otp'] === 'true' || body.skipOtp === true) {
+      // If in automated unit test mode, provision immediately
+      if (isTest) {
         const result = await provisionAccount({ name, emailKey, password, agencyName, body, clientIp, res });
         return sendJson(res, 201, result);
       }
 
-      // Otherwise, dispatch 6-digit OTP verification email
-      const generatedOtp = String(Math.floor(100000 + Math.random() * 900000));
+      // Otherwise, dispatch cryptographically secure 6-digit OTP verification email
+      const generatedOtp = String(randomInt(100000, 1000000));
       pendingSignups.set(emailKey, {
         name,
         emailKey,
@@ -4140,7 +4151,7 @@ const server = createServer(async (req, res) => {
         pendingSignups.delete(emailKey);
         return sendJson(res, 400, { error: 'Verification code has expired. Please request a new one.' });
       }
-      if (pending.otp !== String(otp).trim() && String(otp).trim() !== '123456') {
+      if (pending.otp !== String(otp).trim()) {
         pending.attempts = (pending.attempts || 0) + 1;
         if (pending.attempts > 5) {
           pendingSignups.delete(emailKey);
@@ -7189,17 +7200,26 @@ const server = createServer(async (req, res) => {
 // 
 
 
-    const getDefaultIntegrations = () => [
-      { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, and payment links', icon: 'credit-card', connected: true, accountName: 'Operza Alpha Agency (acct_1928)', status: 'connected', lastSyncAt: new Date().toISOString() },
-      { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'SMS messaging, phone numbers, and voice call tracking', icon: 'phone', connected: true, accountName: '+1 (800) 555-0100', status: 'connected', lastSyncAt: new Date().toISOString() },
-      { id: 'sendgrid', name: 'SendGrid', category: 'Communications', description: 'Transactional email delivery and marketing campaigns', icon: 'mail', connected: true, accountName: 'noreply@operza.io', status: 'connected', lastSyncAt: new Date().toISOString() },
-      { id: 'openai', name: 'OpenAI', category: 'AI & Copilot', description: 'Powering autonomous copilot, conversation replies, and summarization', icon: 'sparkles', connected: true, accountName: 'GPT-4o & Embeddings', status: 'connected', lastSyncAt: new Date().toISOString() },
-      { id: 'slack', name: 'Slack', category: 'Notifications', description: 'Real-time notifications for leads, booked appointments, and deals', icon: 'message', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
-      { id: 'zapier', name: 'Zapier', category: 'Automation', description: 'Connect Operza triggers to 5,000+ business applications', icon: 'zap', connected: true, accountName: 'Operza Flow Sync', status: 'connected', lastSyncAt: new Date().toISOString() },
-      { id: 'google_calendar', name: 'Google Calendar', category: 'Calendar', description: 'Two-way appointment synchronization and scheduling', icon: 'calendar', connected: true, accountName: 'team@operza.io', status: 'connected', lastSyncAt: new Date().toISOString() },
-      { id: 'meta_ads', name: 'Meta Ads', category: 'Marketing', description: 'Instant lead sync from Facebook & Instagram lead forms', icon: 'facebook', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
-      { id: 'shopify', name: 'Shopify', category: 'Commerce', description: 'E-commerce store orders, customer import, and product sync', icon: 'store', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null }
-    ];
+    const getDefaultIntegrations = () => {
+      const hasStripe = Boolean(process.env.STRIPE_SECRET_KEY);
+      const hasTwilio = Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
+      const hasSendgrid = Boolean(process.env.SENDGRID_API_KEY || process.env.SMTP_HOST);
+      const hasOpenAI = Boolean(process.env.OPENAI_API_KEY || process.env.GEMINI_API_KEY);
+      const hasGoogle = Boolean(process.env.GOOGLE_CLIENT_ID);
+      const hasSlack = Boolean(process.env.SLACK_BOT_TOKEN);
+
+      return [
+        { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, and payment links', icon: 'credit-card', connected: hasStripe, accountName: hasStripe ? 'Live Stripe Processing' : '', status: hasStripe ? 'connected' : 'disconnected', lastSyncAt: hasStripe ? new Date().toISOString() : null },
+        { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'SMS messaging, phone numbers, and voice call tracking', icon: 'phone', connected: hasTwilio, accountName: hasTwilio ? (process.env.TWILIO_PHONE_NUMBER || '+1 (800) Verified') : '', status: hasTwilio ? 'connected' : 'disconnected', lastSyncAt: hasTwilio ? new Date().toISOString() : null },
+        { id: 'sendgrid', name: 'SendGrid / SMTP', category: 'Communications', description: 'Transactional email delivery and marketing campaigns', icon: 'mail', connected: hasSendgrid, accountName: hasSendgrid ? (process.env.EMAIL_FROM || 'noreply@operza.io') : '', status: hasSendgrid ? 'connected' : 'disconnected', lastSyncAt: hasSendgrid ? new Date().toISOString() : null },
+        { id: 'openai', name: 'OpenAI / LLM Engine', category: 'AI & Copilot', description: 'Powering autonomous copilot, conversation replies, and summarization', icon: 'sparkles', connected: hasOpenAI, accountName: hasOpenAI ? (process.env.OPENAI_MODEL || 'GPT-4o & Embeddings') : '', status: hasOpenAI ? 'connected' : 'disconnected', lastSyncAt: hasOpenAI ? new Date().toISOString() : null },
+        { id: 'slack', name: 'Slack', category: 'Notifications', description: 'Real-time notifications for leads, booked appointments, and deals', icon: 'message', connected: hasSlack, accountName: hasSlack ? 'Workspace Webhook' : '', status: hasSlack ? 'connected' : 'disconnected', lastSyncAt: hasSlack ? new Date().toISOString() : null },
+        { id: 'zapier', name: 'Zapier / Webhooks', category: 'Automation', description: 'Connect Operza triggers to 5,000+ business applications', icon: 'zap', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'google_calendar', name: 'Google Calendar', category: 'Calendar', description: 'Two-way appointment synchronization and scheduling', icon: 'calendar', connected: hasGoogle, accountName: hasGoogle ? 'Workspace Calendar' : '', status: hasGoogle ? 'connected' : 'disconnected', lastSyncAt: hasGoogle ? new Date().toISOString() : null },
+        { id: 'meta_ads', name: 'Meta Ads', category: 'Marketing', description: 'Instant lead sync from Facebook & Instagram lead forms', icon: 'facebook', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'shopify', name: 'Shopify', category: 'Commerce', description: 'E-commerce store orders, customer import, and product sync', icon: 'store', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null }
+      ];
+    };
 
     if (method === 'GET' && pathname === '/api/integrations') {
       state.records.integrations = state.records.integrations || {};
@@ -7735,6 +7755,9 @@ const server = createServer(async (req, res) => {
 
       // POST /api/crm/:collection (Create)
       if (method === 'POST' && !recordId) {
+        if (actor?.membership?.role === 'viewer') {
+          return sendJson(res, 403, { error: 'Read-only viewer cannot create records', code: 'FORBIDDEN_VIEWER' });
+        }
         const body = await readBody(req);
         // Security: Prevent client from injecting or overriding tenant context IDs
         delete body.id;
@@ -7785,6 +7808,9 @@ const server = createServer(async (req, res) => {
 
       // PUT /api/crm/:collection/:id (Update)
       if (method === 'PUT' && recordId) {
+        if (actor?.membership?.role === 'viewer') {
+          return sendJson(res, 403, { error: 'Read-only viewer cannot modify records', code: 'FORBIDDEN_VIEWER' });
+        }
         const body = await readBody(req);
         // Security: Strip tenant injection and ID mutation
         delete body.id;
@@ -7843,6 +7869,9 @@ const server = createServer(async (req, res) => {
 
       // DELETE /api/crm/:collection/:id
       if (method === 'DELETE' && recordId) {
+        if (actor?.membership?.role === 'viewer') {
+          return sendJson(res, 403, { error: 'Read-only viewer cannot delete records', code: 'FORBIDDEN_VIEWER' });
+        }
         const index = list.findIndex(r => r.id === recordId && r.agencyId === agency.id && r.locationId === activeLocation.id);
         if (index === -1) return sendJson(res, 404, { error: 'Record not found' });
         const deleted = list.splice(index, 1)[0];

@@ -1927,8 +1927,27 @@ export function reducer(state: WorkspaceState, action: Action): WorkspaceState {
 
 export function cleanDemoData(data: WorkspaceState): WorkspaceState {
   const isDemo = (id?: string) => Boolean(id && (/^[a-z]+\d+$/.test(id) || id === 'c1' || id === 'c2'));
+  const currentUserName = (typeof localStorage !== 'undefined' && localStorage.getItem('operza_user_name')) || 'Workspace Owner';
+  const currentAgencyName = (typeof localStorage !== 'undefined' && localStorage.getItem('operza_agency_name')) || 'Agency Workspace';
+
+  const sanitizedTeam = (data.team || []).map((m) =>
+    m.name === 'Asim R.' ? { ...m, name: currentUserName, email: `${currentUserName.toLowerCase().replace(/\s+/g, '')}@workspace.io` } : m
+  );
+
+  const sanitizedCustomValues = (data.customValues || []).map((cv) => {
+    if (cv.name === 'Business name' && (cv.value === 'Asim Growth Agency' || !cv.value)) {
+      return { ...cv, value: currentAgencyName };
+    }
+    if (cv.name === 'Email signature' && (cv.value?.includes('Asim') || !cv.value)) {
+      return { ...cv, value: `${currentUserName} — ${currentAgencyName}` };
+    }
+    return cv;
+  });
+
   return {
     ...data,
+    team: sanitizedTeam,
+    customValues: sanitizedCustomValues,
     contacts: (data.contacts || []).filter((c) => !isDemo(c.id)),
     opportunities: (data.opportunities || []).filter((o) => !isDemo(o.id) && !isDemo(o.contactId)),
     conversations: (data.conversations || []).filter((cv) => !isDemo(cv.id) && !isDemo(cv.contactId)),

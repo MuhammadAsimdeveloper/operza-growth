@@ -37,14 +37,14 @@ export default function Integrations() {
       if (!active || !res?.integrations) return;
       setIntegrations(res.integrations);
     }).catch(() => {
-      // Default catalogue fallback when offline or initializing
+      // Default catalogue fallback when offline or initializing (truthful disconnected states)
       setIntegrations([
-        { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, and payment links', icon: 'credit-card', connected: true, accountName: 'Operza Alpha Agency (acct_1928)', status: 'connected', lastSyncAt: new Date().toISOString() },
-        { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'SMS messaging, phone numbers, and voice call tracking', icon: 'phone', connected: true, accountName: '+1 (800) 555-0100', status: 'connected', lastSyncAt: new Date().toISOString() },
-        { id: 'sendgrid', name: 'SendGrid', category: 'Communications', description: 'Transactional email delivery and marketing campaigns', icon: 'mail', connected: true, accountName: 'noreply@operza.io', status: 'connected', lastSyncAt: new Date().toISOString() },
-        { id: 'openai', name: 'OpenAI', category: 'AI & Copilot', description: 'Powering autonomous copilot, conversation replies, and summarization', icon: 'sparkles', connected: true, accountName: 'GPT-4o & Embeddings', status: 'connected', lastSyncAt: new Date().toISOString() },
-        { id: 'zapier', name: 'Zapier', category: 'Automation', description: 'Connect Operza triggers to 5,000+ business applications', icon: 'zap', connected: true, accountName: 'Operza Flow Sync', status: 'connected', lastSyncAt: new Date().toISOString() },
-        { id: 'google_calendar', name: 'Google Calendar', category: 'Calendar', description: 'Two-way appointment synchronization and scheduling', icon: 'calendar', connected: true, accountName: 'team@operza.io', status: 'connected', lastSyncAt: new Date().toISOString() },
+        { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, and payment links', icon: 'credit-card', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'SMS messaging, phone numbers, and voice call tracking', icon: 'phone', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'sendgrid', name: 'SendGrid', category: 'Communications', description: 'Transactional email delivery and marketing campaigns', icon: 'mail', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'openai', name: 'OpenAI', category: 'AI & Copilot', description: 'Powering autonomous copilot, conversation replies, and summarization', icon: 'sparkles', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'zapier', name: 'Zapier', category: 'Automation', description: 'Connect Operza triggers to 5,000+ business applications', icon: 'zap', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
+        { id: 'google_calendar', name: 'Google Calendar', category: 'Calendar', description: 'Two-way appointment synchronization and scheduling', icon: 'calendar', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
         { id: 'slack', name: 'Slack', category: 'Communications', description: 'Real-time notifications for leads, booked appointments, and deals', icon: 'message', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
         { id: 'meta_ads', name: 'Meta Ads', category: 'Marketing', description: 'Instant lead sync from Facebook & Instagram lead forms', icon: 'facebook', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
         { id: 'shopify', name: 'Shopify', category: 'Commerce', description: 'E-commerce store orders, customer import, and product sync', icon: 'store', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null }

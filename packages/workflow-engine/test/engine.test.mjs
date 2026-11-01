@@ -228,4 +228,39 @@ assert.equal(mergeStepRes.result.merged, true);
 assert.equal(mergeStepRes.result.data.variables.interimResult, 'ready');
 console.log('✅ Merge node context combination verified');
 
-console.log('\n🎉 ALL 12 WORKFLOW ENGINE UNIT TESTS PASSED CLEANLY! 🎉');
+// 13. Code Node Security & Sandbox Isolation
+console.log('[TEST 13] Safe VM Sandbox Isolation & Denial-of-Service Defense');
+const sandboxIsolationRes = await executeStep({
+  node: {
+    id: 'n_sandbox',
+    type: 'code',
+    config: {
+      script: 'return { hasProcess: typeof process !== "undefined", hasRequire: typeof require !== "undefined" };',
+    }
+  },
+  execution: {},
+  triggerContext: {},
+  variables: {}
+});
+assert.equal(sandboxIsolationRes.status, 'completed');
+assert.equal(sandboxIsolationRes.result.codeOutput.hasProcess, false);
+assert.equal(sandboxIsolationRes.result.codeOutput.hasRequire, false);
+
+const dosRes = await executeStep({
+  node: {
+    id: 'n_dos',
+    type: 'code',
+    config: {
+      script: 'while(true) {}',
+      timeoutMs: 200
+    }
+  },
+  execution: {},
+  triggerContext: {},
+  variables: {}
+});
+assert.equal(dosRes.status, 'failed');
+assert.ok(dosRes.error.includes('timed out') || dosRes.error.includes('Code execution failed'));
+console.log('✅ VM sandbox security boundaries and execution timeout verified');
+
+console.log('\n🎉 ALL 13 WORKFLOW ENGINE UNIT TESTS PASSED CLEANLY! 🎉');

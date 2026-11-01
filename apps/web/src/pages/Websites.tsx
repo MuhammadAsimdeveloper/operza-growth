@@ -130,6 +130,7 @@ export default function Websites() {
   const [confirmDeleteSite, setConfirmDeleteSite] = useState<Site | null>(null);
   const [builderTarget, setBuilderTarget] = useState<{ site: Site; page: SitePage } | null>(null);
   const [maintenanceSite, setMaintenanceSite] = useState<Site | null>(null);
+  const [codeModalSite, setCodeModalSite] = useState<Site | null>(null);
 
   useEffect(() => {
     api.websites.list().then((res) => {
@@ -277,6 +278,13 @@ export default function Websites() {
                   onClick={() => setMaintenanceSite(site)}
                 >
                   <Icon name="sliders" size={14} /> Maintenance & DNS
+                </button>
+                <button
+                  className="btn btn--sm"
+                  title="Import or export website HTML code and template JSON"
+                  onClick={() => setCodeModalSite(site)}
+                >
+                  <Icon name="code" size={14} /> Code / Export
                 </button>
                 <button className="btn btn--sm" onClick={() => setAddingSiteId(site.id)}>
                   <Icon name="plus" size={14} /> Add page
@@ -442,6 +450,13 @@ export default function Websites() {
         <SiteMaintenanceModal
           site={maintenanceSite}
           onClose={() => setMaintenanceSite(null)}
+        />
+      )}
+
+      {codeModalSite && (
+        <SiteCodeModal
+          site={codeModalSite}
+          onClose={() => setCodeModalSite(null)}
         />
       )}
 
@@ -827,9 +842,10 @@ function SiteMaintenanceModal({ site, onClose }: { site: Site; onClose: () => vo
   const [dnsVerified, setDnsVerified] = useState(true);
   const [verifyingDns, setVerifyingDns] = useState(false);
 
-  // Injected scripts
+  // Injected scripts & WordPress Custom CSS
   const [headerScripts, setHeaderScripts] = useState(site.headerScripts || '');
   const [footerScripts, setFooterScripts] = useState(site.footerScripts || '');
+  const [customCss, setCustomCss] = useState(site.customCss || '');
 
   // SEO & Meta
   const [seoTitle, setSeoTitle] = useState(site.seoTitle || site.name);
@@ -837,6 +853,7 @@ function SiteMaintenanceModal({ site, onClose }: { site: Site; onClose: () => vo
     site.seoDescription || `Welcome to ${site.name}. Discover our full suite of professional services and client solutions.`
   );
   const [faviconUrl, setFaviconUrl] = useState(site.faviconUrl || '');
+  const [focusKeyword, setFocusKeyword] = useState(site.focusKeyword || '');
   const [saving, setSaving] = useState(false);
 
   const handleVerifyDns = () => {
@@ -856,8 +873,10 @@ function SiteMaintenanceModal({ site, onClose }: { site: Site; onClose: () => vo
       domain: domain.trim(),
       headerScripts: headerScripts.trim(),
       footerScripts: footerScripts.trim(),
+      customCss: customCss.trim(),
       seoTitle: seoTitle.trim(),
       seoDescription: seoDescription.trim(),
+      focusKeyword: focusKeyword.trim(),
       faviconUrl: faviconUrl.trim(),
     };
     dispatch({ type: 'site/update', id: site.id, patch });
@@ -1103,6 +1122,25 @@ function SiteMaintenanceModal({ site, onClose }: { site: Site; onClose: () => vo
               Injected right before the closing <code>&lt;/body&gt;</code> tag for optimal page load speed.
             </div>
           </div>
+
+          <div className="field">
+            <div className="row row--between">
+              <label htmlFor="custom-css">WordPress-Style Additional CSS</label>
+              <span className="hint" style={{ fontSize: 11 }}>Site-wide scoped styles</span>
+            </div>
+            <textarea
+              id="custom-css"
+              className="input"
+              rows={5}
+              style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}
+              placeholder={'/* WordPress Customizer Additional CSS */\n:root {\n  --brand-primary: #3b82f6;\n}\n.operza-cta-btn {\n  box-shadow: 0 4px 14px rgba(59, 130, 246, 0.4);\n}'}
+              value={customCss}
+              onChange={(e) => setCustomCss(e.target.value)}
+            />
+            <div className="hint" style={{ marginTop: 4 }}>
+              Injected into a dedicated <code>&lt;style id="operza-custom-css"&gt;</code> block across all site templates.
+            </div>
+          </div>
         </div>
       )}
 
@@ -1135,6 +1173,45 @@ function SiteMaintenanceModal({ site, onClose }: { site: Site; onClose: () => vo
           </div>
 
           <div className="field">
+            <div className="row row--between">
+              <label htmlFor="focus-keyword">Focus Keyphrase (WordPress / Yoast Style)</label>
+              <Badge tone={focusKeyword ? 'violet' : 'default'}>
+                {focusKeyword ? `Auditing: "${focusKeyword}"` : 'Optional'}
+              </Badge>
+            </div>
+            <input
+              id="focus-keyword"
+              className="input"
+              value={focusKeyword}
+              onChange={(e) => setFocusKeyword(e.target.value)}
+              placeholder="e.g. enterprise b2b saas growth"
+            />
+            <div className="hint" style={{ marginTop: 4 }}>
+              Enter the primary keyword phrase you want this website to rank for. Operza audits your metadata below.
+            </div>
+          </div>
+
+          {focusKeyword.trim() && (
+            <div style={{ border: '1px solid var(--line)', borderRadius: 8, padding: 12, background: 'var(--surface-2)', fontSize: 12 }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Keyphrase Optimization Audit:</div>
+              <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
+                <li style={{ color: seoTitle.toLowerCase().includes(focusKeyword.toLowerCase().trim()) ? 'var(--green)' : 'var(--amber)' }}>
+                  {seoTitle.toLowerCase().includes(focusKeyword.toLowerCase().trim()) ? '✓' : '✗'} Keyphrase in SEO Title
+                </li>
+                <li style={{ color: seoDescription.toLowerCase().includes(focusKeyword.toLowerCase().trim()) ? 'var(--green)' : 'var(--amber)' }}>
+                  {seoDescription.toLowerCase().includes(focusKeyword.toLowerCase().trim()) ? '✓' : '✗'} Keyphrase in Meta Description
+                </li>
+                <li style={{ color: seoTitle.length >= 30 && seoTitle.length <= 60 ? 'var(--green)' : 'var(--amber)' }}>
+                  {seoTitle.length >= 30 && seoTitle.length <= 60 ? '✓' : '–'} Title length ({seoTitle.length} chars — recommended 30-60)
+                </li>
+                <li style={{ color: seoDescription.length >= 120 && seoDescription.length <= 160 ? 'var(--green)' : 'var(--amber)' }}>
+                  {seoDescription.length >= 120 && seoDescription.length <= 160 ? '✓' : '–'} Description length ({seoDescription.length} chars — recommended 120-160)
+                </li>
+              </ul>
+            </div>
+          )}
+
+          <div className="field">
             <label htmlFor="favicon-url">Favicon URL</label>
             <input
               id="favicon-url"
@@ -1164,6 +1241,373 @@ function SiteMaintenanceModal({ site, onClose }: { site: Site; onClose: () => vo
               {seoDescription || 'Add an SEO description above to customize your Google search preview.'}
             </div>
           </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+function SiteCodeModal({ site, onClose }: { site: Site; onClose: () => void }) {
+  const { dispatch } = useStore();
+  const [activeTab, setActiveTab] = useState<'export' | 'import'>('export');
+  const [exportFormat, setExportFormat] = useState<'html' | 'json'>('html');
+  const [copied, setCopied] = useState(false);
+
+  // Import states
+  const [importType, setImportType] = useState<'json' | 'html'>('json');
+  const [importCode, setImportCode] = useState('');
+  const [importMode, setImportMode] = useState<'merge' | 'replace'>('merge');
+  const [importStatus, setImportStatus] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
+  // Generate HTML bundle
+  const generateHtml = (): string => {
+    const pagesHtml = site.pages.map((p) => `
+    <section id="${p.id}" class="operza-page-section" data-path="${p.path}">
+      <header class="operza-section-header">
+        <h1>${p.headline || p.name}</h1>
+        ${p.subhead ? `<p class="operza-subhead">${p.subhead}</p>` : ''}
+        ${p.cta ? `<a href="#action" class="operza-cta-btn">${p.cta}</a>` : ''}
+      </header>
+      <div class="operza-blocks">
+        ${(p.blocks || []).map((b: any) => `
+        <div class="operza-block operza-block--${b.type}">
+          ${b.type === 'heading' ? `<h2>${b.props?.text || ''}</h2>` : ''}
+          ${b.type === 'paragraph' ? `<p>${b.props?.text || ''}</p>` : ''}
+          ${b.type === 'button' ? `<button>${b.props?.label || 'Action'}</button>` : ''}
+          ${b.type === 'image' ? `<img src="${b.props?.url || ''}" alt="${b.props?.alt || ''}" />` : ''}
+        </div>`).join('\n        ')}
+      </div>
+    </section>`).join('\n');
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${site.seoTitle || site.name}</title>
+  <meta name="description" content="${site.seoDescription || ''}">
+  ${site.focusKeyword ? `<meta name="keywords" content="${site.focusKeyword}">` : ''}
+  ${site.faviconUrl ? `<link rel="icon" href="${site.faviconUrl}">` : ''}
+  <!-- Operza WordPress-Compatible Additional CSS -->
+  <style id="operza-custom-css">
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; line-height: 1.6; color: #1e293b; background: #fff; }
+    .operza-site-container { max-width: 1200px; margin: 0 auto; padding: 2rem 1.5rem; }
+    .operza-page-section { padding: 3rem 0; border-bottom: 1px solid #e2e8f0; }
+    .operza-cta-btn { display: inline-block; padding: 0.75rem 1.5rem; background: #2563eb; color: #fff; text-decoration: none; border-radius: 6px; font-weight: 600; margin-top: 1rem; }
+    ${site.customCss || ''}
+  </style>
+  ${site.headerScripts || ''}
+</head>
+<body>
+  <div class="operza-site-container">
+    <header class="operza-global-header" style="padding-bottom: 1.5rem; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
+      <h2 style="margin: 0; font-size: 1.25rem;">${site.name}</h2>
+      <nav>
+        ${site.pages.map((p) => `<a href="${p.path}" style="margin-left: 1rem; color: #475569; text-decoration: none;">${p.name}</a>`).join(' ')}
+      </nav>
+    </header>
+    <main>
+${pagesHtml}
+    </main>
+    <footer style="margin-top: 4rem; padding-top: 2rem; border-top: 1px solid #e2e8f0; font-size: 0.875rem; color: #94a3b8; text-align: center;">
+      <p>© ${new Date().getFullYear()} ${site.name}. Powered by Operza Growth Engine.</p>
+    </footer>
+  </div>
+  ${site.footerScripts || ''}
+</body>
+</html>`;
+  };
+
+  const generateJson = (): string => {
+    return JSON.stringify(site, null, 2);
+  };
+
+  const exportContent = exportFormat === 'html' ? generateHtml() : generateJson();
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(exportContent);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleDownload = () => {
+    const slug = siteSlug(site);
+    const filename = exportFormat === 'html' ? `${slug}-site.html` : `${slug}-template.json`;
+    const mimeType = exportFormat === 'html' ? 'text/html' : 'application/json';
+    const blob = new Blob([exportContent], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImport = async () => {
+    setImportError(null);
+    setImportStatus(null);
+    if (!importCode.trim()) {
+      setImportError('Please paste valid code or schema to import.');
+      return;
+    }
+
+    try {
+      if (importType === 'json') {
+        const parsed = JSON.parse(importCode);
+        if (!parsed || typeof parsed !== 'object') {
+          throw new Error('Invalid JSON format');
+        }
+
+        let importedPages: SitePage[] = [];
+        if (Array.isArray(parsed.pages)) {
+          importedPages = parsed.pages.map((p: any) => ({
+            id: p.id || uid('page'),
+            name: String(p.name || 'Imported Page'),
+            path: toPath(String(p.path || '/page')),
+            headline: p.headline ? String(p.headline) : undefined,
+            subhead: p.subhead ? String(p.subhead) : undefined,
+            cta: p.cta ? String(p.cta) : undefined,
+            theme: p.theme || 'plain',
+            visits: typeof p.visits === 'number' ? p.visits : 0,
+            optins: typeof p.optins === 'number' ? p.optins : 0,
+            blocks: Array.isArray(p.blocks) ? p.blocks : [],
+          }));
+        } else if (Array.isArray(parsed)) {
+          importedPages = parsed.map((p: any) => ({
+            id: p.id || uid('page'),
+            name: String(p.name || 'Imported Page'),
+            path: toPath(String(p.path || '/page')),
+            headline: p.headline ? String(p.headline) : undefined,
+            subhead: p.subhead ? String(p.subhead) : undefined,
+            cta: p.cta ? String(p.cta) : undefined,
+            theme: p.theme || 'plain',
+            visits: 0,
+            optins: 0,
+            blocks: Array.isArray(p.blocks) ? p.blocks : [],
+          }));
+        } else {
+          throw new Error('JSON schema must contain a "pages" array');
+        }
+
+        const newPages = importMode === 'replace'
+          ? importedPages
+          : [...site.pages, ...importedPages];
+
+        const patch: Partial<Site> = {
+          pages: newPages,
+          customCss: parsed.customCss ? String(parsed.customCss) : site.customCss,
+          seoTitle: parsed.seoTitle ? String(parsed.seoTitle) : site.seoTitle,
+          seoDescription: parsed.seoDescription ? String(parsed.seoDescription) : site.seoDescription,
+          focusKeyword: parsed.focusKeyword ? String(parsed.focusKeyword) : site.focusKeyword,
+        };
+
+        dispatch({ type: 'site/update', id: site.id, patch });
+        try {
+          await api.websites.update(site.id, patch);
+        } catch (err) {
+          console.error('Failed to sync imported site to backend:', err);
+        }
+
+        setImportStatus(`Successfully imported ${importedPages.length} page(s)!`);
+        setTimeout(() => onClose(), 1200);
+      } else {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(importCode, 'text/html');
+        const title = doc.querySelector('title')?.textContent || 'Imported Page';
+        const h1 = doc.querySelector('h1')?.textContent || title;
+        const p = doc.querySelector('p')?.textContent || '';
+        const customStyle = doc.querySelector('style#operza-custom-css')?.textContent || '';
+
+        const newPage: SitePage = {
+          id: uid('page'),
+          name: title.slice(0, 30),
+          path: slugPath(title),
+          headline: h1,
+          subhead: p.slice(0, 160),
+          cta: 'Learn more',
+          theme: 'plain',
+          visits: 0,
+          optins: 0,
+          blocks: [
+            { id: uid('block'), type: 'heading', props: { text: h1, level: 1 } },
+            ...(p ? [{ id: uid('block'), type: 'paragraph', props: { text: p } }] : []),
+          ],
+        };
+
+        const newPages = importMode === 'replace' ? [newPage] : [...site.pages, newPage];
+        const patch: Partial<Site> = {
+          pages: newPages,
+          customCss: customStyle ? `${site.customCss || ''}\n${customStyle}`.trim() : site.customCss,
+        };
+
+        dispatch({ type: 'site/update', id: site.id, patch });
+        try {
+          await api.websites.update(site.id, patch);
+        } catch (err) {
+          console.error('Failed to sync imported HTML to backend:', err);
+        }
+
+        setImportStatus(`Successfully created page "${newPage.name}" from HTML!`);
+        setTimeout(() => onClose(), 1200);
+      }
+    } catch (err: any) {
+      setImportError(err.message || 'Failed to parse import content');
+    }
+  };
+
+  return (
+    <Modal
+      title={`Code & Template Manager · ${site.name}`}
+      wide
+      onClose={onClose}
+      footer={
+        <button className="btn" type="button" onClick={onClose}>
+          Close
+        </button>
+      }
+    >
+      <div className="segmented" style={{ marginBottom: 16 }}>
+        <button
+          type="button"
+          className={activeTab === 'export' ? 'is-active' : ''}
+          onClick={() => setActiveTab('export')}
+        >
+          <span className="row" style={{ gap: 6, alignItems: 'center' }}>
+            <Icon name="download" size={13} /> Export Code & Templates
+          </span>
+        </button>
+        <button
+          type="button"
+          className={activeTab === 'import' ? 'is-active' : ''}
+          onClick={() => setActiveTab('import')}
+        >
+          <span className="row" style={{ gap: 6, alignItems: 'center' }}>
+            <Icon name="upload" size={13} /> Import HTML / JSON
+          </span>
+        </button>
+      </div>
+
+      {activeTab === 'export' && (
+        <div className="stack" style={{ gap: 14 }}>
+          <div className="row row--between" style={{ alignItems: 'center' }}>
+            <div className="segmented" style={{ width: 'fit-content' }}>
+              <button
+                type="button"
+                className={exportFormat === 'html' ? 'is-active' : ''}
+                onClick={() => setExportFormat('html')}
+              >
+                Production HTML Code
+              </button>
+              <button
+                type="button"
+                className={exportFormat === 'json' ? 'is-active' : ''}
+                onClick={() => setExportFormat('json')}
+              >
+                Site JSON Template
+              </button>
+            </div>
+            <div className="row" style={{ gap: 8 }}>
+              <button type="button" className="btn btn--sm" onClick={handleCopy}>
+                {copied ? '✓ Copied!' : 'Copy Code'}
+              </button>
+              <button type="button" className="btn btn--sm btn--primary" onClick={handleDownload}>
+                <Icon name="download" size={13} /> Download File
+              </button>
+            </div>
+          </div>
+
+          <div className="field">
+            <textarea
+              className="input"
+              rows={14}
+              readOnly
+              style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, background: 'var(--surface-2)', whiteSpace: 'pre' }}
+              value={exportContent}
+            />
+          </div>
+
+          <div className="hint">
+            💡 Exported code is 100% self-contained and ready for deployment on Apache, Nginx, Netlify, Cloudflare Pages, or WordPress custom templates.
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'import' && (
+        <div className="stack" style={{ gap: 14 }}>
+          <div className="row row--between" style={{ alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+            <div className="segmented" style={{ width: 'fit-content' }}>
+              <button
+                type="button"
+                className={importType === 'json' ? 'is-active' : ''}
+                onClick={() => setImportType('json')}
+              >
+                JSON Schema / Template
+              </button>
+              <button
+                type="button"
+                className={importType === 'html' ? 'is-active' : ''}
+                onClick={() => setImportType('html')}
+              >
+                Raw HTML Page
+              </button>
+            </div>
+            <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+              <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="importMode"
+                  checked={importMode === 'merge'}
+                  onChange={() => setImportMode('merge')}
+                />
+                Merge with existing
+              </label>
+              <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="importMode"
+                  checked={importMode === 'replace'}
+                  onChange={() => setImportMode('replace')}
+                />
+                Replace all pages
+              </label>
+            </div>
+          </div>
+
+          <div className="field">
+            <label>
+              {importType === 'json' ? 'Paste Operza or WordPress WP-JSON Schema' : 'Paste Raw HTML Code or Page Source'}
+            </label>
+            <textarea
+              className="input"
+              rows={10}
+              placeholder={importType === 'json' ? '{\n  "pages": [\n    { "name": "Landing", "path": "/home" }\n  ]\n}' : '<!DOCTYPE html>\n<html>\n<head><title>My Landing Page</title></head>\n<body><h1>Welcome</h1><p>Our company specializes in...</p></body>\n</html>'}
+              style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5 }}
+              value={importCode}
+              onChange={(e) => setImportCode(e.target.value)}
+            />
+          </div>
+
+          {importError && (
+            <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(239, 68, 68, 0.1)', color: 'var(--red)', fontSize: 12 }}>
+              ⚠️ {importError}
+            </div>
+          )}
+
+          {importStatus && (
+            <div style={{ padding: '8px 12px', borderRadius: 6, background: 'rgba(34, 197, 94, 0.1)', color: 'var(--green)', fontSize: 12 }}>
+              ✓ {importStatus}
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="btn btn--primary"
+            style={{ width: 'fit-content' }}
+            onClick={handleImport}
+          >
+            <Icon name="upload" size={13} /> Process & Apply Import
+          </button>
         </div>
       )}
     </Modal>

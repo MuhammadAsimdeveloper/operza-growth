@@ -18,24 +18,46 @@ interface NavEntry {
 
 function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   const { state } = useStore();
-  const { agency, locations, activeLocation, switchLocation } = useAuth();
+  const { user, agency, locations, activeLocation, switchLocation } = useAuth();
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const unread = state.conversations.reduce((sum, c) => sum + c.unread, 0);
 
-  const groups: Array<{ label?: string; items: NavEntry[] }> = [
-    {
-      items: [
-        { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
-        { to: '/conversations', label: 'Conversations', icon: 'message', badge: unread },
-        { to: '/phone', label: 'Phone System', icon: 'phone' },
-        { to: '/calendars', label: 'Calendars', icon: 'calendar' },
-        { to: '/contacts', label: 'Contacts', icon: 'users' },
-        { to: '/tasks', label: 'Tasks', icon: 'task' },
-        { to: '/opportunities', label: 'Opportunities', icon: 'kanban' },
-        { to: '/reputation', label: 'Reputation', icon: 'star' },
-        { to: '/smart-lists', label: 'Smart Lists', icon: 'sliders' },
-      ],
-    },
+  const isSuperAdmin = user?.role === 'superadmin';
+
+  const groups: Array<{ label?: string; items: NavEntry[] }> = isSuperAdmin
+    ? [
+        {
+          label: 'Platform Control',
+          items: [
+            { to: '/admin', label: 'Platform Overview', icon: 'shield', end: true },
+            { to: '/sub-accounts', label: 'All Agencies', icon: 'building' },
+            { to: '/snapshots', label: 'Agency Snapshots', icon: 'refresh' },
+          ],
+        },
+        {
+          label: 'Infrastructure & Ledger',
+          items: [
+            { to: '/developers', label: 'Developer API & Webhooks', icon: 'webhook' },
+            { to: '/audit-log', label: 'System Audit Ledger', icon: 'clipboard' },
+            { to: '/integrations', label: 'Payment & API Gateways', icon: 'plug' },
+            { to: '/reporting', label: 'Global Telemetry', icon: 'chart' },
+          ],
+        },
+      ]
+    : [
+        {
+          items: [
+            { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
+            { to: '/conversations', label: 'Conversations', icon: 'message', badge: unread },
+            { to: '/phone', label: 'Phone System', icon: 'phone' },
+            { to: '/calendars', label: 'Calendars', icon: 'calendar' },
+            { to: '/contacts', label: 'Contacts', icon: 'users' },
+            { to: '/tasks', label: 'Tasks', icon: 'task' },
+            { to: '/opportunities', label: 'Opportunities', icon: 'kanban' },
+            { to: '/reputation', label: 'Reputation', icon: 'star' },
+            { to: '/smart-lists', label: 'Smart Lists', icon: 'sliders' },
+          ],
+        },
     {
       label: 'Marketing',
       items: [
@@ -109,78 +131,80 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   return (
     <aside className="sidebar">
       <div className="sidebar__brand">
-        <div className="brand__mark">OP</div>
+        <div className="brand__mark" style={isSuperAdmin ? { background: '#6366f1' } : undefined}>OP</div>
         <div className="brand__text">
           <div className="brand__name">Operza</div>
-          <div className="brand__sub">Agency Workspace</div>
+          <div className="brand__sub">{isSuperAdmin ? 'Platform Control' : 'Agency Workspace'}</div>
         </div>
         <button className="icon-btn sidebar__toggle" style={{ marginLeft: 'auto' }} onClick={onNavigate} aria-label="Close navigation">
           <Icon name="x" size={17} />
         </button>
       </div>
 
-      <div style={{ position: 'relative' }}>
-        <button
-          className="sidebar__account"
-          type="button"
-          onClick={() => setAccountMenuOpen((v) => !v)}
-          title="Switch active sub-account / location"
-        >
-          <span className="account__avatar">
-            {(agency?.name || 'OP').slice(0, 2).toUpperCase()}
-          </span>
-          <span style={{ minWidth: 0, flex: 1 }}>
-            <span className="account__name" style={{ display: 'block' }}>
-              {activeLocation?.name || agency?.name || 'Operza Agency'}
-            </span>
-            <span className="account__plan" style={{ display: 'block' }}>
-              {agency?.name || 'Agency Workspace'}
-            </span>
-          </span>
-          <Icon name="chevron-down" size={15} />
-        </button>
-
-        {accountMenuOpen && (
-          <div
-            className="card"
-            style={{
-              position: 'absolute',
-              top: '100%',
-              left: 12,
-              right: 12,
-              zIndex: 50,
-              boxShadow: 'var(--shadow-lg)',
-              padding: '8px',
-              borderRadius: 'var(--r-md)',
-              background: 'var(--surface)',
-              border: '1px solid var(--line)',
-            }}
+      {!isSuperAdmin && (
+        <div style={{ position: 'relative' }}>
+          <button
+            className="sidebar__account"
+            type="button"
+            onClick={() => setAccountMenuOpen((v) => !v)}
+            title="Switch active sub-account / location"
           >
-            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', padding: '4px 8px' }}>
-              SWITCH SUB-ACCOUNT
+            <span className="account__avatar">
+              {(agency?.name || 'OP').slice(0, 2).toUpperCase()}
+            </span>
+            <span style={{ minWidth: 0, flex: 1 }}>
+              <span className="account__name" style={{ display: 'block' }}>
+                {activeLocation?.name || agency?.name || 'Operza Agency'}
+              </span>
+              <span className="account__plan" style={{ display: 'block' }}>
+                {agency?.name || 'Agency Workspace'}
+              </span>
+            </span>
+            <Icon name="chevron-down" size={15} />
+          </button>
+
+          {accountMenuOpen && (
+            <div
+              className="card"
+              style={{
+                position: 'absolute',
+                top: '100%',
+                left: 12,
+                right: 12,
+                zIndex: 50,
+                boxShadow: 'var(--shadow-lg)',
+                padding: '8px',
+                borderRadius: 'var(--r-md)',
+                background: 'var(--surface)',
+                border: '1px solid var(--line)',
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', padding: '4px 8px' }}>
+                SWITCH SUB-ACCOUNT
+              </div>
+              {locations.map((loc) => (
+                <button
+                  key={loc.id}
+                  type="button"
+                  className="btn btn--ghost btn--sm"
+                  style={{
+                    width: '100%',
+                    justifyContent: 'flex-start',
+                    fontWeight: loc.id === activeLocation?.id ? 700 : 400,
+                    color: loc.id === activeLocation?.id ? 'var(--accent)' : 'var(--text)',
+                  }}
+                  onClick={() => {
+                    switchLocation(loc.id);
+                    setAccountMenuOpen(false);
+                  }}
+                >
+                  <Icon name="building" size={13} /> {loc.name}
+                </button>
+              ))}
             </div>
-            {locations.map((loc) => (
-              <button
-                key={loc.id}
-                type="button"
-                className="btn btn--ghost btn--sm"
-                style={{
-                  width: '100%',
-                  justifyContent: 'flex-start',
-                  fontWeight: loc.id === activeLocation?.id ? 700 : 400,
-                  color: loc.id === activeLocation?.id ? 'var(--accent)' : 'var(--text)',
-                }}
-                onClick={() => {
-                  switchLocation(loc.id);
-                  setAccountMenuOpen(false);
-                }}
-              >
-                <Icon name="building" size={13} /> {loc.name}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       <nav className="sidebar__nav">
         {groups.map((group, gi) => (

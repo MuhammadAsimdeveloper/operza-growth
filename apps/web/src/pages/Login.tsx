@@ -4,7 +4,7 @@ import { useAuth } from '../lib/AuthContext';
 import { SEO } from '../components/SEO';
 
 export default function Login() {
-  const { login, isAuthenticated, isLoading } = useAuth();
+  const { login, isAuthenticated, isLoading, user } = useAuth();
   const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -13,7 +13,7 @@ export default function Login() {
 
   // If already authenticated, redirect
   if (isAuthenticated && !isLoading) {
-    const from = (location.state as any)?.from?.pathname ?? '/';
+    const from = (location.state as any)?.from?.pathname ?? (user?.role === 'superadmin' ? '/admin' : '/');
     return <Navigate to={from} replace />;
   }
 

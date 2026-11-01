@@ -14,6 +14,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
+import vm from 'node:vm';
 
 
 // Utility — Checksum
@@ -484,7 +485,7 @@ export async function executeStep({
         return { status: 'completed', nodeId, result: { reviewRequestSent: true, platform, channel } };
       }
 
-      // JavaScript code transformation node (n8n-style)
+      // JavaScript code transformation node (n8n-style safe VM sandbox)
       case 'code':
       case 'javascript': {
         const script = config.script || config.code || 'return items;';
@@ -496,8 +497,40 @@ export async function executeStep({
         };
         let codeResult;
         try {
-          const fn = new Function('$json', '$input', '$vars', 'items', 'context', script);
-          codeResult = fn(sandboxData.$json, sandboxData.$input, sandboxData.$vars, sandboxData.items, ctx);
+          const wrappedScript = `(function($json, $input, $vars, items, context) {\n${script}\n})($json, $input, $vars, items, context)`;
+          const sandbox = Object.freeze({
+            $json: structuredClone(sandboxData.$json),
+            $input: structuredClone(sandboxData.$input),
+            $vars: structuredClone(sandboxData.$vars),
+            items: structuredClone(sandboxData.items),
+            context: structuredClone(ctx),
+            Math,
+            Date,
+            JSON,
+            parseInt,
+            parseFloat,
+            isNaN,
+            isFinite,
+            encodeURIComponent,
+            decodeURIComponent,
+            String,
+            Number,
+            Boolean,
+            Array,
+            Object,
+            RegExp,
+            console: {
+              log: () => {},
+              warn: () => {},
+              error: () => {},
+            },
+          });
+          const contextObj = vm.createContext(sandbox);
+          const timeoutMs = Math.min(Math.max(Number(config.timeoutMs) || 1000, 100), 5000);
+          codeResult = vm.runInContext(wrappedScript, contextObj, {
+            timeout: timeoutMs,
+            displayErrors: true,
+          });
         } catch (err) {
           throw new Error(`Code execution failed: ${err.message}`);
         }

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Avatar, Badge, EmptyState, PageHeader, StatCard, StatusBadge } from '../components/ui';
 import { Donut, LineChart } from '../components/Chart';
@@ -74,6 +74,9 @@ export default function Dashboard() {
   const contactOf = (id: string) => contacts.find((c) => c.id === id);
 
   const { user, agency } = useAuth();
+  if (user?.role === 'superadmin') {
+    return <Navigate to="/admin" replace />;
+  }
   const getGreeting = () => {
     const hour = new Date().getHours();
     if (hour < 12) return 'Good morning';

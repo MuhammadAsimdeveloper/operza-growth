@@ -300,8 +300,10 @@ export interface Site {
   maintenanceNotice?: string;
   headerScripts?: string;
   footerScripts?: string;
+  customCss?: string;
   seoTitle?: string;
   seoDescription?: string;
+  focusKeyword?: string;
   faviconUrl?: string;
 }
 
