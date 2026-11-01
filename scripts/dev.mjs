@@ -4,6 +4,15 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
+// Auto-load root .env if present
+try {
+  if (typeof process.loadEnvFile === 'function') {
+    process.loadEnvFile(path.join(root, '.env'));
+  }
+} catch {
+  // Graceful fallback
+}
+
 console.log('=====================================================');
 console.log('🚀 Starting Operza Unified Business OS & Automation');
 console.log('=====================================================');

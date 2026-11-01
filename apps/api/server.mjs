@@ -40,6 +40,16 @@ try {
   console.warn('[OPERZA] ws package not installed — WebSocket server disabled. Run: npm install ws');
 }
 
+// Auto-load root .env if present
+try {
+  if (typeof process.loadEnvFile === 'function') {
+    const rootDir = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+    process.loadEnvFile(path.join(rootDir, '.env'));
+  }
+} catch {
+  // Graceful fallback if .env does not exist
+}
+
 // Conditionally load pg for PostgreSQL dual-mode persistence
 let pgPool = null;
 try {
@@ -233,6 +243,17 @@ let state = emptyState();
 let writeQueue = Promise.resolve();
 const cookieSession = isProd ? '__Host-operza_session' : 'operza_session';
 const cookieCsrf = 'operza_csrf';
+
+// In-memory OAuth state tracker for anti-CSRF verification
+const oauthStates = new Map();
+if (typeof setInterval === 'function') {
+  setInterval(() => {
+    const now = Date.now();
+    for (const [key, timestamp] of oauthStates.entries()) {
+      if (now - timestamp > 15 * 60 * 1000) oauthStates.delete(key);
+    }
+  }, 5 * 60 * 1000).unref();
+}
 
 // 
 const rateLimitStore = new Map();
@@ -4341,6 +4362,225 @@ const server = createServer(async (req, res) => {
         activeLocationId: actor.activeLocation.id,
         role: actor.user.role || actor.membership.role
       });
+    }
+
+    // AUTH: Available Identity Providers
+    if (method === 'GET' && pathname === '/api/auth/providers') {
+      return sendJson(res, 200, {
+        google: Boolean(process.env.GOOGLE_CLIENT_ID),
+        googleClientId: process.env.GOOGLE_CLIENT_ID || null,
+        emailOtp: true
+      });
+    }
+
+    // AUTH: Google OAuth 2.0 Authorization Initiation
+    if (method === 'GET' && pathname === '/api/auth/google') {
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      if (!clientId) {
+        if (req.headers.accept?.includes('text/html')) {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Operza — Google OAuth Setup Required</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #090d16; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 20px; box-sizing: border-box; }
+    .card { background: #131b2e; border: 1px solid #1e293b; border-radius: 12px; padding: 32px; max-width: 540px; box-shadow: 0 16px 36px rgba(0,0,0,0.5); }
+    h1 { font-size: 20px; margin-top: 0; color: #fff; display: flex; align-items: center; gap: 10px; }
+    p { font-size: 14px; line-height: 1.6; color: #94a3b8; }
+    pre { background: #050811; border: 1px solid #23314d; border-radius: 8px; padding: 14px; font-size: 12.5px; color: #38bdf8; overflow-x: auto; line-height: 1.5; }
+    a.btn { display: inline-block; background: #4f46e5; color: #fff; padding: 10px 18px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 13px; margin-top: 14px; }
+    a.btn:hover { background: #4338ca; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1><span>🔒</span> Google OAuth Configuration Required</h1>
+    <p>To enable <strong>Sign in with Google</strong> in Operza, add your Google Cloud OAuth 2.0 Client credentials to your <code>.env</code> file:</p>
+    <pre>GOOGLE_CLIENT_ID=your-google-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-your-google-client-secret
+GOOGLE_REDIRECT_URI=http://localhost:4000/api/auth/google/callback</pre>
+    <p>In Google Cloud Console under <strong>APIs &amp; Services &gt; Credentials &gt; Authorized redirect URIs</strong>, add:<br>
+    <code>http://localhost:4000/api/auth/google/callback</code></p>
+    <a href="/login" class="btn">Return to Sign In</a>
+  </div>
+</body>
+</html>`);
+          return;
+        }
+        return sendJson(res, 400, {
+          error: 'Google OAuth is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env.'
+        });
+      }
+
+      const stateToken = randomBytes(32).toString('hex');
+      oauthStates.set(stateToken, Date.now());
+
+      const hostHeader = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:4000';
+      const proto = req.headers['x-forwarded-proto'] || (isProd ? 'https' : 'http');
+      const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${proto}://${hostHeader}/api/auth/google/callback`;
+
+      const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent('openid email profile')}&state=${encodeURIComponent(stateToken)}&access_type=offline&prompt=consent`;
+
+      res.statusCode = 302;
+      res.setHeader('Location', authUrl);
+      res.end();
+      return;
+    }
+
+    // AUTH: Google OAuth 2.0 Authorization Callback
+    if (method === 'GET' && pathname === '/api/auth/google/callback') {
+      const query = url.searchParams;
+      const code = query.get('code');
+      const stateParam = query.get('state');
+      const oauthError = query.get('error');
+
+      const webBase = isProd ? '' : (process.env.WEB_URL || 'http://localhost:5173');
+
+      if (oauthError) {
+        res.statusCode = 302;
+        res.setHeader('Location', `${webBase}/login?error=${encodeURIComponent('Google sign-in was canceled: ' + oauthError)}`);
+        res.end();
+        return;
+      }
+
+      if (!code || !stateParam || !oauthStates.has(stateParam)) {
+        res.statusCode = 302;
+        res.setHeader('Location', `${webBase}/login?error=${encodeURIComponent('Invalid or expired authentication session. Please try again.')}`);
+        res.end();
+        return;
+      }
+
+      const createdAt = oauthStates.get(stateParam);
+      oauthStates.delete(stateParam);
+      if (Date.now() - createdAt > 10 * 60 * 1000) {
+        res.statusCode = 302;
+        res.setHeader('Location', `${webBase}/login?error=${encodeURIComponent('Authentication session timed out. Please try again.')}`);
+        res.end();
+        return;
+      }
+
+      const clientId = process.env.GOOGLE_CLIENT_ID;
+      const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+      const hostHeader = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:4000';
+      const proto = req.headers['x-forwarded-proto'] || (isProd ? 'https' : 'http');
+      const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${proto}://${hostHeader}/api/auth/google/callback`;
+
+      try {
+        const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            code,
+            client_id: clientId,
+            client_secret: clientSecret,
+            redirect_uri: redirectUri,
+            grant_type: 'authorization_code'
+          })
+        });
+
+        const tokenData = await tokenRes.json();
+        if (!tokenRes.ok || !tokenData.access_token) {
+          const msg = tokenData.error_description || tokenData.error || 'Failed to exchange Google OAuth authorization code';
+          res.statusCode = 302;
+          res.setHeader('Location', `${webBase}/login?error=${encodeURIComponent(msg)}`);
+          res.end();
+          return;
+        }
+
+        const userRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+          headers: { Authorization: `Bearer ${tokenData.access_token}` }
+        });
+        const profile = await userRes.json();
+
+        if (!profile.email) {
+          res.statusCode = 302;
+          res.setHeader('Location', `${webBase}/login?error=${encodeURIComponent('No verified email address returned from your Google account.')}`);
+          res.end();
+          return;
+        }
+
+        const normalizedEmail = profile.email.toLowerCase().trim();
+        let user = state.users.find(u => u.email === normalizedEmail && u.status === 'active');
+        let agency, membership, locations;
+
+        if (user) {
+          user.googleId = profile.sub;
+          user.avatarUrl = profile.picture || user.avatarUrl;
+          user.isEmailVerified = true;
+          membership = state.memberships.find(m => m.userId === user.id && m.status === 'active');
+          agency = state.agencies.find(a => a.id === membership?.agencyId && a.status === 'active');
+          locations = state.locations.filter(l => l.agencyId === agency?.id && l.status === 'active');
+        } else {
+          user = {
+            id: randomUUID(),
+            email: normalizedEmail,
+            name: profile.name || normalizedEmail.split('@')[0],
+            googleId: profile.sub,
+            avatarUrl: profile.picture || '',
+            role: 'owner',
+            isEmailVerified: true,
+            status: 'active',
+            createdAt: new Date().toISOString()
+          };
+          agency = {
+            id: randomUUID(),
+            name: `${user.name}'s Agency`,
+            plan: 'trial',
+            status: 'active',
+            createdAt: new Date().toISOString()
+          };
+          const location = {
+            id: randomUUID(),
+            agencyId: agency.id,
+            name: 'Main Location',
+            isDefault: true,
+            status: 'active',
+            createdAt: new Date().toISOString()
+          };
+          membership = {
+            id: randomUUID(),
+            agencyId: agency.id,
+            userId: user.id,
+            role: 'owner',
+            status: 'active',
+            createdAt: new Date().toISOString()
+          };
+
+          state.users.push(user);
+          state.agencies.push(agency);
+          state.locations.push(location);
+          state.memberships.push(membership);
+          locations = [location];
+        }
+
+        const token = randomBytes(32).toString('hex');
+        const csrf = randomBytes(24).toString('hex');
+        state.sessions.push({
+          id: randomUUID(),
+          tokenHash: hash(token),
+          csrfHash: hash(csrf),
+          userId: user.id,
+          agencyId: agency.id,
+          expiresAt: Date.now() + 12 * 3600 * 1000
+        });
+
+        setSessionCookies(res, token, csrf);
+        await saveState();
+        auditLog('auth.google_login', { user, agency, membership, locations, activeLocation: locations[0] }, {});
+
+        res.statusCode = 302;
+        res.setHeader('Location', `${webBase}/`);
+        res.end();
+        return;
+      } catch (err) {
+        res.statusCode = 302;
+        res.setHeader('Location', `${webBase}/login?error=${encodeURIComponent('Network error during Google sign-in: ' + err.message)}`);
+        res.end();
+        return;
+      }
     }
 
     // AUTH: Full user profile

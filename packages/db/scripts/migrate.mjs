@@ -4,6 +4,16 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Auto-load root .env if present
+try {
+  if (typeof process.loadEnvFile === 'function') {
+    const root = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
+    process.loadEnvFile(path.join(root, '.env'));
+  }
+} catch {
+  // Gracefully continue if .env does not exist
+}
+
 const { Pool } = pg;
 const migrationUrl = process.env.MIGRATION_DATABASE_URL || process.env.DATABASE_URL;
 

@@ -2861,8 +2861,13 @@ async function runTests() {
     // TEST 86: WebSocket Cross-Tenant Event Isolation
     // ─────────────────────────────────────────────────────────────
     console.log('\n[TEST 86] WebSocket Cross-Tenant Real-Time Event Isolation');
-    const wsModule = await import('../apps/api/node_modules/ws/index.js');
-    const WebSocket = wsModule.default?.WebSocket || wsModule.default || wsModule;
+    let wsModule;
+    try {
+      wsModule = await import('ws');
+    } catch {
+      wsModule = await import('../apps/api/node_modules/ws/index.js');
+    }
+    const WebSocket = wsModule.default?.WebSocket || wsModule.WebSocket || wsModule.default || wsModule;
     const wsClientA = new WebSocket(`ws://localhost:4005/ws?agencyId=${t78_signupB.data.agency.id}`); // Client for Beta
     const wsClientB = new WebSocket('ws://localhost:4005/ws?agencyId=unrelated_agency_xyz'); // Client for different agency
 
