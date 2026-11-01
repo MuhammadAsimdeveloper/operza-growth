@@ -990,16 +990,9 @@ export default function Copilot() {
               /* Welcome / Zero State View */
               <div style={{ maxWidth: '680px', margin: '30px auto', textAlign: 'center' }}>
                 <MissMinutesAvatar size={68} animated={false} style={{ margin: '0 auto 16px' }} />
-                <h2 style={{ fontSize: '22px', fontWeight: 700, margin: '0 0 6px' }}>
+                <h2 style={{ fontSize: '22px', fontWeight: 700, margin: '0 0 10px' }}>
                   {activeAgent.name}
                 </h2>
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', marginBottom: '14px' }}>
-                  <span style={{ fontSize: '11px', background: 'rgba(245, 158, 11, 0.15)', color: '#d97706', padding: '2px 8px', borderRadius: '4px', fontWeight: 600 }}>
-                    TVA AUTONOMOUS COPILOT
-                  </span>
-                  <span style={{ fontSize: '11px', color: 'var(--text-3)' }}>•</span>
-                  <span style={{ fontSize: '12px', color: 'var(--text-2)' }}>{selectedModel}</span>
-                </div>
                 <p style={{ color: 'var(--text-2)', fontSize: '13.5px', lineHeight: 1.6, margin: '0 0 24px', maxWidth: '580px', marginInline: 'auto' }}>
                   {activeAgent.subtitle}. Connected live to your contacts, pipeline deals, campaigns, calendar, and internal documents.
                 </p>
@@ -1236,15 +1229,6 @@ export default function Copilot() {
                 boxShadow: '0 4px 16px rgba(0,0,0,0.06)'
               }}
             >
-              {/* Active context pills */}
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px', fontSize: '11px', color: 'var(--text-3)', overflowX: 'auto', paddingBottom: '2px' }}>
-                <span style={{ fontWeight: 600 }}>Active Workspace:</span>
-                <Badge tone="default">Live CRM</Badge>
-                {knowledgeDocs.length > 0 && <Badge tone="default">{knowledgeDocs.length} Knowledge Docs</Badge>}
-                <Badge tone="amber">{activeAgent.name}</Badge>
-                <Badge tone="default">{selectedModel}</Badge>
-              </div>
-
               {/* Textarea */}
               <textarea
                 ref={textareaRef}
@@ -1276,10 +1260,7 @@ export default function Copilot() {
               />
 
               {/* Input Action Controls */}
-              <div className="row row--between" style={{ marginTop: '8px', alignItems: 'center' }}>
-                <span className="hint" style={{ fontSize: '11px', color: 'var(--text-3)' }}>
-                  Press <strong>Enter</strong> to send, <strong>Shift + Enter</strong> for newline
-                </span>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px', alignItems: 'center' }}>
                 <button
                   type="button"
                   className="btn btn--primary btn--sm"
