@@ -29,6 +29,7 @@ import { workflowQueue } from './queue.mjs';
 import { getEmailProvider } from './providers/email.mjs';
 import { getSmsProvider, normalizeE164, isValidE164 } from './providers/sms.mjs';
 import { getPaymentProvider, formatCurrencyAmount, SUPPORTED_CURRENCIES, isSupportedCurrency } from './providers/payments.mjs';
+import { WORKFLOW_CATEGORIES, WORKFLOW_COLLECTIONS, RAW_TEMPLATES } from './workflow-templates.mjs';
 
 // Conditionally load ws — gracefully degrade if not installed
 let WebSocketServer;
@@ -6046,6 +6047,64 @@ const server = createServer(async (req, res) => {
       auditLog('workflow.duplicate', actor, { originalId: flow.id, clonedId });
       broadcast('workflow.created', { id: clonedId, name: clonedFlow.name });
       return sendJson(res, 201, { success: true, workflow: clonedFlow });
+    }
+
+    // GET /api/workflow-templates/categories
+    if (method === 'GET' && pathname === '/api/workflow-templates/categories') {
+      return sendJson(res, 200, { categories: WORKFLOW_CATEGORIES, collections: WORKFLOW_COLLECTIONS });
+    }
+
+    // GET /api/workflow-templates
+    if (method === 'GET' && pathname === '/api/workflow-templates') {
+      const parsedUrl = new URL(req.url, 'http://localhost');
+      const q = (parsedUrl.searchParams.get('q') || '').toLowerCase();
+      const cat = parsedUrl.searchParams.get('category');
+      let tpls = RAW_TEMPLATES;
+      if (cat) {
+        tpls = tpls.filter(t => String(t.categoryId) === String(cat) || t.category.toLowerCase() === cat.toLowerCase());
+      }
+      if (q) {
+        tpls = tpls.filter(t => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q));
+      }
+      return sendJson(res, 200, { templates: tpls, total: tpls.length });
+    }
+
+    // GET /api/workflow-templates/:id
+    if (method === 'GET' && pathname.startsWith('/api/workflow-templates/') && !pathname.endsWith('/clone')) {
+      const tplId = pathname.replace('/api/workflow-templates/', '').trim();
+      const tpl = RAW_TEMPLATES.find(t => t.id === tplId);
+      if (!tpl) return sendJson(res, 404, { error: 'Workflow template not found' });
+      return sendJson(res, 200, { template: tpl });
+    }
+
+    // POST /api/workflow-templates/:id/clone - Instantiate template as active agency workflow
+    if (method === 'POST' && pathname.startsWith('/api/workflow-templates/') && pathname.endsWith('/clone')) {
+      const tplId = pathname.replace('/api/workflow-templates/', '').replace('/clone', '').trim();
+      const tpl = RAW_TEMPLATES.find(t => t.id === tplId);
+      if (!tpl) return sendJson(res, 404, { error: 'Workflow template not found' });
+
+      const newId = randomUUID();
+      const newFlow = {
+        id: newId,
+        agencyId: agency.id,
+        locationId: activeLocation.id,
+        name: tpl.name,
+        status: 'draft',
+        trigger: JSON.parse(JSON.stringify(tpl.trigger)),
+        actions: JSON.parse(JSON.stringify(tpl.actions)),
+        version: 1,
+        enrolled: 0,
+        completed: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      state.records.workflows = state.records.workflows || [];
+      state.records.workflows.push(newFlow);
+      await saveState();
+      auditLog('workflow.template_cloned', actor, { templateId: tpl.id, workflowId: newId });
+      broadcast('workflow.created', { id: newId, name: newFlow.name });
+      return sendJson(res, 201, { success: true, workflow: newFlow });
     }
 
 

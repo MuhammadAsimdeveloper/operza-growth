@@ -56,44 +56,44 @@
 }
 
 [data-theme="dark"] {
-  /* Surfaces */
-  --bg: #090d16;
-  --surface: #111827;
-  --surface-2: #1e293b;
-  --surface-3: #283548;
-  --sidebar: #0d121f;
+  /* Surfaces - n8n Slate Dark Canvas Aesthetic */
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface-2: #21262d;
+  --surface-3: #30363d;
+  --sidebar: #0d1117;
 
   /* Ink */
-  --text: #f8fafc;
-  --text-2: #94a3b8;
-  --text-3: #64748b;
-  --text-inverse: #090d16;
+  --text: #f0f6fc;
+  --text-2: #8b949e;
+  --text-3: #6e7681;
+  --text-inverse: #0d1117;
 
   /* Lines */
-  --line: #1e293b;
-  --line-strong: #334155;
+  --line: #21262d;
+  --line-strong: #30363d;
 
-  /* Brand */
-  --accent: #6366f1;
-  --accent-hover: #4f46e5;
-  --accent-soft: rgba(99, 102, 241, 0.16);
-  --accent-ink: #c7d2fe;
+  /* Brand - n8n Coral & Electric Violet */
+  --accent: #ff6d5a;
+  --accent-hover: #ff523b;
+  --accent-soft: rgba(255, 109, 90, 0.14);
+  --accent-ink: #ffb8ad;
 
   /* Status */
-  --green: #10b981;
-  --green-soft: rgba(16, 185, 129, 0.16);
-  --amber: #f59e0b;
-  --amber-soft: rgba(245, 158, 11, 0.16);
-  --red: #ef4444;
-  --red-soft: rgba(239, 68, 68, 0.16);
-  --blue: #3b82f6;
-  --blue-soft: rgba(59, 130, 246, 0.16);
-  --violet: #8b5cf6;
-  --violet-soft: rgba(139, 92, 246, 0.16);
+  --green: #2ea043;
+  --green-soft: rgba(46, 160, 67, 0.16);
+  --amber: #d29922;
+  --amber-soft: rgba(210, 153, 34, 0.16);
+  --red: #f85149;
+  --red-soft: rgba(248, 81, 73, 0.16);
+  --blue: #388bfd;
+  --blue-soft: rgba(56, 139, 253, 0.16);
+  --violet: #a371f7;
+  --violet-soft: rgba(163, 113, 247, 0.16);
 
   /* Elevation */
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.6), 0 2px 5px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.7);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.6), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.7), 0 2px 5px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.85);
 }

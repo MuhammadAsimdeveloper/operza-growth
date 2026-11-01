@@ -346,6 +346,29 @@ export default function Workflows() {
     }
   };
 
+  const handleImportTemplate = async (template: any) => {
+    try {
+      const res = await api.workflowTemplates.clone(template.id);
+      if (res?.workflow) {
+        dispatch({ type: 'workflow/add', workflow: res.workflow });
+        setSelectedId(res.workflow.id);
+        return;
+      }
+    } catch {}
+
+    const newFlow: Workflow = {
+      id: uid('wf'),
+      name: template.name,
+      status: 'draft',
+      trigger: JSON.parse(JSON.stringify(template.trigger)),
+      actions: JSON.parse(JSON.stringify(template.actions)),
+      enrolled: 0,
+      completed: 0,
+    };
+    dispatch({ type: 'workflow/add', workflow: newFlow });
+    setSelectedId(newFlow.id);
+  };
+
   const addStep = (parentId?: string, branch?: 'yes' | 'no') => {
     if (!selected) return;
     setStepDraft({ workflowId: selected.id, parentId, branch });
@@ -620,6 +643,7 @@ export default function Workflows() {
                     workflow={selected}
                     onEditStep={(step) => editStep(step)}
                     onAddStep={() => addStep()}
+                    onImportTemplate={handleImportTemplate}
                   />
                 ) : (
                   <div className="flow">

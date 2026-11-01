@@ -128,6 +128,18 @@ export const api = {
     duplicate: (workflowId: string) =>
       request<{ success: boolean; workflow: any }>(`/api/workflows/${workflowId}/duplicate`, { method: 'POST' }),
   },
+  workflowTemplates: {
+    getCategories: () => request<{ categories: any[]; collections: any[] }>('/api/workflow-templates/categories'),
+    list: (params: { q?: string; category?: string } = {}) => {
+      const search = new URLSearchParams();
+      if (params.q) search.set('q', params.q);
+      if (params.category) search.set('category', params.category);
+      const query = search.toString() ? `?${search.toString()}` : '';
+      return request<{ templates: any[]; total: number }>(`/api/workflow-templates${query}`);
+    },
+    get: (id: string) => request<{ template: any }>(`/api/workflow-templates/${id}`),
+    clone: (id: string) => request<{ success: boolean; workflow: any }>(`/api/workflow-templates/${id}/clone`, { method: 'POST' }),
+  },
   reviews: {
     getPublic: (locationId: string) => request(`/api/reviews/public/${locationId}`),
     submitPublic: (locationId: string, data: { contactName: string; email?: string; rating: number; text: string; source?: string }) =>

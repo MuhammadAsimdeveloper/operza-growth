@@ -229,6 +229,7 @@ function SearchBox() {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -247,8 +248,19 @@ function SearchBox() {
     const onDown = (e: MouseEvent) => {
       if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        inputRef.current?.focus();
+        setOpen(true);
+      }
+    };
     document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
   }, []);
 
   const go = (path: string) => {
@@ -263,7 +275,8 @@ function SearchBox() {
     <div className="topbar__search" ref={boxRef}>
       <Icon name="search" size={16} />
       <input
-        placeholder="Search contacts, deals, pages…"
+        ref={inputRef}
+        placeholder="Search contacts, deals, pages… (Ctrl+K)"
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
@@ -271,6 +284,21 @@ function SearchBox() {
         }}
         onFocus={() => setOpen(true)}
       />
+      <kbd
+        style={{
+          fontSize: 10,
+          fontWeight: 600,
+          padding: '2px 5px',
+          borderRadius: 4,
+          background: 'var(--surface-3)',
+          color: 'var(--text-3)',
+          border: '1px solid var(--line-strong)',
+          marginLeft: 6,
+          userSelect: 'none',
+        }}
+      >
+        Ctrl K
+      </kbd>
       {open && query.trim() && (
         <div
           className="card"
