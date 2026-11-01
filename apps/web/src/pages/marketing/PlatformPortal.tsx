@@ -51,7 +51,7 @@ export default function PlatformPortal() {
               style={styles.btnPrimary}
               onClick={() => trackEvent('signup_start', { source: 'portal_page' })}
             >
-              Start 14-Day Free Trial →
+              Start 7-Day Free Trial →
             </Link>
             <Link to="/pricing" style={styles.btnSecondary}>
               See White-Label Pricing
@@ -145,7 +145,7 @@ export default function PlatformPortal() {
             style={styles.btnPrimary}
             onClick={() => trackEvent('signup_start', { source: 'portal_bottom_cta' })}
           >
-            Start Free 14-Day Trial →
+            Start Free 7-Day Trial →
           </Link>
         </div>
       </section>

@@ -17,9 +17,9 @@ const PRICING_FAQS = [
       'The Starter plan includes 3 client sub-accounts. The Growth plan provides 15 client sub-accounts, and the Scale plan delivers unlimited sub-accounts with full snapshot replication.',
   },
   {
-    question: 'What is included in the 14-day free trial?',
+    question: 'What is included in the 7-day free trial?',
     answer:
-      'The 14-day trial provides full unrestricted access to all platform features: visual workflows, funnel builder, CRM pipelines, omnichannel inbox, and the white-label client portal.',
+      'The 7-day trial provides full unrestricted access to all platform features: visual workflows, funnel builder, CRM pipelines, omnichannel inbox, and the white-label client portal.',
   },
   {
     question: 'Can I self-host Operza on my own servers?',
@@ -125,7 +125,7 @@ export default function Pricing() {
                 style={styles.planBtnSecondary}
                 onClick={() => trackEvent('pricing_select', { plan: 'starter', cycle: billingCycle })}
               >
-                Start 14-Day Free Trial
+                Start 7-Day Free Trial
               </Link>
             </div>
 
@@ -156,7 +156,7 @@ export default function Pricing() {
                 style={styles.planBtnPrimary}
                 onClick={() => trackEvent('pricing_select', { plan: 'growth', cycle: billingCycle })}
               >
-                Start 14-Day Free Trial →
+                Start 7-Day Free Trial →
               </Link>
             </div>
 
@@ -185,7 +185,7 @@ export default function Pricing() {
                 style={styles.planBtnSecondary}
                 onClick={() => trackEvent('pricing_select', { plan: 'scale', cycle: billingCycle })}
               >
-                Start 14-Day Free Trial
+                Start 7-Day Free Trial
               </Link>
             </div>
           </div>

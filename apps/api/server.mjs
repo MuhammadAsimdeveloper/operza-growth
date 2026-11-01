@@ -395,7 +395,7 @@ const PLAN_LIMITS = {
     maxActiveWorkflows: Number(process.env.PLAN_TRIAL_MAX_ACTIVE_WORKFLOWS) || 3,
     maxMonthlyWorkflowExecutions: Number(process.env.PLAN_TRIAL_MAX_MONTHLY_EXECUTIONS) || 500,
     maxStorageMb: Number(process.env.PLAN_TRIAL_MAX_STORAGE_MB) || 250,
-    trialDays: 14
+    trialDays: 7
   },
   starter: {
     key: 'starter',
@@ -461,8 +461,8 @@ function getAgencyUsage(agencyId) {
   const createdDate = ag?.createdAt ? new Date(ag.createdAt) : new Date();
   const daysSinceCreation = Math.floor((Date.now() - createdDate.getTime()) / (86400 * 1000));
   const isTrial = (plan.key === 'trial' || ag?.status === 'trial');
-  const trialDaysRemaining = isTrial ? Math.max(0, 14 - daysSinceCreation) : null;
-  const isTrialExpired = isTrial && daysSinceCreation > 14;
+  const trialDaysRemaining = isTrial ? Math.max(0, 7 - daysSinceCreation) : null;
+  const isTrialExpired = isTrial && daysSinceCreation > 7;
 
   return {
     planKey: plan.key,
@@ -501,7 +501,7 @@ function checkPlanLimit(agencyId, resourceType, increment = 1) {
     return {
       allowed: false,
       code: 'TRIAL_EXPIRED',
-      error: 'Your 14-day free trial has expired. Please upgrade to a paid plan to continue creating resources.'
+      error: 'Your 7-day free trial has expired. Please upgrade to a paid plan to continue creating resources.'
     };
   }
 
@@ -4105,7 +4105,7 @@ const server = createServer(async (req, res) => {
         attempts: 0
       });
 
-      await emailProvider.sendEmail({
+      await getEmailProvider().sendEmail({
         to: emailKey,
         subject: 'Verify Your Operza Account',
         text: `Welcome to Operza! Your 6-digit verification code is: ${generatedOtp}. This code expires in 10 minutes.`,
@@ -4121,6 +4121,7 @@ const server = createServer(async (req, res) => {
         success: true,
         requireOtp: true,
         email: emailKey,
+        ...(process.env.NODE_ENV !== 'production' ? { debugOtp: generatedOtp } : {}),
         message: 'A 6-digit verification code has been dispatched to your email address.'
       });
     }
@@ -4128,7 +4129,8 @@ const server = createServer(async (req, res) => {
     // AUTH: Verify OTP
     if (method === 'POST' && pathname === '/api/auth/verify-otp') {
       const body = await readBody(req);
-      const { email, otp } = body;
+      const email = body.email;
+      const otp = body.otp || body.code;
       if (!email || !otp) return sendJson(res, 400, { error: 'Email and verification code are required' });
       const emailKey = String(email).toLowerCase().trim();
       const pending = pendingSignups.get(emailKey);
@@ -4170,7 +4172,7 @@ const server = createServer(async (req, res) => {
       pending.otp = newOtp;
       pending.expiresAt = Date.now() + OTP_TTL;
       pending.attempts = 0;
-      await emailProvider.sendEmail({
+      await getEmailProvider().sendEmail({
         to: emailKey,
         subject: 'Your New Operza Verification Code',
         text: `Your new Operza verification code is: ${newOtp}. It expires in 10 minutes.`,
@@ -6346,10 +6348,10 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 200, {
           allowNewSignups: true,
           requireEmailVerification: true,
-          defaultTrialDays: 14,
+          defaultTrialDays: 7,
           rateLimitMax: RATE_LIMIT_MAX_REQUESTS,
-          emailProvider: emailProvider.constructor.name,
-          smsProvider: smsProvider.constructor.name,
+          emailProvider: getEmailProvider().constructor.name,
+          smsProvider: getSmsProvider().constructor.name,
           paymentMode: process.env.STRIPE_SECRET_KEY ? 'stripe_live' : 'mock_sandbox',
           databaseEngine: pgPool ? 'postgresql' : 'json_store'
         });

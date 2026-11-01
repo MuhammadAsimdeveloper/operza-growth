@@ -83,7 +83,7 @@ export default function Signup() {
   return (
     <div style={styles.wrapper}>
       <SEO
-        title="Start 14-Day Free Trial — Agency Workspace"
+        title="Start 7-Day Free Trial — Agency Workspace"
         description="Create your Operza agency account. Full access to CRM pipelines, 2D visual workflows, funnels, omnichannel conversations, and white-label client portal."
         canonical="/signup"
         robots="noindex, follow"

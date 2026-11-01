@@ -1337,7 +1337,7 @@ export const seed: WorkspaceState = {
     { id: 'cv3', name: 'Booking link', value: 'https://book.operza.test/asim' },
     { id: 'cv4', name: 'Office phone', value: '+1 (415) 555-0100' },
     { id: 'cv5', name: 'Email signature', value: 'Asim R. — Asim Growth Agency' },
-    { id: 'cv6', name: 'Trial length', value: '14 days' },
+    { id: 'cv6', name: 'Trial length', value: '7 days' },
     { id: 'cv7', name: 'Review link', value: 'https://g.page/r/asim-growth/review' },
   ],
 

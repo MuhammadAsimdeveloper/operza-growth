@@ -51,7 +51,7 @@ export default function PlatformReporting() {
               style={styles.btnPrimary}
               onClick={() => trackEvent('signup_start', { source: 'reporting_page' })}
             >
-              Start Free 14-Day Trial →
+              Start Free 7-Day Trial →
             </Link>
             <Link to="/pricing" style={styles.btnSecondary}>
               Explore Reporting Features
@@ -114,7 +114,7 @@ export default function PlatformReporting() {
             style={styles.btnPrimary}
             onClick={() => trackEvent('signup_start', { source: 'reporting_bottom_cta' })}
           >
-            Start Free 14-Day Trial →
+            Start Free 7-Day Trial →
           </Link>
         </div>
       </section>

@@ -406,7 +406,7 @@ export default function PlatformAdmin() {
               <input
                 className="input"
                 type="number"
-                value={settings?.trialDays || 14}
+                value={settings?.trialDays || 7}
                 onChange={(e) => setSettings({ ...settings, trialDays: Number(e.target.value) })}
                 style={{ maxWidth: 160 }}
               />

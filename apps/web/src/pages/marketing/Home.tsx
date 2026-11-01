@@ -92,7 +92,7 @@ export default function Home() {
               style={styles.heroBtnPrimary}
               onClick={() => trackEvent('signup_start', { source: 'hero_primary' })}
             >
-              Start 14-Day Free Trial →
+              Start 7-Day Free Trial →
             </Link>
             <Link
               to="/platform/automation"
@@ -264,7 +264,7 @@ export default function Home() {
                     <span style={styles.badgeSuccess}>4.8% Conversion</span>
                   </div>
                   <div style={{ padding: 16, background: '#0f172a', borderRadius: 8, color: '#f8fafc', textAlign: 'center' }}>
-                    <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>Scale Agency Growth in 14 Days</div>
+                    <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 6 }}>Scale Agency Growth in 7 Days</div>
                     <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 12 }}>Limited VIP Masterclass Invitation</div>
                     <div style={{ background: '#1e293b', padding: 8, borderRadius: 6, fontSize: 12, border: '1px dashed #6366f1' }}>
                       ☑️ 1-Click Order Bump: Add VIP Snapshot Blueprints ($497)
@@ -437,7 +437,7 @@ export default function Home() {
           </h2>
           <p style={{ fontSize: 16, color: '#c7d2fe', maxWidth: 540, margin: '0 auto 24px', lineHeight: 1.5 }}>
             Join forward-thinking agencies eliminating software fragmentation with Operza.
-            Start your full-featured 14-day trial today.
+            Start your full-featured 7-day trial today.
           </p>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center', flexWrap: 'wrap' }}>
             <Link

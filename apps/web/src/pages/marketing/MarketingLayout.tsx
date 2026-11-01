@@ -361,7 +361,7 @@ export function MarketingLayout() {
               <h4 style={styles.footerHeading}>Company</h4>
               <ul style={styles.footerList}>
                 <li><Link to="/about" style={styles.footerLink}>About Operza</Link></li>
-                <li><Link to="/signup" style={styles.footerLink}>Start 14-Day Trial</Link></li>
+                <li><Link to="/signup" style={styles.footerLink}>Start 7-Day Trial</Link></li>
                 <li><a href="https://github.com/MuhammadAsimdeveloper/operza-growth" target="_blank" rel="noopener noreferrer" style={styles.footerLink}>GitHub Repository</a></li>
                 <li><Link to="/docs" style={styles.footerLink}>Security &amp; RLS Isolation</Link></li>
               </ul>

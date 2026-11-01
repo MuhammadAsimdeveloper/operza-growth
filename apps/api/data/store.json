@@ -13,6 +13,34 @@
         "ip": "127.0.0.1"
       },
       "createdAt": "2026-11-01T05:06:06.480Z"
+    },
+    {
+      "id": "67385830-3861-4351-a57a-1bad18a1808a",
+      "name": "Platform Administrator",
+      "email": "admin@operza.io",
+      "passwordHash": "68980eef72188263c0df104ee11951ee:dce03bdd4731175b09e50dc17e72a25f8b9356935470c29485dd284b459953db124dddd3905a73635b572a0367e850e16ab4780f0cf16365d65811541fb1b37d",
+      "role": "superadmin",
+      "status": "active",
+      "consent": {
+        "termsAcceptedAt": "2026-11-01T05:58:24.787Z"
+      },
+      "createdAt": "2026-11-01T05:58:24.788Z"
+    },
+    {
+      "id": "f711df18-3ccf-432f-a239-f0f3f79a09c0",
+      "name": "Trial Tester",
+      "email": "trial_user_1793514944642@operza.io",
+      "passwordHash": "48f1c2dd90316ad28669f5a0c24c4e2a:5f060a15981509e066d6b04f15fb13eb96733bd11a3283fd728565a9fa7cbd70fa579bff8eb6b9ce698b8cfc5fe7bb09b0a33639fa0545763826d717b79c841e",
+      "role": "owner",
+      "emailVerified": true,
+      "status": "active",
+      "consent": {
+        "termsAcceptedAt": "2026-11-01T06:35:44.760Z",
+        "privacyPolicyAcceptedAt": "2026-11-01T06:35:44.760Z",
+        "marketingOptIn": false,
+        "ip": "127.0.0.1"
+      },
+      "createdAt": "2026-11-01T06:35:44.760Z"
     }
   ],
   "agencies": [
@@ -27,6 +55,31 @@
       "country": "US",
       "locale": "en-US",
       "createdAt": "2026-11-01T05:06:06.480Z"
+    },
+    {
+      "id": "agency_platform_system",
+      "name": "Operza Platform Control",
+      "slug": "operza-admin",
+      "status": "active",
+      "plan": "enterprise",
+      "timezone": "UTC",
+      "currency": "USD",
+      "country": "US",
+      "locale": "en-US",
+      "isSystem": true,
+      "createdAt": "2026-11-01T05:58:24.788Z"
+    },
+    {
+      "id": "38b5e0b7-925b-47a4-8e55-b9315c6435d7",
+      "name": "Trial 7 Agency",
+      "slug": "trial_user_1793514944642",
+      "status": "active",
+      "plan": "trial",
+      "timezone": "UTC",
+      "currency": "USD",
+      "country": "US",
+      "locale": "en-US",
+      "createdAt": "2026-11-01T06:35:44.760Z"
     }
   ],
   "locations": [
@@ -37,6 +90,22 @@
       "timezone": "UTC",
       "status": "active",
       "createdAt": "2026-11-01T05:06:06.480Z"
+    },
+    {
+      "id": "loc_platform_main",
+      "agencyId": "agency_platform_system",
+      "name": "Global Operations",
+      "timezone": "UTC",
+      "status": "active",
+      "createdAt": "2026-11-01T05:58:24.788Z"
+    },
+    {
+      "id": "edcb353d-eabb-4820-b105-3c0ce7f28ef3",
+      "agencyId": "38b5e0b7-925b-47a4-8e55-b9315c6435d7",
+      "name": "Main Workspace",
+      "timezone": "UTC",
+      "status": "active",
+      "createdAt": "2026-11-01T06:35:44.760Z"
     }
   ],
   "memberships": [
@@ -47,6 +116,22 @@
       "role": "owner",
       "status": "active",
       "createdAt": "2026-11-01T05:06:06.480Z"
+    },
+    {
+      "id": "4105bb23-2c71-481b-9f3f-53f7e1b3f9ab",
+      "agencyId": "agency_platform_system",
+      "userId": "67385830-3861-4351-a57a-1bad18a1808a",
+      "role": "superadmin",
+      "status": "active",
+      "createdAt": "2026-11-01T05:58:24.788Z"
+    },
+    {
+      "id": "caba7d8f-9d53-40d8-8c9d-b83e90c71de7",
+      "agencyId": "38b5e0b7-925b-47a4-8e55-b9315c6435d7",
+      "userId": "f711df18-3ccf-432f-a239-f0f3f79a09c0",
+      "role": "owner",
+      "status": "active",
+      "createdAt": "2026-11-01T06:35:44.760Z"
     }
   ],
   "invitations": [],
@@ -58,6 +143,22 @@
       "userId": "7230ed70-91ec-4055-bf4e-7d146f8514c3",
       "agencyId": "7dd79ae1-11cb-45ba-aa23-b9ac365d816c",
       "expiresAt": 1793552766481
+    },
+    {
+      "id": "b492da8e-3963-4cbf-ae95-8cb9ad351095",
+      "tokenHash": "9c88b1705730cc8a426bd4ab7c0f2105e953da348685913e65f908f19a92f06f",
+      "csrfHash": "ba873611d2ce91d802909236bfcb9d2d46d38486373a231efde23386c305d1a7",
+      "userId": "f711df18-3ccf-432f-a239-f0f3f79a09c0",
+      "agencyId": "38b5e0b7-925b-47a4-8e55-b9315c6435d7",
+      "expiresAt": 1793558144761
+    },
+    {
+      "id": "75a88ee5-c3ce-4d57-98ee-7599d26093bb",
+      "tokenHash": "4d7628ec90ce07a0ffc07369e5036a99c78d0bc02b2c1910fba67329c9c1cbbd",
+      "csrfHash": "fea8cb7de3cd2ecb393598adf02206d71848dec6e885b6ae75805195188cdec8",
+      "userId": "67385830-3861-4351-a57a-1bad18a1808a",
+      "agencyId": "agency_platform_system",
+      "expiresAt": 1793558178238
     }
   ],
   "records": {
@@ -79,6 +180,22 @@
         "status": "active",
         "description": "Primary customer acquisition pipeline",
         "createdAt": "2026-11-01T05:06:06.480Z"
+      },
+      {
+        "id": "5d9c8230-1a92-4f12-ae26-16011554aab0",
+        "agencyId": "38b5e0b7-925b-47a4-8e55-b9315c6435d7",
+        "locationId": "edcb353d-eabb-4820-b105-3c0ce7f28ef3",
+        "name": "Lead Pipeline",
+        "stages": [
+          "New Inbound Lead",
+          "Discovery Call Booked",
+          "Proposal Sent",
+          "Won",
+          "Lost"
+        ],
+        "status": "active",
+        "description": "Primary customer acquisition pipeline",
+        "createdAt": "2026-11-01T06:35:44.760Z"
       }
     ],
     "customFields": [],
@@ -136,6 +253,56 @@
           }
         ],
         "createdAt": "2026-11-01T05:06:06.480Z"
+      },
+      {
+        "id": "f63ab72c-c4f6-405c-8633-742de9cc2a1b",
+        "agencyId": "38b5e0b7-925b-47a4-8e55-b9315c6435d7",
+        "locationId": "edcb353d-eabb-4820-b105-3c0ce7f28ef3",
+        "name": "Automated Lead Qualification & AI Scoring",
+        "description": "Auto-scores new leads, applies qualification tags, and creates follow-up tasks.",
+        "status": "published",
+        "triggerType": "form",
+        "triggerConfig": {
+          "formName": "contact-us"
+        },
+        "nodes": [
+          {
+            "id": "node-ai-score",
+            "name": "AI Lead Evaluation",
+            "type": "ai_agent",
+            "config": {
+              "prompt": "Analyze lead data and score purchase intent from 1 to 100."
+            }
+          },
+          {
+            "id": "node-tag",
+            "name": "Apply High-Intent Tag",
+            "type": "tag",
+            "config": {
+              "tag": "ai-qualified"
+            }
+          },
+          {
+            "id": "node-task",
+            "name": "Create Priority Outreach Task",
+            "type": "task",
+            "config": {
+              "title": "High-Intent Lead Review",
+              "priority": "high",
+              "dueInDays": 1
+            }
+          },
+          {
+            "id": "node-approval",
+            "name": "Executive Proposal Gate",
+            "type": "condition",
+            "requiresApproval": true,
+            "config": {
+              "message": "Review enterprise proposal before final transmission"
+            }
+          }
+        ],
+        "createdAt": "2026-11-01T06:35:44.760Z"
       }
     ],
     "forms": [
@@ -157,6 +324,25 @@
         "submissions": 0,
         "description": "Book your strategy consultation with our growth engineering team.",
         "createdAt": "2026-11-01T05:06:06.480Z"
+      },
+      {
+        "id": "96a13428-5563-4c89-b57b-de5a1c8fa295",
+        "agencyId": "38b5e0b7-925b-47a4-8e55-b9315c6435d7",
+        "locationId": "edcb353d-eabb-4820-b105-3c0ce7f28ef3",
+        "name": "Inbound Consultation Request",
+        "publicSlug": "contact-us",
+        "fields": [
+          "firstName",
+          "lastName",
+          "email",
+          "phone",
+          "company",
+          "projectDetails"
+        ],
+        "status": "published",
+        "submissions": 0,
+        "description": "Book your strategy consultation with our team.",
+        "createdAt": "2026-11-01T06:35:44.760Z"
       }
     ],
     "formSubmissions": [],
@@ -204,6 +390,46 @@
           }
         ],
         "createdAt": "2026-11-01T05:06:06.480Z"
+      },
+      {
+        "id": "8742696d-0727-47c8-9178-6dcae3b204b4",
+        "agencyId": "38b5e0b7-925b-47a4-8e55-b9315c6435d7",
+        "locationId": "edcb353d-eabb-4820-b105-3c0ce7f28ef3",
+        "name": "Discovery & Strategy Session",
+        "slug": "discovery-strategy",
+        "color": "#6366f1",
+        "durationMin": 30,
+        "description": "30-minute discovery call to evaluate automation requirements.",
+        "status": "active",
+        "roundRobin": true,
+        "availability": [
+          {
+            "weekday": 1,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 2,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 3,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 4,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 5,
+            "start": "09:00",
+            "end": "17:00"
+          }
+        ],
+        "createdAt": "2026-11-01T06:35:44.760Z"
       }
     ],
     "paymentLinks": [
@@ -221,6 +447,21 @@
         "active": true,
         "description": "Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.",
         "createdAt": "2026-11-01T05:06:06.480Z"
+      },
+      {
+        "id": "f97b5fcb-4092-4470-a3f1-41aad56742e6",
+        "agencyId": "38b5e0b7-925b-47a4-8e55-b9315c6435d7",
+        "locationId": "edcb353d-eabb-4820-b105-3c0ce7f28ef3",
+        "name": "Growth Retainer - Starter Pack",
+        "slug": "starter-retainer",
+        "amount": 1500,
+        "currency": "USD",
+        "productIds": [],
+        "visits": 0,
+        "conversions": 0,
+        "active": true,
+        "description": "Automation retainer including workflow builds and CRM setup.",
+        "createdAt": "2026-11-01T06:35:44.760Z"
       }
     ],
     "orders": [],
@@ -249,6 +490,18 @@
         "mimeType": "image/svg+xml",
         "url": "/api/media/file/brand-hero-logo",
         "uploadedAt": "2026-11-01T05:06:06.480Z"
+      },
+      {
+        "id": "ce06ce69-c99b-4d77-a5c5-ec2d29746b1c",
+        "agencyId": "38b5e0b7-925b-47a4-8e55-b9315c6435d7",
+        "locationId": "edcb353d-eabb-4820-b105-3c0ce7f28ef3",
+        "name": "brand-hero-logo.svg",
+        "folder": "Logos",
+        "kind": "image",
+        "sizeKb": 34,
+        "mimeType": "image/svg+xml",
+        "url": "/api/media/file/brand-hero-logo",
+        "uploadedAt": "2026-11-01T06:35:44.760Z"
       }
     ],
     "blogs": [
@@ -265,6 +518,20 @@
         "views": 142,
         "publishedAt": "2026-11-01T05:06:06.480Z",
         "createdAt": "2026-11-01T05:06:06.480Z"
+      },
+      {
+        "id": "a75467db-689d-4c4b-9ae5-3e9938ad79aa",
+        "agencyId": "38b5e0b7-925b-47a4-8e55-b9315c6435d7",
+        "locationId": "edcb353d-eabb-4820-b105-3c0ce7f28ef3",
+        "title": "How AI Automation Scales 7-Figure Marketing Agencies",
+        "slug": "how-ai-automation-scales-agencies",
+        "author": "Trial Tester",
+        "category": "Strategy",
+        "content": "Scaling a modern marketing agency requires moving from fragmented manual tools to unified autonomous agent infrastructure.",
+        "status": "published",
+        "views": 0,
+        "publishedAt": "2026-11-01T06:35:44.760Z",
+        "createdAt": "2026-11-01T06:35:44.760Z"
       }
     ],
     "qrCodes": [
@@ -276,6 +543,15 @@
         "target": "/calendars/public/discovery-strategy",
         "scans": 12,
         "createdAt": "2026-11-01T05:06:06.480Z"
+      },
+      {
+        "id": "e4072127-7f93-4833-912c-c017c45c9cc7",
+        "agencyId": "38b5e0b7-925b-47a4-8e55-b9315c6435d7",
+        "locationId": "edcb353d-eabb-4820-b105-3c0ce7f28ef3",
+        "name": "Discovery Booking QR",
+        "target": "/calendars/public/discovery-strategy",
+        "scans": 0,
+        "createdAt": "2026-11-01T06:35:44.760Z"
       }
     ],
     "snippets": [
@@ -288,6 +564,16 @@
         "body": "Hi {{contact.firstName}}, great speaking with you today! We look forward to scaling {{contact.company}} with {{agency.name}}.",
         "channel": "email",
         "uses": 8
+      },
+      {
+        "id": "0992ce47-bb07-4f30-ac0d-1397d14aa8fa",
+        "agencyId": "38b5e0b7-925b-47a4-8e55-b9315c6435d7",
+        "locationId": "edcb353d-eabb-4820-b105-3c0ce7f28ef3",
+        "label": "Discovery Call Follow-up",
+        "subject": "Following up on our discovery conversation",
+        "body": "Hi {{contact.firstName}}, great speaking with you today! We look forward to scaling with {{agency.name}}.",
+        "channel": "email",
+        "uses": 0
       }
     ],
     "templates": [
@@ -301,6 +587,17 @@
         "body": "Hello {{contact.firstName}},\n\nWelcome to {{agency.name}}! Your dedicated growth portal is ready.\n\nBest regards,\n{{agency.name}} Team",
         "uses": 15,
         "updatedAt": "2026-11-01T05:06:06.480Z"
+      },
+      {
+        "id": "c0884b96-5a9c-4c20-ab8b-8378976fac17",
+        "agencyId": "38b5e0b7-925b-47a4-8e55-b9315c6435d7",
+        "locationId": "edcb353d-eabb-4820-b105-3c0ce7f28ef3",
+        "name": "Welcome & Onboarding Packet",
+        "category": "Onboarding",
+        "subject": "Welcome to {{agency.name}}, {{contact.firstName}}!",
+        "body": "Hello {{contact.firstName}},\n\nWelcome to {{agency.name}}! Your dedicated growth portal is ready.\n\nBest regards,\n{{agency.name}} Team",
+        "uses": 0,
+        "updatedAt": "2026-11-01T06:35:44.760Z"
       }
     ],
     "team": [],
@@ -308,6 +605,20 @@
   },
   "workflowExecutions": [],
   "snapshots": [],
-  "audit": [],
-  "mediaFiles": {}
+  "audit": [
+    {
+      "id": "889a2e6b-be8f-493d-bbf2-b7c081eaddb5",
+      "action": "auth.signup",
+      "userId": "f711df18-3ccf-432f-a239-f0f3f79a09c0",
+      "userName": "Trial Tester",
+      "agencyId": "38b5e0b7-925b-47a4-8e55-b9315c6435d7",
+      "locationId": "edcb353d-eabb-4820-b105-3c0ce7f28ef3",
+      "details": {
+        "email": "trial_user_1793514944642@operza.io"
+      },
+      "timestamp": "2026-11-01T06:35:44.765Z"
+    }
+  ],
+  "mediaFiles": {},
+  "workflowUsage": {}
 }

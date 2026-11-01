@@ -153,7 +153,7 @@ export default function PlatformConversations() {
             style={styles.btnPrimary}
             onClick={() => trackEvent('signup_start', { source: 'conversations_bottom_cta' })}
           >
-            Start Free 14-Day Trial →
+            Start Free 7-Day Trial →
           </Link>
         </div>
       </section>

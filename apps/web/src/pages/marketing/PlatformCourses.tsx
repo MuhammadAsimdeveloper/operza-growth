@@ -121,7 +121,7 @@ export default function PlatformCourses() {
             style={styles.btnPrimary}
             onClick={() => trackEvent('signup_start', { source: 'courses_bottom_cta' })}
           >
-            Start Free 14-Day Trial →
+            Start Free 7-Day Trial →
           </Link>
         </div>
       </section>

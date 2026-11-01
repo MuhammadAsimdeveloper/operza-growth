@@ -51,7 +51,7 @@ export default function PlatformCrm() {
               style={styles.btnPrimary}
               onClick={() => trackEvent('signup_start', { source: 'crm_page' })}
             >
-              Start 14-Day Free Trial →
+              Start 7-Day Free Trial →
             </Link>
             <Link to="/pricing" style={styles.btnSecondary}>
               Compare CRM Plans

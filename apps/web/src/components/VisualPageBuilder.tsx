@@ -88,7 +88,7 @@ const DEFAULT_BLOCKS: FunnelBlock[] = [
   {
     id: 'b_subhead_1',
     type: 'subheadline',
-    content: 'Unlock 3x qualified leads, instant AI qualification, and automated pipeline execution in 14 days.',
+    content: 'Unlock 3x qualified leads, instant AI qualification, and automated pipeline execution in 7 days.',
     align: 'center',
   },
   {
