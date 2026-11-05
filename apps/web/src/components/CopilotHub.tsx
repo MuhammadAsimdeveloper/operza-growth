@@ -11,12 +11,18 @@ interface Message {
 
 export function CopilotHub() {
   const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    const openAtlasCopilot = () => setIsOpen(true);
+    window.addEventListener('atlas:open-copilot', openAtlasCopilot);
+    return () => window.removeEventListener('atlas:open-copilot', openAtlasCopilot);
+  }, []);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
       sender: 'assistant',
-      text: 'Welcome to Operza Copilot. I can query your contacts, analyze pipelines, summarize inbound leads, and trigger background automations.',
+      text: 'Welcome to Atlas Copilot. I can query your contacts, analyze pipelines, summarize inbound leads, and trigger background automations.',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
@@ -129,7 +135,7 @@ export function CopilotHub() {
           }}
         >
           <Icon name="sparkles" size={18} />
-          <span>Operza Copilot</span>
+          <span>Atlas Copilot</span>
           {pendingApprovals.length > 0 && (
             <span
               style={{
@@ -179,7 +185,7 @@ export function CopilotHub() {
                 <Icon name="sparkles" size={18} />
               </span>
               <div>
-                <div style={{ fontWeight: 600, fontSize: '14px' }}>Operza Copilot Hub</div>
+                <div style={{ fontWeight: 600, fontSize: '14px' }}>Atlas Copilot Hub</div>
                 <div style={{ fontSize: '11px', color: '#94a3b8' }}>
                   {isStreaming ? 'Streaming response...' : 'Autonomous Assistant Ready'}
                 </div>
