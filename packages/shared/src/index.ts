@@ -125,7 +125,7 @@ export interface WorkflowDefinition {
   updatedAt: string;
 }
 
-export type WorkflowStepStatus = 'running' | 'completed' | 'simulated' | 'failed' | 'waiting_approval' | 'skipped';
+export type WorkflowStepStatus = 'running' | 'waiting' | 'waiting_approval' | 'done' | 'completed' | 'simulated' | 'failed' | 'skipped';
 
 export interface WorkflowExecutionStep {
   nodeId: string;
