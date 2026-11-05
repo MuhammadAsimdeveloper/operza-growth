@@ -1500,6 +1500,25 @@ function TemplateGalleryModal({
         { id: uid('act'), kind: 'task', label: 'Review incoming webhook lead', config: { title: 'Qualify lead from external webhook' } },
       ],
     },
+    {
+      name: 'Webhook Lead Validation & Triage',
+      category: 'Webhooks & APIs',
+      description: 'Routes incoming lead data through a field check, then tags valid leads and creates a follow-up task. Invalid leads go to a review task.',
+      trigger: { kind: 'webhook', detail: 'Incoming Lead Intake' },
+      actions: [
+        {
+          id: uid('act'), kind: 'condition', label: 'Check for an email address',
+          config: { rule: { field: 'email', operator: 'contains', value: '@' } },
+          yes: [
+            { id: uid('act'), kind: 'tag', label: 'Mark intake as validated', config: { tag: 'intake-validated' } },
+            { id: uid('act'), kind: 'task', label: 'Create sales follow-up', config: { title: 'Follow up with validated lead', dueInDays: 1 } }
+          ],
+          no: [
+            { id: uid('act'), kind: 'task', label: 'Review incomplete lead', config: { title: 'Review lead missing a valid email', dueInDays: 1 } }
+          ]
+        }
+      ]
+    },
   ];
 
   return (
