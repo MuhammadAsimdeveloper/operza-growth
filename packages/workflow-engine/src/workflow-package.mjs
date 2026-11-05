@@ -151,6 +151,9 @@ function sanitizeActions(actions, state, path = 'workflow.actions', depth = 0) {
     }
     const hasYes = action.yes !== undefined;
     const hasNo = action.no !== undefined;
+    if ((hasYes && !Array.isArray(action.yes)) || (hasNo && !Array.isArray(action.no))) {
+      fail(actionPath + ' branches must be arrays', 'INVALID_BRANCH');
+    }
     if ((hasYes || hasNo) && action.kind !== 'condition') {
       fail(actionPath + ' branches are only supported on condition nodes', 'INVALID_BRANCH');
     }
