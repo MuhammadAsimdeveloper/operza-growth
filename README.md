@@ -270,7 +270,7 @@ Operza provides an exhaustive, RESTful API and WebSocket event hub:
 
 ### Automation & AI
 * `GET|POST /api/crm/workflows` — Automation workflow blueprints
-* `POST /api/workflows/:id/run` — Trigger workflow execution
+* `POST /api/workflows/:id/run` — Run a side-effect-free workflow simulation
 * `POST /api/workflows/runs/:id/approve` — Resume paused human approval gate
 * `GET /api/copilot/stream` — Low-latency Server-Sent Events (SSE) AI token stream
 * `POST /api/copilot/knowledge` — Semantic document ingestion for AI grounding
