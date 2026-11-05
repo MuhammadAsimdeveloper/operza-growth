@@ -2549,3 +2549,602 @@ a {
     justify-content: flex-end;
   }
 }
+
+
+/* ---------- Atlas Desktop Control Center ---------- */
+@media (min-width: 901px) {
+  .shell--overview .topbar {
+    display: none;
+  }
+}
+
+.shell--overview .sidebar__brand {
+  height: 74px;
+  padding: 27px 28px 0;
+  border-bottom: 0;
+  gap: 0;
+  align-items: flex-start;
+}
+
+.shell--overview .brand__mark {
+  display: none;
+}
+
+.shell--overview .brand__name {
+  font-size: 20px;
+  font-weight: 720;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+.shell--overview .brand__sub {
+  margin-top: 3px;
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.shell--overview .sidebar__account {
+  min-height: 42px;
+  height: 42px;
+  width: calc(100% - 36px);
+  margin: 10px 18px 17px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 10px;
+  background: #f5f8fc;
+  box-shadow: none;
+}
+
+.shell--overview .sidebar__account .account__avatar,
+.shell--overview .sidebar__account .account__plan,
+.shell--overview .sidebar__account > svg {
+  display: none;
+}
+
+.shell--overview .sidebar__account .account__name {
+  font-size: 11px;
+  font-weight: 650;
+  color: #1b2435;
+}
+
+.shell--overview .sidebar__nav--compact {
+  padding: 0 14px 8px;
+}
+
+.shell--overview .atlas-sidebar__links .nav__item {
+  height: 38px;
+  min-height: 38px;
+  padding: 0 16px;
+  margin: 0 0 10px;
+  border-radius: 8px;
+  gap: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: #172033;
+}
+
+.shell--overview .atlas-sidebar__links .nav__icon {
+  display: none;
+}
+
+.shell--overview .atlas-sidebar__links .nav__item.is-active {
+  background: #ecefff;
+  color: #3446e8;
+  font-weight: 650;
+}
+
+.shell--overview .sidebar__footer {
+  padding: 0 14px 42px;
+  border-top: 0;
+}
+
+.shell--overview .atlas-sidebar__section-label {
+  padding: 0 10px 12px;
+  color: #72809a;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.035em;
+}
+
+.shell--overview .sidebar__footer .nav__item {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 16px;
+  margin-bottom: 8px;
+  border-radius: 8px;
+  gap: 0;
+  color: #172033;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.shell--overview .sidebar__footer .nav__icon,
+.shell--overview .sidebar__footer > button {
+  display: none;
+}
+
+.shell--overview .atlas-sidebar__user {
+  margin-top: 72px;
+  padding: 0 20px;
+  color: #172033;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.atlas-dashboard {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 30px 42px 42px 32px;
+  background: #f6f8fb;
+  color: #1b2435;
+}
+
+.atlas-dashboard__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 31px;
+}
+
+.atlas-dashboard__heading {
+  min-width: 180px;
+}
+
+.atlas-dashboard__breadcrumb {
+  margin-bottom: 4px;
+  color: #687895;
+  font-size: 10px;
+  font-weight: 550;
+}
+
+.atlas-dashboard__breadcrumb span {
+  padding: 0 4px;
+  color: #9aa6b9;
+}
+
+.atlas-dashboard__heading h1 {
+  color: #1b2435;
+  font-size: 25px;
+  line-height: 1.2;
+  font-weight: 720;
+  letter-spacing: -0.035em;
+}
+
+.atlas-dashboard__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  min-width: 0;
+}
+
+.atlas-dashboard__toolbar .topbar__search {
+  flex: 0 1 220px;
+  width: 220px;
+  max-width: 220px;
+}
+
+.atlas-dashboard__toolbar .topbar__search input {
+  height: 38px;
+  padding-left: 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #fff;
+  color: #1b2435;
+  font-size: 10.5px;
+  box-shadow: none;
+}
+
+.atlas-dashboard__toolbar .topbar__search input::placeholder {
+  color: #71809c;
+}
+
+.atlas-dashboard__toolbar .topbar__search .icon {
+  display: none;
+}
+
+.atlas-quick-action-button {
+  display: inline-flex;
+  height: 38px;
+  min-width: 128px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 14px;
+  border-radius: 8px;
+  background: #3548df;
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.atlas-quick-action-button:hover {
+  background: #293bd0;
+  transform: translateY(-1px);
+}
+
+.atlas-hero {
+  display: flex;
+  min-height: 150px;
+  flex-direction: column;
+  justify-content: center;
+  padding: 22px 24px;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.atlas-eyebrow {
+  margin-bottom: 9px;
+  color: #3548df;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.atlas-hero h2 {
+  margin: 0;
+  color: #1b2435;
+  font-size: 24px;
+  line-height: 1.25;
+  font-weight: 720;
+  letter-spacing: -0.035em;
+}
+
+.atlas-hero p {
+  margin-top: 7px;
+  color: #687895;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.atlas-kpis {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 17px;
+  margin-top: 22px;
+}
+
+.atlas-kpi {
+  display: flex;
+  min-width: 0;
+  min-height: 92px;
+  flex-direction: column;
+  justify-content: center;
+  padding: 13px 16px 11px;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.atlas-kpi__label {
+  margin-bottom: 8px;
+  color: #596987;
+  font-size: 9px;
+  font-weight: 550;
+}
+
+.atlas-kpi__value {
+  color: #1b2435;
+  font-size: 23px;
+  line-height: 1.05;
+  font-weight: 720;
+  letter-spacing: -0.035em;
+  font-variant-numeric: tabular-nums;
+}
+
+.atlas-kpi__note {
+  margin-top: 3px;
+  color: #73819a;
+  font-size: 9px;
+  line-height: 1.25;
+}
+
+.atlas-dashboard__columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(300px, 1fr);
+  gap: 22px;
+  margin-top: 22px;
+}
+
+.atlas-panel {
+  min-width: 0;
+  min-height: 300px;
+  padding: 21px 24px;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.atlas-panel__heading h2 {
+  color: #1b2435;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.atlas-panel__heading p {
+  margin-top: 4px;
+  color: #71809c;
+  font-size: 10px;
+}
+
+.atlas-attention-list {
+  margin-top: 13px;
+}
+
+.atlas-attention-row {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 16px 0 2px;
+  border-radius: 8px;
+}
+
+.atlas-attention-row:hover {
+  background: #f8faff;
+}
+
+.atlas-attention-row__copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.atlas-attention-row__copy strong {
+  overflow: hidden;
+  color: #202a3b;
+  font-size: 10.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.atlas-attention-row__copy > span {
+  overflow: hidden;
+  color: #7b879c;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.atlas-status {
+  display: inline-flex;
+  min-width: 86px;
+  height: 24px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #f3f5ff;
+  color: #3446e8;
+  font-size: 8.5px;
+  font-weight: 650;
+}
+
+.atlas-status--healthy {
+  background: #f1f8f4;
+  color: #12845a;
+}
+
+.atlas-status--setup {
+  background: #fff7e9;
+  color: #a56b10;
+}
+
+.atlas-status--checking {
+  background: #f2f4f8;
+  color: #64748b;
+}
+
+.atlas-quick-panel {
+  padding-left: 24px;
+  padding-right: 24px;
+}
+
+.atlas-quick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 30px;
+}
+
+.atlas-quick-list > a,
+.atlas-quick-list > button {
+  display: flex;
+  width: 100%;
+  min-height: 38px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 8px;
+  background: #f5f8fc;
+  color: #202a3b;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.atlas-quick-list > a:hover,
+.atlas-quick-list > button:hover {
+  background: #edf1fa;
+}
+
+.atlas-quick-list > a > svg:first-child,
+.atlas-quick-list > button > svg:first-child {
+  color: #5366df;
+}
+
+.atlas-quick-list > a > svg:last-child,
+.atlas-quick-list > button > svg:last-child {
+  margin-left: auto;
+  color: #8996ad;
+}
+
+.atlas-dashboard__footnote {
+  margin-top: 40px;
+  color: #72809a;
+  font-size: 9.5px;
+}
+
+@media (max-width: 1200px) {
+  .atlas-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .atlas-dashboard__columns {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .shell--overview .topbar {
+    display: flex;
+  }
+
+  .shell--overview .topbar__search {
+    display: none;
+  }
+
+  .atlas-dashboard {
+    padding: 22px 18px 32px;
+  }
+
+  .atlas-dashboard__header {
+    margin-bottom: 22px;
+  }
+
+  .atlas-dashboard__columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .atlas-panel {
+    min-height: 0;
+  }
+
+  .atlas-quick-list {
+    margin-top: 20px;
+  }
+
+  .atlas-dashboard__footnote {
+    margin-top: 24px;
+  }
+}
+
+@media (max-width: 640px) {
+  .atlas-dashboard {
+    padding: 18px 14px 28px;
+  }
+
+  .atlas-dashboard__header {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .atlas-dashboard__toolbar {
+    width: 100%;
+  }
+
+  .atlas-dashboard__toolbar .topbar__search {
+    display: none;
+  }
+
+  .atlas-quick-action-button {
+    min-width: 0;
+  }
+
+  .atlas-hero {
+    min-height: 138px;
+    padding: 19px 18px;
+  }
+
+  .atlas-hero h2 {
+    font-size: 20px;
+  }
+
+  .atlas-hero p {
+    font-size: 10.5px;
+  }
+
+  .atlas-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .atlas-kpi {
+    min-height: 86px;
+    padding: 12px;
+  }
+
+  .atlas-kpi__value {
+    font-size: 21px;
+  }
+
+  .atlas-panel {
+    padding: 18px 16px;
+  }
+
+  .atlas-attention-row {
+    padding-right: 0;
+  }
+
+  .atlas-status {
+    min-width: 72px;
+  }
+}
+
+[data-theme="dark"] .shell--overview .sidebar__account {
+  background: var(--surface-2);
+}
+
+[data-theme="dark"] .shell--overview .sidebar__account .account__name,
+[data-theme="dark"] .shell--overview .atlas-sidebar__links .nav__item,
+[data-theme="dark"] .shell--overview .sidebar__footer .nav__item,
+[data-theme="dark"] .shell--overview .atlas-sidebar__user {
+  color: var(--text);
+}
+
+[data-theme="dark"] .shell--overview .atlas-sidebar__links .nav__item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+[data-theme="dark"] .atlas-dashboard {
+  background: var(--bg);
+  color: var(--text);
+}
+
+[data-theme="dark"] .atlas-dashboard__heading h1,
+[data-theme="dark"] .atlas-hero h2,
+[data-theme="dark"] .atlas-kpi__value,
+[data-theme="dark"] .atlas-panel__heading h2,
+[data-theme="dark"] .atlas-attention-row__copy strong,
+[data-theme="dark"] .atlas-quick-list > a,
+[data-theme="dark"] .atlas-quick-list > button {
+  color: var(--text);
+}
+
+[data-theme="dark"] .atlas-hero,
+[data-theme="dark"] .atlas-kpi,
+[data-theme="dark"] .atlas-panel {
+  background: var(--surface);
+}
+
+[data-theme="dark"] .atlas-quick-list > a,
+[data-theme="dark"] .atlas-quick-list > button {
+  background: var(--surface-2);
+}
+
+[data-theme="dark"] .atlas-quick-list > a:hover,
+[data-theme="dark"] .atlas-quick-list > button:hover {
+  background: var(--surface-3);
+}
+
