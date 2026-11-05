@@ -519,7 +519,7 @@ export async function executeStep({
         if (!assigneeId) {
           return { status: 'completed', nodeId, result: { notice: 'No assignee could be determined' } };
         }
-        await crmActions.assignContact({ contactId, userId: assigneeId });
+        await crmActions.assignContact({ contactId, assignee: assigneeId });
         return { status: 'completed', nodeId, result: { assignedTo: assigneeId, contactId } };
       }
 
