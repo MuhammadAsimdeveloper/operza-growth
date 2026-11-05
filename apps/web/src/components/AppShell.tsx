@@ -197,7 +197,7 @@ function Sidebar({ onNavigate, compact = false }: { onNavigate: () => void; comp
       </div>
 
       <nav className={compact ? "sidebar__nav sidebar__nav--compact" : "sidebar__nav"}>
-        {(compact ? [{ label: undefined, items: controlPlaneItems }] : groups).map((group, gi) => (
+        {(compact ? [{ items: controlPlaneItems } as { label?: string; items: NavEntry[] }] : groups).map((group, gi) => (
           <div key={group.label ?? `g${gi}`} className={compact ? "atlas-sidebar__links" : undefined}>
             {group.label && <div className="nav__group-label">{group.label}</div>}
             {group.items.map((item) => (
