@@ -7,6 +7,6 @@ export type SimulationStep = {
 };
 
 export function simulateWorkflowActions(
-  actions: Array<Record<string, any>>,
-  contact: Record<string, any>
+  actions: unknown[],
+  contact: unknown
 ): { status: 'simulated' | 'failed'; steps: SimulationStep[] };
