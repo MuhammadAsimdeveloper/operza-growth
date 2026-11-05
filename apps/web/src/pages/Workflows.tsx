@@ -1,5 +1,6 @@
 import { useState, useEffect, type ReactElement } from 'react';
 import { api } from '../lib/api';
+import { simulateWorkflowActions } from '../../../../packages/workflow-engine/src/simulation.mjs';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, PageHeader, StatCard, StatusBadge, Switch } from '../components/ui';
@@ -147,121 +148,22 @@ function countSteps(actions: WorkflowAction[]): number {
   return actions.reduce((total, step) => total + 1 + countSteps(step.yes ?? []) + countSteps(step.no ?? []), 0);
 }
 
-function ruleMatches(rule: ConditionRule, contact: Contact): boolean {
-  const expected = rule.value.trim().toLowerCase();
-  if (!expected) return false;
-
-  if (rule.field === 'tag') {
-    const tags = contact.tags.map((tag) => tag.toLowerCase());
-    if (rule.operator === 'is') return tags.includes(expected);
-    if (rule.operator === 'is_not') return !tags.includes(expected);
-    return tags.some((tag) => tag.includes(expected));
-  }
-
-  const actual = (
-    rule.field === 'status' ? contact.status : rule.field === 'company' ? contact.company : contact.email
-  ).toLowerCase();
-  if (rule.operator === 'is') return actual === expected;
-  if (rule.operator === 'is_not') return actual !== expected;
-  return actual.includes(expected);
-}
-
 function simulateRun(flow: Workflow, contact: Contact): WorkflowRun {
-  const steps: WorkflowRunStep[] = [];
-  let failed = false;
-
-  const visit = (list: WorkflowAction[]) => {
-    for (const step of list) {
-      if (failed) {
-        steps.push({ label: step.label, kind: step.kind, status: 'skipped' });
-        continue;
-      }
-
-      if (step.kind === 'condition') {
-        const rule = step.config?.rule;
-        const pass = rule ? ruleMatches(rule, contact) : false;
-        steps.push({
-          label: step.label,
-          kind: step.kind,
-          status: 'done',
-          detail: pass ? 'Yes branch' : 'No branch',
-        });
-        visit((pass ? step.yes : step.no) ?? []);
-        continue;
-      }
-
-      if (step.kind === 'webhook') {
-        const url = step.config?.url?.trim() ?? '';
-        if (!/^https?:\/\/\S+$/i.test(url)) {
-          steps.push({
-            label: step.label,
-            kind: step.kind,
-            status: 'failed',
-            detail: 'Invalid or missing webhook URL',
-          });
-          failed = true;
-          continue;
-        }
-        steps.push({
-          label: step.label,
-          kind: step.kind,
-          status: 'done',
-          detail: `${step.config?.method ?? 'POST'} ${url} Â· simulated`,
-        });
-        continue;
-      }
-
-      if (step.kind === 'wait') {
-        steps.push({
-          label: step.label,
-          kind: step.kind,
-          status: 'done',
-          detail: `${delayText(step.delayHours)} Â· simulated`,
-        });
-        continue;
-      }
-
-      if (step.kind === 'tag') {
-        steps.push({
-          label: step.label,
-          kind: step.kind,
-          status: 'done',
-          detail: `Tag "${step.config?.tag ?? 'untitled'}" applied`,
-        });
-        continue;
-      }
-
-      if (step.kind === 'task') {
-        const due = step.config?.dueInDays ?? 0;
-        steps.push({
-          label: step.label,
-          kind: step.kind,
-          status: 'done',
-          detail: `Task created Â· due in ${due} day${due === 1 ? '' : 's'}`,
-        });
-        continue;
-      }
-
-      steps.push({
-        label: step.label,
-        kind: step.kind,
-        status: 'done',
-        detail: `${step.kind === 'sms' ? 'SMS' : 'Email'} queued Â· simulated`,
-      });
-    }
-  };
-
-  visit(flow.actions);
-  const done = steps.filter((step) => step.status === 'done').length;
+  const simulation = simulateWorkflowActions(flow.actions, contact);
 
   return {
     id: uid('run'),
     workflowId: flow.id,
     contactId: contact.id,
     at: new Date().toISOString(),
-    status: failed ? 'failed' : 'success',
-    durationMs: 400 + done * 260,
-    steps,
+    status: simulation.status,
+    durationMs: 0,
+    steps: simulation.steps.map((step) => ({
+      label: step.label || step.id || step.kind,
+      kind: step.kind as WorkflowAction['kind'],
+      status: step.status,
+      detail: step.detail,
+    })),
   };
 }
 
@@ -1349,10 +1251,10 @@ function RunResult({
 }) {
   const [approving, setApproving] = useState(false);
   const steps = run.steps || [];
-  const done = steps.filter((step: any) => step.status === 'done' || step.status === 'completed').length;
+  const done = steps.filter((step: any) => ['done', 'completed', 'simulated'].includes(step.status)).length;
   const simulated = steps.filter((step: any) => step.status === 'simulated').length;
   const hasSimulatedSteps = simulated > 0;
-  const isCompleted = run.status === 'success' || run.status === 'completed';
+  const isCompleted = run.status === 'success' || run.status === 'completed' || run.status === 'simulated';
   const isApprovalNeeded = run.status === 'waiting_approval';
 
   const handleApprove = async () => {
@@ -1383,7 +1285,7 @@ function RunResult({
 
   return (
     <Modal
-      title={isCompleted ? (hasSimulatedSteps ? 'Workflow Completed · Simulation' : 'Workflow Execution Completed') : isApprovalNeeded ? 'Awaiting Operator Approval' : 'Workflow Execution Status'}
+      title={isCompleted ? (hasSimulatedSteps || run.status === 'simulated' ? 'Workflow Simulation Completed' : 'Workflow Execution Completed') : isApprovalNeeded ? 'Awaiting Operator Approval' : 'Workflow Execution Status'}
       onClose={onClose}
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
@@ -1404,7 +1306,7 @@ function RunResult({
           <strong style={{ fontSize: 13.5 }}>{run.workflowName || flow?.name || 'Workflow'}</strong>
         </div>
         <Badge tone={isCompleted && !hasSimulatedSteps ? 'green' : isCompleted ? 'default' : isApprovalNeeded ? 'amber' : 'red'} dot>
-          {isCompleted ? (hasSimulatedSteps ? 'Completed · Simulated' : 'Completed') : isApprovalNeeded ? 'Needs Approval' : run.status}
+          {isCompleted ? (hasSimulatedSteps || run.status === 'simulated' ? 'Simulation only' : 'Completed') : isApprovalNeeded ? 'Needs Approval' : run.status}
         </Badge>
       </div>
 
@@ -1435,7 +1337,7 @@ function RunResult({
         <div>
           <div className="cell-sub">Duration</div>
           <strong style={{ fontSize: 13 }}>
-            {run.durationMs ? `${(run.durationMs / 1000).toFixed(2)}s` : 'Instant'}
+            {run.durationMs ? `${(run.durationMs / 1000).toFixed(2)}s` : run.status === 'simulated' ? 'Not measured' : 'Instant'}
           </strong>
         </div>
       </div>
