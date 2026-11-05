@@ -165,7 +165,7 @@ export default function Dashboard() {
             <h2 id="atlas-quick-title">Quick actions</h2>
           </div>
           <div className="atlas-quick-list">
-            <Link to="/contacts"><Icon name="users" size={15} /> Add contact <Icon name="arrow-right" size={14} /></Link>
+            <Link to="/contacts" state={{ openAddContact: true }}><Icon name="users" size={15} /> Add contact <Icon name="arrow-right" size={14} /></Link>
             <Link to="/opportunities"><Icon name="plus" size={15} /> Create opportunity <Icon name="arrow-up-right" size={14} /></Link>
             <Link to="/workflows"><Icon name="zap" size={15} /> Start automation <Icon name="arrow-up-right" size={14} /></Link>
             <button type="button" onClick={openAtlasCopilot}><Icon name="sparkles" size={15} /> Ask Atlas <Icon name="arrow-up-right" size={14} /></button>
