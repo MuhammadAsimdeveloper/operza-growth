@@ -193,7 +193,7 @@ a {
   padding: 14px 8px 6px;
   display: flex;
   align-items: center;
-  justifyContent: space-between;
+  justify-content: space-between;
   cursor: pointer;
   user-select: none;
 }

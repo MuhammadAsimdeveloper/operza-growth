@@ -12,7 +12,14 @@
 
 const BASE = '';
 
+let cachedCsrfToken = '';
+
+export function setCachedCsrfToken(token: string) {
+  if (token) cachedCsrfToken = token;
+}
+
 function getCsrfToken(): string {
+  if (cachedCsrfToken) return cachedCsrfToken;
   if (typeof document === 'undefined') return '';
   const match = document.cookie.match(/(?:^|;\s*)operza_csrf=([^;]+)/);
   return match ? decodeURIComponent(match[1]) : '';
@@ -47,7 +54,11 @@ export async function request<T = any>(endpoint: string, options: RequestInit = 
     throw new Error(errorBody.error || `Request failed with status ${response.status}`);
   }
 
-  return response.json();
+  const data = await response.json();
+  if (data && typeof data === 'object' && 'csrfToken' in data && typeof data.csrfToken === 'string') {
+    setCachedCsrfToken(data.csrfToken);
+  }
+  return data;
 }
 
 export const api = {
@@ -61,7 +72,11 @@ export const api = {
     login: (data: { email: string; password: string }) =>
       request('/api/auth/login', { method: 'POST', body: JSON.stringify(data) }),
     session: () => request('/api/auth/session'),
-    logout: () => request('/api/auth/logout', { method: 'POST' }),
+    getCsrf: () => request<{ csrfToken: string }>('/api/auth/csrf'),
+    logout: () => {
+      setCachedCsrfToken('');
+      return request('/api/auth/logout', { method: 'POST' });
+    },
   },
   admin: {
     getOverview: () => request('/api/admin/overview'),

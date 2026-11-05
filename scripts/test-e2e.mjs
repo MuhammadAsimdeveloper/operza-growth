@@ -2419,8 +2419,8 @@ async function runTests() {
       throw new Error(`WhatsApp inbound message failed: ${JSON.stringify(waMsgRes.data)}`);
     }
 
-    // Meta challenge verification
-    const metaVerifyRes = await request('/api/webhooks/meta?hub.mode=subscribe&hub.challenge=meta_chall_44');
+    // Meta challenge verification with proper verify token
+    const metaVerifyRes = await request('/api/webhooks/meta?hub.mode=subscribe&hub.verify_token=test_tok&hub.challenge=meta_chall_44');
     console.log(`Meta Verification Status: ${metaVerifyRes.status}`);
     if (metaVerifyRes.status !== 200) {
       throw new Error(`Meta verification challenge failed with status ${metaVerifyRes.status}`);

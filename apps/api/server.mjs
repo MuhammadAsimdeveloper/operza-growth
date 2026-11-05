@@ -763,7 +763,7 @@ function setSessionCookies(res, sessionToken, csrfToken) {
   const secure = isProd ? '; Secure' : '';
   res.setHeader('set-cookie', [
     `${cookieSession}=${encodeURIComponent(sessionToken)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=43200${secure}`,
-    `${cookieCsrf}=${encodeURIComponent(csrfToken)}; Path=/; SameSite=Strict; Max-Age=43200${secure}`
+    `${cookieCsrf}=${encodeURIComponent(csrfToken)}; Path=/; SameSite=Lax; Max-Age=43200${secure}`
   ]);
 }
 
@@ -1131,8 +1131,9 @@ function getActor(req) {
 
   const requestedLoc = req.headers['x-operza-location'];
   const activeLocation = locations.find(l => l.id === requestedLoc) || locations[0];
+  const csrfToken = session.csrfRaw || cookieValue(req.headers.cookie, cookieCsrf) || '';
 
-  return { user, agency, membership, locations, activeLocation, csrfHash: session.csrfHash };
+  return { user, agency, membership, locations, activeLocation, csrfHash: session.csrfHash, csrfToken };
 }
 
 async function readBody(req) {
@@ -2751,10 +2752,10 @@ const server = createServer(async (req, res) => {
         discount: discountAmount,
         couponCode: appliedCoupon ? appliedCoupon.code : undefined,
         currency: link.currency || 'USD',
-        status: 'paid',
+        status: 'pending',
         paymentLinkId: link.id,
         items: [{ name: link.name, amount: finalAmount, quantity: 1 }],
-        paidAt: new Date().toISOString(),
+        paidAt: null,
         createdAt: new Date().toISOString()
       };
       state.records.orders = state.records.orders || [];
@@ -2769,38 +2770,38 @@ const server = createServer(async (req, res) => {
         contactId: contact.id,
         contactName: `${firstName} ${lastName}`,
         amount: finalAmount,
-        status: 'paid',
+        status: 'pending',
         dueDate: new Date().toISOString().split('T')[0],
-        description: `Payment for ${link.name}${appliedCoupon ? ` (Discount coupon ${appliedCoupon.code})` : ''}`,
+        description: `Invoice for ${link.name}${appliedCoupon ? ` (Discount coupon ${appliedCoupon.code})` : ''}`,
         createdAt: new Date().toISOString()
       };
       state.records.invoices = state.records.invoices || [];
       state.records.invoices.push(invoice);
 
-      const opp = (state.records.opportunities || []).find(o => o.contactId === contact.id && o.status === 'open');
-      if (opp) {
-        opp.stage = 'Won';
-        opp.status = 'won';
-        opp.value = (opp.value || 0) + link.amount;
-        broadcast('crm.opportunity.updated', { id: opp.id, stage: 'Won', status: 'won', value: opp.value });
-      }
+      // Create provider-backed checkout session
+      const paymentProvider = getPaymentProvider(process.env.PAYMENT_PROVIDER || 'mock');
+      const paymentSession = await paymentProvider.createCheckoutSession({
+        amount: finalAmount,
+        currency: order.currency,
+        orderId: order.id,
+        customerEmail: emailKey,
+        description: `Payment for ${link.name}`
+      });
+      order.paymentSessionId = paymentSession.sessionId;
+      order.checkoutUrl = paymentSession.checkoutUrl;
 
-      link.conversions = (link.conversions || 0) + 1;
+      link.visits = (link.visits || 0) + 1;
       await saveState();
 
-      broadcast('crm.order.created', { id: orderId, amount: order.amount, customerName: order.contactName });
-      broadcast('crm.invoice.created', { id: invoiceId, number: invoice.number, amount: invoice.amount, status: 'paid' });
-
-      triggerWorkflowExecution({
-        agencyId: link.agencyId,
-        locationId: link.locationId,
-        triggerType: 'payment',
-        triggerContext: { link, order, invoice, contact }
-      }).catch(err => console.error('Payment workflow trigger failed:', err));
+      broadcast('crm.order.created', { id: orderId, amount: order.amount, customerName: order.contactName, status: 'pending' });
+      broadcast('crm.invoice.created', { id: invoiceId, number: invoice.number, amount: invoice.amount, status: 'pending' });
 
       return sendJson(res, 201, {
         success: true,
-        message: 'Payment processed successfully.',
+        status: 'pending',
+        message: 'Checkout session created. Awaiting verified payment.',
+        checkoutUrl: paymentSession.checkoutUrl,
+        sessionId: paymentSession.sessionId,
         order,
         invoice,
         contact
@@ -3463,13 +3464,60 @@ const server = createServer(async (req, res) => {
       auditLog('webhook.stripe', null, { eventType, eventId: event.id });
 
       switch (eventType) {
+        case 'checkout.session.completed':
+        case 'payment_intent.succeeded': {
+          const sessionObj = event.data?.object || {};
+          const targetOrderId = sessionObj.client_reference_id || sessionObj.metadata?.orderId || sessionObj.id;
+          const order = (state.records.orders || []).find(
+            o => o.id === targetOrderId || o.paymentSessionId === targetOrderId || o.paymentSessionId === sessionObj.id
+          );
+          if (order && order.status !== 'paid') {
+            order.status = 'paid';
+            order.paidAt = new Date().toISOString();
+            order.paymentIntentId = sessionObj.payment_intent || sessionObj.id;
+
+            // Update associated invoice
+            const invoice = (state.records.invoices || []).find(
+              i => i.contactId === order.contactId && i.status === 'pending'
+            );
+            if (invoice) {
+              invoice.status = 'paid';
+              broadcast('crm.invoice.updated', { id: invoice.id, status: 'paid' });
+            }
+
+            // Mark associated open opportunity as won
+            const opp = (state.records.opportunities || []).find(
+              o => o.contactId === order.contactId && o.status === 'open'
+            );
+            if (opp) {
+              opp.stage = 'Won';
+              opp.status = 'won';
+              opp.value = (opp.value || 0) + order.amount;
+              broadcast('crm.opportunity.updated', { id: opp.id, stage: 'Won', status: 'won', value: opp.value });
+            }
+
+            // Increment conversions on payment link
+            const link = (state.records.paymentLinks || []).find(l => l.id === order.paymentLinkId);
+            if (link) {
+              link.conversions = (link.conversions || 0) + 1;
+            }
+
+            await saveState();
+            broadcast('crm.order.updated', { id: order.id, status: 'paid', paidAt: order.paidAt });
+            broadcast('webhook.stripe.payment_succeeded', { orderId: order.id, amount: order.amount });
+
+            triggerWorkflowExecution({
+              agencyId: order.agencyId,
+              locationId: order.locationId,
+              triggerType: 'payment',
+              triggerContext: { order, invoice, contactId: order.contactId }
+            }).catch(err => console.error('Payment workflow trigger failed:', err));
+          }
+          break;
+        }
         case 'invoice.paid':
           console.log(`[STRIPE] Invoice paid: ${event.data?.object?.id} — amount: ${event.data?.object?.amount_paid}`);
           broadcast('webhook.stripe.invoice_paid', { invoiceId: event.data?.object?.id });
-          break;
-        case 'payment_intent.succeeded':
-          console.log(`[STRIPE] Payment intent succeeded: ${event.data?.object?.id}`);
-          broadcast('webhook.stripe.payment_succeeded', { paymentIntentId: event.data?.object?.id });
           break;
         case 'customer.subscription.created':
         case 'customer.subscription.updated':
@@ -3893,7 +3941,7 @@ const server = createServer(async (req, res) => {
 
 // 
     if (pathname === '/api/webhooks/meta') {
-      const verifyToken = process.env.META_VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOKEN || 'test_tok';
+      const verifyToken = process.env.META_VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOKEN || (isProd ? '' : 'test_tok');
       const appSecret = process.env.META_APP_SECRET || process.env.WHATSAPP_APP_SECRET;
 
       if (method === 'GET') {
@@ -3902,8 +3950,8 @@ const server = createServer(async (req, res) => {
         const token = urlObj.searchParams.get('hub.verify_token');
         const challenge = urlObj.searchParams.get('hub.challenge');
 
-        // Check subscription handshake without logging token
-        if (mode === 'subscribe' && (challenge === 'meta_chall_44' || (token && safeEqual(token, verifyToken)))) {
+        // Check subscription handshake without logging token — strictly require verified token
+        if (mode === 'subscribe' && token && verifyToken && safeEqual(token, verifyToken)) {
           console.log('[META WEBHOOK] Verification challenge confirmed');
           res.writeHead(200, { 'content-type': 'text/plain' });
           res.end(challenge || 'verified');
@@ -3918,6 +3966,11 @@ const server = createServer(async (req, res) => {
         const rawBody = await readRawBody(req);
         const signature = req.headers['x-hub-signature-256'] || '';
 
+        if (isProd && !appSecret) {
+          console.error('[META WEBHOOK] FATAL: Missing META_APP_SECRET in production');
+          return sendJson(res, 500, { error: 'Webhook processing misconfigured in production' });
+        }
+
         if (appSecret) {
           if (!signature) {
             return sendJson(res, 401, { error: 'Missing X-Hub-Signature-256 header' });
@@ -3927,6 +3980,8 @@ const server = createServer(async (req, res) => {
             console.warn('[META WEBHOOK] Invalid signature');
             return sendJson(res, 401, { error: 'Invalid webhook signature' });
           }
+        } else if (isProd) {
+          return sendJson(res, 401, { error: 'Missing webhook secret and signature in production' });
         }
 
         let payload;
@@ -3943,9 +3998,12 @@ const server = createServer(async (req, res) => {
 
         const entry = payload.entry?.[0];
         const messaging = entry?.messaging?.[0] || payload;
-        const senderId = messaging.sender?.id || payload.senderId || 'ig_user_123';
+        const senderId = messaging.sender?.id || payload.senderId;
+        if (!senderId) {
+          return sendJson(res, 400, { error: 'Missing sender ID in Meta message event' });
+        }
         const senderHandle = payload.handle || payload.username || `@user_${senderId.slice(-4)}`;
-        const textBody = messaging.message?.text || payload.message || payload.text || 'Inquiry via Instagram';
+        const textBody = messaging.message?.text || payload.message || payload.text || '';
 
         let contact = [...(state.records.contacts || [])].reverse().find(
           c => c.instagramHandle === senderHandle || (c.tags && c.tags.includes(senderHandle))
@@ -4238,6 +4296,7 @@ const server = createServer(async (req, res) => {
         id: randomUUID(),
         tokenHash: hash(token),
         csrfHash: hash(csrf),
+        csrfRaw: csrf,
         userId,
         agencyId,
         expiresAt: Date.now() + 12 * 3600 * 1000
@@ -4251,7 +4310,8 @@ const server = createServer(async (req, res) => {
         user: { id: user.id, name: user.name, email: user.email, role: 'owner' },
         agency: { id: agency.id, name: agency.name },
         locations: [location],
-        activeLocationId: location.id
+        activeLocationId: location.id,
+        csrfToken: csrf
       };
     }
 
@@ -4398,6 +4458,7 @@ const server = createServer(async (req, res) => {
         id: randomUUID(),
         tokenHash: hash(token),
         csrfHash: hash(csrf),
+        csrfRaw: csrf,
         userId: user.id,
         agencyId: agency.id,
         expiresAt: Date.now() + 12 * 3600 * 1000
@@ -4411,7 +4472,8 @@ const server = createServer(async (req, res) => {
         user: { id: user.id, name: user.name, email: user.email, role: user.role || membership.role || 'admin' },
         agency: { id: agency.id, name: agency.name },
         locations,
-        activeLocationId: locations[0]?.id
+        activeLocationId: locations[0]?.id,
+        csrfToken: csrf
       });
     }
 
@@ -4424,7 +4486,17 @@ const server = createServer(async (req, res) => {
         agency: { id: actor.agency.id, name: actor.agency.name },
         locations: actor.locations,
         activeLocationId: actor.activeLocation.id,
-        role: actor.user.role || actor.membership.role
+        role: actor.user.role || actor.membership.role,
+        csrfToken: actor.csrfToken || cookieValue(req.headers.cookie, cookieCsrf)
+      });
+    }
+
+    // AUTH: Refresh / Get CSRF Token
+    if (method === 'GET' && pathname === '/api/auth/csrf') {
+      const actor = getActor(req);
+      if (!actor) return sendJson(res, 401, { error: 'Not authenticated' });
+      return sendJson(res, 200, {
+        csrfToken: actor.csrfToken || cookieValue(req.headers.cookie, cookieCsrf)
       });
     }
 
