@@ -26,3 +26,24 @@ test('assign_to passes the selected user as the CRM assignee', async () => {
     assignee: 'user_42'
   });
 });
+
+test('dry-run CRM write actions never call mutation adapters', async () => {
+  let mutationCount = 0;
+
+  const result = await executeStep({
+    node: {
+      id: 'node_tag_dry_run',
+      type: 'tag',
+      config: { tag: 'vip' }
+    },
+    execution: { id: 'execution_dry_run', mode: 'dry_run' },
+    triggerContext: { contact: { id: 'contact_42' } },
+    crmActions: {
+      addContactTag: async () => { mutationCount += 1; }
+    }
+  });
+
+  assert.equal(result.status, 'simulated');
+  assert.equal(result.result.sideEffectsDisabled, true);
+  assert.equal(mutationCount, 0);
+});
