@@ -47,3 +47,18 @@ test('dry-run CRM write actions never call mutation adapters', async () => {
   assert.equal(result.result.sideEffectsDisabled, true);
   assert.equal(mutationCount, 0);
 });
+
+test('dry-run wait nodes preview the delay without suspending execution', async () => {
+  const result = await executeStep({
+    node: {
+      id: 'node_wait_dry_run',
+      type: 'wait',
+      config: { durationMinutes: 30 }
+    },
+    execution: { id: 'execution_dry_run', mode: 'dry_run' },
+    triggerContext: {}
+  });
+
+  assert.equal(result.status, 'simulated');
+  assert.equal(result.result.wouldWaitMinutes, 30);
+});
