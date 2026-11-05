@@ -812,18 +812,28 @@ async function initDatabase() {
   }
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function toUuidOrNull(val) {
+  if (!val || typeof val !== 'string') return null;
+  return UUID_REGEX.test(val) ? val : null;
+}
+
 async function syncRelationalWrite(collectionName, action, record, agencyId) {
   if (!pgPool) return;
   try {
     const client = await pgPool.connect();
     try {
       await client.query('BEGIN');
-      if (agencyId) {
-        await client.query("SELECT set_config('app.current_agency_id', $1, true), set_config('app.agency_id', $1, true)", [String(agencyId)]);
+      const safeAgencyId = toUuidOrNull(agencyId || record?.agencyId);
+      if (safeAgencyId) {
+        await client.query("SELECT set_config('app.current_agency_id', $1, true), set_config('app.agency_id', $1, true)", [safeAgencyId]);
       }
       if (collectionName === 'contacts') {
+        const contactId = toUuidOrNull(record.id) || record.id;
+        const agId = safeAgencyId || toUuidOrNull(record.agencyId);
+        const locId = toUuidOrNull(record.locationId);
         if (action === 'delete') {
-          await client.query('DELETE FROM contacts WHERE id = $1 AND agency_id = $2', [record.id, record.agencyId || agencyId]);
+          await client.query('DELETE FROM contacts WHERE id = $1 AND agency_id = $2', [contactId, agId]);
         } else {
           await client.query(`
             INSERT INTO contacts (id, agency_id, location_id, first_name, last_name, email, phone, company, status, custom_fields, tags, created_at, updated_at)
@@ -839,7 +849,7 @@ async function syncRelationalWrite(collectionName, action, record, agencyId) {
               tags = EXCLUDED.tags,
               updated_at = EXCLUDED.updated_at
           `, [
-            record.id, record.agencyId || agencyId, record.locationId || null,
+            contactId, agId, locId,
             record.firstName || '', record.lastName || '', record.email || '',
             record.phone || '', record.company || '', record.status || 'lead',
             JSON.stringify(record.customFields || {}), record.tags || [],
@@ -847,8 +857,11 @@ async function syncRelationalWrite(collectionName, action, record, agencyId) {
           ]);
         }
       } else if (collectionName === 'tasks') {
+        const taskId = toUuidOrNull(record.id) || record.id;
+        const agId = safeAgencyId || toUuidOrNull(record.agencyId);
+        const locId = toUuidOrNull(record.locationId);
         if (action === 'delete') {
-          await client.query('DELETE FROM tasks WHERE id = $1 AND agency_id = $2', [record.id, record.agencyId || agencyId]);
+          await client.query('DELETE FROM tasks WHERE id = $1 AND agency_id = $2', [taskId, agId]);
         } else {
           await client.query(`
             INSERT INTO tasks (id, agency_id, location_id, title, status, priority, due_date, created_at, updated_at)
@@ -860,15 +873,18 @@ async function syncRelationalWrite(collectionName, action, record, agencyId) {
               due_date = EXCLUDED.due_date,
               updated_at = EXCLUDED.updated_at
           `, [
-            record.id, record.agencyId || agencyId, record.locationId || null,
+            taskId, agId, locId,
             record.title || '', record.status || 'pending', record.priority || 'medium',
             record.dueDate || new Date().toISOString(),
             record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
           ]);
         }
       } else if (collectionName === 'opportunities') {
+        const oppId = toUuidOrNull(record.id) || record.id;
+        const agId = safeAgencyId || toUuidOrNull(record.agencyId);
+        const locId = toUuidOrNull(record.locationId);
         if (action === 'delete') {
-          await client.query('DELETE FROM opportunities WHERE id = $1 AND agency_id = $2', [record.id, record.agencyId || agencyId]);
+          await client.query('DELETE FROM opportunities WHERE id = $1 AND agency_id = $2', [oppId, agId]);
         } else {
           await client.query(`
             INSERT INTO opportunities (id, agency_id, location_id, name, stage, value, status, created_at, updated_at)
@@ -880,9 +896,135 @@ async function syncRelationalWrite(collectionName, action, record, agencyId) {
               status = EXCLUDED.status,
               updated_at = EXCLUDED.updated_at
           `, [
-            record.id, record.agencyId || agencyId, record.locationId || null,
+            oppId, agId, locId,
             record.name || 'Opportunity', record.stage || 'lead', Number(record.value) || 0,
             record.status || 'open',
+            record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
+          ]);
+        }
+      } else if (collectionName === 'forms') {
+        const formId = toUuidOrNull(record.id) || record.id;
+        const agId = safeAgencyId || toUuidOrNull(record.agencyId);
+        const locId = toUuidOrNull(record.locationId);
+        if (action === 'delete') {
+          await client.query('DELETE FROM forms WHERE id = $1 AND agency_id = $2', [formId, agId]);
+        } else {
+          await client.query(`
+            INSERT INTO forms (id, agency_id, location_id, name, public_slug, fields, status, submissions_count, description, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11)
+            ON CONFLICT (id) DO UPDATE SET
+              name = EXCLUDED.name,
+              public_slug = EXCLUDED.public_slug,
+              fields = EXCLUDED.fields,
+              status = EXCLUDED.status,
+              submissions_count = EXCLUDED.submissions_count,
+              description = EXCLUDED.description,
+              updated_at = EXCLUDED.updated_at
+          `, [
+            formId, agId, locId,
+            record.name || 'Untitled Form',
+            record.publicSlug || record.slug || formId,
+            JSON.stringify(record.fields || []),
+            record.status || (record.published ? 'published' : 'draft'),
+            Number(record.submissions || record.submissions_count || 0),
+            record.description || null,
+            record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
+          ]);
+        }
+      } else if (collectionName === 'formSubmissions' || collectionName === 'form_submissions') {
+        const subId = toUuidOrNull(record.id) || record.id;
+        const agId = safeAgencyId || toUuidOrNull(record.agencyId);
+        const formId = toUuidOrNull(record.formId);
+        const contactId = toUuidOrNull(record.contactId);
+        if (action === 'delete') {
+          await client.query('DELETE FROM form_submissions WHERE id = $1 AND agency_id = $2', [subId, agId]);
+        } else {
+          await client.query(`
+            INSERT INTO form_submissions (id, agency_id, form_id, contact_id, contact_name, answers, ip_address, submitted_at)
+            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
+            ON CONFLICT (id) DO UPDATE SET
+              contact_id = EXCLUDED.contact_id,
+              contact_name = EXCLUDED.contact_name,
+              answers = EXCLUDED.answers,
+              ip_address = EXCLUDED.ip_address,
+              submitted_at = EXCLUDED.submitted_at
+          `, [
+            subId, agId, formId, contactId,
+            record.contactName || null,
+            JSON.stringify(record.answers || {}),
+            record.ipAddress || record.ip_address || record.source || null,
+            record.submittedAt || record.createdAt || new Date().toISOString()
+          ]);
+        }
+      } else if (collectionName === 'orders') {
+        const orderId = toUuidOrNull(record.id) || record.id;
+        const agId = safeAgencyId || toUuidOrNull(record.agencyId);
+        const locId = toUuidOrNull(record.locationId);
+        const contactId = toUuidOrNull(record.contactId);
+        if (action === 'delete') {
+          await client.query('DELETE FROM orders WHERE id = $1 AND agency_id = $2', [orderId, agId]);
+        } else {
+          await client.query(`
+            INSERT INTO orders (id, agency_id, location_id, contact_id, order_number, contact_name, amount, currency, status, items, bump_accepted, bump_amount, paid_at, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12, $13, $14, $15)
+            ON CONFLICT (id) DO UPDATE SET
+              contact_id = EXCLUDED.contact_id,
+              order_number = EXCLUDED.order_number,
+              contact_name = EXCLUDED.contact_name,
+              amount = EXCLUDED.amount,
+              currency = EXCLUDED.currency,
+              status = EXCLUDED.status,
+              items = EXCLUDED.items,
+              bump_accepted = EXCLUDED.bump_accepted,
+              bump_amount = EXCLUDED.bump_amount,
+              paid_at = EXCLUDED.paid_at,
+              updated_at = EXCLUDED.updated_at
+          `, [
+            orderId, agId, locId, contactId,
+            record.orderNumber || `ORD-${Date.now().toString().slice(-6)}`,
+            record.contactName || null,
+            Number(record.amount) || 0,
+            record.currency || 'USD',
+            record.status || 'pending',
+            JSON.stringify(record.items || []),
+            Boolean(record.bumpAccepted),
+            Number(record.bumpAmount) || 0,
+            record.paidAt || null,
+            record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
+          ]);
+        }
+      } else if (collectionName === 'invoices') {
+        const invId = toUuidOrNull(record.id) || record.id;
+        const agId = safeAgencyId || toUuidOrNull(record.agencyId);
+        const locId = toUuidOrNull(record.locationId);
+        const contactId = toUuidOrNull(record.contactId);
+        if (action === 'delete') {
+          await client.query('DELETE FROM invoices WHERE id = $1 AND agency_id = $2', [invId, agId]);
+        } else {
+          await client.query(`
+            INSERT INTO invoices (id, agency_id, location_id, contact_id, number, contact_name, amount, currency, status, due_date, paid_at, description, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            ON CONFLICT (id) DO UPDATE SET
+              contact_id = EXCLUDED.contact_id,
+              number = EXCLUDED.number,
+              contact_name = EXCLUDED.contact_name,
+              amount = EXCLUDED.amount,
+              currency = EXCLUDED.currency,
+              status = EXCLUDED.status,
+              due_date = EXCLUDED.due_date,
+              paid_at = EXCLUDED.paid_at,
+              description = EXCLUDED.description,
+              updated_at = EXCLUDED.updated_at
+          `, [
+            invId, agId, locId, contactId,
+            record.number || `INV-${Date.now().toString().slice(-6)}`,
+            record.contactName || null,
+            Number(record.amount) || 0,
+            record.currency || 'USD',
+            record.status || 'draft',
+            record.dueDate || null,
+            record.paidAt || null,
+            record.description || null,
             record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
           ]);
         }
@@ -2122,10 +2264,40 @@ const server = createServer(async (req, res) => {
     // Public Form Lookup
     if (method === 'GET' && pathname.startsWith('/api/forms/public/')) {
       const slug = pathname.replace('/api/forms/public/', '').trim();
-      const form = (state.records.forms || []).find(
+      let form = (state.records.forms || []).find(
         f => (f.publicSlug === slug || f.slug === slug || f.id === slug) &&
              (f.status === 'published' || f.published === true)
       );
+      if (!form && pgPool) {
+        try {
+          const client = await pgPool.connect();
+          try {
+            const resForm = await client.query(
+              `SELECT id, name, public_slug, fields, status, submissions_count, description
+               FROM forms
+               WHERE (public_slug = $1 OR id::text = $1) AND status = 'published'
+               LIMIT 1`,
+              [slug]
+            );
+            if (resForm.rowCount > 0) {
+              const row = resForm.rows[0];
+              form = {
+                id: row.id,
+                name: row.name,
+                publicSlug: row.public_slug,
+                fields: row.fields,
+                status: row.status,
+                description: row.description,
+                submissions: row.submissions_count
+              };
+            }
+          } finally {
+            client.release();
+          }
+        } catch (e) {
+          console.warn('[OPERZA-DB] Public form query fallback notice:', e.message);
+        }
+      }
       if (!form) return sendJson(res, 404, { error: 'Form not found or unpublished' });
       return sendJson(res, 200, {
         id: form.id,
@@ -2139,14 +2311,46 @@ const server = createServer(async (req, res) => {
     // Public Form Submission Ingress -> Lead capture + Trigger Workflow
     if (method === 'POST' && pathname.startsWith('/api/forms/submit/')) {
       const slug = pathname.replace('/api/forms/submit/', '').trim();
-      const form = (state.records.forms || []).find(
+      let form = (state.records.forms || []).find(
         f => (f.publicSlug === slug || f.slug === slug || f.id === slug) &&
              (f.status === 'published' || f.published === true)
       );
+      if (!form && pgPool) {
+        try {
+          const client = await pgPool.connect();
+          try {
+            const resForm = await client.query(
+              `SELECT id, agency_id, location_id, name, public_slug, fields, status, submissions_count, description
+               FROM forms
+               WHERE (public_slug = $1 OR id::text = $1) AND status = 'published'
+               LIMIT 1`,
+              [slug]
+            );
+            if (resForm.rowCount > 0) {
+              const row = resForm.rows[0];
+              form = {
+                id: row.id,
+                agencyId: row.agency_id,
+                locationId: row.location_id,
+                name: row.name,
+                publicSlug: row.public_slug,
+                fields: row.fields,
+                status: row.status,
+                description: row.description,
+                submissions: row.submissions_count
+              };
+            }
+          } finally {
+            client.release();
+          }
+        } catch (e) {
+          console.warn('[OPERZA-DB] Public form lookup notice:', e.message);
+        }
+      }
       if (!form) return sendJson(res, 404, { error: 'Form not found or unpublished' });
 
       const body = await readBody(req);
-      const answers = body.answers || {};
+      const answers = body && typeof body.answers === 'object' && body.answers !== null ? body.answers : {};
 
       const firstName = answers.firstName || answers.name || 'Website';
       const lastName = answers.lastName || 'Lead';
@@ -2157,6 +2361,7 @@ const server = createServer(async (req, res) => {
       state.records.contacts = state.records.contacts || [];
       let contact = email ? state.records.contacts.find(c => c.email === email && c.agencyId === form.agencyId) : null;
       let contactId = contact?.id;
+      const isNewContact = !contact;
 
       if (!contact) {
         contactId = randomUUID();
@@ -2183,6 +2388,7 @@ const server = createServer(async (req, res) => {
       }
 
       form.submissions = (form.submissions || 0) + 1;
+      form.updatedAt = new Date().toISOString();
 
       // Persist submission record
       state.records.formSubmissions = state.records.formSubmissions || [];
@@ -2224,6 +2430,11 @@ const server = createServer(async (req, res) => {
       state.records.opportunities.push(opportunity);
 
       await saveState();
+      await syncRelationalWrite('contacts', isNewContact ? 'create' : 'update', contact, form.agencyId);
+      await syncRelationalWrite('forms', 'update', form, form.agencyId);
+      await syncRelationalWrite('formSubmissions', 'create', submission, form.agencyId);
+      await syncRelationalWrite('opportunities', 'create', opportunity, form.agencyId);
+
       broadcast('crm.form.submission_received', { formId: form.id, submissionId, contactName: submission.contactName });
       broadcast('crm.opportunity.created', { id: oppId, name: opportunity.name });
 
@@ -2690,6 +2901,7 @@ const server = createServer(async (req, res) => {
       let contact = (state.records.contacts || []).find(
         c => c.agencyId === link.agencyId && c.locationId === link.locationId && c.email === emailKey
       );
+      const isNewContact = !contact;
 
       if (!contact) {
         contact = {
@@ -2792,6 +3004,9 @@ const server = createServer(async (req, res) => {
 
       link.visits = (link.visits || 0) + 1;
       await saveState();
+      await syncRelationalWrite('contacts', isNewContact ? 'create' : 'update', contact, link.agencyId);
+      await syncRelationalWrite('orders', 'create', order, link.agencyId);
+      await syncRelationalWrite('invoices', 'create', invoice, link.agencyId);
 
       broadcast('crm.order.created', { id: orderId, amount: order.amount, customerName: order.contactName, status: 'pending' });
       broadcast('crm.invoice.created', { id: invoiceId, number: invoice.number, amount: invoice.amount, status: 'pending' });
@@ -3503,6 +3718,10 @@ const server = createServer(async (req, res) => {
             }
 
             await saveState();
+            await syncRelationalWrite('orders', 'update', order, order.agencyId);
+            if (invoice) {
+              await syncRelationalWrite('invoices', 'update', invoice, order.agencyId);
+            }
             broadcast('crm.order.updated', { id: order.id, status: 'paid', paidAt: order.paidAt });
             broadcast('webhook.stripe.payment_succeeded', { orderId: order.id, amount: order.amount });
 
@@ -5793,6 +6012,7 @@ GOOGLE_REDIRECT_URI=http://localhost:4000/api/auth/google/callback</pre>
       form.updatedAt = new Date().toISOString();
 
       await saveState();
+      await syncRelationalWrite('forms', 'update', form, agency.id);
       auditLog(isPublished ? 'form.published' : 'form.unpublished', actor, { formId, name: form.name });
       broadcast('crm.form.updated', { id: formId, published: isPublished, status: form.status });
 

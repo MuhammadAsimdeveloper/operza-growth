@@ -3,6 +3,13 @@
 All notable changes to the Operza platform are documented in this file.
 
 ## [2.1.0] - 2026-11-05
+### Database & Multi-Tenant Forms (OPE-1)
+- **Fixed (P1):** Extended `syncRelationalWrite` in `apps/api/server.mjs` to synchronize `forms`, `form_submissions`, `orders`, and `invoices` directly to normalized PostgreSQL tables under strict RLS isolation.
+- **Fixed (P1):** Added UUID validation helper `toUuidOrNull` preventing PostgreSQL UUID syntax errors when non-UUID string identifiers (e.g. `'main'`) are present in tenant records.
+- **Fixed (P1):** Public form submission (`/api/forms/submit/:slug`) now synchronizes captured contacts, form submissions, inbound pipeline opportunities, and submission counts to PostgreSQL relational tables.
+- **Fixed (P1):** Public checkout and Stripe webhooks now synchronize order and invoice records to PostgreSQL relational tables upon creation and verified payment confirmation.
+- **Added:** Added `scripts/test-forms-and-migrations.mjs` test suite (49 automated tests) verifying form CRUD, anonymous public lookup protection, draft privacy, lead capture side effects, cross-tenant isolation, and relational sync. Added `npm run test:forms`.
+
 ### Security & Ingress
 - **Fixed (P0):** Rewrote public checkout handler (`/api/payments/checkout/:slug`) to initialize orders in `pending` status instead of marking them `paid` upon form submission.
 - **Fixed (P0):** Removed hardcoded backdoor verification challenge (`meta_chall_44`) from Meta Messenger webhook. Enforced proper verify token and HMAC signature checks.
