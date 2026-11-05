@@ -135,7 +135,7 @@ export async function executeStep({
   const { id: nodeId, type, config = {} } = node;
 
   // Human-approval gate (unchanged)
-  if (node.requiresApproval && !execution.approvedBy) {
+  if (node.requiresApproval && !execution.approvedBy && execution.mode !== 'dry_run') {
     return {
       status: 'waiting_approval',
       nodeId,
@@ -157,6 +157,18 @@ export async function executeStep({
     }
 
     const actionDefinition = getWorkflowActionDefinition(type);
+    if (execution?.mode === 'dry_run' && actionDefinition?.risk === 'write') {
+      return {
+        status: 'simulated',
+        nodeId,
+        result: {
+          actionId: actionDefinition.id,
+          mode: 'dry_run',
+          sideEffectsDisabled: true,
+          reason: 'DRY_RUN_ONLY'
+        }
+      };
+    }
     if (actionDefinition?.risk === 'external_side_effect') {
       const invocation = createActionInvocation({
         tenantId: execution?.agencyId || execution?.tenantId || null,
@@ -300,6 +312,13 @@ export async function executeStep({
 
       case 'wait': {
         const durationMinutes = Number(config.durationMinutes) || 5;
+        if (execution?.mode === 'dry_run') {
+          return {
+            status: 'simulated',
+            nodeId,
+            result: { mode: 'dry_run', sideEffectsDisabled: true, wouldWaitMinutes: durationMinutes }
+          };
+        }
         const retryAt = new Date(now + durationMinutes * 60 * 1000).toISOString();
         return { status: 'waiting', nodeId, retryAt, result: { retryAt } };
       }
@@ -344,6 +363,13 @@ export async function executeStep({
         const multiplier = { minutes: 60_000, hours: 3_600_000, days: 86_400_000 };
         const ms = amount * (multiplier[unit] || multiplier.minutes);
         const retryAt = new Date(now + ms).toISOString();
+        if (execution?.mode === 'dry_run') {
+          return {
+            status: 'simulated',
+            nodeId,
+            result: { mode: 'dry_run', sideEffectsDisabled: true, wouldResumeAt: retryAt, delayAmount: amount, delayUnit: unit }
+          };
+        }
         return { status: 'waiting', nodeId, retryAt, result: { retryAt, delayAmount: amount, delayUnit: unit } };
       }
 
