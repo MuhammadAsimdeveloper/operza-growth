@@ -3157,3 +3157,19 @@ a {
   background: var(--surface-3);
   color: var(--text-2);
 }
+
+/* Workflow package import/export feedback */
+.atlas-workflow-feedback {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+[data-theme="dark"] .atlas-workflow-feedback {
+  border-color: var(--line-strong);
+}
