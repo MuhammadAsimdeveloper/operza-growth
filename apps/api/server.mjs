@@ -5203,6 +5203,7 @@ const server = createServer(async (req, res) => {
         agencyId: agency.id,
         locationId: activeLocation.id,
         triggerType: 'manual',
+        mode: 'dry_run',
         triggerContext: {
           contact,
           manualTrigger: true,
