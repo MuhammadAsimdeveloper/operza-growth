@@ -638,6 +638,7 @@ export default function Workflows() {
                 {displayRuns.map((run: any) => {
                   const flow = state.workflows.find((w) => w.id === run.workflowId);
                   const isSuccess = run.status === 'success' || run.status === 'completed';
+                  const hasSimulatedSteps = (run.steps || []).some((step: any) => step.status === 'simulated');
                   const isApproval = run.status === 'waiting_approval';
                   const isRunning = run.status === 'running';
                   const cName = run.triggerContext?.contact
@@ -655,8 +656,8 @@ export default function Workflows() {
                       <td>{cName || 'Automated'}</td>
                       <td className="cell-num">{(run.steps || []).length}</td>
                       <td>
-                        <Badge tone={isSuccess ? 'green' : isApproval ? 'amber' : isRunning ? 'violet' : 'red'} dot>
-                          {isSuccess ? 'Completed' : isApproval ? 'Approval Needed' : isRunning ? 'Running' : 'Failed'}
+                        <Badge tone={isSuccess && !hasSimulatedSteps ? 'green' : isSuccess ? 'default' : isApproval ? 'amber' : isRunning ? 'violet' : 'red'} dot>
+                          {isSuccess ? (hasSimulatedSteps ? 'Completed · Simulated' : 'Completed') : isApproval ? 'Approval Needed' : isRunning ? 'Running' : 'Failed'}
                         </Badge>
                       </td>
                       <td className="cell-sub">{relative(run.createdAt || run.at || new Date().toISOString())}</td>
@@ -1349,6 +1350,8 @@ function RunResult({
   const [approving, setApproving] = useState(false);
   const steps = run.steps || [];
   const done = steps.filter((step: any) => step.status === 'done' || step.status === 'completed').length;
+  const simulated = steps.filter((step: any) => step.status === 'simulated').length;
+  const hasSimulatedSteps = simulated > 0;
   const isCompleted = run.status === 'success' || run.status === 'completed';
   const isApprovalNeeded = run.status === 'waiting_approval';
 
@@ -1380,7 +1383,7 @@ function RunResult({
 
   return (
     <Modal
-      title={isCompleted ? 'Workflow Execution Completed' : isApprovalNeeded ? 'Awaiting Operator Approval' : 'Workflow Execution Status'}
+      title={isCompleted ? (hasSimulatedSteps ? 'Workflow Completed · Simulation' : 'Workflow Execution Completed') : isApprovalNeeded ? 'Awaiting Operator Approval' : 'Workflow Execution Status'}
       onClose={onClose}
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
@@ -1400,8 +1403,8 @@ function RunResult({
           <div className="cell-sub">Workflow</div>
           <strong style={{ fontSize: 13.5 }}>{run.workflowName || flow?.name || 'Workflow'}</strong>
         </div>
-        <Badge tone={isCompleted ? 'green' : isApprovalNeeded ? 'amber' : 'red'} dot>
-          {isCompleted ? 'Completed' : isApprovalNeeded ? 'Needs Approval' : run.status}
+        <Badge tone={isCompleted && !hasSimulatedSteps ? 'green' : isCompleted ? 'default' : isApprovalNeeded ? 'amber' : 'red'} dot>
+          {isCompleted ? (hasSimulatedSteps ? 'Completed · Simulated' : 'Completed') : isApprovalNeeded ? 'Needs Approval' : run.status}
         </Badge>
       </div>
 
@@ -1427,6 +1430,7 @@ function RunResult({
         <div>
           <div className="cell-sub">Steps Completed</div>
           <strong style={{ fontSize: 13 }}>{done}/{steps.length}</strong>
+          {hasSimulatedSteps && <div className="cell-sub">{simulated} simulated · no external send</div>}
         </div>
         <div>
           <div className="cell-sub">Duration</div>
@@ -1442,6 +1446,7 @@ function RunResult({
         {steps.map((step: any, index: number) => {
           const isStepDone = step.status === 'done' || step.status === 'completed';
           const isStepApproval = step.status === 'waiting_approval';
+          const isStepSimulated = step.status === 'simulated';
           const isStepFailed = step.status === 'failed';
 
           return (
@@ -1473,7 +1478,7 @@ function RunResult({
                   <div className="cell-sub">{step.detail || step.nodeType || step.kind}</div>
                 </div>
                 <Badge tone={isStepFailed ? 'red' : isStepApproval ? 'amber' : isStepDone ? 'green' : 'default'}>
-                  {step.status}
+                  {isStepSimulated ? 'Simulated' : step.status}
                 </Badge>
               </div>
 
