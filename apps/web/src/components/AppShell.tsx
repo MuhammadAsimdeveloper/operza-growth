@@ -229,7 +229,7 @@ function Sidebar({ onNavigate, compact = false }: { onNavigate: () => void; comp
         </NavLink>
         {compact && (
           <NavLink to="/audit-log" className="nav__item" onClick={onNavigate}>
-            <span className="nav__icon"><Icon name="shield-check" size={17} /></span>
+            <span className="nav__icon"><Icon name="lock" size={17} /></span>
             <span className="nav__label">Audit &amp; Security</span>
           </NavLink>
         )}
@@ -285,7 +285,7 @@ export function SearchBox() {
     <div className="topbar__search" ref={boxRef}>
       <Icon name="search" size={16} />
       <input
-        placeholder="Search contacts, deals, pages…"
+        placeholder="Search Atlas..."
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
