@@ -3148,3 +3148,12 @@ a {
   background: var(--surface-3);
 }
 
+
+.atlas-status--unavailable {
+  background: #f2f4f8;
+  color: #64748b;
+}
+[data-theme="dark"] .atlas-status--unavailable {
+  background: var(--surface-3);
+  color: var(--text-2);
+}
