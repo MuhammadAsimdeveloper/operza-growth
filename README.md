@@ -190,7 +190,7 @@ docker compose up -d
 
 | Service | Port | Description |
 | ------- | ---- | ----------- |
-| **Web UI** | `80` (or `5173`) | Nginx Alpine hosting compiled React 19 SPA |
+| **Web UI** | `80` (or `5173`) | Nginx Alpine hosting compiled React 18.3.1 SPA |
 | **API Server** | `4000` | Node.js ESM REST API + WebSocket Hub |
 | **PostgreSQL** | `5432` | Multi-tenant PostgreSQL 16 with RLS |
 | **Redis** | `6379` | Distributed Redis 7 Queue & Cache |
@@ -216,7 +216,7 @@ operza/
 │   │   ├── queue.mjs           # Native RESP Redis BullMQ queue driver
 │   │   └── Dockerfile          # Multi-stage Node 22 Alpine API image
 │   │
-│   └── web/                    # React 19 + TypeScript + Vite CRM Application
+│   └── web/                    # React 18.3.1 + TypeScript + Vite CRM Application
 │       ├── src/
 │       │   ├── components/
 │       │   │   ├── WorkflowCanvas.tsx    # 2D visual node-and-wire canvas
@@ -288,7 +288,7 @@ Operza provides an exhaustive, RESTful API and WebSocket event hub:
 Operza features an exhaustive end-to-end integration test harness (`scripts/test-e2e.mjs`) covering all 77 integration scenarios, database writes, and public ingress points.
 
 ```bash
-# Run the complete 72-step integration test suite:
+# Run the complete 77-step integration test suite:
 npm test
 
 # Run frontend TypeScript typechecking & bundle build:
@@ -301,7 +301,7 @@ Expected test result:
 🧪 Starting Operza End-to-End System Verification
 =====================================================
 ...
-[TEST 72] Public Live Funnel Ingress & Order Bump Checkout: /api/funnels/public/* & /optin/*
+[TEST 77] Public Live Funnel Ingress & Order Bump Checkout: /api/funnels/public/* & /optin/*
 ✅ Public live funnel ingress, visit tracking, opt-in lead creation, and 1-click order bump calculation verified
 
 🎉 ALL 77 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉
