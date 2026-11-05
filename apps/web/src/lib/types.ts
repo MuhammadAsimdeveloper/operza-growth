@@ -416,8 +416,8 @@ export interface Workflow {
   completed: number;
 }
 
-export type WorkflowRunStatus = 'success' | 'failed';
-export type WorkflowRunStepStatus = 'done' | 'failed' | 'skipped';
+export type WorkflowRunStatus = 'success' | 'failed' | 'simulated';
+export type WorkflowRunStepStatus = 'done' | 'failed' | 'skipped' | 'simulated';
 
 export interface WorkflowRunStep {
   label: string;
