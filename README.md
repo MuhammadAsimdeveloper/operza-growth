@@ -6,10 +6,10 @@
 **Unified Multi-Tenant CRM + Visual Node Automation + Autonomous AI Copilot**
 
 [![CI Status](https://github.com/MuhammadAsimdeveloper/operza-growth/actions/workflows/ci.yml/badge.svg)](https://github.com/MuhammadAsimdeveloper/operza-growth/actions)
-[![Tests Passing](https://img.shields.io/badge/Tests-72%2F72%20Passed-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
+[![Tests Passing](https://img.shields.io/badge/E2E%20Cases-77-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
 [![Node.js Version](https://img.shields.io/badge/Node.js-%3E%3D20.0.0-339933.svg?style=flat-square&logo=node.js)](package.json)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6.svg?style=flat-square&logo=typescript)](apps/web)
-[![React](https://img.shields.io/badge/React-19.0-61dafb.svg?style=flat-square&logo=react)](apps/web)
+[![React](https://img.shields.io/badge/React-18.3.1.0-61dafb.svg?style=flat-square&logo=react)](apps/web)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ed.svg?style=flat-square&logo=docker)](docker-compose.yml)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 
@@ -36,11 +36,19 @@ Modern growth agencies and scaling businesses are forced into an expensive, frag
 
 ---
 
+## Current Workflow Safety Model
+
+External email, SMS, and review-request workflow actions run in **simulation mode by default** and do not create fake sent messages. Direct-URL workflow nodes (webhook, HTTP request, and Slack webhook) are blocked until a tenant-scoped connector and egress boundary are available. Live external delivery requires a verified provider, explicit consent, action-bound approval, and a trusted server-injected provider adapter.
+
+This governance layer does not add or activate a mail/SMS provider, a secret vault, or live payment processing. See [the unified Operza + Atlas architecture plan](docs/UNIFIED_OPERZA_ATLAS_PLAN.md) for the audit and phased roadmap.
+
+---
+
 ## 🏛️ System Architecture
 
 ```mermaid
 flowchart TD
-    subgraph Clients["Presentation Layer (React 19 + TypeScript + Tailwind)"]
+    subgraph Clients["Presentation Layer (React 18 + TypeScript + Tailwind)"]
         UI["Operza CRM Workspace"]
         Canvas["Visual Workflow Graph Canvas"]
         Builder["WYSIWYG Funnel & Page Builder"]
@@ -226,7 +234,7 @@ operza/
 │
 ├── scripts/
 │   ├── dev.mjs                 # Single-command local launcher
-│   └── test-e2e.mjs            # Comprehensive 72-step end-to-end test suite
+│   └── test-e2e.mjs            # Comprehensive 77-step end-to-end test suite
 │
 ├── docker-compose.yml          # Complete PostgreSQL, Redis, API & Web stack
 ├── package.json                # Monorepo root workspaces configuration
@@ -277,7 +285,7 @@ Operza provides an exhaustive, RESTful API and WebSocket event hub:
 
 ## 🧪 Verification & Testing
 
-Operza features an exhaustive end-to-end integration test harness (`scripts/test-e2e.mjs`) covering all 72 core workflows, database writes, and public ingress points.
+Operza features an exhaustive end-to-end integration test harness (`scripts/test-e2e.mjs`) covering all 77 integration scenarios, database writes, and public ingress points.
 
 ```bash
 # Run the complete 72-step integration test suite:
@@ -296,7 +304,7 @@ Expected test result:
 [TEST 72] Public Live Funnel Ingress & Order Bump Checkout: /api/funnels/public/* & /optin/*
 ✅ Public live funnel ingress, visit tracking, opt-in lead creation, and 1-click order bump calculation verified
 
-🎉 ALL 72 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉
+🎉 ALL 77 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉
 ```
 
 ---
