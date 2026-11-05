@@ -108,15 +108,15 @@ function Sidebar({ onNavigate, compact = false }: { onNavigate: () => void; comp
 
   const controlPlaneItems: NavEntry[] = [
     { to: '/', label: 'Overview', icon: 'dashboard', end: true },
-    { to: '/reporting', label: 'Command Center', icon: 'activity' },
+    { to: '/reporting', label: 'Command Center', icon: 'chart' },
     { to: '/contacts', label: 'CRM', icon: 'users' },
     { to: '/conversations', label: 'Conversations', icon: 'message', badge: unread },
-    { to: '/workflows', label: 'Automations', icon: 'workflow' },
+    { to: '/workflows', label: 'Automations', icon: 'zap' },
     { to: '/integrations', label: 'Integrations', icon: 'plug' },
-    { to: '/campaigns', label: 'Growth', icon: 'trending-up' },
+    { to: '/campaigns', label: 'Growth', icon: 'target' },
     { to: '/ai-trainer', label: 'AI Operations', icon: 'sparkles' },
-    { to: '/developers', label: 'AI Workforce', icon: 'bot' },
-    { to: '/documents', label: 'Knowledge', icon: 'book-open' },
+    { to: '/developers', label: 'AI Workforce', icon: 'webhook' },
+    { to: '/documents', label: 'Knowledge', icon: 'book' },
     { to: '/payments', label: 'Revenue OS', icon: 'wallet' },
   ];
 
@@ -141,11 +141,11 @@ function Sidebar({ onNavigate, compact = false }: { onNavigate: () => void; comp
           title="Switch active sub-account / location"
         >
           <span className="account__avatar">
-            {(agency?.name || 'OP').slice(0, 2).toUpperCase()}
+            {(agency?.name || 'AT').slice(0, 2).toUpperCase()}
           </span>
           <span style={{ minWidth: 0, flex: 1 }}>
             <span className="account__name" style={{ display: 'block' }}>
-              {activeLocation?.name || agency?.name || 'Operza Agency'}
+              {activeLocation?.name || agency?.name || 'Atlas Workspace'}
             </span>
             <span className="account__plan" style={{ display: 'block' }}>
               {agency?.name || 'Agency Workspace'}
@@ -197,8 +197,8 @@ function Sidebar({ onNavigate, compact = false }: { onNavigate: () => void; comp
       </div>
 
       <nav className={compact ? "sidebar__nav sidebar__nav--compact" : "sidebar__nav"}>
-        {(compact ? [{ items: controlPlaneItems }] : groups).map((group, gi) => (
-          <div key={group.label ?? `g${gi}`}>
+        {(compact ? [{ label: undefined, items: controlPlaneItems }] : groups).map((group, gi) => (
+          <div key={group.label ?? `g${gi}`} className={compact ? "atlas-sidebar__links" : undefined}>
             {group.label && <div className="nav__group-label">{group.label}</div>}
             {group.items.map((item) => (
               <NavLink
