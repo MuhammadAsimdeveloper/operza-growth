@@ -1253,7 +1253,7 @@ function RunResult({
   const steps = run.steps || [];
   const done = steps.filter((step: any) => ['done', 'completed', 'simulated'].includes(step.status)).length;
   const simulated = steps.filter((step: any) => step.status === 'simulated').length;
-  const hasSimulatedSteps = simulated > 0;
+  const hasSimulatedSteps = simulated > 0 || run.status === 'simulated' || run.mode === 'dry_run';
   const isCompleted = run.status === 'success' || run.status === 'completed' || run.status === 'simulated';
   const isApprovalNeeded = run.status === 'waiting_approval';
 
@@ -1330,14 +1330,14 @@ function RunResult({
           </strong>
         </div>
         <div>
-          <div className="cell-sub">Steps Completed</div>
+          <div className="cell-sub">Steps Processed</div>
           <strong style={{ fontSize: 13 }}>{done}/{steps.length}</strong>
           {hasSimulatedSteps && <div className="cell-sub">{simulated} simulated · no external send</div>}
         </div>
         <div>
           <div className="cell-sub">Duration</div>
           <strong style={{ fontSize: 13 }}>
-            {run.durationMs ? `${(run.durationMs / 1000).toFixed(2)}s` : run.status === 'simulated' ? 'Not measured' : 'Instant'}
+            {run.mode === 'dry_run' || run.status === 'simulated' ? 'Not measured' : run.durationMs ? `${(run.durationMs / 1000).toFixed(2)}s` : 'Instant'}
           </strong>
         </div>
       </div>
