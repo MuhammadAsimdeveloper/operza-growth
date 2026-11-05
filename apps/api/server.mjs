@@ -625,7 +625,7 @@ function validateCsrf(req, actor) {
 }
 
 // ─── Workflow Execution Engine ────────────────────────────────────────
-async function executeWorkflowInstance({ flow, agencyId, locationId, triggerType, triggerContext }) {
+async function executeWorkflowInstance({ flow, agencyId, locationId, triggerType, triggerContext, mode = 'live' }) {
   const executionId = randomUUID();
   const startTime = Date.now();
   const execution = {
@@ -634,6 +634,7 @@ async function executeWorkflowInstance({ flow, agencyId, locationId, triggerType
     locationId,
     workflowId: flow.id,
     workflowName: flow.name,
+    mode,
     status: 'running',
     triggerType,
     triggerContext,
@@ -1073,6 +1074,7 @@ const copilotTools = {
         agencyId: actor.agency.id,
         locationId: actor.activeLocation.id,
         triggerType: 'manual',
+        mode: 'dry_run',
         triggerContext: {
           contact,
           manualTrigger: true,
