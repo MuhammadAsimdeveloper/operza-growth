@@ -15,7 +15,6 @@ import type {
   Workflow,
   WorkflowAction,
   WorkflowRun,
-  WorkflowRunStep,
   WorkflowStepConfig,
   WorkflowTrigger,
   WorkflowTriggerKind,
