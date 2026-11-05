@@ -49,7 +49,7 @@ The Operza API layer is built with high-throughput Node.js (ESM native), featuri
 | | `GET/POST` | `/api/crm/documents` | Digital contracts & legal e-signatures |
 | | `GET/POST` | `/api/crm/phoneNumbers` | Virtual phone number provisioning & IVR routing |
 | **Workflows** | `GET/POST` | `/api/crm/workflows` | Automation workflow blueprints |
-| | `POST` | `/api/workflows/:id/run` | Execute workflow with condition evaluation |
+| | `POST` | `/api/workflows/:id/run` | Side-effect-free workflow dry run with condition evaluation |
 | | `POST` | `/api/workflows/runs/:id/approve` | Clear human-in-the-loop approval gate |
 | **Copilot** | `GET` | `/api/copilot/stream` | Real-time SSE AI token streaming |
 | | `POST` | `/api/copilot/chat` | AI Copilot conversational query |

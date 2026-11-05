@@ -14,6 +14,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
+import { authorizeActionInvocation, createActionInvocation, getWorkflowActionDefinition, isDirectNetworkNode } from './action-governance.mjs';
 
 // ---------------------------------------------------------------------------
 // Utility — Checksum
@@ -127,13 +128,14 @@ export async function executeStep({
   triggerContext,
   crmActions,
   aiHandler,
+  providerExecutor = null,
   now = Date.now(),
   variables = {},
 }) {
   const { id: nodeId, type, config = {} } = node;
 
   // Human-approval gate (unchanged)
-  if (node.requiresApproval && !execution.approvedBy) {
+  if (node.requiresApproval && !execution.approvedBy && execution.mode !== 'dry_run') {
     return {
       status: 'waiting_approval',
       nodeId,
@@ -145,6 +147,82 @@ export async function executeStep({
   const ctx = { ...triggerContext, variables };
 
   try {
+    if (isDirectNetworkNode(type)) {
+      return {
+        status: 'failed',
+        nodeId,
+        errorCode: 'DIRECT_NETWORK_TARGET_DISABLED',
+        error: 'Direct URL workflow requests are disabled. Use a verified connector-scoped operation instead.'
+      };
+    }
+
+    const actionDefinition = getWorkflowActionDefinition(type);
+    if (execution?.mode === 'dry_run' && actionDefinition?.risk === 'write') {
+      return {
+        status: 'simulated',
+        nodeId,
+        result: {
+          actionId: actionDefinition.id,
+          mode: 'dry_run',
+          sideEffectsDisabled: true,
+          reason: 'DRY_RUN_ONLY'
+        }
+      };
+    }
+    if (actionDefinition?.risk === 'external_side_effect') {
+      const invocation = createActionInvocation({
+        tenantId: execution?.agencyId || execution?.tenantId || null,
+        workflowId: execution?.workflowId || null,
+        executionId: execution?.id || null,
+        actorId: execution?.actorId || null,
+        node,
+        input: config,
+        mode: execution?.mode === 'live' ? 'live' : 'dry_run',
+        providerStatus: execution?.providerStatuses?.[actionDefinition.providerKey] || 'unconfigured',
+        consent: execution?.consent === true,
+        approvalEvidence: execution?.approvalEvidence || null
+      });
+      const decision = authorizeActionInvocation(invocation);
+      if (decision.decision === 'simulate') {
+        return {
+          status: 'simulated',
+          nodeId,
+          result: {
+            actionId: invocation.actionId,
+            mode: 'dry_run',
+            sideEffectsDisabled: true,
+            reason: decision.code
+          }
+        };
+      }
+      if (decision.decision !== 'allow') {
+        return {
+          status: 'failed',
+          nodeId,
+          errorCode: decision.code,
+          error: 'External action blocked by governance policy (' + decision.code + ').'
+        };
+      }
+      if (typeof providerExecutor !== 'function') {
+        return {
+          status: 'failed',
+          nodeId,
+          errorCode: 'PROVIDER_ADAPTER_UNAVAILABLE',
+          error: 'No trusted provider adapter is configured for this action.'
+        };
+      }
+      await providerExecutor({ invocation, node, context: ctx });
+      return {
+        status: 'completed',
+        nodeId,
+        result: {
+          actionId: invocation.actionId,
+          providerKey: invocation.providerKey,
+          dispatch: 'accepted'
+        }
+      };
+    }
+
     switch (type) {
       // ---------------------------------------------------------------
       // Original node types
@@ -234,6 +312,13 @@ export async function executeStep({
 
       case 'wait': {
         const durationMinutes = Number(config.durationMinutes) || 5;
+        if (execution?.mode === 'dry_run') {
+          return {
+            status: 'simulated',
+            nodeId,
+            result: { mode: 'dry_run', sideEffectsDisabled: true, wouldWaitMinutes: durationMinutes }
+          };
+        }
         const retryAt = new Date(now + durationMinutes * 60 * 1000).toISOString();
         return { status: 'waiting', nodeId, retryAt, result: { retryAt } };
       }
@@ -278,6 +363,13 @@ export async function executeStep({
         const multiplier = { minutes: 60_000, hours: 3_600_000, days: 86_400_000 };
         const ms = amount * (multiplier[unit] || multiplier.minutes);
         const retryAt = new Date(now + ms).toISOString();
+        if (execution?.mode === 'dry_run') {
+          return {
+            status: 'simulated',
+            nodeId,
+            result: { mode: 'dry_run', sideEffectsDisabled: true, wouldResumeAt: retryAt, delayAmount: amount, delayUnit: unit }
+          };
+        }
         return { status: 'waiting', nodeId, retryAt, result: { retryAt, delayAmount: amount, delayUnit: unit } };
       }
 
@@ -453,7 +545,7 @@ export async function executeStep({
         if (!assigneeId) {
           return { status: 'completed', nodeId, result: { notice: 'No assignee could be determined' } };
         }
-        await crmActions.assignContact({ contactId, userId: assigneeId });
+        await crmActions.assignContact({ contactId, assignee: assigneeId });
         return { status: 'completed', nodeId, result: { assignedTo: assigneeId, contactId } };
       }
 
@@ -480,6 +572,7 @@ export async function executeStep({
     return {
       status: 'failed',
       nodeId,
+      errorCode: error.code || 'WORKFLOW_STEP_FAILED',
       error: error.message || 'Execution failed',
     };
   }
@@ -515,7 +608,7 @@ function buildNodeMap(nodes) {
  * @param {object}   triggerContext   – data that started the workflow
  * @param {Function} stepExecutor    – async (node, context, variables) => stepResult
  *                                     Defaults to `executeStep` with the given deps.
- * @param {object}   [deps]          – { execution, crmActions, aiHandler }
+ * @param {object}   [deps]          – { execution, crmActions, aiHandler, providerExecutor }
  * @returns {Promise<{ timeline: object[], variables: object, finalStatus: string }>}
  */
 export async function walkGraph(nodes, triggerContext, stepExecutor, deps = {}) {
@@ -555,6 +648,7 @@ export async function walkGraph(nodes, triggerContext, stepExecutor, deps = {}) 
         triggerContext,
         crmActions: deps.crmActions,
         aiHandler: deps.aiHandler,
+        providerExecutor: deps.providerExecutor,
         now: startedAt,
         variables,
       });
@@ -615,6 +709,7 @@ export async function walkGraph(nodes, triggerContext, stepExecutor, deps = {}) 
               triggerContext: itemCtx,
               crmActions: deps.crmActions,
               aiHandler: deps.aiHandler,
+              providerExecutor: deps.providerExecutor,
               now: childStart,
               variables,
             });

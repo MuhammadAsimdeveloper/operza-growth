@@ -125,6 +125,20 @@ export interface WorkflowDefinition {
   updatedAt: string;
 }
 
+export type WorkflowStepStatus = 'running' | 'waiting' | 'waiting_approval' | 'done' | 'completed' | 'simulated' | 'failed' | 'skipped';
+
+export interface WorkflowExecutionStep {
+  nodeId: string;
+  nodeName?: string;
+  nodeType?: string;
+  status: WorkflowStepStatus;
+  result?: unknown;
+  error?: string | null;
+  errorCode?: string;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
 export interface WorkflowExecution {
   id: string;
   workflowId: string;
@@ -135,4 +149,5 @@ export interface WorkflowExecution {
   lastErrorCode?: string;
   createdAt: string;
   finishedAt?: string;
+  steps?: WorkflowExecutionStep[];
 }

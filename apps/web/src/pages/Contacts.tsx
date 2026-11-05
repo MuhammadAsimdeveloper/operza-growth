@@ -1,6 +1,6 @@
 import { api } from '../lib/api';
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, EmptyState, PageHeader, StatusBadge } from '../components/ui';
@@ -18,6 +18,7 @@ const STATUSES: Array<{ value: 'all' | ContactStatus; label: string }> = [
 export default function Contacts() {
   const { state, dispatch } = useStore();
   const navigate = useNavigate();
+  const location = useLocation();
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<'all' | ContactStatus>('all');
   const [tag, setTag] = useState('all');
@@ -61,6 +62,13 @@ export default function Contacts() {
       active = false;
     };
   }, [state.contacts, dispatch]);
+
+  useEffect(() => {
+    const state = location.state as { openAddContact?: boolean } | null;
+    if (!state?.openAddContact) return;
+    setAdding(true);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate]);
 
   const allTags = useMemo(
     () => Array.from(new Set(state.contacts.flatMap((c) => c.tags))).sort(),

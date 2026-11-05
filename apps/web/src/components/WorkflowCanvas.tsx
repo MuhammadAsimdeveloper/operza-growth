@@ -206,7 +206,7 @@ export function WorkflowCanvas({
           onClick={() => setZoom((z) => Math.max(0.4, z - 0.15))}
           title="Zoom Out"
         >
-          <Icon name="x" size={13} />
+          <Icon name="minus" size={13} />
         </button>
         <button
           className="btn btn--subtle btn--sm"

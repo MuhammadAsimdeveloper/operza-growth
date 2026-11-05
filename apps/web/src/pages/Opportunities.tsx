@@ -1,6 +1,6 @@
 import { api } from '../lib/api';
-import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, PageHeader, StatCard } from '../components/ui';
@@ -9,10 +9,20 @@ import { currency, num } from '../lib/format';
 
 export default function Opportunities() {
   const { state, dispatch } = useStore();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [pipelineId, setPipelineId] = useState(state.pipelines[0]?.id ?? '');
   const [dragId, setDragId] = useState<string | null>(null);
   const [overStage, setOverStage] = useState<string | null>(null);
   const [adding, setAdding] = useState<string | null>(null); // stage id
+
+  useEffect(() => {
+    const routeState = location.state as { openAddOpportunity?: boolean } | null;
+    if (!routeState?.openAddOpportunity) return;
+    const firstStage = state.pipelines[0]?.stages[0]?.id;
+    if (firstStage) setAdding(firstStage);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate, state.pipelines]);
 
   const pipeline = state.pipelines.find((p) => p.id === pipelineId) ?? state.pipelines[0];
   const deals = useMemo(

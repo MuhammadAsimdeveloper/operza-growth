@@ -1,5 +1,7 @@
-import { useState, useEffect, type ReactElement } from 'react';
+import { useState, useEffect, useRef, type ChangeEvent, type ReactElement } from 'react';
 import { api } from '../lib/api';
+import { simulateWorkflowActions } from '../../../../packages/workflow-engine/src/simulation.mjs';
+import { exportWorkflowPackage, importWorkflowPackage } from '../../../../packages/workflow-engine/src/workflow-package.mjs';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, PageHeader, StatCard, StatusBadge, Switch } from '../components/ui';
@@ -14,7 +16,6 @@ import type {
   Workflow,
   WorkflowAction,
   WorkflowRun,
-  WorkflowRunStep,
   WorkflowStepConfig,
   WorkflowTrigger,
   WorkflowTriggerKind,
@@ -147,121 +148,22 @@ function countSteps(actions: WorkflowAction[]): number {
   return actions.reduce((total, step) => total + 1 + countSteps(step.yes ?? []) + countSteps(step.no ?? []), 0);
 }
 
-function ruleMatches(rule: ConditionRule, contact: Contact): boolean {
-  const expected = rule.value.trim().toLowerCase();
-  if (!expected) return false;
-
-  if (rule.field === 'tag') {
-    const tags = contact.tags.map((tag) => tag.toLowerCase());
-    if (rule.operator === 'is') return tags.includes(expected);
-    if (rule.operator === 'is_not') return !tags.includes(expected);
-    return tags.some((tag) => tag.includes(expected));
-  }
-
-  const actual = (
-    rule.field === 'status' ? contact.status : rule.field === 'company' ? contact.company : contact.email
-  ).toLowerCase();
-  if (rule.operator === 'is') return actual === expected;
-  if (rule.operator === 'is_not') return actual !== expected;
-  return actual.includes(expected);
-}
-
 function simulateRun(flow: Workflow, contact: Contact): WorkflowRun {
-  const steps: WorkflowRunStep[] = [];
-  let failed = false;
-
-  const visit = (list: WorkflowAction[]) => {
-    for (const step of list) {
-      if (failed) {
-        steps.push({ label: step.label, kind: step.kind, status: 'skipped' });
-        continue;
-      }
-
-      if (step.kind === 'condition') {
-        const rule = step.config?.rule;
-        const pass = rule ? ruleMatches(rule, contact) : false;
-        steps.push({
-          label: step.label,
-          kind: step.kind,
-          status: 'done',
-          detail: pass ? 'Yes branch' : 'No branch',
-        });
-        visit((pass ? step.yes : step.no) ?? []);
-        continue;
-      }
-
-      if (step.kind === 'webhook') {
-        const url = step.config?.url?.trim() ?? '';
-        if (!/^https?:\/\/\S+$/i.test(url)) {
-          steps.push({
-            label: step.label,
-            kind: step.kind,
-            status: 'failed',
-            detail: 'Invalid or missing webhook URL',
-          });
-          failed = true;
-          continue;
-        }
-        steps.push({
-          label: step.label,
-          kind: step.kind,
-          status: 'done',
-          detail: `${step.config?.method ?? 'POST'} ${url} Â· simulated`,
-        });
-        continue;
-      }
-
-      if (step.kind === 'wait') {
-        steps.push({
-          label: step.label,
-          kind: step.kind,
-          status: 'done',
-          detail: `${delayText(step.delayHours)} Â· simulated`,
-        });
-        continue;
-      }
-
-      if (step.kind === 'tag') {
-        steps.push({
-          label: step.label,
-          kind: step.kind,
-          status: 'done',
-          detail: `Tag "${step.config?.tag ?? 'untitled'}" applied`,
-        });
-        continue;
-      }
-
-      if (step.kind === 'task') {
-        const due = step.config?.dueInDays ?? 0;
-        steps.push({
-          label: step.label,
-          kind: step.kind,
-          status: 'done',
-          detail: `Task created Â· due in ${due} day${due === 1 ? '' : 's'}`,
-        });
-        continue;
-      }
-
-      steps.push({
-        label: step.label,
-        kind: step.kind,
-        status: 'done',
-        detail: `${step.kind === 'sms' ? 'SMS' : 'Email'} queued Â· simulated`,
-      });
-    }
-  };
-
-  visit(flow.actions);
-  const done = steps.filter((step) => step.status === 'done').length;
+  const simulation = simulateWorkflowActions(flow.actions, contact);
 
   return {
     id: uid('run'),
     workflowId: flow.id,
     contactId: contact.id,
     at: new Date().toISOString(),
-    status: failed ? 'failed' : 'success',
-    durationMs: 400 + done * 260,
-    steps,
+    status: simulation.status,
+    durationMs: 0,
+    steps: simulation.steps.map((step) => ({
+      label: step.label || step.id || step.kind,
+      kind: step.kind as WorkflowAction['kind'],
+      status: step.status,
+      detail: step.detail,
+    })),
   };
 }
 
@@ -281,6 +183,8 @@ export default function Workflows() {
   const [viewingRun, setViewingRun] = useState<any | null>(null);
   const [realRuns, setRealRuns] = useState<any[]>([]);
   const [viewMode, setViewMode] = useState<'graph' | 'tree'>('graph');
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [importFeedback, setImportFeedback] = useState('');
 
   const fetchRuns = () => {
     api.workflows
@@ -317,6 +221,44 @@ export default function Workflows() {
   const succeeded = (realRuns.length > 0 ? realRuns : state.workflowRuns).filter((run) => (run.status === 'success' || run.status === 'completed')).length;
   const displayRuns = realRuns.length > 0 ? realRuns : state.workflowRuns;
   const runsFor = selected ? state.workflowRuns.filter((run) => run.workflowId === selected.id) : [];
+
+  const exportSelectedWorkflow = () => {
+    if (!selected) return;
+    try {
+      const bundle = exportWorkflowPackage(selected);
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      const filename = selected.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'workflow';
+      anchor.href = url;
+      anchor.download = filename + '.operza-workflow.json';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setImportFeedback('Exported ' + selected.name + ' as an Operza workflow package.');
+    } catch (error) {
+      setImportFeedback(error instanceof Error ? error.message : 'Workflow export failed.');
+    }
+  };
+
+  const importWorkflowFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      if (file.size > 1_000_000) throw new Error('Workflow package exceeds the 1 MB size limit.');
+      const packageData = JSON.parse(await file.text());
+      const imported = importWorkflowPackage(packageData, { idFactory: (prefix) => uid(prefix) }) as Workflow;
+      dispatch({ type: 'workflow/add', workflow: imported });
+      setSelectedId(imported.id);
+      setImportFeedback('Imported ' + imported.name + ' as a draft. Review its steps before publishing.');
+    } catch (error) {
+      setImportFeedback(error instanceof Error ? error.message : 'Workflow import failed.');
+    } finally {
+      input.value = '';
+    }
+  };
 
   const contactName = (id: string) => {
     const contact = state.contacts.find((c) => c.id === id);
@@ -435,13 +377,23 @@ export default function Workflows() {
 
   return (
     <div className="content">
+      <input ref={importInputRef} type="file" accept=".json,application/json" hidden onChange={importWorkflowFile} />
+      {importFeedback && <div className="atlas-workflow-feedback" role="status">{importFeedback}</div>}
       <PageHeader
         title="Workflows"
         subtitle="Automations that run on triggers, waits, if/else branches and webhooks."
         actions={
-          <button className="btn btn--primary" onClick={() => setCreating(true)}>
-            <Icon name="plus" size={16} /> New workflow
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+            <button className="btn btn--secondary btn--sm" type="button" onClick={() => importInputRef.current?.click()}>
+              <Icon name="upload" size={14} /> Import package
+            </button>
+            <button className="btn btn--secondary btn--sm" type="button" onClick={exportSelectedWorkflow} disabled={!selected}>
+              <Icon name="download" size={14} /> Export JSON
+            </button>
+            <button className="btn btn--primary" type="button" onClick={() => setCreating(true)}>
+              <Icon name="plus" size={16} /> New workflow
+            </button>
+          </div>
         }
       />
 
@@ -638,6 +590,7 @@ export default function Workflows() {
                 {displayRuns.map((run: any) => {
                   const flow = state.workflows.find((w) => w.id === run.workflowId);
                   const isSuccess = run.status === 'success' || run.status === 'completed';
+                  const hasSimulatedSteps = (run.steps || []).some((step: any) => step.status === 'simulated');
                   const isApproval = run.status === 'waiting_approval';
                   const isRunning = run.status === 'running';
                   const cName = run.triggerContext?.contact
@@ -655,8 +608,8 @@ export default function Workflows() {
                       <td>{cName || 'Automated'}</td>
                       <td className="cell-num">{(run.steps || []).length}</td>
                       <td>
-                        <Badge tone={isSuccess ? 'green' : isApproval ? 'amber' : isRunning ? 'violet' : 'red'} dot>
-                          {isSuccess ? 'Completed' : isApproval ? 'Approval Needed' : isRunning ? 'Running' : 'Failed'}
+                        <Badge tone={isSuccess && !hasSimulatedSteps ? 'green' : isSuccess ? 'default' : isApproval ? 'amber' : isRunning ? 'violet' : 'red'} dot>
+                          {isSuccess ? (hasSimulatedSteps ? 'Completed · Simulated' : 'Completed') : isApproval ? 'Approval Needed' : isRunning ? 'Running' : 'Failed'}
                         </Badge>
                       </td>
                       <td className="cell-sub">{relative(run.createdAt || run.at || new Date().toISOString())}</td>
@@ -736,7 +689,7 @@ export default function Workflows() {
             const newFlow: Workflow = {
               id: uid('wf'),
               name: tpl.name,
-              status: 'published',
+              status: 'draft',
               trigger: tpl.trigger,
               actions: tpl.actions,
               enrolled: 0,
@@ -1348,8 +1301,10 @@ function RunResult({
 }) {
   const [approving, setApproving] = useState(false);
   const steps = run.steps || [];
-  const done = steps.filter((step: any) => step.status === 'done' || step.status === 'completed').length;
-  const isCompleted = run.status === 'success' || run.status === 'completed';
+  const done = steps.filter((step: any) => ['done', 'completed', 'simulated'].includes(step.status)).length;
+  const simulated = steps.filter((step: any) => step.status === 'simulated').length;
+  const hasSimulatedSteps = simulated > 0 || run.status === 'simulated' || run.mode === 'dry_run';
+  const isCompleted = run.status === 'success' || run.status === 'completed' || run.status === 'simulated';
   const isApprovalNeeded = run.status === 'waiting_approval';
 
   const handleApprove = async () => {
@@ -1380,7 +1335,7 @@ function RunResult({
 
   return (
     <Modal
-      title={isCompleted ? 'Workflow Execution Completed' : isApprovalNeeded ? 'Awaiting Operator Approval' : 'Workflow Execution Status'}
+      title={isCompleted ? (hasSimulatedSteps || run.status === 'simulated' ? 'Workflow Simulation Completed' : 'Workflow Execution Completed') : isApprovalNeeded ? 'Awaiting Operator Approval' : 'Workflow Execution Status'}
       onClose={onClose}
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
@@ -1400,8 +1355,8 @@ function RunResult({
           <div className="cell-sub">Workflow</div>
           <strong style={{ fontSize: 13.5 }}>{run.workflowName || flow?.name || 'Workflow'}</strong>
         </div>
-        <Badge tone={isCompleted ? 'green' : isApprovalNeeded ? 'amber' : 'red'} dot>
-          {isCompleted ? 'Completed' : isApprovalNeeded ? 'Needs Approval' : run.status}
+        <Badge tone={isCompleted && !hasSimulatedSteps ? 'green' : isCompleted ? 'default' : isApprovalNeeded ? 'amber' : 'red'} dot>
+          {isCompleted ? (hasSimulatedSteps || run.status === 'simulated' ? 'Simulation only' : 'Completed') : isApprovalNeeded ? 'Needs Approval' : run.status}
         </Badge>
       </div>
 
@@ -1425,13 +1380,14 @@ function RunResult({
           </strong>
         </div>
         <div>
-          <div className="cell-sub">Steps Completed</div>
+          <div className="cell-sub">Steps Processed</div>
           <strong style={{ fontSize: 13 }}>{done}/{steps.length}</strong>
+          {hasSimulatedSteps && <div className="cell-sub">{simulated} simulated · no external send</div>}
         </div>
         <div>
           <div className="cell-sub">Duration</div>
           <strong style={{ fontSize: 13 }}>
-            {run.durationMs ? `${(run.durationMs / 1000).toFixed(2)}s` : 'Instant'}
+            {run.mode === 'dry_run' || run.status === 'simulated' ? 'Not measured' : run.durationMs ? `${(run.durationMs / 1000).toFixed(2)}s` : 'Instant'}
           </strong>
         </div>
       </div>
@@ -1442,6 +1398,7 @@ function RunResult({
         {steps.map((step: any, index: number) => {
           const isStepDone = step.status === 'done' || step.status === 'completed';
           const isStepApproval = step.status === 'waiting_approval';
+          const isStepSimulated = step.status === 'simulated';
           const isStepFailed = step.status === 'failed';
 
           return (
@@ -1473,7 +1430,7 @@ function RunResult({
                   <div className="cell-sub">{step.detail || step.nodeType || step.kind}</div>
                 </div>
                 <Badge tone={isStepFailed ? 'red' : isStepApproval ? 'amber' : isStepDone ? 'green' : 'default'}>
-                  {step.status}
+                  {isStepSimulated ? 'Simulated' : step.status}
                 </Badge>
               </div>
 
@@ -1533,15 +1490,34 @@ function TemplateGalleryModal({
       ],
     },
     {
-      name: 'Inbound Webhook to Pipeline & Slack Dispatch',
+      name: 'Inbound Webhook Lead Triage',
       category: 'Omnichannel & Integrations',
-      description: 'Listens for external inbound lead webhooks, tags the contact, dispatches notifications, and creates an intake task.',
+      description: 'Receives an inbound lead, applies a workspace tag, and creates a review task. No external message is sent.',
       trigger: { kind: 'webhook', detail: 'External Inbound Lead' },
       actions: [
         { id: uid('act'), kind: 'tag', label: 'Tag webhook-lead', config: { tag: 'webhook-lead' } },
-        { id: uid('act'), kind: 'webhook', label: 'POST to Slack / Discord', config: { method: 'POST', url: 'https://hooks.slack.com/services/demo' } },
+        { id: uid('act'), kind: 'task', label: 'Create notification review task', config: { title: 'Review inbound lead notification' } },
         { id: uid('act'), kind: 'task', label: 'Review incoming webhook lead', config: { title: 'Qualify lead from external webhook' } },
       ],
+    },
+    {
+      name: 'Webhook Lead Validation & Triage',
+      category: 'Webhooks & APIs',
+      description: 'Routes incoming lead data through a field check, then tags valid leads and creates a follow-up task. Invalid leads go to a review task.',
+      trigger: { kind: 'webhook', detail: 'Incoming Lead Intake' },
+      actions: [
+        {
+          id: uid('act'), kind: 'condition', label: 'Check for an email address',
+          config: { rule: { field: 'email', operator: 'contains', value: '@' } },
+          yes: [
+            { id: uid('act'), kind: 'tag', label: 'Mark intake as validated', config: { tag: 'intake-validated' } },
+            { id: uid('act'), kind: 'task', label: 'Create sales follow-up', config: { title: 'Follow up with validated lead', dueInDays: 1 } }
+          ],
+          no: [
+            { id: uid('act'), kind: 'task', label: 'Review incomplete lead', config: { title: 'Review lead missing a valid email', dueInDays: 1 } }
+          ]
+        }
+      ]
     },
   ];
 
@@ -1549,7 +1525,7 @@ function TemplateGalleryModal({
     <Modal title="Pre-built Automation Templates" onClose={onClose} wide>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <p style={{ color: 'var(--text-3)', fontSize: 13, margin: 0 }}>
-          Install ready-to-use production workflows with triggers, branching, and actions in one click.
+          Install a template as a draft, review every action, then publish it when your workspace is ready.
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
           {templates.map((tpl) => (
