@@ -1,6 +1,7 @@
-import { useState, useEffect, type ReactElement } from 'react';
+import { useState, useEffect, useRef, type ChangeEvent, type ReactElement } from 'react';
 import { api } from '../lib/api';
 import { simulateWorkflowActions } from '../../../../packages/workflow-engine/src/simulation.mjs';
+import { exportWorkflowPackage, importWorkflowPackage } from '../../../../packages/workflow-engine/src/workflow-package.mjs';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, PageHeader, StatCard, StatusBadge, Switch } from '../components/ui';
@@ -182,6 +183,8 @@ export default function Workflows() {
   const [viewingRun, setViewingRun] = useState<any | null>(null);
   const [realRuns, setRealRuns] = useState<any[]>([]);
   const [viewMode, setViewMode] = useState<'graph' | 'tree'>('graph');
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [importFeedback, setImportFeedback] = useState('');
 
   const fetchRuns = () => {
     api.workflows
@@ -218,6 +221,44 @@ export default function Workflows() {
   const succeeded = (realRuns.length > 0 ? realRuns : state.workflowRuns).filter((run) => (run.status === 'success' || run.status === 'completed')).length;
   const displayRuns = realRuns.length > 0 ? realRuns : state.workflowRuns;
   const runsFor = selected ? state.workflowRuns.filter((run) => run.workflowId === selected.id) : [];
+
+  const exportSelectedWorkflow = () => {
+    if (!selected) return;
+    try {
+      const bundle = exportWorkflowPackage(selected);
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      const filename = selected.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'workflow';
+      anchor.href = url;
+      anchor.download = filename + '.operza-workflow.json';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setImportFeedback('Exported ' + selected.name + ' as an Operza workflow package.');
+    } catch (error) {
+      setImportFeedback(error instanceof Error ? error.message : 'Workflow export failed.');
+    }
+  };
+
+  const importWorkflowFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      if (file.size > 1_000_000) throw new Error('Workflow package exceeds the 1 MB size limit.');
+      const packageData = JSON.parse(await file.text());
+      const imported = importWorkflowPackage(packageData, { idFactory: (prefix) => uid(prefix) }) as Workflow;
+      dispatch({ type: 'workflow/add', workflow: imported });
+      setSelectedId(imported.id);
+      setImportFeedback('Imported ' + imported.name + ' as a draft. Review its steps before publishing.');
+    } catch (error) {
+      setImportFeedback(error instanceof Error ? error.message : 'Workflow import failed.');
+    } finally {
+      input.value = '';
+    }
+  };
 
   const contactName = (id: string) => {
     const contact = state.contacts.find((c) => c.id === id);
@@ -336,13 +377,23 @@ export default function Workflows() {
 
   return (
     <div className="content">
+      <input ref={importInputRef} type="file" accept=".json,application/json" hidden onChange={importWorkflowFile} />
+      {importFeedback && <div className="atlas-workflow-feedback" role="status">{importFeedback}</div>}
       <PageHeader
         title="Workflows"
         subtitle="Automations that run on triggers, waits, if/else branches and webhooks."
         actions={
-          <button className="btn btn--primary" onClick={() => setCreating(true)}>
-            <Icon name="plus" size={16} /> New workflow
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+            <button className="btn btn--secondary btn--sm" type="button" onClick={() => importInputRef.current?.click()}>
+              <Icon name="upload" size={14} /> Import package
+            </button>
+            <button className="btn btn--secondary btn--sm" type="button" onClick={exportSelectedWorkflow} disabled={!selected}>
+              <Icon name="download" size={14} /> Export JSON
+            </button>
+            <button className="btn btn--primary" type="button" onClick={() => setCreating(true)}>
+              <Icon name="plus" size={16} /> New workflow
+            </button>
+          </div>
         }
       />
 
@@ -638,7 +689,7 @@ export default function Workflows() {
             const newFlow: Workflow = {
               id: uid('wf'),
               name: tpl.name,
-              status: 'published',
+              status: 'draft',
               trigger: tpl.trigger,
               actions: tpl.actions,
               enrolled: 0,
@@ -1439,13 +1490,13 @@ function TemplateGalleryModal({
       ],
     },
     {
-      name: 'Inbound Webhook to Pipeline & Slack Dispatch',
+      name: 'Inbound Webhook Lead Triage',
       category: 'Omnichannel & Integrations',
-      description: 'Listens for external inbound lead webhooks, tags the contact, dispatches notifications, and creates an intake task.',
+      description: 'Receives an inbound lead, applies a workspace tag, and creates a review task. No external message is sent.',
       trigger: { kind: 'webhook', detail: 'External Inbound Lead' },
       actions: [
         { id: uid('act'), kind: 'tag', label: 'Tag webhook-lead', config: { tag: 'webhook-lead' } },
-        { id: uid('act'), kind: 'webhook', label: 'POST to Slack / Discord', config: { method: 'POST', url: 'https://hooks.slack.com/services/demo' } },
+        { id: uid('act'), kind: 'task', label: 'Create notification review task', config: { title: 'Review inbound lead notification' } },
         { id: uid('act'), kind: 'task', label: 'Review incoming webhook lead', config: { title: 'Qualify lead from external webhook' } },
       ],
     },
@@ -1455,7 +1506,7 @@ function TemplateGalleryModal({
     <Modal title="Pre-built Automation Templates" onClose={onClose} wide>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <p style={{ color: 'var(--text-3)', fontSize: 13, margin: 0 }}>
-          Install ready-to-use production workflows with triggers, branching, and actions in one click.
+          Install a template as a draft, review every action, then publish it when your workspace is ready.
         </p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
           {templates.map((tpl) => (
