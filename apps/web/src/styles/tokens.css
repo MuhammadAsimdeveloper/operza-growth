@@ -62,6 +62,29 @@
 
   --sidebar-w: 244px;
   --topbar-h: 58px;
+
+  /* Atlas Control Center Design System Aliases */
+  --bg-app: #f8fafc;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #f1f5f9;
+  --bg-surface-hover: #e2e8f0;
+  --border-subtle: #e2e8f0;
+  --border-contrast: #cbd5e1;
+  --border-focus: #ff6d5a;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #64748b;
+  --color-primary: #ff6d5a;
+  --color-primary-hover: #ff523b;
+  --color-primary-subtle: rgba(255, 109, 90, 0.12);
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
 }
 
 [data-theme="dark"] {
@@ -114,4 +137,27 @@
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.6), 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.7), 0 2px 5px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.85);
+
+  /* Atlas Control Center Design System Dark Aliases */
+  --bg-app: #0d1117;
+  --bg-surface: #161b22;
+  --bg-surface-elevated: #21262d;
+  --bg-surface-hover: #30363d;
+  --border-subtle: #21262d;
+  --border-contrast: #30363d;
+  --border-focus: #ff6d5a;
+  --text-primary: #f0f6fc;
+  --text-secondary: #8b949e;
+  --text-muted: #6e7681;
+  --color-primary: #ff6d5a;
+  --color-primary-hover: #ff523b;
+  --color-primary-subtle: rgba(255, 109, 90, 0.16);
+  --color-success: #2ea043;
+  --color-warning: #d29922;
+  --color-error: #f85149;
+  --color-info: #388bfd;
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
 }
