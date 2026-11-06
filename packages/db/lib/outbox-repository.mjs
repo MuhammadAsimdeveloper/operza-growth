@@ -138,6 +138,18 @@ export function createWorkflowOutboxRepository(pool) {
       });
     },
 
+    async renewLease({ jobId, workerId, leaseMs = 30_000 } = {}) {
+      const boundedLeaseMs = Math.max(1_000, Math.min(300_000, Math.floor(leaseMs)));
+      return withClient(async client => {
+        const updated = await client.query(
+          "UPDATE workflow_outbox SET lease_until=now() + ($3 * interval '1 millisecond'), updated_at=now() " +
+          "WHERE id=$1 AND lease_owner=$2 AND status='leased' AND lease_until > now() RETURNING id",
+          [jobId, workerId, boundedLeaseMs]
+        );
+        return updated.rowCount === 1;
+      });
+    },
+
     async acknowledge({ jobId, workerId, result = {} } = {}) {
       const safeResult = result && typeof result === 'object' && !Array.isArray(result) ? result : {};
       validatePayload(safeResult);
