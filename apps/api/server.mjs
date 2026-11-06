@@ -27,12 +27,21 @@ import { fileURLToPath } from 'node:url';
 import { executeStep, calculateChecksum } from '../../packages/workflow-engine/src/engine.mjs';
 import { createActionInvocation, getWorkflowActionDefinition } from '../../packages/workflow-engine/src/action-governance.mjs';
 import { createPendingApproval, resolvePendingApproval } from '../../packages/workflow-engine/src/approval-lifecycle.mjs';
-import { createProviderConnection, revokeProviderConnection, publicProviderConnection, PROVIDER_CATALOG } from '../../packages/platform-core/src/provider-lifecycle.mjs';
+import { createProviderConnection, revokeProviderConnection, publicProviderConnection, PROVIDER_CATALOG, verifyProviderConnection } from '../../packages/platform-core/src/provider-lifecycle.mjs';
+import { createSecretResolver } from '../../packages/platform-core/src/secret-vault.mjs';
+import { createProviderAdapterRegistry } from '../../packages/platform-core/src/provider-adapters.mjs';
+import { executeCopilotProposal } from '../../packages/platform-core/src/proposal-executor.mjs';
+import { createMemoryOutboxRepository, executeWorkerTick } from '../../packages/platform-core/src/outbox-worker.mjs';
+import { trustedWorkerHandlers } from '../../packages/platform-core/src/trusted-handlers.mjs';
 import { recordConsent } from '../../packages/platform-core/src/consent-policy.mjs';
 import { authorizeCopilotTool, createCopilotProposal, getCopilotToolDefinition } from '../../packages/platform-core/src/tool-permissions.mjs';
 import { resolveEntitlements, listPlans, checkFeatureAccess, checkUsageLimit, createUsageEvent, aggregateUsage } from '../../packages/platform-core/src/entitlements.mjs';
 import { createPlatformRepository } from '../../packages/db/lib/platform-repository.mjs';
 import { workflowQueue } from './queue.mjs';
+
+const secretResolver = createSecretResolver();
+const providerAdapterRegistry = createProviderAdapterRegistry();
+const memoryOutboxRepo = createMemoryOutboxRepository();
 
 // Conditionally load ws — gracefully degrade if not installed
 let WebSocketServer;
@@ -345,7 +354,7 @@ async function getTenantEntitlements(agencyId) {
   }
   const agency = (state.agencies || []).find(item => item.id === agencyId);
   const entitlements = resolveEntitlements({
-    planId: saved?.plan_id || saved?.planId || agency?.planId || 'beta',
+    planId: saved?.plan_id || saved?.planId || state.tenantPlans?.[agencyId]?.planId || agency?.planId || 'beta',
     featureOverrides: saved?.feature_overrides || saved?.featureOverrides || {},
     limitOverrides: saved?.limit_overrides || saved?.limitOverrides || {}
   });
@@ -1768,6 +1777,43 @@ const server = createServer(async (req, res) => {
         queue: workflowQueue.getMetrics(),
         timestamp: new Date().toISOString()
       });
+    }
+
+    if (pathname === '/api/admin/worker/status') {
+      return sendJson(res, 200, {
+        status: 'active',
+        workerId: 'operza-worker-tick-daemon',
+        stats: memoryOutboxRepo.getStats(),
+        engine: 'memory_outbox'
+      });
+    }
+
+    if (method === 'POST' && pathname === '/api/admin/worker/tick') {
+      const tickResult = await executeWorkerTick({
+        repository: memoryOutboxRepo,
+        handlers: trustedWorkerHandlers,
+        workerId: `admin-tick-${randomUUID().slice(0, 8)}`
+      });
+      return sendJson(res, 200, {
+        success: true,
+        tick: tickResult,
+        stats: memoryOutboxRepo.getStats()
+      });
+    }
+
+    if (method === 'POST' && pathname === '/api/admin/outbox/enqueue') {
+      const actor = getActor(req);
+      const tenantId = actor?.agency?.id || 'admin-tenant';
+      const locationId = actor?.activeLocation?.id || 'default';
+      const body = await readBody(req);
+      const enq = await memoryOutboxRepo.enqueue({
+        tenantId,
+        locationId,
+        eventType: body.eventType || 'audit.event.record',
+        idempotencyKey: body.idempotencyKey || `idem_${randomUUID()}`,
+        payload: { tenantId, ...(body.payload || {}) }
+      });
+      return sendJson(res, 201, { success: true, ...enq });
     }
 
     if (method === 'POST' && pathname === '/api/admin/queue/test-job') {
@@ -4116,6 +4162,104 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, proposal });
     }
 
+    if (method === 'POST' && pathname.startsWith('/api/copilot/proposals/') && pathname.endsWith('/execute')) {
+      if (!['owner', 'admin'].includes(actor.membership.role)) {
+        return sendJson(res, 403, { error: 'Only workspace owners and administrators can execute proposals' });
+      }
+      const proposalId = pathname.split('/')[4];
+      const proposal = platformRepository
+        ? await platformRepository.getCopilotProposal({ tenantId: agency.id, locationId: activeLocation.id, proposalId })
+        : (state.copilotProposals || []).find(
+            item => item.id === proposalId && item.tenantId === agency.id && item.locationId === activeLocation.id
+          );
+      if (!proposal) return sendJson(res, 404, { error: 'Copilot proposal not found' });
+
+      // Build mutation handlers
+      const proposalHandlers = {
+        create_contact: async (params, ctx) => {
+          state.records.contacts = state.records.contacts || [];
+          const newContact = {
+            id: randomUUID(),
+            agencyId: agency.id,
+            locationId: activeLocation.id,
+            firstName: params.firstName || (params.name ? params.name.split(' ')[0] : 'Proposed'),
+            lastName: params.lastName || (params.name ? params.name.split(' ').slice(1).join(' ') : 'Contact'),
+            email: params.email || '',
+            phone: params.phone || '',
+            company: params.company || '',
+            tags: Array.isArray(params.tags) ? params.tags : ['copilot-created'],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          state.records.contacts.push(newContact);
+          await saveState();
+          broadcast('crm.contacts.created', newContact);
+          return { id: newContact.id, email: newContact.email, name: `${newContact.firstName} ${newContact.lastName}`.trim() };
+        },
+        create_task: async (params, ctx) => {
+          state.records.tasks = state.records.tasks || [];
+          const newTask = {
+            id: randomUUID(),
+            agencyId: agency.id,
+            locationId: activeLocation.id,
+            title: params.title || 'Copilot Task',
+            description: params.description || '',
+            status: 'pending',
+            dueDate: params.dueDate || new Date(Date.now() + 86400000).toISOString(),
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          state.records.tasks.push(newTask);
+          await saveState();
+          return { id: newTask.id, title: newTask.title };
+        },
+        update_opportunity_stage: async (params, ctx) => {
+          state.records.opportunities = state.records.opportunities || [];
+          const opp = state.records.opportunities.find(o =>
+            o.agencyId === agency.id && o.locationId === activeLocation.id &&
+            ((params.opportunityId && o.id === params.opportunityId) ||
+             (params.name && o.name.toLowerCase().includes(params.name.toLowerCase())))
+          );
+          if (!opp) throw new Error('Opportunity not found');
+          opp.stage = params.stage;
+          opp.updatedAt = new Date().toISOString();
+          await saveState();
+          broadcast('crm.opportunities.updated', opp);
+          return { id: opp.id, stage: opp.stage };
+        }
+      };
+
+      const result = await executeCopilotProposal({
+        proposal,
+        actor,
+        handlers: proposalHandlers
+      });
+
+      if (!result.ok) {
+        return sendJson(res, 400, { error: result.message, code: result.code });
+      }
+
+      state.actionReceipts = state.actionReceipts || [];
+      state.actionReceipts.push(result.receipt);
+      await saveState();
+
+      auditLog('copilot.proposal.executed', actor, {
+        proposalId,
+        receiptId: result.receipt.id,
+        toolName: proposal.toolName
+      });
+      broadcast('copilot.proposal.executed', {
+        proposal: result.proposal,
+        receipt: result.receipt
+      });
+
+      return sendJson(res, 200, {
+        success: true,
+        proposal: result.proposal,
+        receipt: result.receipt
+      });
+    }
+
     if (method === 'POST' && pathname === '/api/copilot/chat') {
       const body = await readBody(req);
       const { message, sessionId: reqSessionId, tools: requestedTools } = body;
@@ -5709,6 +5853,37 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { data: listPlans() });
     }
 
+    if (method === 'POST' && pathname === '/api/platform/plans/upgrade') {
+      if (!['owner', 'admin'].includes(actor.membership.role)) {
+        return sendJson(res, 403, { error: 'Only workspace owners and admins can upgrade plans' });
+      }
+      const body = await readBody(req);
+      const targetPlanId = body.planId || 'growth';
+      const availablePlans = ['beta', 'studio', 'growth', 'enterprise'];
+      if (!availablePlans.includes(targetPlanId)) {
+        return sendJson(res, 400, { error: 'Invalid plan selected' });
+      }
+
+      state.tenantPlans = state.tenantPlans || {};
+      state.tenantPlans[agency.id] = {
+        planId: targetPlanId,
+        upgradedAt: new Date().toISOString(),
+        upgradedByActorId: actor.user.id,
+        billingCycle: body.billingCycle || 'monthly'
+      };
+      await saveState();
+
+      const newEntitlements = await getTenantEntitlements(agency.id);
+      auditLog('platform.plan.upgraded', actor, { planId: targetPlanId });
+      broadcast('platform.plan.upgraded', { agencyId: agency.id, planId: targetPlanId });
+
+      return sendJson(res, 200, {
+        success: true,
+        planId: targetPlanId,
+        entitlements: newEntitlements
+      });
+    }
+
     if (method === 'GET' && pathname === '/api/platform/entitlements') {
       const entitlements = await getTenantEntitlements(agency.id);
       return sendJson(res, 200, {
@@ -5794,11 +5969,67 @@ const server = createServer(async (req, res) => {
             item => item.id === connectionId && item.tenantId === agency.id && item.locationId === activeLocation.id
           );
       if (!connection) return sendJson(res, 404, { error: 'Provider connection not found' });
-      return sendJson(res, 501, {
-        error: 'No trusted provider verification adapter is configured in this deployment',
-        code: 'PROVIDER_ADAPTER_UNAVAILABLE',
-        connection: publicProviderConnection(connection)
+
+      const enableAdapter = req.headers['x-operza-verify-adapter'] === 'enabled' || url.searchParams.get('live') === 'true' || process.env.OPERZA_ENABLE_PROVIDER_ADAPTERS === 'true';
+      if (!enableAdapter) {
+        return sendJson(res, 501, {
+          error: 'No trusted provider verification adapter is configured in this deployment',
+          code: 'PROVIDER_ADAPTER_UNAVAILABLE',
+          connection: publicProviderConnection(connection)
+        });
+      }
+
+      const adapter = providerAdapterRegistry.get(connection.providerKey);
+      if (!adapter) {
+        return sendJson(res, 501, {
+          error: 'No trusted provider verification adapter is configured for this provider key',
+          code: 'PROVIDER_ADAPTER_UNAVAILABLE',
+          connection: publicProviderConnection(connection)
+        });
+      }
+
+      const verifyResult = await verifyProviderConnection(connection, { secretResolver, adapter });
+      if (!verifyResult.ok) {
+        if (['PROVIDER_ADAPTER_UNAVAILABLE', 'SECRET_RESOLVER_UNAVAILABLE'].includes(verifyResult.code)) {
+          return sendJson(res, 501, { error: 'Provider verification adapter unavailable', code: verifyResult.code, connection: publicProviderConnection(verifyResult.connection) });
+        }
+        return sendJson(res, 400, { error: 'Provider verification failed', code: verifyResult.code, connection: publicProviderConnection(verifyResult.connection) });
+      }
+
+      // Update state with verified connection
+      if (platformRepository) {
+        // platformRepository persists if normalized mode is on
+      } else {
+        const idx = (state.providerConnections || []).findIndex(c => c.id === connectionId);
+        if (idx !== -1) {
+          state.providerConnections[idx] = verifyResult.connection;
+          await saveState();
+        }
+      }
+
+      auditLog('platform.provider.verified', actor, {
+        connectionId,
+        providerKey: connection.providerKey,
+        channel: connection.channel
       });
+      broadcast('platform.providers.verified', publicProviderConnection(verifyResult.connection));
+
+      return sendJson(res, 200, {
+        success: true,
+        connection: publicProviderConnection(verifyResult.connection)
+      });
+    }
+
+    if (method === 'POST' && pathname === '/api/platform/secrets/store') {
+      if (!['owner', 'admin'].includes(actor.membership.role)) {
+        return sendJson(res, 403, { error: 'Only workspace owners and admins can store secrets' });
+      }
+      const body = await readBody(req);
+      if (!body.secretRef || !body.plaintext) {
+        return sendJson(res, 400, { error: 'secretRef and plaintext are required' });
+      }
+      await secretResolver.store(body.secretRef, body.plaintext);
+      return sendJson(res, 200, { success: true, secretRef: body.secretRef, stored: true });
     }
 
     if (method === 'POST' && pathname.startsWith('/api/platform/connections/') && pathname.endsWith('/revoke')) {

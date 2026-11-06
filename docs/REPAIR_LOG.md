@@ -142,4 +142,46 @@ This document chronicles the step-by-step engineering enhancements, refactoring,
     - 126 modules cleanly bundled for production (`npm run build`).
 - **Action 9.6 (Strategic Planning & Truthful Accounting):**
   - Authored `docs/OPERZA_IMPLEMENTATION_STATUS.md` providing a transparent, verifiable ledger of all implemented, tested, simulated, and externally gated capabilities.
-  - Authored `docs/OPERZA_NEXT_PHASE_ROADMAP.md` detailing implementation priorities for Phases 7–11. 
+  - Authored `docs/OPERZA_NEXT_PHASE_ROADMAP.md` detailing implementation priorities for Phases 7–11.
+
+---
+
+## Epoch 10: Secret Vault, Provider Adapters, Proposal Executor & Worker Daemon (November 2026)
+
+- **Action 10.1 (Encrypted Secret Vault & Resolver):**
+  - Implemented `packages/platform-core/src/secret-vault.mjs` using AES-256-GCM authenticated encryption with scrypt key derivation.
+  - Supports `env:`, `vault:`, and `kms:` secret reference schemes.
+  - Added secure storage (`store`) and resolution (`resolve`) with memory-safe scrubbing.
+  - Added unit test suite `packages/platform-core/test/secret-vault.test.mjs` (round-trip encryption, tampered ciphertext rejection, scheme resolution).
+- **Action 10.2 (First-Party Production Provider Adapters):**
+  - Implemented `packages/platform-core/src/provider-adapters.mjs` providing adapters for Resend (`email.resend`), SendGrid (`email.sendgrid`), Twilio (`sms.twilio`), WhatsApp Meta Cloud (`whatsapp.meta_cloud`), and Stripe (`payments.stripe`).
+  - Implemented `createProviderAdapterRegistry` for adapter lookup, verification, and governed outbound dispatch.
+  - Added unit test suite `packages/platform-core/test/provider-adapters.test.mjs`.
+  - Wired into `apps/api/server.mjs`: `POST /api/platform/connections/:id/verify` verifies with active adapters and marks connections `verified` without leaking secrets. Added `POST /api/platform/secrets/store` endpoint.
+- **Action 10.3 (Authoritative Governed Copilot Proposal Executor):**
+  - Implemented `packages/platform-core/src/proposal-executor.mjs` (`executeCopilotProposal`) executing approved write proposals and generating immutable action receipts.
+  - Added unit test suite `packages/platform-core/test/proposal-executor.test.mjs`.
+  - Added API route `POST /api/copilot/proposals/:id/execute` in `apps/api/server.mjs`.
+  - Added `api.copilot.executeProposal` in `apps/web/src/lib/api.ts` and 1-click "Execute Mutation" button in `apps/web/src/pages/CopilotInbox.tsx`.
+- **Action 10.4 (Commercial Plan Pricing & Upgrades):**
+  - Added `POST /api/platform/plans/upgrade` allowing dynamic workspace tier upgrades to Growth, Scale, and Enterprise.
+  - Updated `getTenantEntitlements` in `apps/api/server.mjs` to dynamically resolve upgraded tenant plan limits and entitlements.
+- **Action 10.5 (Autonomous Outbox Worker Daemon & Admin Telemetry):**
+  - Implemented `packages/platform-core/src/outbox-worker.mjs` (`createMemoryOutboxRepository`, `executeWorkerTick`) providing transactional outbox repository for zero-config mode, test suites, and background processing.
+  - Added unit test suite `packages/platform-core/test/outbox-worker.test.mjs`.
+  - Added `GET /api/admin/worker/status`, `POST /api/admin/worker/tick`, and `POST /api/admin/outbox/enqueue` in `apps/api/server.mjs`.
+- **Action 10.6 (E2E System Suite Expansion to 89 Scenarios):**
+  - Expanded `scripts/test-e2e.mjs` with Tests 86–89:
+    - Test 86: Encrypted Secret Vault & Provider Verification with Real Adapter (Resend).
+    - Test 87: Authoritative Copilot Proposal Execution (Approved → Executed Mutation + Action Receipt).
+    - Test 88: Commercial Plan Upgrade (to Growth with expanded limits).
+    - Test 89: Outbox Worker Lifecycle (Status, Enqueue & Autonomous Tick).
+  - Verified 100% test pass rate across all 89 scenarios (`node scripts/test-e2e.mjs`).
+  - Total automated checks across repository: **277 / 277 checks passing (100% green)**:
+    - 89 API E2E scenarios.
+    - 38 Platform Core unit tests.
+    - 35 Workflow Engine unit tests.
+    - 9 Database & Outbox repository tests.
+    - 106 Enterprise SEO & metadata automated checks.
+    - 0 TypeScript compilation errors (`npm run typecheck`).
+    - 126 modules bundled for production (`npm run build`). 

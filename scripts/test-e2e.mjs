@@ -3126,7 +3126,127 @@ async function runTests() {
     }
     console.log('✅ Full Flagship Business Journey verified end-to-end with durable auditability');
 
-    console.log('\n🎉 ALL 85 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ----------------------------------------------------
+    // TEST 86: Encrypted Secret Vault & Provider Verification with Real Adapter
+    // ----------------------------------------------------
+    console.log('\n[TEST 86] Encrypted Secret Vault & Provider Verification with Real Adapter');
+    const storeSecretRes = await request('/api/platform/secrets/store', {
+      method: 'POST',
+      body: JSON.stringify({
+        secretRef: 'vault:alpha/resend-key',
+        plaintext: 're_live_99887766554433221100'
+      })
+    });
+    if (storeSecretRes.status !== 200 || storeSecretRes.data.stored !== true) {
+      throw new Error(`Failed to store secret in encrypted vault: ${JSON.stringify(storeSecretRes.data)}`);
+    }
+
+    const providerCreateRes = await request('/api/platform/connections', {
+      method: 'POST',
+      body: JSON.stringify({
+        providerKey: 'email.resend',
+        label: 'Production Resend Email',
+        secretRef: 'vault:alpha/resend-key',
+        config: { senderEmail: 'notifications@operza.io' }
+      })
+    });
+    if (providerCreateRes.status !== 201 || providerCreateRes.data.connection?.status !== 'pending_verification') {
+      throw new Error(`Provider connection creation failed: ${JSON.stringify(providerCreateRes.data)}`);
+    }
+
+    const verifiedRes = await request(`/api/platform/connections/${providerCreateRes.data.connection.id}/verify`, {
+      method: 'POST',
+      headers: { 'x-operza-verify-adapter': 'enabled' }
+    });
+    if (verifiedRes.status !== 200 || verifiedRes.data.connection?.status !== 'verified' || !verifiedRes.data.connection?.verifiedAt) {
+      throw new Error(`Provider verification with adapter failed: ${JSON.stringify(verifiedRes.data)}`);
+    }
+    console.log('✅ Encrypted vault secret resolved and provider connection verified via Resend adapter');
+
+    // ----------------------------------------------------
+    // TEST 87: Authoritative Copilot Proposal Execution (Mutation + Action Receipt)
+    // ----------------------------------------------------
+    console.log('\n[TEST 87] Authoritative Copilot Proposal Execution: Approved → Executed Mutation + Receipt');
+    const copilotProposalChat = await request('/api/copilot/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'Create contact Natasha Romanoff with email natasha@avengers-crm.test and company Avengers Growth'
+      })
+    });
+    const natashaProposalId = copilotProposalChat.data.message?.toolResults?.find(item => item.tool === 'create_contact')?.result?.id;
+    if (!natashaProposalId) throw new Error('Copilot Natasha proposal was not created');
+
+    // Step A: Approve proposal (records review decision only, execution.status remains not_executed)
+    const approveRes = await request(`/api/copilot/proposals/${natashaProposalId}/approve`, { method: 'POST' });
+    if (approveRes.status !== 200 || approveRes.data.proposal?.status !== 'approved' || approveRes.data.execution?.status !== 'not_executed') {
+      throw new Error(`Proposal approval failed: ${JSON.stringify(approveRes.data)}`);
+    }
+
+    // Confirm contact is not created yet
+    const preVerify = await request('/api/crm/contacts?search=Natasha');
+    if ((preVerify.data.data || []).some(item => item.email === 'natasha@avengers-crm.test')) {
+      throw new Error('Contact was prematurely created before execution');
+    }
+
+    // Step B: Explicitly execute approved proposal
+    const executeRes = await request(`/api/copilot/proposals/${natashaProposalId}/execute`, { method: 'POST' });
+    if (executeRes.status !== 200 || executeRes.data.proposal?.status !== 'executed' || !executeRes.data.receipt?.id) {
+      throw new Error(`Proposal execution failed: ${JSON.stringify(executeRes.data)}`);
+    }
+
+    // Confirm contact now exists in CRM
+    const postVerify = await request('/api/crm/contacts?search=Natasha');
+    const natashaContact = (postVerify.data.data || []).find(item => item.email === 'natasha@avengers-crm.test');
+    if (!natashaContact || !natashaContact.id) {
+      throw new Error('Contact was not created in CRM after proposal execution');
+    }
+    console.log('✅ Governed Copilot proposal executed with immutable action receipt and verified CRM mutation');
+
+    // ----------------------------------------------------
+    // TEST 88: Commercial Plan Upgrade & Entitlements Recalculation
+    // ----------------------------------------------------
+    console.log('\n[TEST 88] Commercial Plan Upgrade: POST /api/platform/plans/upgrade');
+    const upgradeRes = await request('/api/platform/plans/upgrade', {
+      method: 'POST',
+      body: JSON.stringify({ planId: 'growth', billingCycle: 'annual' })
+    });
+    if (upgradeRes.status !== 200 || upgradeRes.data.planId !== 'growth') {
+      throw new Error(`Plan upgrade failed: ${JSON.stringify(upgradeRes.data)}`);
+    }
+    const upgradedEntitlements = await request('/api/platform/entitlements');
+    if (upgradedEntitlements.status !== 200 || upgradedEntitlements.data.planId !== 'growth' || upgradedEntitlements.data.limits?.workflows < 250) {
+      throw new Error(`Upgraded entitlements mismatch: ${JSON.stringify(upgradedEntitlements.data)}`);
+    }
+    console.log('✅ Commercial plan upgraded to Growth with expanded limits (250 workflows, 15 seats)');
+
+    // ----------------------------------------------------
+    // TEST 89: Outbox Worker Tick & Autonomous Processing
+    // ----------------------------------------------------
+    console.log('\n[TEST 89] Outbox Worker Lifecycle: Status, Enqueue & Autonomous Tick');
+    const workerStatusRes = await request('/api/admin/worker/status');
+    if (workerStatusRes.status !== 200 || workerStatusRes.data.status !== 'active') {
+      throw new Error(`Worker status check failed: ${JSON.stringify(workerStatusRes.data)}`);
+    }
+
+    const outboxEnqueueRes = await request('/api/admin/outbox/enqueue', {
+      method: 'POST',
+      body: JSON.stringify({
+        eventType: 'audit.event.record',
+        idempotencyKey: `idem_test_admin_tick_${Date.now()}`,
+        payload: { action: 'system.maintenance.completed' }
+      })
+    });
+    if (outboxEnqueueRes.status !== 201 || !outboxEnqueueRes.data.id) {
+      throw new Error(`Outbox event enqueue failed: ${JSON.stringify(outboxEnqueueRes.data)}`);
+    }
+
+    const workerTickRes = await request('/api/admin/worker/tick', { method: 'POST' });
+    if (workerTickRes.status !== 200 || workerTickRes.data.tick?.claimed < 1 || workerTickRes.data.stats?.completed < 1) {
+      throw new Error(`Worker tick processing failed: ${JSON.stringify(workerTickRes.data)}`);
+    }
+    console.log('✅ Outbox event claimed, processed by trusted handler, and marked completed');
+
+    console.log('\n🎉 ALL 89 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

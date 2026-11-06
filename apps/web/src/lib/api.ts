@@ -347,6 +347,8 @@ export const api = {
     getProposals: () => request<{ data: any[] }>('/api/copilot/proposals'),
     approveProposal: (id: string) =>
       request<{ success: boolean; proposal: any; execution: { status: 'not_executed'; code: string; message: string } }>(`/api/copilot/proposals/${id}/approve`, { method: 'POST' }),
+    executeProposal: (id: string) =>
+      request<{ success: boolean; proposal: any; receipt: any }>(`/api/copilot/proposals/${id}/execute`, { method: 'POST' }),
     rejectProposal: (id: string) =>
       request<{ success: boolean; proposal: any }>(`/api/copilot/proposals/${id}/reject`, { method: 'POST' }),
     stream: (message: string, onDelta: (delta: string) => void, onComplete: () => void) => {

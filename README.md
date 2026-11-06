@@ -6,7 +6,7 @@
 **Unified Multi-Tenant CRM + Visual Node Automation + Autonomous AI Copilot**
 
 [![CI Status](https://github.com/MuhammadAsimdeveloper/operza-growth/actions/workflows/ci.yml/badge.svg)](https://github.com/MuhammadAsimdeveloper/operza-growth/actions)
-[![E2E Scenarios](https://img.shields.io/badge/E2E%20Cases-85-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
+[![E2E Scenarios](https://img.shields.io/badge/E2E%20Cases-89-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
 [![Node.js Version](https://img.shields.io/badge/Node.js-%3E%3D20.0.0-339933.svg?style=flat-square&logo=node.js)](package.json)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6.svg?style=flat-square&logo=typescript)](apps/web)
 [![React](https://img.shields.io/badge/React-18.3.1.0-61dafb.svg?style=flat-square&logo=react)](apps/web)
@@ -308,10 +308,10 @@ Operza provides an exhaustive, RESTful API and WebSocket event hub:
 
 ## 🧪 Verification & Testing
 
-Operza's comprehensive automated test suite defines **261 automated checks across 5 test suites**, including 85 end-to-end API integration scenarios (`scripts/test-e2e.mjs`) covering tenant APIs, workflow approvals, provider onboarding, consent records, Copilot proposal safety, public ingress, security controls, and the flagship business journey.
+Operza's comprehensive automated test suite defines **277 automated checks across 5 test suites**, including 89 end-to-end API integration scenarios (`scripts/test-e2e.mjs`) covering tenant APIs, workflow approvals, provider onboarding, consent records, Copilot proposal safety, public ingress, security controls, the flagship business journey, encrypted secret vault, authoritative proposal execution, commercial plan upgrades, and autonomous outbox worker processing.
 
 ```bash
-# Run workflow-engine (35 tests), platform-core (26 tests), DB repository (9 tests), SEO checks (106 checks), and 85 API scenarios:
+# Run workflow-engine (35 tests), platform-core (38 tests), DB repository (9 tests), SEO checks (106 checks), and 89 API scenarios:
 npm test
 
 # Run frontend TypeScript typechecking & bundle build:
@@ -324,13 +324,22 @@ Expected test result:
 🧪 Starting Operza End-to-End System Verification
 =====================================================
 ...
-[TEST 84] Copilot proposal approval records review without performing the mutation
-✅ Proposal approval is recorded separately from execution and does not mutate CRM data
-
 [TEST 85] Flagship Business Journey: Lead Capture → CRM → Qualification → Approval → Booking → Pipeline → Reporting
 ✅ Full Flagship Business Journey verified end-to-end with durable auditability
 
-🎉 ALL 85 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉
+[TEST 86] Encrypted Secret Vault & Provider Verification with Real Adapter
+✅ Encrypted vault secret resolved and provider connection verified via Resend adapter
+
+[TEST 87] Authoritative Copilot Proposal Execution: Approved → Executed Mutation + Receipt
+✅ Governed Copilot proposal executed with immutable action receipt and verified CRM mutation
+
+[TEST 88] Commercial Plan Upgrade: POST /api/platform/plans/upgrade
+✅ Commercial plan upgraded to Growth with expanded limits (250 workflows, 15 seats)
+
+[TEST 89] Outbox Worker Lifecycle: Status, Enqueue & Autonomous Tick
+✅ Outbox event claimed, processed by trusted handler, and marked completed
+
+🎉 ALL 89 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉
 ```
 
 ---

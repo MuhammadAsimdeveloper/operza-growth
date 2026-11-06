@@ -130,4 +130,5 @@ export const handlers = {
   }
 };
 
+export const trustedWorkerHandlers = handlers;
 export default { handlers };

@@ -118,6 +118,28 @@ export default function CopilotInbox() {
     }
   };
 
+  const handleExecute = async (proposal: CopilotProposal) => {
+    setActionInProgress(proposal.id);
+    setDecisionFeedback(null);
+    try {
+      const res = await api.copilot.executeProposal(proposal.id);
+      setDecisionFeedback({
+        id: proposal.id,
+        type: 'success',
+        title: 'Proposal Executed',
+        message: `Proposal ${proposal.id.slice(0, 8)} executed successfully. Action receipt: ${res.receipt?.id || 'generated'}.`,
+      });
+      await fetchProposals();
+      if (selectedProposal?.id === proposal.id) {
+        setSelectedProposal(res.proposal);
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to execute proposal');
+    } finally {
+      setActionInProgress(null);
+    }
+  };
+
   const pendingCount = proposals.filter((p) => p.status === 'pending').length;
   const approvedCount = proposals.filter((p) => p.status === 'approved').length;
   const rejectedCount = proposals.filter((p) => p.status === 'rejected').length;
@@ -328,6 +350,21 @@ export default function CopilotInbox() {
                           Approve
                         </button>
                       </>
+                    )}
+
+                    {item.status === 'approved' && item.executionStatus !== 'executed' && (
+                      <button
+                        onClick={() => handleExecute(item)}
+                        disabled={actionInProgress === item.id}
+                        className="btn btn--secondary btn--sm text-xs flex items-center gap-1 bg-amber-600 hover:bg-amber-700 text-white"
+                      >
+                        {actionInProgress === item.id ? (
+                          <Icon name="refresh" size={12} className="animate-spin" />
+                        ) : (
+                          <Icon name="play" size={12} />
+                        )}
+                        Execute Mutation
+                      </button>
                     )}
                   </div>
                 </div>

@@ -5,3 +5,7 @@ export * from './entitlements.mjs';
 export * from './durable-worker.mjs';
 export * from './trusted-handlers.mjs';
 export * from './outbox-producer.mjs';
+export * from './secret-vault.mjs';
+export * from './provider-adapters.mjs';
+export * from './proposal-executor.mjs';
+export * from './outbox-worker.mjs';
