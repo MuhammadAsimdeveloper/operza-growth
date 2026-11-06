@@ -167,7 +167,7 @@ BEGIN
     EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', table_name);
     EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', table_name);
     EXECUTE format('DROP POLICY IF EXISTS %I ON %I', table_name || '_tenant_scope', table_name);
-    IF table_name = 'tenant_entitlements' THEN
+    IF table_name IN ('tenant_entitlements', 'usage_events') THEN
       EXECUTE format(
         'CREATE POLICY %I ON %I USING (agency_id = nullif(current_setting(''app.agency_id'', true), '''')::uuid) WITH CHECK (agency_id = nullif(current_setting(''app.agency_id'', true), '''')::uuid)',
         table_name || '_tenant_scope', table_name
