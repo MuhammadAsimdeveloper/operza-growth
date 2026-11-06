@@ -50,7 +50,10 @@ The Operza API layer is built with high-throughput Node.js (ESM native), featuri
 | | `GET/POST` | `/api/crm/phoneNumbers` | Virtual phone number provisioning & IVR routing |
 | **Workflows** | `GET/POST` | `/api/crm/workflows` | Automation workflow blueprints |
 | | `POST` | `/api/workflows/:id/run` | Side-effect-free workflow dry run with condition evaluation |
-| | `POST` | `/api/workflows/runs/:id/approve` | Clear human-in-the-loop approval gate |
+| | `GET` | `/api/workflows/runs` | Redacted workflow execution history for the active workspace |
+| | `GET` | `/api/workflows/approvals` | List pending action-specific approvals |
+| | `POST` | `/api/workflows/runs/:id/approve` | Approve the pending action and resume from the pinned node |
+| | `POST` | `/api/workflows/runs/:id/reject` | Reject the pending action without executing it |
 | **Copilot** | `GET` | `/api/copilot/stream` | Real-time SSE AI token streaming |
 | | `POST` | `/api/copilot/chat` | AI Copilot conversational query |
 | | `POST` | `/api/copilot/knowledge` | Ingest grounding documents into knowledge base |
@@ -59,6 +62,16 @@ The Operza API layer is built with high-throughput Node.js (ESM native), featuri
 | | `GET/PUT` | `/api/agency/branding` | Custom white-label domain & portal branding |
 
 ---
+
+## Approval persistence and execution recovery
+
+- Approval requests and decisions are persisted in `state.workflowApprovals` alongside `workflowExecutions`.
+- The existing `saveState()` pipeline writes the state envelope through atomic JSON replacement and, when configured, the PostgreSQL `operza_app_state` snapshot.
+- Each run stores a private workflow snapshot and version reference. Approval is bound to a single node and deterministic action hash; approval never means “mark the run completed”.
+- The decision is persisted before the resume call. A process restart recovers executions left in the `resuming` state.
+- API responses use an allow-listed projection; private snapshots, raw trigger payloads, approval evidence and action hashes stay server-side.
+
+**Current boundary:** This is durable single-application-state persistence, not a normalized approval table or a multi-worker transactional outbox. Multi-instance leases, transactional action receipts, provider-level idempotency enforcement, and real external provider adapters remain future work. No live message is sent by this approval feature.
 
 ## 🚀 Running the API
 
