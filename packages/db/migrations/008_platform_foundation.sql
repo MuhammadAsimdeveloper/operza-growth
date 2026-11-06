@@ -122,7 +122,7 @@ CREATE TABLE IF NOT EXISTS workflow_outbox (
   PRIMARY KEY (agency_id, location_id, id),
   UNIQUE (agency_id, location_id, idempotency_key),
   FOREIGN KEY (agency_id, location_id, execution_id)
-    REFERENCES workflow_executions(agency_id, location_id, id) ON DELETE SET NULL,
+    REFERENCES workflow_executions(agency_id, location_id, id) ON DELETE SET NULL (execution_id),
   FOREIGN KEY (agency_id, location_id) REFERENCES locations(agency_id, id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS workflow_outbox_available_idx
