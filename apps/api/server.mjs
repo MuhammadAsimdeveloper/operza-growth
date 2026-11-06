@@ -855,6 +855,7 @@ async function executeWorkflowInstance({
         execution.pendingApproval = {
           id: approval.id,
           nodeId: approval.nodeId,
+          actionHash: approval.actionHash,
           actionId: approval.actionId,
           nodeType: approval.nodeType,
           nodeLabel: approval.nodeLabel,
