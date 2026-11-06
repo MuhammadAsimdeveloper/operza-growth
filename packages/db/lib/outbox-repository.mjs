@@ -240,7 +240,7 @@ export function createWorkflowOutboxRepository(pool) {
           const updated = await client.query(
             "UPDATE workflow_action_receipts SET status='succeeded', result=$4::jsonb, " +
               "provider_receipt=$5, updated_at=now() " +
-            "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 " +
+            "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 AND status='started' " +
             "RETURNING id,status,result",
             [tenantId,locationId,actionHash,JSON.stringify(result),providerReceipt || null]
           );
