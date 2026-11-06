@@ -87,6 +87,22 @@ export async function runOutboxBatch({
   return { claimed: jobs.length, processed: results.length, results };
 }
 
+function waitOrAbort(ms, signal) {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, Math.max(50, Number(ms) || 1_000));
+    signal?.addEventListener('abort', finish, { once: true });
+    if (signal?.aborted) finish();
+  });
+}
+
 export async function runOutboxWorker({
   repository,
   workerId,
@@ -101,18 +117,10 @@ export async function runOutboxWorker({
   while (!signal?.aborted) {
     try {
       const result = await runOutboxBatch({ repository, workerId, handlers, limit: batchSize, leaseMs, concurrency, signal });
-      if (result.claimed === 0) {
-        await new Promise(resolve => {
-          const timer = setTimeout(resolve, pollIntervalMs);
-          signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
-        });
-      }
+      if (result.claimed === 0) await waitOrAbort(pollIntervalMs, signal);
     } catch (error) {
       onError(error);
-      await new Promise(resolve => {
-        const timer = setTimeout(resolve, pollIntervalMs);
-        signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
-      });
+      await waitOrAbort(pollIntervalMs, signal);
     }
   }
 }
