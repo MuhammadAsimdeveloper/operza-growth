@@ -4079,7 +4079,10 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' && pathname === '/api/copilot/chat') {
       const body = await readBody(req);
       const { message, sessionId: reqSessionId, tools: requestedTools } = body;
-      if (!message) return sendJson(res, 400, { error: 'message is required' });
+      if (typeof message !== 'string' || !message.trim()) return sendJson(res, 400, { error: 'message is required' });
+      if (Array.isArray(requestedTools) && requestedTools.length > 10) {
+        return sendJson(res, 400, { error: 'A maximum of 10 Copilot tool requests is allowed' });
+      }
       const aiLimit = await checkTenantUsageLimit(agency.id, 'monthlyAiRequests', 1);
       if (!aiLimit.allowed) {
         return sendJson(res, 429, { error: 'Monthly Copilot request allowance has been reached', code: aiLimit.code, limit: aiLimit.limit, consumed: aiLimit.consumed });
@@ -4233,7 +4236,7 @@ const server = createServer(async (req, res) => {
         }
         responseText = summaries.join('\n\n');
       } else {
-        responseText = `Hello ${actor.user.name}! You have ${contactCount} contacts and ${taskCount} pending tasks. You can ask me to search contacts, add leads, move deal stages, trigger automated workflows, send outbound messages, or check calendar schedules.`;
+        responseText = `Hello ${actor.user.name}! You have ${contactCount} contacts and ${taskCount} pending tasks. You can ask me to search contacts, draft leads, propose deal-stage changes or workflow runs, prepare messages for human review, or check calendar schedules.`;
       }
 
       const assistantMsg = {
