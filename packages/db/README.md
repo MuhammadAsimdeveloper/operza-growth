@@ -16,8 +16,8 @@ Operza isolates tenant data at the PostgreSQL engine level using Row-Level Secur
 ### Row-Level Security Mechanism
 At the start of every tenant request, the API executes:
 ```sql
-SET LOCAL app.current_agency_id = 'AGENCY_UUID';
-SET LOCAL app.current_location_id = 'LOCATION_UUID';
+SELECT set_config('app.agency_id', 'AGENCY_UUID', true);
+SELECT set_config('app.location_id', 'LOCATION_UUID', true);
 ```
 
 All table queries automatically apply the corresponding RLS policy:
@@ -25,7 +25,7 @@ All table queries automatically apply the corresponding RLS policy:
 CREATE POLICY agency_isolation_policy ON contacts
   FOR ALL
   TO operza_app
-  USING (agency_id = NULLIF(current_setting('app.current_agency_id', true), '')::uuid);
+  USING (agency_id = NULLIF(current_setting('app.agency_id', true), '')::uuid);
 ```
 
 ---
