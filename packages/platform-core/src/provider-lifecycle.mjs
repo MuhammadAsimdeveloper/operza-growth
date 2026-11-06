@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 const REF = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{1,180}$/;
 const ALLOWED_CONFIG = new Set(['accountId', 'region', 'senderEmail', 'senderName', 'phoneNumberId', 'businessAccountId', 'webhookId']);
 
@@ -37,7 +38,7 @@ function assertTenant(input) {
 }
 
 /** Store a reference to a server-side secret, never the secret itself. */
-export function createProviderConnection(input, { now = Date.now(), id = crypto.randomUUID() } = {}) {
+export function createProviderConnection(input, { now = Date.now(), id = randomUUID() } = {}) {
   if (!input || typeof input !== 'object') fail('Provider connection input is required', 'INVALID_PROVIDER_CONNECTION');
   assertTenant(input);
   const provider = PROVIDERS.get(input.providerKey);
@@ -46,13 +47,15 @@ export function createProviderConnection(input, { now = Date.now(), id = crypto.
     fail('A server-side env:, vault: or kms: secret reference is required', 'INVALID_SECRET_REFERENCE');
   }
   const timestamp = new Date(now).toISOString();
+  const label = typeof input.label === 'string' ? input.label.trim().slice(0, 100) : provider.label;
+  if (label.length < 2) fail('Provider connection label is too short', 'INVALID_PROVIDER_LABEL');
   return {
     id,
     tenantId: input.tenantId,
     locationId: input.locationId,
     providerKey: provider.key,
     channel: provider.channel,
-    label: typeof input.label === 'string' ? input.label.slice(0, 100) : provider.label,
+    label,
     secretRef: input.secretRef,
     config: safeConfig(input.config),
     status: 'pending_verification',
@@ -113,7 +116,7 @@ export function markProviderDegraded(connection, code = 'PROVIDER_UNAVAILABLE', 
 }
 
 export function providerMayDispatch(connection) {
-  return Boolean(connection && connection.status === 'verified' && connection.revokedAt == null);
+  return Boolean(connection && connection.status === 'verified' && connection.verifiedAt && connection.revokedAt == null);
 }
 
 export function publicProviderConnection(connection) {
