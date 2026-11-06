@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test:
-    name: Test, Lint & Build (Node ${{ matrix.node-version }})
+    name: Test & Build (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
