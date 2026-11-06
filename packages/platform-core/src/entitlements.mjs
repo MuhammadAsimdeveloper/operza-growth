@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 const PLAN_CATALOG = Object.freeze({
   beta: Object.freeze({
     label: 'Operza Beta',
@@ -32,20 +33,21 @@ export function listPlans() {
 }
 
 export function resolveEntitlements({ planId = 'beta', featureOverrides = {}, limitOverrides = {} } = {}) {
-  const plan = PLAN_CATALOG[planId] || PLAN_CATALOG.beta;
+  const safePlanId = typeof planId === 'string' && Object.hasOwn(PLAN_CATALOG, planId) ? planId : 'beta';
+  const plan = PLAN_CATALOG[safePlanId];
   const features = { ...plan.features };
   const limits = { ...plan.limits };
   for (const [key, value] of Object.entries(featureOverrides || {})) {
-    if (key in features && typeof value === 'boolean') features[key] = value;
+    if (Object.hasOwn(features, key) && typeof value === 'boolean') features[key] = value;
   }
   for (const [key, value] of Object.entries(limitOverrides || {})) {
-    if (key in limits && Number.isSafeInteger(value) && value >= 0) limits[key] = value;
+    if (Object.hasOwn(limits, key) && Number.isSafeInteger(value) && value >= 0) limits[key] = value;
   }
-  return { planId: PLAN_CATALOG[planId] ? planId : 'beta', label: plan.label, pricing: null, features, limits };
+  return { planId: safePlanId, label: plan.label, pricing: null, features, limits };
 }
 
 export function checkFeatureAccess(entitlements, feature) {
-  if (!entitlements?.features || !(feature in entitlements.features)) return { allowed: false, code: 'FEATURE_UNKNOWN' };
+  if (!entitlements?.features || typeof feature !== 'string' || !Object.hasOwn(entitlements.features, feature)) return { allowed: false, code: 'FEATURE_UNKNOWN' };
   return entitlements.features[feature]
     ? { allowed: true, code: 'FEATURE_ENABLED' }
     : { allowed: false, code: 'FEATURE_DISABLED' };
@@ -60,7 +62,7 @@ export function checkUsageLimit(entitlements, usage, metric) {
     : { allowed: false, code: 'LIMIT_REACHED', consumed, limit, remaining: 0 };
 }
 
-export function createUsageEvent({ tenantId, locationId = null, eventId = crypto.randomUUID(), metric, quantity = 1, occurredAt = new Date().toISOString(), metadata = {} } = {}) {
+export function createUsageEvent({ tenantId, locationId = null, eventId = randomUUID(), metric, quantity = 1, occurredAt = new Date().toISOString(), metadata = {} } = {}) {
   if (typeof tenantId !== 'string' || tenantId.length < 3 || typeof metric !== 'string' || !/^[a-z][a-zA-Z0-9_.-]{1,80}$/.test(metric)) {
     throw Object.assign(new TypeError('Usage event identity is invalid'), { code: 'INVALID_USAGE_EVENT' });
   }
