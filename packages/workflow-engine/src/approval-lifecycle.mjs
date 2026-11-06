@@ -23,6 +23,9 @@ export function createPendingApproval({
   requestedByActorId,
   nodeId,
   actionHash,
+  actionId = null,
+  nodeType = null,
+  nodeLabel = null,
   now = Date.now(),
   ttlMs = DEFAULT_TTL_MS
 } = {}) {
@@ -64,6 +67,9 @@ export function createPendingApproval({
     executionId: execution.id,
     nodeId,
     actionHash,
+    actionId,
+    nodeType,
+    nodeLabel,
     requestedByActorId,
     status: 'pending',
     requestedAt,
@@ -104,7 +110,10 @@ export function resolvePendingApproval({
   }
   if (approval.request?.actionHash !== approval.actionHash ||
       approval.request?.nodeId !== approval.nodeId ||
-      approval.request?.executionId !== execution.id) {
+      approval.request?.executionId !== execution.id ||
+      approval.request?.workflowId !== execution.workflowId ||
+      approval.request?.tenantId !== tenantId ||
+      approval.request?.requestedByActorId !== approval.requestedByActorId) {
     return invalid('REQUEST_MISMATCH', 'Approval request metadata is inconsistent.');
   }
 
