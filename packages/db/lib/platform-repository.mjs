@@ -95,6 +95,37 @@ export function createPlatformRepository(pool) {
   }
 
   return {
+    async checkReady() {
+      const requiredTables = [
+        'provider_connections', 'communication_consents', 'workflow_approvals',
+        'workflow_action_receipts', 'workflow_outbox', 'tenant_entitlements',
+        'usage_events', 'copilot_proposals'
+      ];
+      const [tables, role] = await Promise.all([
+        pool.query(
+          "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY($1::text[])",
+          [requiredTables]
+        ),
+        pool.query(
+          "SELECT r.rolsuper, r.rolbypassrls FROM pg_roles r WHERE r.rolname = current_user"
+        )
+      ]);
+      const found = new Set(tables.rows.map(row => row.table_name));
+      const missing = requiredTables.filter(name => !found.has(name));
+      if (missing.length) {
+        throw Object.assign(new Error('Platform migrations are missing required tables: ' + missing.join(', ')), {
+          code: 'PLATFORM_SCHEMA_INCOMPLETE'
+        });
+      }
+      const currentRole = role.rows[0];
+      if (!currentRole || currentRole.rolsuper || currentRole.rolbypassrls) {
+        throw Object.assign(new Error('Platform database runtime role must not be superuser or BYPASSRLS'), {
+          code: 'PLATFORM_ROLE_BYPASSES_RLS'
+        });
+      }
+      return { ready: true, tables: requiredTables };
+    },
+
     async createProviderConnection(connection) {
       return withTenant(connection.tenantId, connection.locationId, async client => {
         const result = await client.query(
