@@ -18,12 +18,14 @@ This document catalogs identified technical defects, architectural vulnerabiliti
 | **BUG-008** | Funnel Checkout | **High** | Potential price tampering in public checkout if client submitted modified product or order bump pricing. | Enforced 100% server-side price recalculation from stored website/payment link metadata, discarding client-provided prices. | `TEST 72: Public Live Funnel Ingress` | **RESOLVED** |
 | **BUG-009** | Security Headers | **Medium** | Missing default security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`) on API JSON responses. | Integrated baseline OWASP security headers directly into `sendJson` response pipeline. | `TEST 77: Security Headers` | **RESOLVED** |
 | **BUG-010** | Error Disclosure | **Low** | Unhandled server exceptions exposed raw `error.message` and stack traces in production environments. | Added structured logging of stack traces while returning sanitized generic error responses in production. | `TEST 1: Health & API Gateway` | **RESOLVED** |
+| **BUG-011** | Workflow Governance | **High** | Approval endpoint changed a paused execution to completed without resuming the paused node, and approval state was not action-bound in the API lifecycle. | Added persisted pending approval records, exact workflow snapshot and node index, deterministic action-hash binding, single-node grant consumption, approve/reject transitions, expiry handling, startup resume recovery, and redacted API projections. | Tests 78–79 plus workflow-engine approval lifecycle tests (CI pending) | **IMPLEMENTED — CI VERIFICATION PENDING** |
 
 ---
 
 ## Defect Triage & Resolution Velocity
 
-- **Total Tracked Defects**: 10
-- **Total Resolved**: 10
-- **Total Open**: 0
-- **Resolution Rate**: 100%
+- **Total Tracked Defects**: 11
+- **Previously Resolved**: 10
+- **Newly Implemented (CI pending)**: 1
+- **Open / Awaiting Verification**: 1
+- **Resolution Rate**: Not recalculated until CI verification completes
