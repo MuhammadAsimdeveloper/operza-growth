@@ -41,7 +41,7 @@ These capabilities are intentionally not represented as live features yet:
 - LangChain/AI Agent, memory, vector retrieval, or model execution inside workflows.
 - General-purpose HTTP Request, arbitrary outbound webhook dispatch, or social/chat provider nodes.
 - SQLite/database connector nodes and split-in-batches processors.
-- Durable wait queues, worker retries, idempotency, and resumable approvals.
+- Durable wait/delay queues, worker retries, and provider-enforced idempotency. Action-bound approvals and resume from a persisted `resuming` execution are implemented; multi-worker transactional resume and provider-level deduplication are still open.
 - Direct import of arbitrary n8n exports. The current package format is Operza-native.
 
 These require separate connector, sandbox, credential vault, policy, queue, and execution work. The workflow engine's existing Atlas approval and external-action governance remains the control layer for future capabilities.
