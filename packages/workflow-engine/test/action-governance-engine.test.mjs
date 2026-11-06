@@ -71,9 +71,10 @@ test('verified live delivery requires an approved action and an injected provide
       approvalEvidence
     },
     triggerContext: {},
-    providerExecutor: async ({ invocation: received }) => {
+    providerExecutor: async ({ invocation: received, idempotencyKey }) => {
       providerCalls += 1;
       assert.equal(received.actionHash, invocation.actionHash);
+      assert.equal(idempotencyKey, invocation.actionHash);
       return { accepted: true };
     }
   });
@@ -94,4 +95,51 @@ test('live delivery fails closed when provider or consent is not configured', as
   });
   assert.equal(result.status, 'failed');
   assert.equal(result.errorCode, 'PROVIDER_UNVERIFIED');
+});
+
+
+test('approval for one node does not authorize another node in the same workflow', async () => {
+  const taskNode = {
+    id: 'node_task_approved',
+    type: 'create_task',
+    requiresApproval: true,
+    config: { title: 'Approved follow-up' }
+  };
+  let createdTasks = 0;
+  const paused = await executeStep({
+    node: taskNode,
+    execution: { id: 'execution_approval_scope', mode: 'live' },
+    triggerContext: { contact: { id: 'contact_42' } },
+    crmActions: { createTask: async () => { createdTasks += 1; } }
+  });
+
+  assert.equal(paused.status, 'waiting_approval');
+  assert.equal(paused.errorCode, 'APPROVAL_REQUIRED');
+  assert.equal(createdTasks, 0);
+
+  const resumed = await executeStep({
+    node: taskNode,
+    execution: { id: 'execution_approval_scope', mode: 'live', approvedNodeId: taskNode.id },
+    triggerContext: { contact: { id: 'contact_42' } },
+    crmActions: { createTask: async () => { createdTasks += 1; } }
+  });
+
+  assert.equal(resumed.status, 'completed');
+  assert.equal(createdTasks, 1);
+
+  const nextNode = {
+    id: 'node_task_next',
+    type: 'create_task',
+    requiresApproval: true,
+    config: { title: 'Another task' }
+  };
+  const nextPaused = await executeStep({
+    node: nextNode,
+    execution: { id: 'execution_approval_scope', mode: 'live', approvedNodeId: taskNode.id },
+    triggerContext: { contact: { id: 'contact_42' } },
+    crmActions: { createTask: async () => { createdTasks += 1; } }
+  });
+
+  assert.equal(nextPaused.status, 'waiting_approval');
+  assert.equal(createdTasks, 1);
 });
