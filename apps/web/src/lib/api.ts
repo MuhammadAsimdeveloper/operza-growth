@@ -345,6 +345,8 @@ export const api = {
     chat: (data: { message: string; sessionId?: string; tools?: any[] }) =>
       request('/api/copilot/chat', { method: 'POST', body: JSON.stringify(data) }),
     getProposals: () => request<{ data: any[] }>('/api/copilot/proposals'),
+    approveProposal: (id: string) =>
+      request<{ success: boolean; proposal: any; execution: { status: 'not_executed'; code: string; message: string } }>(`/api/copilot/proposals/${id}/approve`, { method: 'POST' }),
     rejectProposal: (id: string) =>
       request<{ success: boolean; proposal: any }>(`/api/copilot/proposals/${id}/reject`, { method: 'POST' }),
     stream: (message: string, onDelta: (delta: string) => void, onComplete: () => void) => {
