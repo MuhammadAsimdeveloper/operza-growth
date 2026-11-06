@@ -4070,10 +4070,10 @@ const server = createServer(async (req, res) => {
       // AI may read tenant data and draft changes. Mutations are persisted as
       // proposals only; this endpoint never executes a write tool.
       if (lowerMsg.includes('create contact') || lowerMsg.includes('add contact') || lowerMsg.includes('new contact') || lowerMsg.includes('new lead')) {
-        const emailMatch = message.match(/[\\w.-]+@[\\w.-]+\\.\\w+/);
-        const nameMatch = message.match(/(?:contact|lead)\\s+([A-Z][a-z]+(?:\\s+[A-Z][a-z]+)?)/i) ||
-                          message.match(/name[d]?\\s+([A-Z][a-z]+(?:\\s+[A-Z][a-z]+)?)/i);
-        const companyMatch = message.match(/company\\s+(?:is\\s+)?([A-Za-z0-9&.\\s]+?)(?:$|\\s+(?:with|and|email))/i);
+        const emailMatch = message.match(/[\w.-]+@[\w.-]+\.\w+/);
+        const nameMatch = message.match(/(?:contact|lead)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i) ||
+                          message.match(/name[d]?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
+        const companyMatch = message.match(/company\s+(?:is\s+)?([A-Za-z0-9&.\s]+?)(?:$|\s+(?:with|and|email))/i);
         const fullName = nameMatch ? nameMatch[1].trim() : 'New Lead';
         const [firstName, ...rest] = fullName.split(' ');
         const result = await storeCopilotProposal('create_contact', {
@@ -4087,8 +4087,8 @@ const server = createServer(async (req, res) => {
       }
 
       if (lowerMsg.includes('trigger workflow') || lowerMsg.includes('run workflow') || lowerMsg.includes('execute workflow')) {
-        const wfMatch = message.match(/(?:workflow)\\s+["']?([^"'\\n]+?)["']?$/i) ||
-                        message.match(/(?:run|trigger|execute)\\s+["']?([^"'\\n]+?)(?:workflow)?["']?$/i);
+        const wfMatch = message.match(/(?:workflow)\s+["']?([^"'\n]+?)["']?$/i) ||
+                        message.match(/(?:run|trigger|execute)\s+["']?([^"'\n]+?)(?:workflow)?["']?$/i);
         const result = await storeCopilotProposal('trigger_workflow', {
           workflowName: wfMatch ? wfMatch[1].trim() : ''
         }, actor);
@@ -4096,8 +4096,8 @@ const server = createServer(async (req, res) => {
       }
 
       if (lowerMsg.includes('move opportunity') || lowerMsg.includes('update stage') || lowerMsg.includes('move deal')) {
-        const stageMatch = message.match(/to\\s+([A-Za-z]+)/i);
-        const oppMatch = message.match(/(?:opportunity|deal)\\s+["']?([^"'\\n]+?)["']?\\s+to/i);
+        const stageMatch = message.match(/to\s+([A-Za-z]+)/i);
+        const oppMatch = message.match(/(?:opportunity|deal)\s+["']?([^"'\n]+?)["']?\s+to/i);
         const result = await storeCopilotProposal('update_opportunity_stage', {
           name: oppMatch ? oppMatch[1].trim() : '',
           stage: stageMatch ? stageMatch[1] : 'Qualified'
@@ -4107,8 +4107,8 @@ const server = createServer(async (req, res) => {
 
       if (lowerMsg.includes('send sms') || lowerMsg.includes('send email') || lowerMsg.includes('send message')) {
         const channel = lowerMsg.includes('email') ? 'email' : 'sms';
-        const textMatch = message.match(/(?:saying|message|text)\\s+["']?(.+?)["']?$/i);
-        const recipientMatch = message.match(/to\\s+([A-Za-z0-9@.\\s]+?)(?:\\s+saying|\\s+message|$)/i);
+        const textMatch = message.match(/(?:saying|message|text)\s+["']?(.+?)["']?$/i);
+        const recipientMatch = message.match(/to\s+([A-Za-z0-9@.\s]+?)(?:\s+saying|\s+message|$)/i);
         const result = await storeCopilotProposal('send_communication', {
           recipient: recipientMatch ? recipientMatch[1].trim() : '',
           channel,
