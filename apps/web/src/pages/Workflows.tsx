@@ -592,7 +592,7 @@ export default function Workflows() {
                   const isSuccess = run.status === 'success' || run.status === 'completed';
                   const hasSimulatedSteps = (run.steps || []).some((step: any) => step.status === 'simulated');
                   const isApproval = run.status === 'waiting_approval';
-                  const isRunning = run.status === 'running';
+                  const isRunning = run.status === 'running' || run.status === 'resuming';
                   const cName = run.triggerContext?.contact
                     ? `${run.triggerContext.contact.firstName || ''} ${run.triggerContext.contact.lastName || ''}`.trim()
                     : (run.contactId ? contactName(run.contactId) : run.triggerType || 'Automated');
@@ -733,9 +733,9 @@ export default function Workflows() {
           flow={state.workflows.find((w) => w.id === viewingRun.workflowId) || { name: viewingRun.workflowName }}
           contact={state.contacts.find((c) => c.id === viewingRun.contactId) || viewingRun.triggerContext?.contact}
           onClose={() => setViewingRun(null)}
-          onApproved={() => {
+          onApproved={(updatedRun) => {
             fetchRuns();
-            setViewingRun((prev: any) => prev ? { ...prev, status: 'completed' } : null);
+            setViewingRun((prev: any) => prev ? { ...prev, ...updatedRun } : null);
           }}
         />
       )}
@@ -1297,9 +1297,10 @@ function RunResult({
   flow?: any;
   contact?: any;
   onClose: () => void;
-  onApproved?: () => void;
+  onApproved?: (updatedRun: any) => void;
 }) {
   const [approving, setApproving] = useState(false);
+  const [rejecting, setRejecting] = useState(false);
   const steps = run.steps || [];
   const done = steps.filter((step: any) => ['done', 'completed', 'simulated'].includes(step.status)).length;
   const simulated = steps.filter((step: any) => step.status === 'simulated').length;
@@ -1307,17 +1308,19 @@ function RunResult({
   const isCompleted = run.status === 'success' || run.status === 'completed' || run.status === 'simulated';
   const isApprovalNeeded = run.status === 'waiting_approval';
 
-  const handleApprove = async () => {
-    if (!run.id) return;
-    setApproving(true);
+  const handleDecision = async (decision: 'approved' | 'rejected') => {
+    if (!run.id || !run.pendingApprovalId) return;
+    if (decision === 'approved') setApproving(true);
+    else setRejecting(true);
     try {
-      await api.workflows.approveRun(run.id);
-      run.status = 'completed';
-      onApproved?.();
+      const response = await api.workflows.decideApproval(run.id, run.pendingApprovalId, decision);
+      if (!response?.run) throw new Error('The server did not return the updated execution.');
+      onApproved?.(response.run);
     } catch (err: any) {
-      alert(err.message || 'Approval failed');
+      alert(err.message || (decision === 'approved' ? 'Approval failed' : 'Rejection failed'));
     } finally {
       setApproving(false);
+      setRejecting(false);
     }
   };
 
@@ -1340,9 +1343,22 @@ function RunResult({
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
           {isApprovalNeeded && (
-            <button className="btn btn--primary" onClick={handleApprove} disabled={approving}>
-              {approving ? 'Approving…' : '✓ Approve & Resume Workflow'}
-            </button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                className="btn btn--secondary"
+                onClick={() => handleDecision('rejected')}
+                disabled={approving || rejecting}
+              >
+                {rejecting ? 'Rejecting…' : 'Reject action'}
+              </button>
+              <button
+                className="btn btn--primary"
+                onClick={() => handleDecision('approved')}
+                disabled={approving || rejecting}
+              >
+                {approving ? 'Approving…' : '✓ Approve & Resume'}
+              </button>
+            </div>
           )}
           <button className="btn btn--secondary" onClick={onClose} style={{ marginLeft: 'auto' }}>
             Close
@@ -1364,9 +1380,12 @@ function RunResult({
         <div style={{ marginTop: 12, padding: '12px 16px', background: '#fffbeb', border: '1px solid #fef3c7', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
           <span style={{ fontSize: 20 }}>⚠️</span>
           <div style={{ flex: 1 }}>
-            <strong style={{ color: '#b45309', fontSize: 13, display: 'block' }}>Human Approval Required</strong>
+            <strong style={{ color: '#b45309', fontSize: 13, display: 'block' }}>
+              Review: {run.pendingApproval?.nodeLabel || run.pendingApproval?.nodeType || 'Workflow action'}
+            </strong>
             <span style={{ color: '#92400e', fontSize: 12 }}>
-              An AI agent step or business rule in this workflow flagged an approval gate.
+              This approval applies only to the paused action. Later actions must pass their own policy checks.
+              {run.pendingApproval?.expiresAt ? ` Request expires ${new Date(run.pendingApproval.expiresAt).toLocaleString()}.` : ''}
             </span>
           </div>
         </div>
