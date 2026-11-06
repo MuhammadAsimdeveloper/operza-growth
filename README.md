@@ -6,7 +6,7 @@
 **Unified Multi-Tenant CRM + Visual Node Automation + Autonomous AI Copilot**
 
 [![CI Status](https://github.com/MuhammadAsimdeveloper/operza-growth/actions/workflows/ci.yml/badge.svg)](https://github.com/MuhammadAsimdeveloper/operza-growth/actions)
-[![Tests Passing](https://img.shields.io/badge/E2E%20Cases-77-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
+[![Tests Passing](https://img.shields.io/badge/E2E%20Cases-79-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
 [![Node.js Version](https://img.shields.io/badge/Node.js-%3E%3D20.0.0-339933.svg?style=flat-square&logo=node.js)](package.json)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6.svg?style=flat-square&logo=typescript)](apps/web)
 [![React](https://img.shields.io/badge/React-18.3.1.0-61dafb.svg?style=flat-square&logo=react)](apps/web)
@@ -41,6 +41,13 @@ Modern growth agencies and scaling businesses are forced into an expensive, frag
 External email, SMS, and review-request workflow actions run in **simulation mode by default** and do not create fake sent messages. Direct-URL workflow nodes (webhook, HTTP request, and Slack webhook) are blocked until a tenant-scoped connector and egress boundary are available. Live external delivery requires a verified provider, explicit consent, action-bound approval, and a trusted server-injected provider adapter.
 
 This governance layer does not add or activate a mail/SMS provider, a secret vault, or live payment processing. See [the unified Operza + Atlas architecture plan](docs/UNIFIED_OPERZA_ATLAS_PLAN.md) for the audit and phased roadmap.
+
+### Durable approval lifecycle
+
+Live workflow triggers now persist approval requests in the same durable application-state envelope as workflow executions (atomic JSON store in local mode, PostgreSQL `operza_app_state` snapshot when configured). Requests include tenant/workspace, actor, workflow version snapshot, paused node, action hash, request time, and a 15-minute default expiry. Self-approval, expired requests, stale action hashes, cross-workspace decisions, and repeated decisions are rejected. Approved executions resume from their stored workflow snapshot and paused node; rejected or expired requests terminate without running that action.
+
+The API exposes only a redacted run projection and pending approval summary. Raw trigger payloads, stored workflow snapshots, approval evidence, action hashes, and provider credentials are not sent to the browser. The provider executor receives the action hash as its idempotency key contract, but there is not yet a production mail/SMS provider or transactional outbox to prove end-to-end exactly-once delivery. See [the Phase 2 implementation notes](docs/PHASE_2_DURABLE_APPROVALS.md).
+
 
 ---
 
@@ -122,7 +129,7 @@ flowchart TD
 ### 5. Autonomous AI Copilot with Human Approval Gates
 - **Low-Latency Streaming:** Real-time token streaming over Server-Sent Events (`/api/copilot/stream`).
 - **Semantic Grounding (RAG):** Ingest internal SOPs, pricing sheets, and knowledge articles to train AI sales closers and support bots.
-- **Human-in-the-Loop Safety:** Irreversible workflow operations (bulk broadcasts, customer refunds, contract dismissals) automatically pause in a `waiting_approval` state, surfacing an instant 1-click approval notification in the Copilot Hub.
+- **Human-in-the-Loop Safety:** Actions configured for approval pause in `waiting_approval`, bind the request to one tenant, execution, workflow snapshot, node, and action hash, and can be approved or rejected from the workflow run inspector. Approval resumes from the paused node; it does not restart the workflow.
 
 ### 6. Billing, E-Signatures & Client Portal
 - **Stripe Invoicing & Payment Links:** Create branded invoices, line items, and public checkout pages with 1-click order bumps.
@@ -271,7 +278,9 @@ Operza provides an exhaustive, RESTful API and WebSocket event hub:
 ### Automation & AI
 * `GET|POST /api/crm/workflows` — Automation workflow blueprints
 * `POST /api/workflows/:id/run` — Run a side-effect-free workflow simulation
-* `POST /api/workflows/runs/:id/approve` — Resume paused human approval gate
+* `GET /api/workflows/approvals` — List pending action-specific approvals for the active workspace
+* `POST /api/workflows/runs/:id/approve` — Approve a paused action and resume from its pinned node
+* `POST /api/workflows/runs/:id/reject` — Reject a paused action without executing it
 * `GET /api/copilot/stream` — Low-latency Server-Sent Events (SSE) AI token stream
 * `POST /api/copilot/knowledge` — Semantic document ingestion for AI grounding
 
@@ -285,10 +294,10 @@ Operza provides an exhaustive, RESTful API and WebSocket event hub:
 
 ## 🧪 Verification & Testing
 
-Operza features an exhaustive end-to-end integration test harness (`scripts/test-e2e.mjs`) covering all 77 integration scenarios, database writes, and public ingress points.
+Operza's end-to-end integration harness (`scripts/test-e2e.mjs`) currently defines 79 scenarios covering tenant APIs, workflow approvals, public ingress, and security controls. Treat the latest CI result—not this case count—as the pass/fail source of truth.
 
 ```bash
-# Run the complete 77-step integration test suite:
+# Run workflow-engine unit tests, SEO checks, and the 79-scenario API suite:
 npm test
 
 # Run frontend TypeScript typechecking & bundle build:
@@ -301,10 +310,10 @@ Expected test result:
 🧪 Starting Operza End-to-End System Verification
 =====================================================
 ...
-[TEST 77] Public Live Funnel Ingress & Order Bump Checkout: /api/funnels/public/* & /optin/*
+[TEST 79] Rejected workflow approval never executes the paused action
 ✅ Public live funnel ingress, visit tracking, opt-in lead creation, and 1-click order bump calculation verified
 
-🎉 ALL 77 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉
+🎉 ALL 79 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉
 ```
 
 ---
