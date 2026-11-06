@@ -933,7 +933,13 @@ async function executeWorkflowInstance({
       error: stepRes.error || null,
       executedAt: new Date(stepStart).toISOString()
     };
-    execution.steps.push(stepEntry);
+    // A resumed action updates its original waiting row instead of creating
+    // a duplicate timeline entry for the same node.
+    const pausedStepIndex = execution.steps.findIndex(
+      step => step.nodeId === node.id && step.status === 'waiting_approval'
+    );
+    if (pausedStepIndex >= 0) execution.steps[pausedStepIndex] = stepEntry;
+    else execution.steps.push(stepEntry);
 
     // Consume the approval grant immediately after its one authorized node.
     if (execution.approvedNodeId === node.id) {
