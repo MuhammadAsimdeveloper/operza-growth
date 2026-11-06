@@ -76,7 +76,7 @@ The Operza API layer is built with high-throughput Node.js (ESM native), featuri
 
 ## Approval persistence and execution recovery
 
-- Approval requests and decisions are persisted in `state.workflowApprovals` alongside `workflowExecutions`.
+- Approval requests and decisions are persisted in `state.workflowApprovals` alongside `workflowExecutions`. The normalized `workflow_approvals` table added in migration 008 is not yet used by these Phase 2 API routes.
 - The existing `saveState()` pipeline writes the state envelope through atomic JSON replacement and, when configured, the PostgreSQL `operza_app_state` snapshot.
 - Each run stores a private workflow snapshot and version reference. Approval is bound to a single node and deterministic action hash; approval never means “mark the run completed”.
 - The decision is persisted before the resume call. A process restart recovers executions left in the `resuming` state.
@@ -88,7 +88,7 @@ The Operza API layer is built with high-throughput Node.js (ESM native), featuri
 
 ## Platform persistence and worker operations
 
-The API uses the JSON application-state fallback for provider, consent, Copilot proposal and usage records by default. To use the normalized PostgreSQL repositories, first apply migrations 008 and 009 with the migrator role, then set PLATFORM_DB_ENABLED=true. The PostgreSQL repository applies transaction-local agency/location context for each operation; do not enable this flag before migrations and grants are in place.
+The API uses the JSON application-state fallback for provider, consent, Copilot proposal and usage records by default. Workflow approval records still use the Phase 2 application-state envelope even when normalized platform mode is enabled. To use the normalized PostgreSQL repositories, first apply migrations 008 and 009 with the migrator role, then set PLATFORM_DB_ENABLED=true. The PostgreSQL repository applies transaction-local agency/location context for each operation; do not enable this flag before migrations and grants are in place.
 
 A separate outbox worker is started with npm run worker. It requires:
 - WORKER_DATABASE_URL authenticated as the isolated operza_worker role.
