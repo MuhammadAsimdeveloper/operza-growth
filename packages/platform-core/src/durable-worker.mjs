@@ -15,6 +15,7 @@ export async function runOutboxBatch({
   leaseMs = 30_000,
   retryDelayMs = attempt => Math.min(60_000, 1_000 * (2 ** Math.max(0, attempt - 1))),
   concurrency = 4,
+  heartbeatMs = Math.max(1_000, Math.floor(leaseMs / 3)),
   signal
 } = {}) {
   if (!repository || typeof repository.claim !== 'function' ||
@@ -33,22 +34,50 @@ export async function runOutboxBatch({
       if (index >= jobs.length) return;
       const job = jobs[index];
       const handler = handlers[job.eventType];
+      let leaseLost = false;
+      let heartbeatBusy = false;
+      const heartbeatTimer = typeof repository.renewLease === 'function'
+        ? setInterval(async () => {
+            if (heartbeatBusy || leaseLost || signal?.aborted) return;
+            heartbeatBusy = true;
+            try {
+              const renewed = await repository.renewLease({ jobId: job.id, workerId, leaseMs });
+              if (!renewed) leaseLost = true;
+            } catch {
+              leaseLost = true;
+            } finally {
+              heartbeatBusy = false;
+            }
+          }, Math.max(1_000, Number(heartbeatMs) || Math.floor(leaseMs / 3)))
+        : null;
+      heartbeatTimer?.unref?.();
+
       try {
         if (typeof handler !== 'function') throw new PermanentJobError('No trusted handler is registered for this event type', 'HANDLER_NOT_REGISTERED');
-        const result = await handler(job.payload, { job, workerId, signal });
-        await repository.acknowledge({ jobId: job.id, workerId, result });
-        results.push({ jobId: job.id, status: 'delivered' });
+        const result = await handler(job.payload, { job, workerId, signal, lease: { get lost() { return leaseLost; } } });
+        if (leaseLost) {
+          results.push({ jobId: job.id, status: 'lease_lost' });
+        } else {
+          await repository.acknowledge({ jobId: job.id, workerId, result });
+          results.push({ jobId: job.id, status: 'delivered' });
+        }
       } catch (error) {
-        const retryable = !(error instanceof PermanentJobError) && error?.retryable !== false;
-        const delay = retryable ? Math.max(0, Number(retryDelayMs(job.attempts || 1, error)) || 0) : 0;
-        const disposition = await repository.fail({
-          jobId: job.id,
-          workerId,
-          errorCode: String(error?.code || 'JOB_HANDLER_FAILED').slice(0, 80),
-          retryable,
-          retryDelayMs: delay
-        });
-        results.push({ jobId: job.id, status: disposition?.status || (retryable ? 'retry' : 'dead_letter') });
+        if (leaseLost) {
+          results.push({ jobId: job.id, status: 'lease_lost' });
+        } else {
+          const retryable = !(error instanceof PermanentJobError) && error?.retryable !== false;
+          const delay = retryable ? Math.max(0, Number(retryDelayMs(job.attempts || 1, error)) || 0) : 0;
+          const disposition = await repository.fail({
+            jobId: job.id,
+            workerId,
+            errorCode: String(error?.code || 'JOB_HANDLER_FAILED').slice(0, 80),
+            retryable,
+            retryDelayMs: delay
+          });
+          results.push({ jobId: job.id, status: disposition?.status || (retryable ? 'retry' : 'dead_letter') });
+        }
+      } finally {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
       }
     }
   }
