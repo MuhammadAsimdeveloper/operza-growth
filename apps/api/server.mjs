@@ -396,6 +396,9 @@ async function storeCopilotProposal(toolName, params, actor) {
     tenantId: actor.agency.id,
     locationId: actor.activeLocation.id,
     actorId: actor.user.id,
+    actorRole: actor.membership.role,
+    tenantCapability: entitlement.allowed,
+    agentGrant: state.aiToolGrants?.[actor.agency.id]?.[toolName] !== false,
     toolName,
     params
   });
@@ -4007,6 +4010,9 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'POST' && pathname.startsWith('/api/copilot/proposals/') && pathname.endsWith('/reject')) {
+      if (!['owner', 'admin', 'member'].includes(actor.membership.role)) {
+        return sendJson(res, 403, { error: 'Your role cannot review Copilot proposals' });
+      }
       const proposalId = pathname.split('/')[4];
       const proposal = (state.copilotProposals || []).find(
         item => item.id === proposalId && item.tenantId === agency.id && item.locationId === activeLocation.id
@@ -5667,6 +5673,9 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'POST' && pathname.startsWith('/api/platform/connections/') && pathname.endsWith('/verify')) {
+      if (!['owner', 'admin'].includes(actor.membership.role)) {
+        return sendJson(res, 403, { error: 'Only workspace owners and admins can verify providers' });
+      }
       const connectionId = pathname.split('/')[4];
       const connection = (state.providerConnections || []).find(
         item => item.id === connectionId && item.tenantId === agency.id && item.locationId === activeLocation.id
