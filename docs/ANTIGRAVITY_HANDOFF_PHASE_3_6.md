@@ -13,7 +13,7 @@ The aim is a working, inspectable business platform—not a visual mockup with f
 
 ## 0. Repository onboarding and verification first
 
-**Current CI state:** Run [42208429748](https://github.com/MuhammadAsimdeveloper/operza-growth/actions/runs/42208429748) for commit `377f91879dc5e70bb71e555b7edccdb24f12b069` ended before runner assignment. Both Node 20 and Node 22 jobs report `runner_id: 0` and zero steps. This is not a passing run and not a source-code failure result. Re-run CI from the current branch head and capture actual build/test output.
+**Current CI state:** Run [42208533570](https://github.com/MuhammadAsimdeveloper/operza-growth/actions/runs/42208533570) for the current branch ended before runner assignment. Both Node 20 and Node 22 jobs report `runner_id: 0` and zero steps. This is not a passing run and not a source-code failure result. Re-run after checkout and capture actual build/test output. Re-run CI from the current branch head and capture actual build/test output.
 
 1. Checkout branch `feat/phase-3-6-platform-foundation`.
 2. Inspect the current diff against main and read:
