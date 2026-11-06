@@ -1,5 +1,7 @@
 # Operza — Comprehensive Technical Architecture & Quality Audit
 
+> **Implementation status addendum — 6 November 2026:** This audit is a historical baseline document. The Phase 2 approval branch now includes persisted action-bound approvals, immutable workflow snapshots, node-scoped approve/reject decisions, startup recovery for the saved `resuming` state, and redacted execution API projections. These changes are being validated by CI; they must not be described as production-certified until the branch's unit, API, build, and dependency checks pass. Approval records currently live in the existing JSON/PostgreSQL application-state envelope, not in a normalized transactional approval/outbox schema. Real provider adapters, provider-level idempotency, multi-worker leases, and a transactional outbox are still outstanding.
+
 ## 1. Executive Summary
 
 This document presents the definitive technical audit of **Operza**, an open-source enterprise business operating system, workflow automation platform, and multi-tenant agency CRM. Operza unifies high-scale CRM relational queries, visual workflow orchestration, in-browser drag-and-drop funnel building, white-label client portal interactions, and omnichannel webhook ingestion into a cohesive, high-performance monorepo architecture.
