@@ -4,7 +4,9 @@
 **Auditor**: Principal Enterprise Architect, Staff Backend Engineer & Security Auditor  
 **Repository**: `https://github.com/MuhammadAsimdeveloper/operza-growth.git`  
 **Primary Branches**: `master` and `main`  
-**Status**: **PASSED — PRODUCTION READY (ALL PHASES COMPLETED)**
+**Status**: **HISTORICAL SIGN-OFF — REASSESSMENT REQUIRED FOR CURRENT BRANCH**
+
+> **Status correction — 6 November 2026:** This is a historical sign-off snapshot dated 31 October 2026, not a current production certification. The new Phase 2 approval work is on `feat/phase-2-durable-approvals`; its CI run has not yet been verified. The original scores and test counts below must not be used as evidence that this new branch is production-ready. In addition, the current approval persistence remains in the JSON/PostgreSQL application-state envelope; normalized transactional approval storage, a transactional outbox, provider-enforced idempotency, real provider adapters and multi-worker execution remain open. Reissue a production sign-off only after independent audit and passing CI.
 
 ---
 
