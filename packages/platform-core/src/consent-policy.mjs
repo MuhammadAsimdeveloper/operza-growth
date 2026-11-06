@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 const CHANNELS = new Set(['email', 'sms', 'whatsapp']);
 const PURPOSES = new Set(['transactional', 'marketing', 'appointment', 'review_request']);
 const SOURCES = new Set(['web_form', 'api', 'keyword_opt_out', 'manual', 'import']);
@@ -14,7 +15,7 @@ function matches(record, identity) {
     record.purpose === identity.purpose;
 }
 
-export function recordConsent(input, { now = Date.now(), id = crypto.randomUUID() } = {}) {
+export function recordConsent(input, { now = Date.now(), id = randomUUID() } = {}) {
   for (const field of ['tenantId', 'locationId', 'contactId']) {
     if (typeof input?.[field] !== 'string' || input[field].length < 3 || input[field].length > 180) {
       invalid(field + ' is required', 'INVALID_CONSENT_IDENTITY');
