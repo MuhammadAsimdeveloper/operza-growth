@@ -31,6 +31,7 @@ import { createProviderConnection, revokeProviderConnection, publicProviderConne
 import { recordConsent } from '../../packages/platform-core/src/consent-policy.mjs';
 import { authorizeCopilotTool, createCopilotProposal, getCopilotToolDefinition } from '../../packages/platform-core/src/tool-permissions.mjs';
 import { resolveEntitlements, listPlans, checkFeatureAccess, checkUsageLimit, createUsageEvent, aggregateUsage } from '../../packages/platform-core/src/entitlements.mjs';
+import { createPlatformRepository } from '../../packages/db/lib/platform-repository.mjs';
 import { workflowQueue } from './queue.mjs';
 
 // Conditionally load ws — gracefully degrade if not installed
@@ -65,6 +66,7 @@ try {
   console.warn('[OPERZA-DB] pg module not available or error initializing pool:', err.message);
 }
 
+const platformRepository = process.env.PLATFORM_DB_ENABLED === 'true' && pgPool ? createPlatformRepository(pgPool) : null;
 const scrypt = promisify(scryptCallback);
 const root = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT || 4000);
@@ -332,20 +334,40 @@ function auditLog(action, actor, details = {}) {
 }
 
 // ─── Utility Functions ────────────────────────────────────────────────
-function getTenantEntitlements(agencyId) {
-  const saved = state.tenantEntitlements?.[agencyId] || {};
+async function getTenantEntitlements(agencyId) {
+  let saved;
+  if (platformRepository) {
+    saved = await platformRepository.getEntitlements({ tenantId: agencyId });
+  } else {
+    saved = state.tenantEntitlements?.[agencyId] || {};
+  }
   const agency = (state.agencies || []).find(item => item.id === agencyId);
-  return resolveEntitlements({
-    planId: saved.planId || agency?.planId || 'beta',
-    featureOverrides: saved.featureOverrides || {},
-    limitOverrides: saved.limitOverrides || {}
+  const entitlements = resolveEntitlements({
+    planId: saved?.plan_id || saved?.planId || agency?.planId || 'beta',
+    featureOverrides: saved?.feature_overrides || saved?.featureOverrides || {},
+    limitOverrides: saved?.limit_overrides || saved?.limitOverrides || {}
   });
+  if (saved?.status && saved.status !== 'active') {
+    return {
+      ...entitlements,
+      features: Object.fromEntries(Object.keys(entitlements.features).map(key => [key, false])),
+      limits: Object.fromEntries(Object.keys(entitlements.limits).map(key => [key, 0]))
+    };
+  }
+  return entitlements;
 }
 
-function getCurrentUsage(agencyId, now = Date.now()) {
+async function getCurrentUsage(agencyId, now = Date.now()) {
   const current = new Date(now);
   const from = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), 1));
   const to = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + 1, 1));
+  if (platformRepository) {
+    return platformRepository.aggregateUsage({
+      tenantId: agencyId,
+      from: from.toISOString(),
+      to: to.toISOString()
+    });
+  }
   return aggregateUsage(state.usageEvents || [], {
     tenantId: agencyId,
     from: from.toISOString(),
@@ -353,9 +375,11 @@ function getCurrentUsage(agencyId, now = Date.now()) {
   });
 }
 
-function checkTenantUsageLimit(agencyId, metric, quantity = 1) {
-  const entitlements = getTenantEntitlements(agencyId);
-  const usage = getCurrentUsage(agencyId);
+async function checkTenantUsageLimit(agencyId, metric, quantity = 1) {
+  const [entitlements, usage] = await Promise.all([
+    getTenantEntitlements(agencyId),
+    getCurrentUsage(agencyId)
+  ]);
   const current = usage[metric] || 0;
   const limit = checkUsageLimit(entitlements, usage, metric);
   if (!limit.allowed) return limit;
@@ -366,8 +390,6 @@ function checkTenantUsageLimit(agencyId, metric, quantity = 1) {
 }
 
 async function recordTenantUsage({ agencyId, locationId, metric, quantity = 1, source = 'application', eventId = randomUUID() }) {
-  state.usageEvents = state.usageEvents || [];
-  if (state.usageEvents.some(event => event.eventId === eventId && event.tenantId === agencyId)) return false;
   const event = createUsageEvent({
     tenantId: agencyId,
     locationId,
@@ -376,18 +398,25 @@ async function recordTenantUsage({ agencyId, locationId, metric, quantity = 1, s
     quantity,
     metadata: { source: String(source).slice(0, 80) }
   });
+  if (platformRepository) {
+    return platformRepository.recordUsageEvent(event);
+  }
+  state.usageEvents = state.usageEvents || [];
+  if (state.usageEvents.some(item => item.eventId === eventId && item.tenantId === agencyId)) return false;
   state.usageEvents.push(event);
   await saveState();
   return true;
 }
 
 async function storeCopilotProposal(toolName, params, actor) {
-  const entitlement = checkFeatureAccess(getTenantEntitlements(actor.agency.id), 'copilotProposals');
+  const entitlements = await getTenantEntitlements(actor.agency.id);
+  const entitlement = checkFeatureAccess(entitlements, 'copilotProposals');
+  const agentGrant = state.aiToolGrants?.[actor.agency.id]?.[toolName] !== false;
   const authorization = authorizeCopilotTool({
     toolName,
     actorRole: actor.membership.role,
     tenantCapability: entitlement.allowed,
-    agentGrant: true
+    agentGrant
   });
   if (authorization.decision !== 'proposal_only') {
     return { error: authorization.code, decision: authorization.decision };
@@ -398,26 +427,32 @@ async function storeCopilotProposal(toolName, params, actor) {
     actorId: actor.user.id,
     actorRole: actor.membership.role,
     tenantCapability: entitlement.allowed,
-    agentGrant: state.aiToolGrants?.[actor.agency.id]?.[toolName] !== false,
+    agentGrant,
     toolName,
     params
   });
-  state.copilotProposals = state.copilotProposals || [];
-  state.copilotProposals.push(proposal);
-  await saveState();
+  let stored;
+  if (platformRepository) {
+    stored = await platformRepository.createCopilotProposal(proposal);
+  } else {
+    state.copilotProposals = state.copilotProposals || [];
+    state.copilotProposals.push(proposal);
+    await saveState();
+    stored = proposal;
+  }
   auditLog('copilot.proposal.created', actor, {
-    proposalId: proposal.id,
+    proposalId: stored.id,
     toolName,
-    risk: proposal.risk,
+    risk: stored.risk,
     requiresHumanApproval: true
   });
   return {
-    id: proposal.id,
-    toolName: proposal.toolName,
-    risk: proposal.risk,
-    status: proposal.status,
-    requiresHumanApproval: proposal.requiresHumanApproval,
-    createdAt: proposal.createdAt
+    id: stored.id,
+    toolName: stored.toolName,
+    risk: stored.risk,
+    status: stored.status,
+    requiresHumanApproval: stored.requiresHumanApproval,
+    createdAt: stored.createdAt
   };
 }
 
