@@ -5,9 +5,10 @@
   "type": "module",
   "main": "lib/database.mjs",
   "scripts": {
-    "db:migrate": "node scripts/migrate.mjs"
+    "db:migrate": "node scripts/migrate.mjs",
+    "test": "node --test"
   },
   "dependencies": {
     "pg": "^8.23.1"
   }
-}
+}\n
