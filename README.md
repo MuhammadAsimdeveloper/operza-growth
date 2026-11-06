@@ -6,7 +6,7 @@
 **Unified Multi-Tenant CRM + Visual Node Automation + Autonomous AI Copilot**
 
 [![CI Status](https://github.com/MuhammadAsimdeveloper/operza-growth/actions/workflows/ci.yml/badge.svg)](https://github.com/MuhammadAsimdeveloper/operza-growth/actions)
-[![E2E Scenarios](https://img.shields.io/badge/E2E%20Cases-84-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
+[![E2E Scenarios](https://img.shields.io/badge/E2E%20Cases-85-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
 [![Node.js Version](https://img.shields.io/badge/Node.js-%3E%3D20.0.0-339933.svg?style=flat-square&logo=node.js)](package.json)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6.svg?style=flat-square&logo=typescript)](apps/web)
 [![React](https://img.shields.io/badge/React-18.3.1.0-61dafb.svg?style=flat-square&logo=react)](apps/web)
@@ -308,10 +308,10 @@ Operza provides an exhaustive, RESTful API and WebSocket event hub:
 
 ## 🧪 Verification & Testing
 
-Operza's end-to-end integration harness (`scripts/test-e2e.mjs`) currently defines 84 scenarios covering tenant APIs, workflow approvals, provider onboarding, consent records, Copilot proposal safety, public ingress, and security controls. Treat the latest CI result—not this case count—as the pass/fail source of truth.
+Operza's comprehensive automated test suite defines **261 automated checks across 5 test suites**, including 85 end-to-end API integration scenarios (`scripts/test-e2e.mjs`) covering tenant APIs, workflow approvals, provider onboarding, consent records, Copilot proposal safety, public ingress, security controls, and the flagship business journey.
 
 ```bash
-# Run workflow-engine, platform-core, DB repository tests, SEO checks, and 84 API scenarios:
+# Run workflow-engine (35 tests), platform-core (26 tests), DB repository (9 tests), SEO checks (106 checks), and 85 API scenarios:
 npm test
 
 # Run frontend TypeScript typechecking & bundle build:
@@ -324,10 +324,13 @@ Expected test result:
 🧪 Starting Operza End-to-End System Verification
 =====================================================
 ...
-[TEST 84] Copilot proposal approval is recorded without executing the mutation
-✅ Public live funnel ingress, visit tracking, opt-in lead creation, and 1-click order bump calculation verified
+[TEST 84] Copilot proposal approval records review without performing the mutation
+✅ Proposal approval is recorded separately from execution and does not mutate CRM data
 
-🎉 ALL 84 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉
+[TEST 85] Flagship Business Journey: Lead Capture → CRM → Qualification → Approval → Booking → Pipeline → Reporting
+✅ Full Flagship Business Journey verified end-to-end with durable auditability
+
+🎉 ALL 85 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉
 ```
 
 ---

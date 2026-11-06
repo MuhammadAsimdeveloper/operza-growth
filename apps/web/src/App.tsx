@@ -76,6 +76,9 @@ const Integrations = lazy(() => import('./pages/Integrations'));
 const AiTrainer = lazy(() => import('./pages/AiTrainer'));
 const Developers = lazy(() => import('./pages/Developers'));
 const Branding = lazy(() => import('./pages/Branding'));
+const ConsentLedger = lazy(() => import('./pages/ConsentLedger'));
+const CopilotInbox = lazy(() => import('./pages/CopilotInbox'));
+const PlanUsage = lazy(() => import('./pages/PlanUsage'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
 function PageLoadingFallback() {
@@ -193,6 +196,9 @@ export default function App() {
           <Route path="ai-trainer" element={<AiTrainer />} />
           <Route path="developers" element={<Developers />} />
           <Route path="branding" element={<Branding />} />
+          <Route path="consent-ledger" element={<ConsentLedger />} />
+          <Route path="copilot-inbox" element={<CopilotInbox />} />
+          <Route path="plan-usage" element={<PlanUsage />} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>

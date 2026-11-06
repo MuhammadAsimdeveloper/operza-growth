@@ -64,6 +64,7 @@ function Sidebar({ onNavigate, compact = false }: { onNavigate: () => void; comp
       label: 'Automation & AI',
       items: [
         { to: '/workflows', label: 'Workflows', icon: 'zap' },
+        { to: '/copilot-inbox', label: 'Copilot Proposals', icon: 'check-circle' },
         { to: '/ai-trainer', label: 'AI Bot Training', icon: 'sparkles' },
       ],
     },
@@ -99,6 +100,8 @@ function Sidebar({ onNavigate, compact = false }: { onNavigate: () => void; comp
       label: 'Platform & Ecosystem',
       items: [
         { to: '/integrations', label: 'App Marketplace', icon: 'plug' },
+        { to: '/consent-ledger', label: 'Consent Ledger', icon: 'shield' },
+        { to: '/plan-usage', label: 'Plan & Usage', icon: 'chart' },
         { to: '/developers', label: 'Developer Hub', icon: 'webhook' },
         { to: '/custom-values', label: 'Custom Values', icon: 'sliders' },
         { to: '/audit-log', label: 'Audit Log', icon: 'clipboard' },

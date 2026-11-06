@@ -3,3 +3,5 @@ export * from './consent-policy.mjs';
 export * from './tool-permissions.mjs';
 export * from './entitlements.mjs';
 export * from './durable-worker.mjs';
+export * from './trusted-handlers.mjs';
+export * from './outbox-producer.mjs';

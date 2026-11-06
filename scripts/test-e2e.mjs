@@ -2955,7 +2955,178 @@ async function runTests() {
     }
     console.log('✅ Proposal approval is recorded separately from execution and does not mutate CRM data');
 
-    console.log('\n🎉 ALL 84 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ─────────────────────────────────────────────────────────────
+    // TEST 85: Flagship Business Journey End-to-End
+    // Lead Capture → CRM → Qualification → Follow-up → Approval → Booking → Pipeline → Reporting
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n[TEST 85] Flagship Business Journey: Lead Capture → CRM → Qualification → Approval → Booking → Pipeline → Reporting');
+    const flagshipLeadEmail = `flagship_${Date.now()}@operza-journey.test`;
+
+    // 1. Lead capture via public form
+    const leadFormSubmit = await request('/api/forms/submit/contact-us', {
+      method: 'POST',
+      body: JSON.stringify({
+        answers: {
+          firstName: 'Clara',
+          lastName: 'Oswald',
+          email: flagshipLeadEmail,
+          phone: '+1 555-0899',
+          company: 'Oswald Growth Ventures',
+          projectDetails: 'Enterprise multi-tenant migration and workflow automation'
+        }
+      })
+    });
+    if (leadFormSubmit.status !== 200 || !leadFormSubmit.data.contactId) {
+      throw new Error(`Flagship lead form submission failed: ${JSON.stringify(leadFormSubmit.data)}`);
+    }
+    const flagshipContactId = leadFormSubmit.data.contactId;
+
+    // 2. Duplicate submission safety: re-submit same email; contactId is reused
+    const duplicateSubmit = await request('/api/forms/submit/contact-us', {
+      method: 'POST',
+      body: JSON.stringify({
+        answers: {
+          firstName: 'Clara',
+          lastName: 'Oswald',
+          email: flagshipLeadEmail,
+          phone: '+1 555-0899',
+          company: 'Oswald Growth Ventures Updated'
+        }
+      })
+    });
+    if (duplicateSubmit.status !== 200 || duplicateSubmit.data.contactId !== flagshipContactId) {
+      throw new Error('Duplicate contact submission was not safely resolved to existing contact');
+    }
+
+    // 3. Qualification: Create an opportunity in New stage, and setup governed workflow
+    const oppRes = await request('/api/crm/opportunities', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Oswald Enterprise Growth Contract',
+        contactId: flagshipContactId,
+        value: 24000,
+        stage: 'open',
+        pipeline: 'Sales Pipeline'
+      })
+    });
+    if (oppRes.status !== 201 || !oppRes.data.id) {
+      throw new Error(`Opportunity creation failed: ${JSON.stringify(oppRes.data)}`);
+    }
+    const flagshipOppId = oppRes.data.id;
+
+    // 4. Communication consent evidence recorded
+    const consentRes = await request('/api/platform/consents', {
+      method: 'POST',
+      body: JSON.stringify({
+        contactId: flagshipContactId,
+        channel: 'email',
+        purpose: 'appointment',
+        status: 'granted',
+        source: 'web_form',
+        proofRef: `form_submission:contact-us:${flagshipLeadEmail}`
+      })
+    });
+    if (consentRes.status !== 201 || consentRes.data.consent?.status !== 'granted') {
+      throw new Error('Flagship consent evidence could not be recorded');
+    }
+
+    // 5. Governed workflow with human approval gate triggered on opportunity qualification
+    const flagshipFlow = await request('/api/crm/workflows', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Flagship Opportunity Qualification Workflow',
+        status: 'published',
+        triggerType: 'opportunity_stage',
+        triggerConfig: {},
+        nodes: [
+          {
+            id: 'gate_approval_task',
+            name: 'Require approval for senior partner outreach',
+            type: 'create_task',
+            requiresApproval: true,
+            config: { title: 'Review qualified enterprise lead before outreach', priority: 'high' }
+          },
+          {
+            id: 'tag_qualified_lead',
+            name: 'Tag qualified lead',
+            type: 'add_tag',
+            config: { tag: 'enterprise-qualified' }
+          }
+        ]
+      })
+    });
+    if (flagshipFlow.status !== 201 || !flagshipFlow.data.id) {
+      throw new Error('Could not create flagship workflow');
+    }
+
+    // Move opportunity to qualified stage to trigger the live governed workflow
+    const qualifyRes = await request(`/api/crm/opportunities/${flagshipOppId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ stage: 'qualified' })
+    });
+    if (qualifyRes.status !== 200 || qualifyRes.data.stage !== 'qualified') {
+      throw new Error('Failed to transition opportunity to qualified');
+    }
+
+    // Poll for the live workflow execution to pause at the approval gate
+    let flagshipApprovalRun = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const latestRuns = await request('/api/workflows/runs');
+      flagshipApprovalRun = (latestRuns.data || []).find(run => run.workflowId === flagshipFlow.data.id) || null;
+      if (flagshipApprovalRun?.status === 'waiting_approval') break;
+      await sleep(100);
+    }
+    if (!flagshipApprovalRun || flagshipApprovalRun.status !== 'waiting_approval') {
+      throw new Error(`Expected a waiting_approval execution, got ${flagshipApprovalRun?.status || 'no run'}`);
+    }
+
+    // 6. Inspect pending approvals and approve decision
+    const pendingList = await request('/api/workflows/approvals');
+    const pendingItem = (pendingList.data || []).find(item => item.id === flagshipApprovalRun.pendingApprovalId);
+    if (!pendingItem) {
+      throw new Error('Flagship approval request was not listed in pending approvals');
+    }
+    const approveRunRes = await request(`/api/workflows/runs/${flagshipApprovalRun.id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ approvalId: pendingItem.id, decision: 'approved' })
+    });
+    if (approveRunRes.status !== 200 || approveRunRes.data.run?.status !== 'completed') {
+      throw new Error(`Flagship approval resume failed: ${JSON.stringify(approveRunRes.data)}`);
+    }
+
+    // 7. Booking: Client books an appointment via public calendar
+    const bookingRes = await request('/api/calendars/book/discovery-strategy', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Clara Oswald',
+        email: flagshipLeadEmail,
+        phone: '+1 555-0899',
+        date: '2026-11-20',
+        timeSlot: '14:00',
+        notes: 'Discovery strategy session for enterprise migration'
+      })
+    });
+    if (bookingRes.status !== 201 || !bookingRes.data.appointment?.id) {
+      throw new Error(`Flagship calendar booking failed: ${JSON.stringify(bookingRes.data)}`);
+    }
+
+    // 8. Pipeline state updated to Won
+    const pipelineUpdateRes = await request(`/api/crm/opportunities/${flagshipOppId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ stage: 'won', stageId: 'won', status: 'won' })
+    });
+    if (pipelineUpdateRes.status !== 200 || pipelineUpdateRes.data.stage !== 'won' || pipelineUpdateRes.data.status !== 'won') {
+      throw new Error('Pipeline opportunity stage update failed');
+    }
+
+    // 9. Reporting reflects verified business metrics
+    const statsRes = await request('/api/dashboard/stats');
+    if (statsRes.status !== 200 || statsRes.data.contacts.total < 1 || statsRes.data.opportunities.won < 1) {
+      throw new Error(`Dashboard stats did not reflect verified business journey: ${JSON.stringify(statsRes.data)}`);
+    }
+    console.log('✅ Full Flagship Business Journey verified end-to-end with durable auditability');
+
+    console.log('\n🎉 ALL 85 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;
