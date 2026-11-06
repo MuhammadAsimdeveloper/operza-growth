@@ -1,7 +1,7 @@
 # Phase 2 — Durable workflow approvals
 
 **Implementation branch:** `feat/phase-2-durable-approvals`  
-**Status:** Implemented in source; CI verification pending  
+**Status:** Implemented in source; CI verification blocked so far because GitHub Actions jobs exited before runner assignment. A subsequent run is queued.  
 **Scope:** Persisted action-bound approval and continuation of one workflow execution.
 
 ## Delivered behavior
@@ -50,3 +50,8 @@ These are test cases added to the repository, not a test-pass claim. The GitHub 
 - Add richer UI inspector fields for redacted attempts and provider lifecycle once those fields exist.
 
 **No live provider or payment path is activated by this phase.** A human approval does not itself mean an email, SMS, review request or payment was sent.
+
+
+## Verification status — 6 November 2026
+
+The first GitHub Actions run and its rerun completed as failures before any runner was assigned (`runner_id: 0`, zero job steps, no downloadable job logs). Those outcomes do not demonstrate a source-code test failure, but they also do not verify the source. A fresh run for the timeline fix is queued. Do not treat the unit or E2E cases as passed until a runner executes them and reports successful conclusions.
