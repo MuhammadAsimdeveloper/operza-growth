@@ -387,8 +387,8 @@ async function runTests() {
     }
     console.log('✅ Snapshot created and 1-click deployed to client sub-account with deep-cloned assets');
 
-    // 16. Copilot Autonomous Lead Creation via Intent
-    console.log('\n[TEST 16] Copilot Chat Autonomous Lead Creation: POST /api/copilot/chat');
+    // 16. Copilot Write Proposal Safety: no CRM mutation without human review
+    console.log('\\n[TEST 16] Copilot lead creation creates a proposal, not a contact');
     const copilotContactRes = await request('/api/copilot/chat', {
       method: 'POST',
       body: JSON.stringify({
@@ -397,36 +397,36 @@ async function runTests() {
     });
     console.log(`Copilot Chat Status: ${copilotContactRes.status}`);
     const createToolResult = copilotContactRes.data.message?.toolResults?.find(t => t.tool === 'create_contact');
-    if (!createToolResult || !createToolResult.result?.success || createToolResult.result?.name !== 'Sarah Connor') {
-      throw new Error(`Copilot autonomous contact creation failed: ${JSON.stringify(copilotContactRes.data)}`);
+    if (!createToolResult || createToolResult.result?.status !== 'pending_review' || !createToolResult.result?.id) {
+      throw new Error(`Copilot did not create a pending contact proposal: ${JSON.stringify(copilotContactRes.data)}`);
     }
-    console.log('Copilot Response Text:', copilotContactRes.data.message?.content);
-
-    // Verify contact was persisted to tenant CRM database
     const sarahVerify = await request('/api/crm/contacts?search=Sarah');
-    const sarah = sarahVerify.data.data?.[0];
-    if (!sarah || sarah.company !== 'Cyberdyne Systems') {
-      throw new Error('Contact created via Copilot was not found in CRM query');
+    const sarah = (sarahVerify.data.data || []).find(item => item.email === 'sarah@skynet-defense.com');
+    if (sarah) throw new Error('Copilot created a CRM contact before human review');
+    const proposalsRes = await request('/api/copilot/proposals');
+    const storedProposal = (proposalsRes.data.data || []).find(item => item.id === createToolResult.result.id);
+    if (!storedProposal || storedProposal.status !== 'pending_review' || storedProposal.params?.company !== 'Cyberdyne Systems') {
+      throw new Error('Copilot write proposal was not persisted for human review');
     }
-    console.log(`Persisted Contact: ID=${sarah.id}, Name="${sarah.firstName} ${sarah.lastName}", Company="${sarah.company}"`);
-    console.log('✅ Copilot autonomous lead creation intent executed and persisted in CRM database');
+    console.log('✅ Copilot drafted a tenant-scoped contact proposal; no CRM write was executed');
 
-    // 17. Copilot Autonomous Workflow Triggering via Intent
-    console.log('\n[TEST 17] Copilot Chat Workflow Triggering: POST /api/copilot/chat');
+    // 17. Copilot Workflow Safety: triggering a workflow requires human review
+    console.log('\\n[TEST 17] Copilot workflow intent creates a proposal without starting an execution');
+    const runsBeforeCopilot = await request('/api/workflows/runs');
     const copilotWfRes = await request('/api/copilot/chat', {
       method: 'POST',
-      body: JSON.stringify({
-        message: 'Trigger workflow Lead Qualification'
-      })
+      body: JSON.stringify({ message: 'Trigger workflow Lead Qualification' })
     });
-    console.log(`Copilot Workflow Trigger Status: ${copilotWfRes.status}`);
+    console.log(`Copilot Workflow Proposal Status: ${copilotWfRes.status}`);
     const wfToolResult = copilotWfRes.data.message?.toolResults?.find(t => t.tool === 'trigger_workflow');
-    if (!wfToolResult || !wfToolResult.result?.success || !wfToolResult.result?.executionId) {
-      throw new Error(`Copilot autonomous workflow trigger failed: ${JSON.stringify(copilotWfRes.data)}`);
+    if (!wfToolResult || wfToolResult.result?.status !== 'pending_review' || !wfToolResult.result?.id) {
+      throw new Error(`Copilot workflow request was not converted into a proposal: ${JSON.stringify(copilotWfRes.data)}`);
     }
-    console.log('Copilot Response Text:', copilotWfRes.data.message?.content);
-    console.log(`Workflow Execution Result: Workflow="${wfToolResult.result.workflowName}", ID=${wfToolResult.result.executionId.slice(0, 8)}, Status=${wfToolResult.result.status}`);
-    console.log('✅ Copilot autonomous workflow execution intent dispatched and executed cleanly');
+    const runsAfterCopilot = await request('/api/workflows/runs');
+    if ((runsAfterCopilot.data || []).length !== (runsBeforeCopilot.data || []).length) {
+      throw new Error('Copilot started a workflow before a human approved the proposal');
+    }
+    console.log('✅ Workflow intent remains a proposal; execution history is unchanged');
 
     // 18. Audit Trail Compliance & Security Query: GET /api/audit
     console.log('\n[TEST 18] Audit Trail Compliance: GET /api/audit');
