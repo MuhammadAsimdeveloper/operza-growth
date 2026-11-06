@@ -2828,7 +2828,109 @@ async function runTests() {
     }
     console.log('✅ Rejected approval recorded and paused action was never executed');
 
-    console.log('\n🎉 ALL 79 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ─────────────────────────────────────────────────────────────
+    // TEST 80: Provider Connection Lifecycle — Pending Until Verified
+    // ─────────────────────────────────────────────────────────────
+    console.log('\\n[TEST 80] Provider connection is pending and secret references stay private');
+    const providerCreate = await request('/api/platform/connections', {
+      method: 'POST',
+      body: JSON.stringify({
+        providerKey: 'sms.twilio',
+        label: 'Regression Twilio',
+        secretRef: 'env:TWILIO_AUTH_TOKEN',
+        config: { accountId: 'AC00000000000000000000000000000000' }
+      })
+    });
+    if (providerCreate.status !== 201 || providerCreate.data.connection?.status !== 'pending_verification' ||
+        providerCreate.data.connection?.secretConfigured !== true ||
+        JSON.stringify(providerCreate.data).includes('TWILIO_AUTH_TOKEN')) {
+      throw new Error('Provider connection did not fail closed or exposed its secret reference');
+    }
+    const providerVerify = await request(`/api/platform/connections/${providerCreate.data.connection.id}/verify`, { method: 'POST' });
+    if (providerVerify.status !== 501 || providerVerify.data.code !== 'PROVIDER_ADAPTER_UNAVAILABLE') {
+      throw new Error('Provider was marked verified without a trusted adapter');
+    }
+    const stripeCreate = await request('/api/platform/connections', {
+      method: 'POST',
+      body: JSON.stringify({ providerKey: 'payments.stripe', secretRef: 'env:STRIPE_SECRET_KEY' })
+    });
+    if (stripeCreate.status !== 409 || stripeCreate.data.code !== 'PAYMENTS_DISABLED') {
+      throw new Error('Payments were not kept disabled');
+    }
+    const providerRevoke = await request(`/api/platform/connections/${providerCreate.data.connection.id}/revoke`, { method: 'POST' });
+    if (providerRevoke.status !== 200 || providerRevoke.data.connection.status !== 'revoked') {
+      throw new Error('Provider connection revocation failed');
+    }
+    console.log('✅ Provider setup requires a trusted verifier, secrets stay private, payments stay disabled');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 81: Consent Ledger and Opt-Out Revocation
+    // ─────────────────────────────────────────────────────────────
+    console.log('\\n[TEST 81] Tenant-scoped communication consent and opt-out');
+    const consentCreate = await request('/api/platform/consents', {
+      method: 'POST',
+      body: JSON.stringify({
+        contactId: contact.data.id,
+        channel: 'email',
+        purpose: 'marketing',
+        status: 'granted',
+        source: 'manual',
+        proofRef: 'operator-captured-consent-001'
+      })
+    });
+    if (consentCreate.status !== 201 || consentCreate.data.consent?.status !== 'granted') {
+      throw new Error(`Consent evidence could not be recorded: ${JSON.stringify(consentCreate.data)}`);
+    }
+    const consentList = await request(`/api/platform/consents?contactId=${contact.data.id}`);
+    if (consentList.status !== 200 || !(consentList.data.data || []).some(item => item.id === consentCreate.data.consent.id)) {
+      throw new Error('Consent list did not return the workspace contact record');
+    }
+    const consentRevoke = await request(`/api/platform/consents/${consentCreate.data.consent.id}/revoke`, { method: 'POST' });
+    if (consentRevoke.status !== 200 || consentRevoke.data.consent?.status !== 'revoked') {
+      throw new Error('Consent revocation did not create an auditable opt-out');
+    }
+    console.log('✅ Consent grants require proof references and opt-outs create a newer revoked record');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 82: Plan Entitlements and Usage Metering
+    // ─────────────────────────────────────────────────────────────
+    console.log('\\n[TEST 82] Plan entitlements and monthly usage ledger');
+    const planList = await request('/api/platform/plans');
+    const entitlements = await request('/api/platform/entitlements');
+    const usage = await request('/api/platform/usage');
+    if (planList.status !== 200 || !(planList.data.data || []).length ||
+        entitlements.status !== 200 || entitlements.data.pricing !== null ||
+        entitlements.data.features?.payments !== false ||
+        usage.status !== 200 || usage.data.period !== 'current_utc_month') {
+      throw new Error('Platform entitlement or usage data is inconsistent');
+    }
+    if ((usage.data.usage?.monthlyAiRequests || 0) < 2) {
+      throw new Error('Copilot usage events were not recorded');
+    }
+    console.log('✅ Beta plan is unpriced, payment entitlement remains disabled, and Copilot usage is metered');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 83: Copilot Proposal Review State
+    // ─────────────────────────────────────────────────────────────
+    console.log('\\n[TEST 83] Copilot proposals can be reviewed without executing mutations');
+    const allProposals = await request('/api/copilot/proposals');
+    const contactProposal = (allProposals.data.data || []).find(item =>
+      item.toolName === 'create_contact' && item.params?.email === 'sarah@skynet-defense.com'
+    );
+    if (!contactProposal || contactProposal.status !== 'pending_review') {
+      throw new Error('Expected lead proposal was missing from the proposal inbox');
+    }
+    const rejectedProposal = await request(`/api/copilot/proposals/${contactProposal.id}/reject`, { method: 'POST' });
+    if (rejectedProposal.status !== 200 || rejectedProposal.data.proposal?.status !== 'rejected') {
+      throw new Error('Copilot proposal review decision was not persisted');
+    }
+    const stillNoSarah = await request('/api/crm/contacts?search=Sarah');
+    if ((stillNoSarah.data.data || []).some(item => item.email === 'sarah@skynet-defense.com')) {
+      throw new Error('Rejecting a Copilot proposal unexpectedly mutated CRM data');
+    }
+    console.log('✅ Proposal rejection is persisted and does not create the proposed contact');
+
+    console.log('\n🎉 ALL 83 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;
