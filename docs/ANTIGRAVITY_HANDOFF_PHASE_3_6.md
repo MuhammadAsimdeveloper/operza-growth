@@ -106,6 +106,8 @@ Build a Plan & Usage page that displays:
 
 Do not invent pricing or display estimates as actual prices. All current plans return `pricing: null`. Payments, live messaging and marketplace entitlements remain disabled. Do not add a fake checkout or subscription activation.
 
+**Approval table note:** Migration 008 creates a normalized `workflow_approvals` table, but the Phase 2 API approval routes are not yet writing to it. Implement that cutover separately, with transactional decisions and compare-and-set semantics.
+
 ## 5. Finish the durable outbox integration
 
 The repository has:
