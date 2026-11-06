@@ -19,14 +19,15 @@ This document catalogs identified technical defects, architectural vulnerabiliti
 | **BUG-009** | Security Headers | **Medium** | Missing default security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`) on API JSON responses. | Integrated baseline OWASP security headers directly into `sendJson` response pipeline. | `TEST 77: Security Headers` | **RESOLVED** |
 | **BUG-010** | Error Disclosure | **Low** | Unhandled server exceptions exposed raw `error.message` and stack traces in production environments. | Added structured logging of stack traces while returning sanitized generic error responses in production. | `TEST 1: Health & API Gateway` | **RESOLVED** |
 | **BUG-011** | Workflow Governance | **High** | Approval endpoint changed a paused execution to completed without resuming the paused node, and approval state was not action-bound in the API lifecycle. | Added persisted pending approval records, exact workflow snapshot and node index, deterministic action-hash binding, single-node grant consumption, approve/reject transitions, expiry handling, startup resume recovery, and redacted API projections. | Tests 78–79 plus workflow-engine approval lifecycle tests (CI pending) | **IMPLEMENTED — CI BLOCKED BEFORE RUNNER ASSIGNMENT; SOURCE VERIFICATION OPEN** |
+| **BUG-012** | AI Governance | **High** | Copilot natural-language write intent and explicit write-tool requests could mutate CRM records or initiate workflows during chat without a separate review step. | Added a role-, tenant-capability- and agent-grant-gated tool catalog. All write/workflow/external-side-effect intents now create tenant-scoped proposals. Approve/reject routes record review only; approval returns `not_executed` until a trusted executor exists. | Tests 16–17 and 83–84 plus platform-core permission evaluations (CI and DB verification pending) | **IMPLEMENTED — EXECUTOR NOT YET BUILT; VERIFICATION OPEN** |
 
 ---
 
 ## Defect Triage & Resolution Velocity
 
-- **Total Tracked Defects**: 11
+- **Total Tracked Defects**: 12
 - **Previously Resolved**: 10
-- **Newly Implemented (source change committed)**: 1
-- **Awaiting Executable CI Verification**: 1
-- **CI Note**: The last two GitHub Actions attempts exited before runner assignment; no test steps ran.
-- **Resolution Rate**: Not recalculated until CI verification completes
+- **Implemented, Awaiting Verification**: 2
+- **Open Engineering Follow-ups**: proposal executor, provider adapters, outbox producer wiring and deployment DB verification
+- **CI Note**: The Phase 2 branch previously saw GitHub Actions attempts exit before runner assignment; the current branch still requires a fresh executable CI run.
+- **Resolution Rate**: Not recalculated until executable CI and DB verification complete
