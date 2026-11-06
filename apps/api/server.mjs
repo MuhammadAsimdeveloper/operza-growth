@@ -25,6 +25,8 @@ import { readFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { executeStep, calculateChecksum } from '../../packages/workflow-engine/src/engine.mjs';
+import { createActionInvocation, getWorkflowActionDefinition } from '../../packages/workflow-engine/src/action-governance.mjs';
+import { createPendingApproval, resolvePendingApproval } from '../../packages/workflow-engine/src/approval-lifecycle.mjs';
 import { workflowQueue } from './queue.mjs';
 
 // Conditionally load ws — gracefully degrade if not installed
@@ -124,6 +126,7 @@ const emptyState = () => ({
   sessions: [],
   records: Object.fromEntries(Object.keys(collections).map(key => [key, []])),
   workflowExecutions: [],
+  workflowApprovals: [],
   snapshots: [],
   audit: [],
   mediaFiles: {}
@@ -625,25 +628,55 @@ function validateCsrf(req, actor) {
 }
 
 // ─── Workflow Execution Engine ────────────────────────────────────────
-async function executeWorkflowInstance({ flow, agencyId, locationId, triggerType, triggerContext, mode = 'live' }) {
-  const executionId = randomUUID();
-  const startTime = Date.now();
-  const execution = {
-    id: executionId,
+async function executeWorkflowInstance({
+  flow,
+  agencyId,
+  locationId,
+  triggerType,
+  triggerContext,
+  mode = 'live',
+  execution: existingExecution = null
+}) {
+  const startedAt = Date.now();
+  const execution = existingExecution || {
+    id: randomUUID(),
     agencyId,
     locationId,
     workflowId: flow.id,
     workflowName: flow.name,
+    workflowVersion: Number.isInteger(flow.version) && flow.version > 0 ? flow.version : 1,
+    workflowSnapshot: structuredClone(flow),
+    actorId: triggerContext?.actorId || 'system_workflow',
+    actorName: triggerContext?.triggeredBy || 'System workflow',
+    providerStatuses: {},
+    consent: false,
     mode,
     status: 'running',
     triggerType,
     triggerContext,
+    currentNodeIndex: 0,
     steps: [],
     createdAt: new Date().toISOString()
   };
-  state.workflowExecutions.push(execution);
 
-  broadcast('workflow.execution.started', { executionId, workflowId: flow.id, workflowName: flow.name });
+  if (existingExecution) {
+    flow = flow || execution.workflowSnapshot;
+    agencyId = execution.agencyId;
+    locationId = execution.locationId;
+    triggerType = execution.triggerType;
+    triggerContext = execution.triggerContext || {};
+    mode = execution.mode;
+    execution.status = 'running';
+  } else {
+    state.workflowExecutions.push(execution);
+    state.workflowApprovals = state.workflowApprovals || [];
+    await saveState();
+    broadcast('workflow.execution.started', {
+      executionId: execution.id,
+      workflowId: flow.id,
+      workflowName: flow.name
+    });
+  }
 
   const crmActions = {
     sendEmail: async ({ to, subject, body }) => {
@@ -777,7 +810,108 @@ async function executeWorkflowInstance({ flow, agencyId, locationId, triggerType
     return `[Operza Copilot AI Analysis]: Lead qualified for ${context.contact?.company || 'inquiry'}. Confidence: 94%.`;
   };
 
-  for (const node of (flow.nodes || [])) {
+
+  const nodes = Array.isArray(flow?.nodes) ? flow.nodes : [];
+  const startIndex = Number.isInteger(execution.currentNodeIndex) ? execution.currentNodeIndex : 0;
+
+  for (let index = startIndex; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    execution.currentNodeIndex = index;
+    const actionDefinition = getWorkflowActionDefinition(node?.type);
+    const requiresApproval = mode !== 'dry_run' &&
+      (node?.requiresApproval === true || actionDefinition?.approval === 'human');
+
+    if (requiresApproval && execution.approvedNodeId !== node.id) {
+      try {
+        if (!actionDefinition) {
+          throw Object.assign(new Error('Approval is not supported for this unregistered action.'), {
+            code: 'ACTION_NOT_REGISTERED'
+          });
+        }
+        const invocation = createActionInvocation({
+          tenantId: agencyId,
+          workflowId: execution.workflowId,
+          executionId: execution.id,
+          actorId: execution.actorId,
+          node,
+          input: node.config || {},
+          mode: 'live',
+          providerStatus: execution.providerStatuses?.[actionDefinition.providerKey] || 'unconfigured',
+          consent: execution.consent === true
+        });
+        const approval = createPendingApproval({
+          execution,
+          tenantId: agencyId,
+          requestedByActorId: execution.actorId,
+          nodeId: node.id,
+          actionHash: invocation.actionHash,
+          actionId: invocation.actionId,
+          nodeType: node.type,
+          nodeLabel: node.name || node.label || node.id
+        });
+        state.workflowApprovals = state.workflowApprovals || [];
+        state.workflowApprovals.push(approval);
+        execution.pendingApprovalId = approval.id;
+        execution.pendingApproval = {
+          id: approval.id,
+          nodeId: approval.nodeId,
+          actionId: approval.actionId,
+          nodeType: approval.nodeType,
+          nodeLabel: approval.nodeLabel,
+          requestedAt: approval.requestedAt,
+          expiresAt: approval.request.expiresAt
+        };
+        execution.status = 'waiting_approval';
+        execution.steps.push({
+          nodeId: node.id,
+          nodeName: node.name || node.label || node.id,
+          nodeType: node.type || node.kind,
+          status: 'waiting_approval',
+          durationMs: 0,
+          errorCode: 'APPROVAL_REQUIRED',
+          result: {
+            approvalId: approval.id,
+            actionId: invocation.actionId,
+            expiresAt: approval.request.expiresAt
+          },
+          executedAt: new Date().toISOString()
+        });
+        auditLog('workflow.approval.requested', {
+          user: { id: execution.actorId, name: execution.actorName || 'Workflow' },
+          agency: { id: agencyId },
+          activeLocation: { id: locationId }
+        }, {
+          approvalId: approval.id,
+          executionId: execution.id,
+          workflowId: execution.workflowId,
+          nodeId: node.id,
+          actionId: invocation.actionId,
+          actionHash: invocation.actionHash
+        });
+        execution.durationMs = Date.now() - startedAt;
+        await saveState();
+        broadcast('workflow.execution.waiting_approval', {
+          executionId: execution.id,
+          approvalId: approval.id,
+          nodeId: node.id
+        });
+        return execution;
+      } catch (approvalError) {
+        execution.status = 'failed';
+        execution.lastErrorCode = approvalError.code || 'APPROVAL_CREATION_FAILED';
+        execution.steps.push({
+          nodeId: node?.id || null,
+          nodeName: node?.name || node?.label || node?.id || 'Unknown action',
+          nodeType: node?.type || node?.kind || 'unknown',
+          status: 'failed',
+          durationMs: 0,
+          errorCode: execution.lastErrorCode,
+          executedAt: new Date().toISOString()
+        });
+        break;
+      }
+    }
+
     const stepStart = Date.now();
     const stepRes = await executeStep({
       node,
@@ -793,27 +927,134 @@ async function executeWorkflowInstance({ flow, agencyId, locationId, triggerType
       nodeType: node.type || node.kind,
       status: stepRes.status,
       durationMs: stepEnd - stepStart,
+      errorCode: stepRes.errorCode || null,
       result: stepRes.result || null,
       error: stepRes.error || null,
       executedAt: new Date(stepStart).toISOString()
     };
     execution.steps.push(stepEntry);
 
+    // Consume the approval grant immediately after its one authorized node.
+    if (execution.approvedNodeId === node.id) {
+      execution.approvedNodeId = null;
+      execution.approvalEvidence = null;
+      execution.approvedBy = null;
+    }
+
     if (stepRes.status === 'failed' || stepRes.status === 'waiting_approval' || stepRes.status === 'waiting') {
       execution.status = stepRes.status;
+      execution.currentNodeIndex = index;
+      if (stepRes.status === 'waiting_approval') {
+        execution.lastErrorCode = stepRes.errorCode || 'APPROVAL_CONTEXT_MISSING';
+      }
       break;
     }
+    execution.currentNodeIndex = index + 1;
   }
 
   if (execution.status === 'running') {
     execution.status = 'completed';
     execution.finishedAt = new Date().toISOString();
   }
-  execution.durationMs = Date.now() - startTime;
+  execution.durationMs = (execution.durationMs || 0) + (Date.now() - startedAt);
 
-  broadcast('workflow.execution.finished', { executionId, status: execution.status, durationMs: execution.durationMs });
+  broadcast('workflow.execution.finished', {
+    executionId: execution.id,
+    status: execution.status,
+    durationMs: execution.durationMs
+  });
   await saveState();
   return execution;
+}
+
+function safeWorkflowStepResult(result) {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+  const allowed = [
+    'actionId', 'providerKey', 'dispatch', 'mode', 'sideEffectsDisabled', 'reason',
+    'tagAdded', 'stageUpdated', 'branch', 'isMatch', 'wouldWaitMinutes',
+    'wouldResumeAt', 'delayAmount', 'delayUnit', 'iterations', 'filteredCount',
+    'httpStatus'
+  ];
+  const output = {};
+  for (const key of allowed) {
+    const value = result[key];
+    if (typeof value === 'string' && value.length <= 180 ||
+        typeof value === 'number' || typeof value === 'boolean') {
+      if (value !== undefined) output[key] = value;
+    }
+  }
+  return Object.keys(output).length ? output : null;
+}
+
+function publicWorkflowExecution(execution) {
+  const sourceContact = execution.triggerContext?.contact;
+  const contact = sourceContact ? {
+    id: sourceContact.id,
+    firstName: sourceContact.firstName || '',
+    lastName: sourceContact.lastName || ''
+  } : null;
+  const pendingApproval = execution.pendingApproval ? {
+    id: execution.pendingApproval.id,
+    nodeId: execution.pendingApproval.nodeId,
+    actionId: execution.pendingApproval.actionId,
+    nodeType: execution.pendingApproval.nodeType,
+    nodeLabel: execution.pendingApproval.nodeLabel,
+    requestedAt: execution.pendingApproval.requestedAt,
+    expiresAt: execution.pendingApproval.expiresAt
+  } : null;
+
+  return {
+    id: execution.id,
+    workflowId: execution.workflowId,
+    workflowName: execution.workflowName,
+    workflowVersion: execution.workflowVersion || 1,
+    mode: execution.mode,
+    status: execution.status,
+    triggerType: execution.triggerType,
+    contactId: contact?.id || execution.contactId || null,
+    triggerContext: {
+      contact,
+      manualTrigger: execution.triggerContext?.manualTrigger === true,
+      triggeredBy: execution.triggerContext?.triggeredBy || null,
+      scheduledAt: execution.triggerContext?.scheduledAt || null
+    },
+    createdAt: execution.createdAt,
+    finishedAt: execution.finishedAt || null,
+    durationMs: execution.durationMs || 0,
+    currentNodeIndex: execution.currentNodeIndex || 0,
+    pendingApproval,
+    pendingApprovalId: pendingApproval?.id || null,
+    lastErrorCode: execution.lastErrorCode || null,
+    steps: (execution.steps || []).map(step => ({
+      nodeId: step.nodeId,
+      nodeName: step.nodeName,
+      nodeType: step.nodeType,
+      status: step.status,
+      durationMs: step.durationMs || 0,
+      errorCode: step.errorCode || null,
+      result: safeWorkflowStepResult(step.result),
+      executedAt: step.executedAt || null
+    }))
+  };
+}
+
+function publicWorkflowApproval(approval) {
+  return {
+    id: approval.id,
+    tenantId: approval.tenantId,
+    locationId: approval.locationId,
+    workflowId: approval.workflowId,
+    executionId: approval.executionId,
+    nodeId: approval.nodeId,
+    actionId: approval.actionId,
+    nodeType: approval.nodeType,
+    nodeLabel: approval.nodeLabel,
+    status: approval.status,
+    requestedAt: approval.requestedAt,
+    expiresAt: approval.request?.expiresAt || null,
+    decidedAt: approval.decidedAt || null,
+    decidedByActorId: approval.decidedByActorId || null
+  };
 }
 
 // ─── Workflow Trigger Execution ───────────────────────────────────────
@@ -5166,19 +5407,143 @@ const server = createServer(async (req, res) => {
       const runs = (state.workflowExecutions || []).filter(
         w => w.agencyId === agency.id && w.locationId === activeLocation.id
       );
-      return sendJson(res, 200, runs.reverse());
+      return sendJson(res, 200, runs.reverse().map(publicWorkflowExecution));
     }
 
-    if (method === 'POST' && pathname.endsWith('/approve') && pathname.startsWith('/api/workflows/runs/')) {
+    if (method === 'GET' && pathname === '/api/workflows/approvals') {
+      state.workflowApprovals = state.workflowApprovals || [];
+      const approvals = state.workflowApprovals.filter(
+        item => item.agencyId === agency.id && item.locationId === activeLocation.id && item.status === 'pending'
+      );
+      return sendJson(res, 200, approvals.map(publicWorkflowApproval));
+    }
+
+    if (method === 'POST' &&
+        pathname.startsWith('/api/workflows/runs/') &&
+        (pathname.endsWith('/approve') || pathname.endsWith('/reject'))) {
       const runId = pathname.split('/')[4];
-      const run = (state.workflowExecutions || []).find(r => r.id === runId && r.agencyId === agency.id);
+      const pathDecision = pathname.endsWith('/reject') ? 'rejected' : 'approved';
+      const body = await readBody(req);
+      if (body.decision && body.decision !== pathDecision) {
+        return sendJson(res, 400, { error: 'Decision does not match the requested approval route' });
+      }
+      const run = (state.workflowExecutions || []).find(
+        item => item.id === runId && item.agencyId === agency.id && item.locationId === activeLocation.id
+      );
       if (!run) return sendJson(res, 404, { error: 'Workflow execution not found' });
-      run.status = 'completed';
-      run.approvedBy = actor.user.name;
-      run.finishedAt = new Date().toISOString();
+      if (run.status !== 'waiting_approval' || !run.pendingApprovalId) {
+        return sendJson(res, 409, { error: 'Workflow execution is not awaiting an approval', code: 'EXECUTION_NOT_WAITING' });
+      }
+
+      state.workflowApprovals = state.workflowApprovals || [];
+      const approvalId = body.approvalId || run.pendingApprovalId;
+      const approval = state.workflowApprovals.find(
+        item => item.id === approvalId &&
+          item.agencyId === agency.id &&
+          item.locationId === activeLocation.id &&
+          item.executionId === run.id
+      );
+      if (!approval) return sendJson(res, 404, { error: 'Pending approval not found' });
+
+      const pinnedFlow = run.workflowSnapshot;
+      const pausedNode = pinnedFlow?.nodes?.[run.currentNodeIndex];
+      if (!pausedNode || pausedNode.id !== approval.nodeId) {
+        return sendJson(res, 409, { error: 'Paused workflow node no longer matches the approval request', code: 'ACTION_MISMATCH' });
+      }
+      const definition = getWorkflowActionDefinition(pausedNode.type);
+      if (!definition) {
+        return sendJson(res, 409, { error: 'The approved workflow action is no longer registered', code: 'ACTION_NOT_REGISTERED' });
+      }
+
+      let currentInvocation;
+      try {
+        currentInvocation = createActionInvocation({
+          tenantId: agency.id,
+          workflowId: run.workflowId,
+          executionId: run.id,
+          actorId: run.actorId,
+          node: pausedNode,
+          input: pausedNode.config || {},
+          mode: 'live',
+          providerStatus: run.providerStatuses?.[definition.providerKey] || 'unconfigured',
+          consent: run.consent === true
+        });
+      } catch (error) {
+        return sendJson(res, 409, { error: 'Pinned workflow action could not be verified', code: error.code || 'ACTION_MISMATCH' });
+      }
+      if (currentInvocation.actionHash !== approval.actionHash) {
+        return sendJson(res, 409, { error: 'Pinned workflow action has changed since approval was requested', code: 'ACTION_MISMATCH' });
+      }
+
+      const transition = resolvePendingApproval({
+        approval,
+        execution: run,
+        tenantId: agency.id,
+        locationId: activeLocation.id,
+        approverActorId: actor.user.id,
+        decision: pathDecision
+      });
+      if (!transition.ok) {
+        const status = transition.code === 'TENANT_MISMATCH' || transition.code === 'LOCATION_MISMATCH' ? 403 : 409;
+        return sendJson(res, status, { error: transition.message, code: transition.code });
+      }
+
+      approval.status = transition.approvalStatus;
+      approval.decision = transition.evidence;
+      approval.decidedAt = transition.decidedAt;
+      approval.decidedByActorId = transition.decidedByActorId;
+      auditLog('workflow.approval.decided', actor, {
+        approvalId: approval.id,
+        executionId: run.id,
+        workflowId: run.workflowId,
+        nodeId: approval.nodeId,
+        decision: transition.approvalStatus,
+        actionHash: approval.actionHash
+      });
+
+      if (transition.approvalStatus === 'rejected') {
+        run.status = 'failed';
+        run.lastErrorCode = 'APPROVAL_REJECTED';
+        run.finishedAt = new Date().toISOString();
+        run.pendingApprovalId = null;
+        run.pendingApproval = null;
+        const pausedStep = [...(run.steps || [])].reverse().find(step => step.nodeId === approval.nodeId);
+        if (pausedStep) {
+          pausedStep.status = 'failed';
+          pausedStep.errorCode = 'APPROVAL_REJECTED';
+        }
+        await saveState();
+        broadcast('workflow.execution.approval_rejected', { executionId: run.id, approvalId: approval.id });
+        return sendJson(res, 200, {
+          success: true,
+          approval: publicWorkflowApproval(approval),
+          run: publicWorkflowExecution(run)
+        });
+      }
+
+      run.status = 'resuming';
+      run.approvedNodeId = approval.nodeId;
+      run.approvalEvidence = transition.evidence;
+      run.approvedBy = actor.user.id;
+      run.pendingApprovalId = null;
+      run.pendingApproval = null;
       await saveState();
-      broadcast('workflow.execution.approved', { executionId: runId });
-      return sendJson(res, 200, { success: true, run });
+      broadcast('workflow.execution.resuming', { executionId: run.id, approvalId: approval.id });
+
+      const resumed = await executeWorkflowInstance({
+        flow: structuredClone(pinnedFlow),
+        agencyId: run.agencyId,
+        locationId: run.locationId,
+        triggerType: run.triggerType,
+        triggerContext: run.triggerContext,
+        mode: run.mode,
+        execution: run
+      });
+      return sendJson(res, 200, {
+        success: true,
+        approval: publicWorkflowApproval(approval),
+        run: publicWorkflowExecution(resumed)
+      });
     }
 
     // POST /api/workflows/:id/run — on-demand execution trigger
@@ -5208,11 +5573,12 @@ const server = createServer(async (req, res) => {
           contact,
           manualTrigger: true,
           triggeredBy: actor.user.name,
+          actorId: actor.user.id,
           payload: body.payload || {}
         }
       });
 
-      return sendJson(res, 201, { success: true, execution });
+      return sendJson(res, 201, { success: true, execution: publicWorkflowExecution(execution) });
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -6675,6 +7041,33 @@ const server = createServer(async (req, res) => {
 await initDatabase();
 await workflowQueue.init();
 await loadState();
+state.workflowApprovals = state.workflowApprovals || [];
+
+// Resume executions whose approved transition was durably recorded before a process restart.
+for (const interruptedRun of (state.workflowExecutions || []).filter(
+  item => item.status === 'resuming' && item.approvedNodeId && item.workflowSnapshot
+)) {
+  try {
+    await executeWorkflowInstance({
+      flow: structuredClone(interruptedRun.workflowSnapshot),
+      agencyId: interruptedRun.agencyId,
+      locationId: interruptedRun.locationId,
+      triggerType: interruptedRun.triggerType,
+      triggerContext: interruptedRun.triggerContext,
+      mode: interruptedRun.mode,
+      execution: interruptedRun
+    });
+  } catch (recoveryError) {
+    interruptedRun.status = 'failed';
+    interruptedRun.lastErrorCode = recoveryError.code || 'RESUME_RECOVERY_FAILED';
+    interruptedRun.finishedAt = new Date().toISOString();
+    await saveState();
+    logStructured('ERROR', 'Workflow resume recovery failed', {
+      executionId: interruptedRun.id,
+      error: recoveryError.message
+    });
+  }
+}
 
 // Attach WebSocket server
 if (WebSocketServer) {
