@@ -40,7 +40,13 @@ const DEFINITIONS = [
   ['math', 'flow.math.calculate', 'read', 'none', null],
   ['wait', 'flow.delay.wait', 'read', 'none', null],
   ['lead_score', 'crm.contact.score', 'write', 'none', null],
-  ['internal_notification', 'crm.notification.send', 'write', 'none', null]
+  ['internal_notification', 'crm.notification.send', 'write', 'none', null],
+  ['loop', 'flow.loop.iterate', 'read', 'none', null],
+  ['loop_items', 'flow.loop.iterate', 'read', 'none', null],
+  ['data_filter', 'flow.data.filter', 'read', 'none', null],
+  ['split_test', 'flow.ab.split', 'read', 'none', null],
+  ['set_variable', 'flow.variable.set', 'read', 'none', null],
+  ['error_trigger', 'automation.error.trigger', 'read', 'none', null]
 ].map(([nodeType, id, risk, approval, providerKey]) => Object.freeze({
   nodeType, id, risk, approval, providerKey, surface: 'workflow'
 }));

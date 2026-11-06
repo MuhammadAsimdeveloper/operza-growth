@@ -263,3 +263,65 @@ test('internal_notification node dispatches team alert via CRM action', async ()
   assert.equal(res.result.notificationId, 'notif_999');
   assert.equal(alertDispatched.channel, 'in_app');
 });
+
+test('loop_items node iterates over array items in batches', async () => {
+  const node = {
+    id: 'node-loop-1',
+    type: 'loop_items',
+    config: {
+      items: [
+        { id: 'deal-1', value: 1000 },
+        { id: 'deal-2', value: 2000 },
+        { id: 'deal-3', value: 3000 },
+        { id: 'deal-4', value: 4000 },
+        { id: 'deal-5', value: 5000 }
+      ],
+      batchSize: 2
+    }
+  };
+
+  const res = await executeStep({
+    node,
+    triggerContext: {},
+    crmActions: {}
+  });
+
+  assert.equal(res.status, 'completed');
+  assert.equal(res.result.iterations, 5);
+  assert.equal(res.result.batchSize, 2);
+  assert.equal(res.result.batchCount, 3);
+  assert.equal(res.result.firstItem.id, 'deal-1');
+  assert.equal(res.loopItems.length, 5);
+});
+
+test('data_filter node filters array by condition rules', async () => {
+  const node = {
+    id: 'node-filter-1',
+    type: 'data_filter',
+    config: {
+      items: [
+        { id: 'lead-1', score: 20, stage: 'new' },
+        { id: 'lead-2', score: 85, stage: 'qualified' },
+        { id: 'lead-3', score: 40, stage: 'contacted' },
+        { id: 'lead-4', score: 95, stage: 'qualified' }
+      ],
+      field: 'score',
+      operator: 'greater_than',
+      value: 50,
+      resultVariable: 'qualifiedLeads'
+    }
+  };
+
+  const res = await executeStep({
+    node,
+    triggerContext: {},
+    crmActions: {}
+  });
+
+  assert.equal(res.status, 'completed');
+  assert.equal(res.result.filteredCount, 2);
+  assert.equal(res.result.totalInputItems, 4);
+  assert.deepEqual(res.result.items.map(i => i.id), ['lead-2', 'lead-4']);
+  assert.equal(res.setVariable?.name, 'qualifiedLeads');
+  assert.equal(res.setVariable?.value?.length, 2);
+});

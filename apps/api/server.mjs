@@ -1239,14 +1239,20 @@ async function executeWorkflowInstance({
       }
     }
 
+    execution.variables = execution.variables || {};
     const stepStart = Date.now();
     const stepRes = await executeStep({
       node,
       execution,
       triggerContext,
       crmActions,
-      aiHandler
+      aiHandler,
+      variables: execution.variables
     });
+
+    if (stepRes.setVariable) {
+      execution.variables[stepRes.setVariable.name] = stepRes.setVariable.value;
+    }
 
     // Sub-Workflow execution support
     if (node.type === 'sub_workflow' && node.config?.workflowId) {
@@ -1307,6 +1313,9 @@ async function executeWorkflowInstance({
       if (stepRes.status === 'waiting_approval') {
         execution.lastErrorCode = stepRes.errorCode || 'APPROVAL_CONTEXT_MISSING';
       }
+      if (stepRes.status === 'failed') {
+        execution.lastErrorCode = stepRes.errorCode || 'WORKFLOW_STEP_FAILED';
+      }
       if (stepRes.status === 'waiting') {
         execution.retryAt = stepRes.retryAt;
       }
@@ -1318,6 +1327,33 @@ async function executeWorkflowInstance({
   if (execution.status === 'running') {
     execution.status = 'completed';
     execution.finishedAt = new Date().toISOString();
+  } else if (execution.status === 'failed') {
+    execution.finishedAt = new Date().toISOString();
+    // Dispatch Error Trigger Workflows (n8n Parity: Automated Error Boundary)
+    if (triggerType !== 'workflow_error') {
+      const errorFlows = (state.records.workflows || []).filter(
+        w => w.agencyId === agencyId && w.status === 'published' &&
+             (w.triggerType === 'workflow_error' || w.id === flow.errorWorkflowId)
+      );
+      for (const errFlow of errorFlows) {
+        console.log(`[OPERZA ERROR TRIGGER] Workflow "${flow.name}" failed, triggering error handler "${errFlow.name}"`);
+        executeWorkflowInstance({
+          flow: errFlow,
+          agencyId,
+          locationId,
+          triggerType: 'workflow_error',
+          triggerContext: {
+            failedWorkflowId: flow.id,
+            failedWorkflowName: flow.name,
+            failedExecutionId: execution.id,
+            errorCode: execution.lastErrorCode,
+            errorMessage: execution.steps[execution.steps.length - 1]?.error || execution.lastErrorCode,
+            failedAt: new Date().toISOString()
+          },
+          mode
+        }).catch(err => console.error('[ERROR WORKFLOW TRIGGER ERROR]:', err));
+      }
+    }
   }
   execution.durationMs = (execution.durationMs || 0) + (Date.now() - startedAt);
 
@@ -1336,7 +1372,8 @@ function safeWorkflowStepResult(result) {
     'actionId', 'providerKey', 'dispatch', 'mode', 'sideEffectsDisabled', 'reason',
     'tagAdded', 'stageUpdated', 'branch', 'isMatch', 'wouldWaitMinutes',
     'wouldResumeAt', 'delayAmount', 'delayUnit', 'iterations', 'filteredCount',
-    'httpStatus', 'retryAt', 'pointsAdded', 'notificationId', 'subWorkflowId', 'subExecutionId'
+    'httpStatus', 'retryAt', 'pointsAdded', 'notificationId', 'subWorkflowId', 'subExecutionId',
+    'batchSize', 'batchCount', 'totalInputItems', 'handled'
   ];
   const output = {};
   for (const key of allowed) {
@@ -6819,7 +6856,8 @@ const server = createServer(async (req, res) => {
           manualTrigger: true,
           triggeredBy: body.triggeredBy || actor.user.name,
           actorId: body.actorId || 'agent_automation_runner',
-          payload: body.payload || {}
+          payload: body.payload || {},
+          ...(body.triggerContext || {})
         }
       });
 

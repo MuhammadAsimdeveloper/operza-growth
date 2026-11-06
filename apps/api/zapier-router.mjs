@@ -146,6 +146,19 @@ export function getZapierSamples(event, existingRecords = {}) {
       ];
     }
 
+    case 'notification.created': {
+      return [
+        {
+          id: 'notif_sample_01',
+          title: 'High-Value Prospect Activity',
+          message: 'Contact reached 50 points threshold',
+          channel: 'in_app',
+          read: false,
+          createdAt: now
+        }
+      ];
+    }
+
     default:
       return [
         {
@@ -506,6 +519,28 @@ export async function handleZapierRoute(req, res, { method, pathname, actor, age
 
         broadcast('crm.contact.updated', { id: contact.id, tags: contact.tags });
         return sendJson(res, 200, { success: true, contactId: contact.id, tags: contact.tags, added: tag, contact });
+      }
+
+      case 'send_notification': {
+        const title = data.title || 'Zapier Notification';
+        const message = data.message || data.text || '';
+        const channel = data.channel || 'in_app';
+        state.notifications = state.notifications || [];
+        const notif = {
+          id: randomUUID(),
+          agencyId: agency.id,
+          locationId: activeLocation.id,
+          title,
+          message,
+          channel,
+          read: false,
+          createdAt: new Date().toISOString()
+        };
+        state.notifications.unshift(notif);
+        if (state.notifications.length > 200) state.notifications.length = 200;
+        await saveState();
+        broadcast('crm.notification.created', notif);
+        return sendJson(res, 201, { success: true, notificationId: notif.id, notification: notif });
       }
 
       default:

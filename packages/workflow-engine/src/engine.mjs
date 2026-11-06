@@ -147,7 +147,7 @@ export async function executeStep({
   }
 
   // Build a combined context available to templates
-  const ctx = { ...triggerContext, variables };
+  const ctx = { ...triggerContext, ...variables, variables };
 
   try {
     if (isDirectNetworkNode(type)) {
@@ -392,20 +392,76 @@ export async function executeStep({
       }
 
       // ---------------------------------------------------------------
-      // NEW — loop  (iterate over an array in context)
+      // LOOP / LOOP OVER ITEMS (n8n & GHL Parity)
       // ---------------------------------------------------------------
-      case 'loop': {
-        const arrayPath = config.arrayPath; // e.g. "contact.tags"
-        const items = resolvePath(ctx, arrayPath);
-        if (!Array.isArray(items)) {
-          return { status: 'completed', nodeId, result: { notice: 'arrayPath did not resolve to an array', iterations: 0 } };
+      case 'loop':
+      case 'loop_items': {
+        const source = config.items || config.arrayPath;
+        let items = Array.isArray(source) ? source : (typeof source === 'string' ? (resolvePath(ctx, source) ?? resolvePath(variables, source) ?? ctx[source] ?? variables[source]) : null);
+        if (!Array.isArray(items) && Array.isArray(ctx.items)) {
+          items = ctx.items;
         }
-        // The graph walker handles child execution — here we just mark the items
+        if (!Array.isArray(items)) {
+          return { status: 'completed', nodeId, result: { notice: 'No valid array to iterate', iterations: 0 } };
+        }
+        const batchSize = Math.max(1, Number(config.batchSize) || 1);
+        const batches = [];
+        for (let i = 0; i < items.length; i += batchSize) {
+          batches.push(items.slice(i, i + batchSize));
+        }
         return {
           status: 'completed',
           nodeId,
           loopItems: items,
-          result: { iterations: items.length },
+          result: {
+            iterations: items.length,
+            batchSize,
+            batchCount: batches.length,
+            firstItem: items[0] !== undefined ? items[0] : null
+          }
+        };
+      }
+
+      // ---------------------------------------------------------------
+      // DATA FILTER NODE (n8n Parity)
+      // ---------------------------------------------------------------
+      case 'data_filter':
+      case 'filter': {
+        const source = config.items || config.arrayPath;
+        let items = Array.isArray(source) ? source : (typeof source === 'string' ? (resolvePath(ctx, source) ?? resolvePath(variables, source) ?? ctx[source] ?? variables[source]) : null);
+        if (!Array.isArray(items) && Array.isArray(ctx.items)) {
+          items = ctx.items;
+        }
+        if (!Array.isArray(items)) {
+          return { status: 'completed', nodeId, result: { notice: 'No valid array to filter', filteredCount: 0 } };
+        }
+        const field = config.field || 'id';
+        const operator = config.operator || 'equals';
+        const value = config.value;
+
+        const filtered = items.filter(item => {
+          if (!item || typeof item !== 'object') return false;
+          const actual = resolvePath(item, field) ?? item[field];
+          switch (operator) {
+            case 'equals': return actual === value;
+            case 'not_equals': return actual !== value;
+            case 'greater_than': return Number(actual) > Number(value);
+            case 'less_than': return Number(actual) < Number(value);
+            case 'contains': return String(actual || '').toLowerCase().includes(String(value || '').toLowerCase());
+            case 'exists': return actual !== undefined && actual !== null && actual !== '';
+            default: return false;
+          }
+        });
+        const setVar = config.resultVariable ? { name: config.resultVariable, value: filtered } : undefined;
+        return {
+          status: 'completed',
+          nodeId,
+          ...(setVar ? { setVariable: setVar } : {}),
+          result: {
+            filteredCount: filtered.length,
+            totalInputItems: items.length,
+            items: filtered
+          }
         };
       }
 
@@ -765,6 +821,18 @@ export async function executeStep({
           status: 'completed',
           nodeId,
           result: { title, channel, sent: true, notificationId: notif?.id || null }
+        };
+      }
+
+      case 'error_trigger': {
+        return {
+          status: 'completed',
+          nodeId,
+          result: {
+            handled: true,
+            failedExecutionId: ctx.failedExecutionId || null,
+            errorCode: ctx.errorCode || null
+          }
         };
       }
 

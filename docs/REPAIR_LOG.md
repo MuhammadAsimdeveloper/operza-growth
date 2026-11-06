@@ -364,4 +364,33 @@ This document chronicles the step-by-step engineering enhancements, refactoring,
 - **Action 15.7 (Milestone Verification — 304 / 304 Automated Checks):**
   - 304 / 304 automated checks passing (46 workflow engine, 47 platform core, 9 db, 106 SEO, 96 E2E).
   - 0 TypeScript compilation errors (`npm run typecheck`).
-  - Production build verified in 5.45s (`npm run build`). 
+  - Production build verified in 5.45s (`npm run build`).
+
+---
+
+## Epoch 16: n8n Flow Parity (Loop, Filter, Error Boundary), UI Notifications & Swarm Copilot
+
+- **Action 16.1 (Loop Over Items & Data Filtering Nodes):**
+  - Registered `loop`, `loop_items` (`flow.loop.iterate`), `data_filter` (`flow.data.filter`), `split_test` (`flow.ab.split`), `set_variable` (`flow.variable.set`), and `error_trigger` (`automation.error.trigger`) in `packages/workflow-engine/src/action-governance.mjs`.
+  - Implemented `loop_items` batch iteration with configurable `batchSize`, index metadata, and array resolution in `packages/workflow-engine/src/engine.mjs`.
+  - Implemented `data_filter` filtering array context by condition operators (`equals`, `not_equals`, `greater_than`, `less_than`, `contains`, `exists`) and storing filtered arrays in workflow state variables.
+  - Added unit test cases in `packages/workflow-engine/test/cognitive-nodes.test.mjs`, expanding Workflow Engine suite to 48 / 48 passing tests.
+- **Action 16.2 (Automated Error Boundary & Failure Trigger):**
+  - Enhanced `executeWorkflowInstance` in `apps/api/server.mjs`: when a workflow encounters an unhandled exception or failed step, the engine automatically checks for published workflows with `triggerType === 'workflow_error'` or matching `errorWorkflowId`.
+  - Dispatches the error boundary workflow with full contextual diagnostics (`failedWorkflowId`, `failedExecutionId`, `errorCode`, `errorMessage`, `failedAt`), preventing silent failures and guaranteeing enterprise alerting (n8n parity).
+- **Action 16.3 (Zapier Inbound Team Alert Action):**
+  - Added `send_notification` inbound action in `apps/api/zapier-router.mjs`, enabling external Zapier automations to post alerts into the Operza notification center.
+  - Added `notification.created` sample record generation for Zapier performList schema discovery.
+- **Action 16.4 (Web UI Operza Branding & Notification Center Synchronization):**
+  - Replaced lingering "Atlas" branding in `apps/web/src/components/AppShell.tsx` with "Operza — Unified Business Operating System" and updated search placeholder to "Search Operza...".
+  - Connected `NotificationsButton` in `AppShell.tsx` to `api.notifications.list()`, syncing backend alert records into the UI store on mount and calling `api.notifications.markRead(n.id)` upon interaction.
+- **Action 16.5 (Copilot Swarm Local LLM Model Badge & Quick Prompt Pills):**
+  - Enhanced `apps/web/src/components/CopilotHub.tsx` with an active local LLM model badge (`● Ollama · smollm:135m (Local)`) and real-time streaming indicator.
+  - Added quick prompt suggestion pills ("📊 Pipeline Deals", "⚡ Lead Workflow", "🔍 Find Contacts", "📋 Approvals") allowing operators to trigger multi-agent analysis with single clicks.
+- **Action 16.6 (E2E Test Suite Expansion to 98 Scenarios):**
+  - Added Test 97: Advanced Flow Automation: Loop Over Items & Data Filtering (n8n Parity) — filters leads by score threshold (>50), iterates in batches of 2, and dispatches batch alert notification.
+  - Added Test 98: Resilient Error Trigger & Workflow Failure Boundary (n8n Parity) — verifies automated error boundary catches fragile workflow failures, triggers fallback error workflow, and tests Zapier inbound notification dispatch.
+- **Action 16.7 (Milestone Verification — 308 / 308 Automated Checks):**
+  - 308 / 308 automated checks passing (48 workflow engine, 47 platform core, 9 db, 106 SEO, 98 E2E).
+  - 0 TypeScript compilation errors (`npm run typecheck`).
+  - Production build verified in 3.81s (`npm run build`). 

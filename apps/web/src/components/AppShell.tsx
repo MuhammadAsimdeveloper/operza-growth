@@ -1,4 +1,5 @@
 import { useAuth } from '../lib/AuthContext';
+import { api } from '../lib/api';
 import { CopilotHub } from './CopilotHub';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
@@ -126,9 +127,9 @@ function Sidebar({ onNavigate, compact = false }: { onNavigate: () => void; comp
   return (
     <aside className="sidebar">
       <div className="sidebar__brand">
-        <div className="brand__mark">AT</div>
+        <div className="brand__mark">OP</div>
         <div className="brand__text">
-          <div className="brand__name">Atlas</div>
+          <div className="brand__name">Operza</div>
           <div className="brand__sub">Business Operating System</div>
         </div>
         <button className="icon-btn sidebar__toggle" style={{ marginLeft: 'auto' }} onClick={onNavigate} aria-label="Close navigation">
@@ -144,11 +145,11 @@ function Sidebar({ onNavigate, compact = false }: { onNavigate: () => void; comp
           title="Switch active sub-account / location"
         >
           <span className="account__avatar">
-            {(agency?.name || 'AT').slice(0, 2).toUpperCase()}
+            {(agency?.name || 'OP').slice(0, 2).toUpperCase()}
           </span>
           <span style={{ minWidth: 0, flex: 1 }}>
             <span className="account__name" style={{ display: 'block' }}>
-              {activeLocation?.name || agency?.name || 'Atlas Workspace'}
+              {activeLocation?.name || agency?.name || 'Operza Workspace'}
             </span>
             <span className="account__plan" style={{ display: 'block' }}>
               {agency?.name || 'Agency Workspace'}
@@ -288,7 +289,7 @@ export function SearchBox() {
     <div className="topbar__search" ref={boxRef}>
       <Icon name="search" size={16} />
       <input
-        placeholder="Search Atlas..."
+        placeholder="Search Operza..."
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
@@ -394,11 +395,32 @@ function NotificationsButton() {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener('mousedown', onDown);
+
+    // Sync backend internal notifications into client notification feed
+    api.notifications.list().then((res) => {
+      const items = res?.data || [];
+      if (Array.isArray(items) && items.length > 0) {
+        for (const item of items) {
+          dispatch({
+            type: 'notification/add',
+            notification: {
+              id: item.id,
+              title: item.title,
+              body: item.message,
+              read: Boolean(item.read),
+              at: item.createdAt || new Date().toISOString()
+            }
+          });
+        }
+      }
+    }).catch(() => {});
+
     return () => document.removeEventListener('mousedown', onDown);
   }, []);
 
   const handleOpenNotification = (n: any) => {
     dispatch({ type: 'notifications/read', id: n.id });
+    api.notifications.markRead(n.id).catch(() => {});
     setSelectedNotification(n);
     setOpen(false);
   };

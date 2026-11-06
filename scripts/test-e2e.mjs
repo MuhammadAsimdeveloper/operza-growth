@@ -3851,7 +3851,206 @@ async function runTests() {
     }
     console.log('✅ Notification marked read successfully');
 
-    console.log('\n🎉 ALL 96 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 97] Advanced Flow Automation: Loop Over Items & Data Filtering (n8n Parity)
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 97] Advanced Flow Automation: Loop Over Items & Data Filtering (n8n Parity)');
+
+    const loopFilterWfRes = await request('/api/crm/workflows', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Enterprise Batch Lead Processor',
+        status: 'published',
+        triggerType: 'manual',
+        nodes: [
+          {
+            id: 'node-filter-leads',
+            name: 'Filter Qualified Prospects',
+            type: 'data_filter',
+            config: {
+              arrayPath: 'leads',
+              field: 'score',
+              operator: 'greater_than',
+              value: 50,
+              resultVariable: 'qualifiedLeads'
+            }
+          },
+          {
+            id: 'node-loop-batches',
+            name: 'Iterate Qualified Leads in Batches',
+            type: 'loop_items',
+            config: {
+              items: 'qualifiedLeads',
+              batchSize: 2
+            }
+          },
+          {
+            id: 'node-notify-batch',
+            name: 'Dispatch Batch Processing Alert',
+            type: 'internal_notification',
+            config: {
+              title: 'Batch Leads Ready for Review',
+              message: 'High-score leads filtered and batched for outreach',
+              channel: 'in_app'
+            }
+          }
+        ]
+      })
+    });
+    if (loopFilterWfRes.status !== 201 || !loopFilterWfRes.data.id) {
+      throw new Error(`Failed to create batch workflow: ${JSON.stringify(loopFilterWfRes.data)}`);
+    }
+    const loopFilterWfId = loopFilterWfRes.data.id;
+    console.log(`✅ Batch filter & loop workflow created: ${loopFilterWfId}`);
+
+    // Execute with sample leads array
+    const runBatchRes = await request(`/api/workflows/${loopFilterWfId}/run`, {
+      method: 'POST',
+      body: JSON.stringify({
+        mode: 'live',
+        triggerContext: {
+          leads: [
+            { id: 'lead-101', name: 'Acme Corp', score: 35 },
+            { id: 'lead-102', name: 'Stark Industries', score: 95 },
+            { id: 'lead-103', name: 'Wayne Enterprises', score: 88 },
+            { id: 'lead-104', name: 'Oscorp', score: 42 }
+          ]
+        }
+      })
+    });
+    const batchRun = runBatchRes.data.execution || runBatchRes.data;
+    if ((runBatchRes.status !== 200 && runBatchRes.status !== 201) || batchRun.status !== 'completed') {
+      throw new Error(`Batch workflow did not execute to completion: ${JSON.stringify(runBatchRes.data)}`);
+    }
+    const batchRunId = batchRun.id;
+
+    // Verify step timeline
+    const batchTimelineRes = await request(`/api/workflows/runs/${batchRunId}/nodes`);
+    if (batchTimelineRes.status !== 200 || !Array.isArray(batchTimelineRes.data.steps)) {
+      throw new Error(`Failed to fetch batch timeline: ${JSON.stringify(batchTimelineRes.data)}`);
+    }
+    const filterStep = batchTimelineRes.data.steps.find(s => s.nodeId === 'node-filter-leads');
+    const loopStep = batchTimelineRes.data.steps.find(s => s.nodeId === 'node-loop-batches');
+    const notifStep = batchTimelineRes.data.steps.find(s => s.nodeId === 'node-notify-batch');
+
+    if (!filterStep || filterStep.status !== 'completed' || filterStep.result?.filteredCount !== 2) {
+      throw new Error(`Filter step did not filter 2 leads: ${JSON.stringify(filterStep)}`);
+    }
+    if (!loopStep || loopStep.status !== 'completed' || loopStep.result?.iterations !== 2 || loopStep.result?.batchSize !== 2) {
+      throw new Error(`Loop step did not execute with 2 iterations and batchSize 2: ${JSON.stringify(loopStep)}`);
+    }
+    if (!notifStep || notifStep.status !== 'completed' || !notifStep.result?.notificationId) {
+      throw new Error(`Notification step failed: ${JSON.stringify(notifStep)}`);
+    }
+    console.log(`✅ Batch leads filtered (count: 2/4) and iterated with batchSize: 2`);
+    console.log(`✅ Team alert dispatched with notification ID: ${notifStep.result.notificationId}`);
+
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 98] Resilient Error Trigger & Workflow Failure Boundary (n8n Parity)
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 98] Resilient Error Trigger & Workflow Failure Boundary (n8n Parity)');
+
+    // 1. Create an Error Handler workflow
+    const errorWfRes = await request('/api/crm/workflows', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Operations Error Boundary Handler',
+        status: 'published',
+        triggerType: 'workflow_error',
+        nodes: [
+          {
+            id: 'node-error-catch',
+            name: 'Catch Workflow Error',
+            type: 'error_trigger'
+          },
+          {
+            id: 'node-alert-incident',
+            name: 'Alert Oncall Engineers',
+            type: 'internal_notification',
+            config: {
+              title: 'Critical: Workflow Step Encountered Error',
+              message: 'Automated error boundary captured failure and alerted team',
+              channel: 'in_app'
+            }
+          }
+        ]
+      })
+    });
+    if (errorWfRes.status !== 201 || !errorWfRes.data.id) {
+      throw new Error(`Failed to create error handler workflow: ${JSON.stringify(errorWfRes.data)}`);
+    }
+    const errorWfId = errorWfRes.data.id;
+    console.log(`✅ Published error boundary workflow: ${errorWfId}`);
+
+    // 2. Create and run a workflow that fails intentionally (unsafe code pattern)
+    const failingWfRes = await request('/api/crm/workflows', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Fragile Integration Workflow',
+        status: 'published',
+        triggerType: 'manual',
+        nodes: [
+          {
+            id: 'node-fragile-step',
+            name: 'Prohibited Global Access',
+            type: 'code',
+            config: {
+              code: 'process.exit(1)'
+            }
+          }
+        ]
+      })
+    });
+    if (failingWfRes.status !== 201 || !failingWfRes.data.id) {
+      throw new Error(`Failed to create fragile workflow: ${JSON.stringify(failingWfRes.data)}`);
+    }
+    const failingWfId = failingWfRes.data.id;
+
+    // Run the fragile workflow
+    const failingRunRes = await request(`/api/workflows/${failingWfId}/run`, {
+      method: 'POST',
+      body: JSON.stringify({ mode: 'live' })
+    });
+    const failingRun = failingRunRes.data.execution || failingRunRes.data;
+    if ((failingRunRes.status !== 200 && failingRunRes.status !== 201) || failingRun.status !== 'failed') {
+      throw new Error(`Expected fragile workflow to fail, got: ${JSON.stringify(failingRunRes.data)}`);
+    }
+    console.log(`✅ Fragile workflow failed cleanly with errorCode: "${failingRun.lastErrorCode}"`);
+
+    // 3. Verify the Error Handler workflow was triggered automatically
+    const runsListRes = await request('/api/workflows/runs');
+    if (runsListRes.status !== 200 || !Array.isArray(runsListRes.data)) {
+      throw new Error(`Failed to list workflow runs: ${JSON.stringify(runsListRes.data)}`);
+    }
+    const errorRun = runsListRes.data.find(r => r.workflowId === errorWfId && r.triggerType === 'workflow_error');
+    if (!errorRun || errorRun.status !== 'completed') {
+      throw new Error(`Error boundary workflow was not triggered to completion: ${JSON.stringify(errorRun || runsListRes.data)}`);
+    }
+    console.log(`✅ Error boundary workflow automatically triggered and completed (Run ID: ${errorRun.id})`);
+
+    // 4. Test Zapier Inbound Action: send_notification
+    const zapNotifRes = await request('/api/v1/zapier/actions/send_notification', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: 'Zapier Contract Signed Alert',
+        message: 'Client Acme Corp executed MSA for $75,000 via Zapier webhook',
+        channel: 'in_app'
+      })
+    });
+    if (zapNotifRes.status !== 201 || !zapNotifRes.data.notificationId) {
+      throw new Error(`Zapier send_notification failed: ${JSON.stringify(zapNotifRes.data)}`);
+    }
+    console.log(`✅ Zapier inbound notification action executed (ID: ${zapNotifRes.data.notificationId})`);
+
+    // 5. Verify the notification appears in the notification center
+    const checkNotifs = await request('/api/notifications');
+    const zapNotifRecord = (checkNotifs.data?.data || []).find(n => n.id === zapNotifRes.data.notificationId);
+    if (!zapNotifRecord || zapNotifRecord.title !== 'Zapier Contract Signed Alert') {
+      throw new Error(`Zapier notification not found in feed: ${JSON.stringify(checkNotifs.data)}`);
+    }
+    console.log(`✅ Zapier alert verified in Operza notification center: "${zapNotifRecord.title}"`);
+
+    console.log('\n🎉 ALL 98 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

@@ -218,6 +218,7 @@ export type Action =
   | { type: 'snapshot/create'; id: string; name: string }
   | { type: 'snapshot/restore'; id: string }
   | { type: 'snapshot/delete'; id: string }
+  | { type: 'notification/add'; notification: { id: string; title: string; body: string; read: boolean; at: string } }
   | { type: 'notifications/read'; id: string }
   | { type: 'notifications/readAll' }
   | { type: 'workspace/reset' };
@@ -1178,6 +1179,13 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
       return {
         ...state,
         team: state.team.filter((m) => m.id !== action.id),
+      };
+
+    case 'notification/add':
+      if (state.notifications.some(n => n.id === action.notification.id)) return state;
+      return {
+        ...state,
+        notifications: [action.notification, ...state.notifications]
       };
 
     case 'notifications/read':

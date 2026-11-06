@@ -273,8 +273,14 @@ export function CopilotHub() {
               </span>
               <div>
                 <div style={{ fontWeight: 600, fontSize: '14px' }}>Operza Copilot Swarm</div>
-                <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-                  {isStreaming ? `Agent streaming (${activeAgentName})...` : `Active Agent: ${activeAgentName.toUpperCase()}`}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', borderRadius: '4px', padding: '1px 6px', fontSize: '10px', fontWeight: 600 }}>
+                    <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#10b981' }} />
+                    Ollama · smollm:135m (Local)
+                  </span>
+                  <span style={{ fontSize: '10px', color: '#94a3b8' }}>
+                    {isStreaming ? `Streaming (${activeAgentName})...` : `Agent: ${activeAgentName.toUpperCase()}`}
+                  </span>
                 </div>
               </div>
             </div>
@@ -454,6 +460,44 @@ export function CopilotHub() {
                   {m.timestamp}
                 </div>
               </div>
+            ))}
+          </div>
+
+          {/* Prompt Suggestions */}
+          <div
+            style={{
+              padding: '6px 12px',
+              backgroundColor: '#0f172a',
+              borderTop: '1px solid rgba(255, 255, 255, 0.05)',
+              display: 'flex',
+              gap: '6px',
+              overflowX: 'auto',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            {[
+              { label: '📊 Pipeline Deals', query: 'Summarize CRM pipeline opportunities and stages' },
+              { label: '⚡ Lead Workflow', query: 'Generate workflow for qualifying high-scoring leads' },
+              { label: '🔍 Find Contacts', query: 'Search contacts with active enterprise tags' },
+              { label: '📋 Approvals', query: 'List all workflow runs awaiting human approval' }
+            ].map(pill => (
+              <button
+                key={pill.label}
+                type="button"
+                onClick={() => setInput(pill.query)}
+                style={{
+                  background: 'rgba(255, 255, 255, 0.06)',
+                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  borderRadius: '6px',
+                  color: '#cbd5e1',
+                  fontSize: '11px',
+                  padding: '3px 8px',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                {pill.label}
+              </button>
             ))}
           </div>
 
