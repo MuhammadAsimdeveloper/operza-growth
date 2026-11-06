@@ -130,32 +130,50 @@ The current implementation starts governance inside packages/workflow-engine to 
 
 **Persistence boundary:** Current approval records are stored in `state.workflowApprovals` and written through `saveState()` to the atomic JSON file or the PostgreSQL `operza_app_state` snapshot. This survives a single application restart but is not a normalized approval table, transactional outbox, or multi-worker lease. The current change does not activate any mail, SMS, Slack, review or payment provider.
 
-### Phase 3 — real provider connections
+### Phase 3 — provider and consent foundation (core contracts implemented; real adapters open)
 
-- Build a provider registry and connection lifecycle: unconfigured, pending verification, verified, degraded, revoked.
-- Store secret references server-side; resolve credentials just in time inside isolated adapters.
-- Add consent and recipient-policy checks for email, SMS and WhatsApp.
-- Add verified provider adapters and synthetic contract tests before exposing a live toggle.
-- Keep payments disabled until a real payment provider, webhook authenticity, reconciliation, idempotency and refund controls are implemented and tested.
+- [x] Add a fixed provider catalog and connection lifecycle: pending verification, verified, degraded and revoked.
+- [x] Store references to server-side secrets only; public connection projections never return the reference or secret.
+- [x] Add workspace-scoped connection create/list/revoke APIs and a fail-closed verification route.
+- [x] Add explicit consent records for email, SMS and WhatsApp purposes, proof references, revocations and policy tests.
+- [x] Keep live dispatch disabled in the catalog and keep Stripe/payments blocked.
+- [ ] Implement a real secret resolver/vault adapter and provider-specific verification adapters.
+- [ ] Implement actual email/SMS/WhatsApp send adapters with recipient-level consent rechecks, webhook authentication, delivery receipts and synthetic provider contract tests.
+- [ ] Run migrations 008–009 and verify the normalized repository path in a provisioned PostgreSQL environment before enabling PLATFORM_DB_ENABLED.
 
-### Phase 4 — durable automation operations
+### Phase 4 — durable automation operations (outbox foundation implemented; workflow dispatch integration open)
 
-- Separate API, webhook ingress and worker execution responsibilities.
-- Add PostgreSQL-backed job/outbox state, Redis or another supported queue adapter, leases, heartbeats, bounded concurrency, retry/backoff, dead-letter handling and graceful worker drain.
-- Add scheduled-work persistence and reliable wake-up/resume.
-- Measure queue age, execution latency, provider errors, tenant fairness and recovery behavior before making scale claims.
+- [x] Add normalized PostgreSQL tables for workflow approvals, action receipts and the workflow outbox.
+- [x] Add tenant-scoped outbox enqueue, deduplication, SKIP LOCKED claims, renewable leases, acknowledgement, retry scheduling and dead-letter transitions.
+- [x] Add a separate worker entrypoint that requires the dedicated operza_worker DB role and a trusted handler module.
+- [x] Add bounded worker concurrency, handler allow-listing and lease-loss protection.
+- [ ] Route workflow triggers/resumes and future provider actions through a transactional outbox rather than executing all work inside the API process.
+- [ ] Create trusted event handlers, action receipt claims/completion in each provider action, and provider-side idempotency.
+- [ ] Persist scheduled waits, retries, worker heartbeats/metrics, dead-letter operations and graceful drain/recovery.
+- [ ] Run multi-worker integration/load tests against PostgreSQL and verify tenant fairness, lease expiry and recovery before scale claims.
 
-### Phase 5 — AI workforce and growth intelligence
+### Phase 5 — AI workforce and growth intelligence (permission and proposal foundation implemented)
 
-- AI can draft workflows, explain execution history and propose CRM changes; draft output never mutates tenant records by itself.
-- Tool access is the intersection of actor authority, tenant capability, agent/skill grants and action risk policy.
-- Add evaluation sets for qualification, booking, customer support and safe handoff; release quality scores do not grant authorization.
-- Use the lead-to-booking journey as the first end-to-end product template.
+- [x] Add a typed Copilot tool catalog with read/write risk metadata and actor-role, tenant-capability and agent-grant checks.
+- [x] Restrict natural-language write intent and explicit write tools to tenant-scoped proposals; no write tool executes during chat.
+- [x] Add proposal list, approve and reject routes. Proposal approval records the decision only and explicitly returns not_executed.
+- [x] Add deterministic permission evaluation fixtures for viewers, members, admins, missing grants and disabled tenant capabilities.
+- [ ] Add a trusted proposal executor that applies approved CRM changes with optimistic version checks, audit receipts and idempotency.
+- [ ] Integrate the actual LLM runtime, grounded retrieval, agent skills and scoped memory after authorization is enforced server-side.
+- [ ] Add quality evaluations for qualification, booking, customer support, refusal, safe handoff and prompt-injection scenarios; quality does not grant authorization.
+- [ ] Implement the first lead-to-booking product template with full test and delivery-state evidence.
 
-### Phase 6 — commercial platform
+### Phase 6 — commercial foundation (unpriced entitlements and usage metering implemented)
 
-- Add billing, subscription entitlements, usage metering, white-label controls, client portals and marketplace capabilities only after their underlying workflows and operational controls are genuinely working.
-- Keep beta flags and payment flags honest; never create test success by pretending a charge, subscription or provider delivery occurred.
+- [x] Add static beta/studio/growth/enterprise capability catalogs with pricing null; do not invent product prices.
+- [x] Add tenant entitlements and limits, plus current UTC-month usage event tracking and quota enforcement for manual workflow runs and Copilot requests.
+- [x] Add normalized PostgreSQL tables/repository for tenant entitlements and idempotent usage events; JSON storage remains the default local fallback.
+- [x] Keep messages at zero entitlement, live messaging disabled and payments disabled for every plan.
+- [ ] Build real billing/subscription lifecycle only after pricing, tax, invoicing, payment webhooks, reconciliation, refunds and financial controls are designed and verified.
+- [ ] Add seat/location/workflow-count enforcement and recurring usage aggregation from durable normalized storage.
+- [ ] Connect plan changes to a trusted billing event flow; never trust client-selected plan IDs or client-side payment success.
+
+**Deployment gate for this branch:** apply migrations 008–009 with MIGRATION_DATABASE_URL; set up the worker role with packages/db/operations/provision_worker_role.sql; then set PLATFORM_DB_ENABLED=true only after DB access and RLS tests pass. Real provider delivery and payments remain off.
 
 ## 6. Definition of done for the unified product
 
