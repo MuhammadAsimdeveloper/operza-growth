@@ -1058,6 +1058,41 @@ function publicWorkflowApproval(approval) {
   };
 }
 
+async function expirePendingWorkflowApprovals() {
+  state.workflowApprovals = state.workflowApprovals || [];
+  let changed = false;
+  const now = Date.now();
+  for (const approval of state.workflowApprovals) {
+    if (approval.status !== 'pending' || Date.parse(approval.request?.expiresAt || '') > now) continue;
+    approval.status = 'expired';
+    approval.decidedAt = new Date(now).toISOString();
+    const run = (state.workflowExecutions || []).find(item =>
+      item.id === approval.executionId &&
+      item.agencyId === approval.agencyId &&
+      item.locationId === approval.locationId
+    );
+    if (run && run.status === 'waiting_approval' && run.pendingApprovalId === approval.id) {
+      run.status = 'failed';
+      run.lastErrorCode = 'APPROVAL_EXPIRED';
+      run.finishedAt = new Date(now).toISOString();
+      run.pendingApprovalId = null;
+      run.pendingApproval = null;
+      const pausedStep = [...(run.steps || [])].reverse().find(step => step.nodeId === approval.nodeId);
+      if (pausedStep) {
+        pausedStep.status = 'failed';
+        pausedStep.errorCode = 'APPROVAL_EXPIRED';
+      }
+    }
+    auditLog('workflow.approval.expired', {
+      user: { id: 'system_workflow', name: 'Workflow system' },
+      agency: { id: approval.agencyId },
+      activeLocation: { id: approval.locationId }
+    }, { approvalId: approval.id, executionId: approval.executionId, nodeId: approval.nodeId });
+    changed = true;
+  }
+  if (changed) await saveState();
+}
+
 // ─── Workflow Trigger Execution ───────────────────────────────────────
 async function triggerWorkflowExecution({ agencyId, locationId, triggerType, triggerContext }) {
   const flows = (state.records.workflows || []).filter(
@@ -5405,6 +5440,7 @@ const server = createServer(async (req, res) => {
     // ═════════════════════════════════════════════════════════════
 
     if (method === 'GET' && pathname === '/api/workflows/runs') {
+      await expirePendingWorkflowApprovals();
       const runs = (state.workflowExecutions || []).filter(
         w => w.agencyId === agency.id && w.locationId === activeLocation.id
       );
@@ -5412,6 +5448,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'GET' && pathname === '/api/workflows/approvals') {
+      await expirePendingWorkflowApprovals();
       state.workflowApprovals = state.workflowApprovals || [];
       const approvals = state.workflowApprovals.filter(
         item => item.agencyId === agency.id && item.locationId === activeLocation.id && item.status === 'pending'
@@ -5422,6 +5459,7 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' &&
         pathname.startsWith('/api/workflows/runs/') &&
         (pathname.endsWith('/approve') || pathname.endsWith('/reject'))) {
+      await expirePendingWorkflowApprovals();
       const runId = pathname.split('/')[4];
       const pathDecision = pathname.endsWith('/reject') ? 'rejected' : 'approved';
       const body = await readBody(req);
