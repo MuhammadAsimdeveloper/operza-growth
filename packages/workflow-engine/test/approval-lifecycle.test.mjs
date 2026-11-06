@@ -22,6 +22,9 @@ function pending() {
     requestedByActorId: 'actor_owner',
     nodeId: 'node_email',
     actionHash: 'a'.repeat(64),
+    actionId: 'crm.task.create',
+    nodeType: 'create_task',
+    nodeLabel: 'Create follow-up task',
     now,
     ttlMs: 5 * 60 * 1000
   });
@@ -39,7 +42,10 @@ test('creates a tenant- and action-bound approval with a bounded expiry', () => 
   assert.equal(approval.executionId, run.id);
   assert.equal(approval.nodeId, 'node_email');
   assert.equal(approval.actionHash, 'a'.repeat(64));
-  assert.equal(Date.parse(approval.request.expiresAt) - Date.parse(approval.request.expiresAt), 0);
+  assert.equal(Date.parse(approval.request.expiresAt), now + 5 * 60 * 1000);
+  assert.equal(approval.actionId, 'crm.task.create');
+  assert.equal(approval.nodeType, 'create_task');
+  assert.equal(approval.nodeLabel, 'Create follow-up task');
   assert.equal(approval.request.requestedByActorId, 'actor_owner');
 });
 
