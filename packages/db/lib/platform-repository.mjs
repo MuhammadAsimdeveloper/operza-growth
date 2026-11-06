@@ -101,13 +101,22 @@ export function createPlatformRepository(pool) {
         'workflow_action_receipts', 'workflow_outbox', 'tenant_entitlements',
         'usage_events', 'copilot_proposals'
       ];
-      const [tables, role] = await Promise.all([
+      const [tables, role, rls] = await Promise.all([
         pool.query(
           "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY($1::text[])",
           [requiredTables]
         ),
         pool.query(
           "SELECT r.rolsuper, r.rolbypassrls FROM pg_roles r WHERE r.rolname = current_user"
+        ),
+        pool.query(
+          "SELECT c.relname AS table_name, c.relrowsecurity AS rls_enabled, " +
+            "c.relforcerowsecurity AS rls_forced, count(p.policyname)::integer AS policy_count " +
+          "FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace " +
+          "LEFT JOIN pg_policies p ON p.schemaname=n.nspname AND p.tablename=c.relname " +
+          "WHERE n.nspname='public' AND c.relname=ANY($1::text[]) " +
+          "GROUP BY c.relname,c.relrowsecurity,c.relforcerowsecurity",
+          [requiredTables]
         )
       ]);
       const found = new Set(tables.rows.map(row => row.table_name));
@@ -115,6 +124,16 @@ export function createPlatformRepository(pool) {
       if (missing.length) {
         throw Object.assign(new Error('Platform migrations are missing required tables: ' + missing.join(', ')), {
           code: 'PLATFORM_SCHEMA_INCOMPLETE'
+        });
+      }
+      const rlsByName = new Map(rls.rows.map(row => [row.table_name, row]));
+      const unsafeTables = requiredTables.filter(name => {
+        const row = rlsByName.get(name);
+        return !row || !row.rls_enabled || !row.rls_forced || Number(row.policy_count) < 1;
+      });
+      if (unsafeTables.length) {
+        throw Object.assign(new Error('Platform RLS is not enabled, forced and policy-backed for: ' + unsafeTables.join(', ')), {
+          code: 'PLATFORM_RLS_INCOMPLETE'
         });
       }
       const currentRole = role.rows[0];
