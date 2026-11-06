@@ -18,6 +18,8 @@
 
 **Not live:** The consent policy module is not yet wired into a real outbound delivery adapter. No SendGrid, Resend, Twilio or Meta send adapter is shipped or verified. No secret vault has been provisioned. No live send toggle is enabled. Payments stay disabled.
 
+**Approval storage distinction:** Migration 008 also creates a normalized `workflow_approvals` table, but the Phase 2 API approval routes still persist their approval records in the existing `state.workflowApprovals` application-state envelope. A normalized workflow-approval repository and API cutover are not part of this branch yet. Do not assume the table is populated simply because the migration exists.
+
 ### Phase 4 — durable operations foundation
 
 - Migration 008 adds normalized provider, consent, workflow approval, action receipt, outbox, entitlement and usage tables with tenant RLS.
@@ -118,3 +120,8 @@ These are added test cases, not a pass claim. Run `npm ci`, `npm test` and `npm 
 - Design billing only after pricing, taxes, payments, refunds and reconciliation requirements are real and approved.
 
 **Safety rule:** Do not mark a provider verified without a successful trusted adapter check. Do not show “sent” without a provider acknowledgement. Do not treat a Copilot proposal approval as execution. Do not activate payments in this phase.
+
+
+## Verification status — 6 November 2026
+
+The latest GitHub Actions run on the preceding commit again completed before runner assignment: Node 20 and Node 22 had `runner_id: 0` and zero steps. This does not prove a source test failure, but it leaves build, unit, SEO and API integration verification open. Run CI again from the final branch head and record the real outcome. No production-ready or passing-test claim is made in this guide.
