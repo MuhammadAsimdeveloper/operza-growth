@@ -10,6 +10,8 @@
 
 ---
 
+> **Additional status correction — 6 November 2026:** The feature branch `feat/phase-3-6-platform-foundation` adds Phase 3–6 foundation code after the historical 31 October sign-off. It is not production-certified. Migrations 008–009, normalized DB repository mode, worker role provisioning, trusted outbox handlers, provider adapters/secret resolver, consent enforcement at delivery time, proposal executor, and billing remain deployment or engineering gates. GitHub Actions must execute the Node 20/22 build and test steps before any test-pass claim. A successful schema migration and PostgreSQL RLS integration check are also required before enabling normalized storage.
+
 ## 1. Executive Summary & Readiness Scorecard
 
 Operza has undergone an exhaustive multi-phase technical audit, debugging, repair, enterprise hardening, and end-to-end automated verification. The application operates as a cohesive, resilient, multi-tenant agency business operating system with relational PostgreSQL Row-Level Security, a native TCP RESP Redis queue driver, an interactive 2D node-and-wire visual workflow builder, a responsive drag-and-drop funnel builder, and omnichannel webhook ingestion.
