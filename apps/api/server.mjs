@@ -4049,21 +4049,34 @@ const server = createServer(async (req, res) => {
       // Detect tool calls from user message
       const toolResults = [];
       const lowerMsg = message.toLowerCase();
+      const runCopilotReadTool = async (toolName, params) => {
+        const feature = checkFeatureAccess(getTenantEntitlements(agency.id), 'copilotRead');
+        const decision = authorizeCopilotTool({
+          toolName,
+          actorRole: actor.membership.role,
+          tenantCapability: feature.allowed,
+          agentGrant: state.aiToolGrants?.[agency.id]?.[toolName] !== false
+        });
+        if (decision.decision !== 'allow_read') {
+          return { error: decision.code, decision: decision.decision };
+        }
+        return resolveCopilotToolCall(toolName, params, actor);
+      };
 
       // Heuristic tool dispatch based on message content
       if (lowerMsg.includes('search') && (lowerMsg.includes('contact') || lowerMsg.includes('find'))) {
         const queryMatch = message.match(/(?:search|find|look up)\s+(?:contacts?\s+)?(?:for\s+)?["']?(.+?)["']?\s*$/i);
         const query = queryMatch ? queryMatch[1] : message;
-        const result = copilotTools.search_contacts.execute({ query }, actor);
+        const result = await runCopilotReadTool('search_contacts', { query });
         toolResults.push({ tool: 'search_contacts', result });
       }
       if (lowerMsg.includes('pipeline') || lowerMsg.includes('opportunities') || lowerMsg.includes('deals')) {
-        const result = copilotTools.get_pipeline_summary.execute({}, actor);
+        const result = await runCopilotReadTool('get_pipeline_summary', {});
         toolResults.push({ tool: 'get_pipeline_summary', result });
       }
       if (lowerMsg.includes('availability') || lowerMsg.includes('calendar') || lowerMsg.includes('schedule')) {
         const dateMatch = message.match(/(\d{4}-\d{2}-\d{2})/);
-        const result = copilotTools.get_calendar_availability.execute({ date: dateMatch ? dateMatch[1] : '' }, actor);
+        const result = await runCopilotReadTool('get_calendar_availability', { date: dateMatch ? dateMatch[1] : '' });
         toolResults.push({ tool: 'get_calendar_availability', result });
       }
 
