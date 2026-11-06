@@ -134,12 +134,14 @@ export async function executeStep({
 }) {
   const { id: nodeId, type, config = {} } = node;
 
-  // Human-approval gate (unchanged)
-  if (node.requiresApproval && !execution.approvedBy && execution.mode !== 'dry_run') {
+  // Approval is scoped to one exact node. An approval for a previous step
+  // must never authorize the rest of the workflow.
+  if (node.requiresApproval && execution?.approvedNodeId !== nodeId && execution?.mode !== 'dry_run') {
     return {
       status: 'waiting_approval',
       nodeId,
-      result: { message: 'Awaiting human operator approval' },
+      errorCode: 'APPROVAL_REQUIRED',
+      result: { message: 'Awaiting action-specific human approval' },
     };
   }
 
@@ -211,7 +213,7 @@ export async function executeStep({
           error: 'No trusted provider adapter is configured for this action.'
         };
       }
-      await providerExecutor({ invocation, node, context: ctx });
+      await providerExecutor({ invocation, node, context: ctx, idempotencyKey: invocation.actionHash });
       return {
         status: 'completed',
         nodeId,
