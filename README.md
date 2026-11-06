@@ -6,7 +6,7 @@
 **Unified Multi-Tenant CRM + Visual Node Automation + Autonomous AI Copilot**
 
 [![CI Status](https://github.com/MuhammadAsimdeveloper/operza-growth/actions/workflows/ci.yml/badge.svg)](https://github.com/MuhammadAsimdeveloper/operza-growth/actions)
-[![Tests Passing](https://img.shields.io/badge/E2E%20Cases-79-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
+[![Tests Passing](https://img.shields.io/badge/E2E%20Cases-84-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
 [![Node.js Version](https://img.shields.io/badge/Node.js-%3E%3D20.0.0-339933.svg?style=flat-square&logo=node.js)](package.json)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6.svg?style=flat-square&logo=typescript)](apps/web)
 [![React](https://img.shields.io/badge/React-18.3.1.0-61dafb.svg?style=flat-square&logo=react)](apps/web)
@@ -47,6 +47,15 @@ This governance layer does not add or activate a mail/SMS provider, a secret vau
 Live workflow triggers now persist approval requests in the same durable application-state envelope as workflow executions (atomic JSON store in local mode, PostgreSQL `operza_app_state` snapshot when configured). Requests include tenant/workspace, actor, workflow version snapshot, paused node, action hash, request time, and a 15-minute default expiry. Self-approval, expired requests, stale action hashes, cross-workspace decisions, and repeated decisions are rejected. Approved executions resume from their stored workflow snapshot and paused node; rejected or expired requests terminate without running that action.
 
 The API exposes only a redacted run projection and pending approval summary. Raw trigger payloads, stored workflow snapshots, approval evidence, action hashes, and provider credentials are not sent to the browser. The provider executor receives the action hash as its idempotency key contract, but there is not yet a production mail/SMS provider or transactional outbox to prove end-to-end exactly-once delivery. See [the Phase 2 implementation notes](docs/PHASE_2_DURABLE_APPROVALS.md).
+
+### Platform foundation (Phases 3–6)
+
+The branch adds a provider registry and pending-verification lifecycle, consent ledger and policy checks, tenant-scoped Copilot permissions with proposal-only writes, plan entitlements and usage metering, plus normalized PostgreSQL migrations for provider connections, consent, proposals, approvals, action receipts and a leased workflow outbox. A separate worker process consumes only trusted, explicitly registered event handlers.
+
+Provider verification currently returns PROVIDER_ADAPTER_UNAVAILABLE; no real email/SMS/WhatsApp adapter or secret vault is included. Copilot proposal approval records the human decision but returns not_executed until a real executor exists. All plan prices are null, messaging and payment entitlements remain disabled, and no live payment provider is enabled.
+
+For PostgreSQL deployments, apply migrations 008–009 and set PLATFORM_DB_ENABLED=true only after the schema is installed. To run a worker, provision the dedicated operza_worker database role and configure WORKER_DATABASE_URL plus a trusted WORKFLOW_JOB_MODULE. See [Phase 3–6 deployment and implementation notes](docs/PHASE_3_6_PLATFORM_FOUNDATION.md) and the [Antigravity handoff](docs/ANTIGRAVITY_HANDOFF_PHASE_3_6.md).
+
 
 
 ---
@@ -241,7 +250,7 @@ operza/
 │
 ├── scripts/
 │   ├── dev.mjs                 # Single-command local launcher
-│   └── test-e2e.mjs            # Comprehensive 77-step end-to-end test suite
+│   └── test-e2e.mjs            # 84 API integration scenarios
 │
 ├── docker-compose.yml          # Complete PostgreSQL, Redis, API & Web stack
 ├── package.json                # Monorepo root workspaces configuration
@@ -281,6 +290,11 @@ Operza provides an exhaustive, RESTful API and WebSocket event hub:
 * `GET /api/workflows/approvals` — List pending action-specific approvals for the active workspace
 * `POST /api/workflows/runs/:id/approve` — Approve a paused action and resume from its pinned node
 * `POST /api/workflows/runs/:id/reject` — Reject a paused action without executing it
+* `GET /api/copilot/proposals` — List tenant-scoped AI change proposals
+* `POST /api/copilot/proposals/:id/approve|reject` — Record a human review decision; approval does not itself execute a mutation
+* `GET /api/platform/plans`, `/api/platform/entitlements`, `/api/platform/usage` — Inspect static capabilities and current usage
+* `GET|POST /api/platform/connections` — List or create provider connection references (pending verification)
+* `GET|POST /api/platform/consents` — Inspect or record communication consent evidence
 * `GET /api/copilot/stream` — Low-latency Server-Sent Events (SSE) AI token stream
 * `POST /api/copilot/knowledge` — Semantic document ingestion for AI grounding
 
@@ -294,10 +308,10 @@ Operza provides an exhaustive, RESTful API and WebSocket event hub:
 
 ## 🧪 Verification & Testing
 
-Operza's end-to-end integration harness (`scripts/test-e2e.mjs`) currently defines 79 scenarios covering tenant APIs, workflow approvals, public ingress, and security controls. Treat the latest CI result—not this case count—as the pass/fail source of truth.
+Operza's end-to-end integration harness (`scripts/test-e2e.mjs`) currently defines 84 scenarios covering tenant APIs, workflow approvals, provider onboarding, consent records, Copilot proposal safety, public ingress, and security controls. Treat the latest CI result—not this case count—as the pass/fail source of truth.
 
 ```bash
-# Run workflow-engine unit tests, SEO checks, and the 79-scenario API suite:
+# Run workflow-engine, platform-core, DB repository tests, SEO checks, and 84 API scenarios:
 npm test
 
 # Run frontend TypeScript typechecking & bundle build:
@@ -310,10 +324,10 @@ Expected test result:
 🧪 Starting Operza End-to-End System Verification
 =====================================================
 ...
-[TEST 79] Rejected workflow approval never executes the paused action
+[TEST 84] Copilot proposal approval is recorded without executing the mutation
 ✅ Public live funnel ingress, visit tracking, opt-in lead creation, and 1-click order bump calculation verified
 
-🎉 ALL 79 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉
+🎉 ALL 84 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉
 ```
 
 ---
