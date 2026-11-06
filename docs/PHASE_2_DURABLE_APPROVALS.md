@@ -1,7 +1,7 @@
 # Phase 2 — Durable workflow approvals
 
 **Implementation branch:** `feat/phase-2-durable-approvals`  
-**Status:** Implemented in source; CI verification blocked so far because GitHub Actions jobs exited before runner assignment. A subsequent run is queued.  
+**Status:** Implemented in source; CI verification blocked. The latest source-bearing GitHub Actions run (commit `798b5c3`) ended before runner assignment for both Node 20 and Node 22 (`runner_id: 0`, zero job steps, no downloadable logs). This does not establish a source test failure, but it leaves the code unverified.  
 **Scope:** Persisted action-bound approval and continuation of one workflow execution.
 
 ## Delivered behavior
@@ -54,4 +54,4 @@ These are test cases added to the repository, not a test-pass claim. The GitHub 
 
 ## Verification status — 6 November 2026
 
-The first GitHub Actions run and its rerun completed as failures before any runner was assigned (`runner_id: 0`, zero job steps, no downloadable job logs). Those outcomes do not demonstrate a source-code test failure, but they also do not verify the source. A fresh run for the timeline fix is queued. Do not treat the unit or E2E cases as passed until a runner executes them and reports successful conclusions.
+The first GitHub Actions run and its rerun completed as failures before any runner was assigned (`runner_id: 0`, zero job steps, no downloadable job logs). Those outcomes do not demonstrate a source-code test failure, but they also do not verify the source. The two matrix jobs did not execute any install, build, unit-test, SEO or API integration step. Do not treat the unit or E2E cases as passed until a runner executes them and reports successful conclusions. Later documentation-only commits do not change that verification status.
