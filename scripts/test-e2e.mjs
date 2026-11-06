@@ -2665,7 +2665,164 @@ async function runTests() {
     console.log(`Health Status: ${t77_res.status}`);
     console.log('✅ Enterprise observability and security headers verified');
 
-    console.log('\n🎉 ALL 77 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ─────────────────────────────────────────────────────────────
+    // TEST 78: Durable Approval, Pinned Action & Resume
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n[TEST 78] Durable workflow approval resumes from the exact paused node');
+    const approvalTaskTitle = 'Approval-resume regression task';
+    const approvalFlowRes = await request('/api/crm/workflows', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Approval Resume Regression',
+        status: 'published',
+        triggerType: 'tag',
+        triggerConfig: {},
+        nodes: [
+          {
+            id: 'approval_task_node',
+            name: 'Create approved follow-up',
+            type: 'create_task',
+            requiresApproval: true,
+            config: { title: approvalTaskTitle, priority: 'medium' }
+          },
+          {
+            id: 'resume_tag_node',
+            name: 'Mark approval-resumed contact',
+            type: 'add_tag',
+            config: { tag: 'approval-resumed' }
+          }
+        ]
+      })
+    });
+    if (approvalFlowRes.status !== 201 || !approvalFlowRes.data.id) {
+      throw new Error('Could not create the approval regression workflow');
+    }
+
+    const approvalContactRes = await request('/api/crm/contacts', {
+      method: 'POST',
+      body: JSON.stringify({
+        firstName: 'Approval',
+        lastName: 'Regression',
+        email: 'approval-regression@example.com',
+        status: 'lead'
+      })
+    });
+    if (approvalContactRes.status !== 201 || !approvalContactRes.data.id) {
+      throw new Error('Could not create contact to trigger the approval regression workflow');
+    }
+
+    let approvalRun = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const latestRuns = await request('/api/workflows/runs');
+      approvalRun = (latestRuns.data || []).find(run => run.workflowId === approvalFlowRes.data.id) || null;
+      if (approvalRun?.status === 'waiting_approval') break;
+      await sleep(100);
+    }
+    if (!approvalRun || approvalRun.status !== 'waiting_approval') {
+      throw new Error(`Expected a persisted waiting_approval execution, got ${approvalRun?.status || 'no run'}`);
+    }
+    if (approvalRun.currentNodeIndex !== 0 || approvalRun.pendingApproval?.nodeId !== 'approval_task_node') {
+      throw new Error('Approval did not point to the exact paused node');
+    }
+    if ('workflowSnapshot' in approvalRun || 'approvalEvidence' in approvalRun || 'actorId' in approvalRun ||
+        approvalRun.triggerContext?.payload) {
+      throw new Error('Workflow execution API exposed internal snapshot, approval evidence, actor ID or raw payload');
+    }
+
+    const approvalInbox = await request('/api/workflows/approvals');
+    const pendingApproval = (approvalInbox.data || []).find(item => item.id === approvalRun.pendingApprovalId);
+    if (approvalInbox.status !== 200 || !pendingApproval || pendingApproval.actionId !== 'crm.task.create') {
+      throw new Error('Durable approval inbox did not return the pending action');
+    }
+
+    const resumed = await request(`/api/workflows/runs/${approvalRun.id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ approvalId: pendingApproval.id, decision: 'approved' })
+    });
+    if (resumed.status !== 200 || resumed.data.run?.status !== 'completed') {
+      throw new Error(`Approved workflow did not resume to completion: ${JSON.stringify(resumed.data)}`);
+    }
+    const resumedStatuses = resumed.data.run.steps.map(step => step.status);
+    if (!resumedStatuses.includes('completed') || resumed.data.run.currentNodeIndex !== 2) {
+      throw new Error('Workflow did not continue past the approved action from its pinned position');
+    }
+    const tasksAfterApproval = await request('/api/crm/tasks');
+    const createdApprovalTasks = (tasksAfterApproval.data?.data || []).filter(task => task.title === approvalTaskTitle);
+    if (createdApprovalTasks.length !== 1) {
+      throw new Error(`Expected one approved task, found ${createdApprovalTasks.length}`);
+    }
+
+    const duplicateApproval = await request(`/api/workflows/runs/${approvalRun.id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ approvalId: pendingApproval.id, decision: 'approved' })
+    });
+    const tasksAfterDuplicate = await request('/api/crm/tasks');
+    const duplicateTaskCount = (tasksAfterDuplicate.data?.data || []).filter(task => task.title === approvalTaskTitle).length;
+    if (duplicateApproval.status !== 409 || duplicateTaskCount !== 1) {
+      throw new Error('A repeated approval was not rejected idempotently');
+    }
+    console.log('✅ Approval persisted, action binding verified, pinned workflow resumed, and duplicate approval rejected');
+
+    // ─────────────────────────────────────────────────────────────
+    // TEST 79: Rejected Approval Never Executes the Paused Action
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n[TEST 79] Rejected approval fails closed without running the paused action');
+    const rejectedTaskTitle = 'Rejected approval must not create this task';
+    const rejectFlowRes = await request('/api/crm/workflows', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Approval Rejection Regression',
+        status: 'published',
+        triggerType: 'tag',
+        triggerConfig: {},
+        nodes: [{
+          id: 'rejected_task_node',
+          name: 'Create task after approval',
+          type: 'create_task',
+          requiresApproval: true,
+          config: { title: rejectedTaskTitle }
+        }]
+      })
+    });
+    if (rejectFlowRes.status !== 201 || !rejectFlowRes.data.id) {
+      throw new Error('Could not create the approval rejection workflow');
+    }
+    const rejectContactRes = await request('/api/crm/contacts', {
+      method: 'POST',
+      body: JSON.stringify({
+        firstName: 'Rejected',
+        lastName: 'Approval',
+        email: 'rejected-approval@example.com',
+        status: 'lead'
+      })
+    });
+    if (rejectContactRes.status !== 201) throw new Error('Could not create rejection test contact');
+
+    let rejectedRun = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const latestRuns = await request('/api/workflows/runs');
+      rejectedRun = (latestRuns.data || []).find(run => run.workflowId === rejectFlowRes.data.id) || null;
+      if (rejectedRun?.status === 'waiting_approval') break;
+      await sleep(100);
+    }
+    if (!rejectedRun || rejectedRun.status !== 'waiting_approval') {
+      throw new Error('Rejected approval test did not reach its approval gate');
+    }
+    const rejection = await request(`/api/workflows/runs/${rejectedRun.id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ approvalId: rejectedRun.pendingApprovalId, decision: 'rejected' })
+    });
+    if (rejection.status !== 200 || rejection.data.run?.status !== 'failed' ||
+        rejection.data.run?.lastErrorCode !== 'APPROVAL_REJECTED') {
+      throw new Error('Rejected approval did not terminate the workflow safely');
+    }
+    const tasksAfterRejection = await request('/api/crm/tasks');
+    if ((tasksAfterRejection.data?.data || []).some(task => task.title === rejectedTaskTitle)) {
+      throw new Error('A rejected workflow action unexpectedly executed');
+    }
+    console.log('✅ Rejected approval recorded and paused action was never executed');
+
+    console.log('\n🎉 ALL 79 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;
