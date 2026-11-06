@@ -24,21 +24,39 @@ import type {
 const ACTION_ICON: Record<WorkflowAction['kind'], string> = {
   sms: 'message',
   email: 'mail',
+  whatsapp: 'message',
   wait: 'wait',
   tag: 'tag',
   task: 'task',
   webhook: 'webhook',
   condition: 'condition',
+  ai_classify: 'sparkles',
+  ai_extract: 'sparkles',
+  ai_generate: 'sparkles',
+  ai_agent: 'sparkles',
+  switch: 'condition',
+  code: 'zap',
+  merge: 'workflow',
+  sub_workflow: 'repeat',
 };
 
 const KINDS: Array<{ value: WorkflowAction['kind']; label: string; defaultLabel: string }> = [
   { value: 'email', label: 'Send email', defaultLabel: 'Send email' },
   { value: 'sms', label: 'Send SMS', defaultLabel: 'Send SMS' },
+  { value: 'whatsapp', label: 'Send WhatsApp', defaultLabel: 'Send WhatsApp message' },
   { value: 'wait', label: 'Wait', defaultLabel: 'Wait step' },
   { value: 'tag', label: 'Apply tag', defaultLabel: 'Apply tag' },
   { value: 'task', label: 'Create task', defaultLabel: 'Create follow-up task' },
   { value: 'webhook', label: 'Webhook', defaultLabel: 'POST to endpoint' },
   { value: 'condition', label: 'If / else', defaultLabel: 'Check contact status' },
+  { value: 'ai_classify', label: 'AI Classify', defaultLabel: 'Classify text or intent' },
+  { value: 'ai_extract', label: 'AI Extract', defaultLabel: 'Extract structured JSON entities' },
+  { value: 'ai_generate', label: 'AI Generate', defaultLabel: 'Generate Copilot response' },
+  { value: 'ai_agent', label: 'AI Agent / Copilot', defaultLabel: 'Execute Copilot AI agent' },
+  { value: 'switch', label: 'Switch / Router', defaultLabel: 'Multi-branch router' },
+  { value: 'code', label: 'Custom Code (JS)', defaultLabel: 'Transform data with JS' },
+  { value: 'merge', label: 'Merge Streams', defaultLabel: 'Merge execution branches' },
+  { value: 'sub_workflow', label: 'Execute Sub-Workflow', defaultLabel: 'Call modular workflow' },
 ];
 
 const TRIGGER_KINDS: Array<{ value: WorkflowTriggerKind; label: string }> = [

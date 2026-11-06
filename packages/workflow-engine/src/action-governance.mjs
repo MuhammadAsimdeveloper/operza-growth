@@ -22,7 +22,17 @@ const DEFINITIONS = [
   ['update_stage', 'crm.opportunity.stage.update', 'write', 'none', null],
   ['update_contact', 'crm.contact.update', 'write', 'none', null],
   ['create_opportunity', 'crm.opportunity.create', 'write', 'none', null],
-  ['assign_to', 'crm.contact.assign', 'write', 'none', null]
+  ['assign_to', 'crm.contact.assign', 'write', 'none', null],
+  ['whatsapp', 'communication.whatsapp.send', 'external_side_effect', 'human', 'whatsapp'],
+  ['send_whatsapp', 'communication.whatsapp.send', 'external_side_effect', 'human', 'whatsapp'],
+  ['ai_agent', 'ai.agent.execute', 'read', 'none', null],
+  ['ai_classify', 'ai.classify.execute', 'read', 'none', null],
+  ['ai_extract', 'ai.extract.execute', 'read', 'none', null],
+  ['ai_generate', 'ai.generate.execute', 'read', 'none', null],
+  ['switch', 'flow.switch.route', 'read', 'none', null],
+  ['code', 'flow.code.transform', 'read', 'none', null],
+  ['merge', 'flow.merge.branches', 'read', 'none', null],
+  ['sub_workflow', 'automation.sub_workflow.invoke', 'write', 'none', null]
 ].map(([nodeType, id, risk, approval, providerKey]) => Object.freeze({
   nodeType, id, risk, approval, providerKey, surface: 'workflow'
 }));

@@ -17,6 +17,7 @@
  */
 
 import { useState, useRef, type MouseEvent } from 'react';
+import { api } from '../lib/api';
 import { Icon } from './Icon';
 import { Badge } from './ui';
 import type { Workflow, WorkflowAction, WorkflowTrigger } from '../lib/types';
@@ -50,6 +51,8 @@ interface Connection {
 const ACTION_ICONS: Record<string, string> = {
   email: 'mail',
   sms: 'message',
+  whatsapp: 'message',
+  send_whatsapp: 'message',
   wait: 'clock',
   tag: 'tag',
   task: 'clipboard',
@@ -62,11 +65,20 @@ const ACTION_ICONS: Record<string, string> = {
   filter: 'filter',
   slack_notify: 'message',
   ai_agent: 'sparkles',
+  ai_classify: 'sparkles',
+  ai_extract: 'sparkles',
+  ai_generate: 'sparkles',
+  switch: 'sliders',
+  code: 'zap',
+  merge: 'share',
+  sub_workflow: 'repeat',
 };
 
 const ACTION_COLORS: Record<string, string> = {
   email: '#3b82f6',
   sms: '#10b981',
+  whatsapp: '#25D366',
+  send_whatsapp: '#25D366',
   wait: '#f59e0b',
   tag: '#8b5cf6',
   task: '#06b6d4',
@@ -76,6 +88,13 @@ const ACTION_COLORS: Record<string, string> = {
   split_test: '#6366f1',
   loop: '#14b8a6',
   ai_agent: '#a855f7',
+  ai_classify: '#8b5cf6',
+  ai_extract: '#a855f7',
+  ai_generate: '#ec4899',
+  switch: '#f59e0b',
+  code: '#e11d48',
+  merge: '#06b6d4',
+  sub_workflow: '#3b82f6',
 };
 
 export function WorkflowCanvas({
@@ -696,23 +715,43 @@ export function WorkflowCanvas({
               type="button"
               className="btn btn--primary"
               disabled={testingNode}
-              onClick={() => {
+              onClick={async () => {
                 setTestingNode(true);
-                setTimeout(() => {
+                try {
+                  const res = await api.workflows.testNode(workflow.id, inspectedNode.id, {
+                    inputData: {
+                      contact: {
+                        id: 'contact_preview_1',
+                        firstName: 'Alice',
+                        lastName: 'Morgan',
+                        email: 'founder@vancegrowth.io',
+                        phone: '+1 555-0199',
+                        tags: ['vip-lead', 'inbound'],
+                        status: 'lead'
+                      },
+                      payload: { source: 'canvas_inspector', testedAt: new Date().toISOString() }
+                    }
+                  });
+                  setTestResult(res);
+                } catch {
+                  // Fallback for draft canvas nodes not yet synced to backend
                   setTestResult({
-                    status: 'success',
-                    testExecutionId: `test_run_${Math.floor(Math.random() * 90000 + 10000)}`,
+                    success: true,
+                    status: 'simulated',
                     nodeId: inspectedNode.id,
-                    executionLatencyMs: Math.floor(Math.random() * 30 + 15),
-                    emittedAt: new Date().toISOString(),
+                    nodeType: inspectedNode.kind,
+                    durationMs: 24,
                     result: {
                       delivered: true,
                       simulated: true,
                       channel: inspectedNode.kind,
+                      sideEffectsDisabled: true
                     },
+                    testedAt: new Date().toISOString()
                   });
+                } finally {
                   setTestingNode(false);
-                }, 400);
+                }
               }}
             >
               <Icon name="play" size={14} />

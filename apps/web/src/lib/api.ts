@@ -112,6 +112,13 @@ export const api = {
       }),
     run: (workflowId: string, data: { contactId?: string; payload?: any } = {}) =>
       request(`/api/workflows/${workflowId}/run`, { method: 'POST', body: JSON.stringify(data) }),
+    testNode: (workflowId: string, nodeId: string, data: { inputData?: any; contact?: any; payload?: any } = {}) =>
+      request(`/api/workflows/${workflowId}/nodes/${nodeId}/test`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    getNodeTimeline: (runId: string) =>
+      request(`/api/workflows/runs/${runId}/nodes`),
   },
   reviews: {
     getPublic: (locationId: string) => request(`/api/reviews/public/${locationId}`),

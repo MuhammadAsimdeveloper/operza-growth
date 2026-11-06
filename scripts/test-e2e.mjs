@@ -3246,7 +3246,114 @@ async function runTests() {
     }
     console.log('✅ Outbox event claimed, processed by trusted handler, and marked completed');
 
-    console.log('\n🎉 ALL 89 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ----------------------------------------------------
+    // TEST 90: Interactive Step-by-Step Node Testing API (n8n-style)
+    // ----------------------------------------------------
+    console.log('\n[TEST 90] Interactive Single-Node Step Testing (POST /api/workflows/:id/nodes/:nodeId/test)');
+    const testWfRes = await request('/api/crm/workflows', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Cognitive AI Pipeline Test',
+        status: 'published',
+        triggerType: 'form',
+        triggerConfig: { formName: 'test-form' },
+        nodes: [
+          {
+            id: 'node-classify-test',
+            name: 'Classify Inbound Intent',
+            type: 'ai_classify',
+            config: {
+              text: 'Urgent enterprise billing inquiry regarding annual SaaS contract invoice',
+              categories: ['support', 'billing', 'sales'],
+              resultVariable: 'intent'
+            }
+          },
+          {
+            id: 'node-code-test',
+            name: 'Calculate Priority Score',
+            type: 'code',
+            config: {
+              code: 'const val = $json.dealValue || 200; return { score: val * 1.5, tier: "enterprise" };',
+              resultVariable: 'scoring'
+            }
+          },
+          {
+            id: 'node-switch-test',
+            name: 'Route by Tier',
+            type: 'switch',
+            config: {
+              value: 'enterprise',
+              cases: [
+                { value: 'standard', branch: 'standard_queue' },
+                { value: 'enterprise', branch: 'white_glove_queue' }
+              ],
+              defaultBranch: 'general_queue'
+            }
+          }
+        ]
+      })
+    });
+    if (testWfRes.status !== 201 || !testWfRes.data.id) {
+      throw new Error(`Failed to create cognitive test workflow: ${JSON.stringify(testWfRes.data)}`);
+    }
+    const testWfId = testWfRes.data.id;
+
+    // Test node 1: ai_classify
+    const testNode1Res = await request(`/api/workflows/${testWfId}/nodes/node-classify-test/test`, {
+      method: 'POST',
+      body: JSON.stringify({
+        triggerContext: { message: 'Need urgent invoice assistance' }
+      })
+    });
+    if (testNode1Res.status !== 200 || testNode1Res.data.success !== true || testNode1Res.data.result?.category !== 'billing') {
+      throw new Error(`Single node ai_classify test failed: ${JSON.stringify(testNode1Res.data)}`);
+    }
+    console.log('✅ ai_classify step executed and resolved category: billing');
+
+    // Test node 2: code
+    const testNode2Res = await request(`/api/workflows/${testWfId}/nodes/node-code-test/test`, {
+      method: 'POST',
+      body: JSON.stringify({
+        inputData: { contact: { dealValue: 1000 } }
+      })
+    });
+    if (testNode2Res.status !== 200 || testNode2Res.data.success !== true || testNode2Res.data.result?.output?.score !== 1500) {
+      throw new Error(`Single node code test failed: ${JSON.stringify(testNode2Res.data)}`);
+    }
+    console.log('✅ code step sandboxed execution completed with output:', testNode2Res.data.result.output);
+
+    // Test node 3: switch
+    const testNode3Res = await request(`/api/workflows/${testWfId}/nodes/node-switch-test/test`, {
+      method: 'POST',
+      body: JSON.stringify({})
+    });
+    if (testNode3Res.status !== 200 || testNode3Res.data.selectedBranch !== 'white_glove_queue') {
+      throw new Error(`Single node switch test failed: ${JSON.stringify(testNode3Res.data)}`);
+    }
+    console.log('✅ switch step evaluated and selected branch: white_glove_queue');
+
+    // ----------------------------------------------------
+    // TEST 91: Execution Node Timeline (GET /api/workflows/runs/:runId/nodes)
+    // ----------------------------------------------------
+    console.log('\n[TEST 91] Workflow Run Step Timeline (GET /api/workflows/runs/:runId/nodes)');
+    const runFlowRes = await request(`/api/workflows/${testWfId}/run`, {
+      method: 'POST',
+      body: JSON.stringify({
+        payload: { triggeredBy: 'e2e_tester', dealValue: 1000 }
+      })
+    });
+    if (runFlowRes.status !== 201 || !runFlowRes.data.execution?.id) {
+      throw new Error(`Triggering test workflow failed: ${JSON.stringify(runFlowRes.data)}`);
+    }
+    const runId = runFlowRes.data.execution.id;
+
+    const nodeTimelineRes = await request(`/api/workflows/runs/${runId}/nodes`);
+    if (nodeTimelineRes.status !== 200 || nodeTimelineRes.data.executionId !== runId || !Array.isArray(nodeTimelineRes.data.steps) || nodeTimelineRes.data.steps.length === 0) {
+      throw new Error(`Node timeline query failed: ${JSON.stringify(nodeTimelineRes.data)}`);
+    }
+    console.log(`✅ Execution timeline verified with ${nodeTimelineRes.data.steps.length} node execution steps`);
+
+    console.log('\n🎉 ALL 91 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

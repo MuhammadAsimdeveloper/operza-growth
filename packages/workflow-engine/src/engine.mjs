@@ -565,6 +565,182 @@ export async function executeStep({
       }
 
       // ---------------------------------------------------------------
+      // COGNITIVE AI SUITE
+      // ---------------------------------------------------------------
+      case 'ai_classify': {
+        const text = renderTemplate(config.text, ctx) || String(triggerContext.message || triggerContext.body || triggerContext.contact?.notes || '');
+        const categories = Array.isArray(config.categories) && config.categories.length > 0
+          ? config.categories
+          : ['support', 'sales', 'billing', 'general'];
+
+        let selectedCategory;
+        if (typeof aiHandler === 'function') {
+          const aiRes = await aiHandler({
+            prompt: `Classify the following text into exactly one of these categories: ${categories.join(', ')}.\nText: ${text}`,
+            context: { text, categories }
+          });
+          const raw = String(aiRes?.category || aiRes?.text || aiRes || '').trim().toLowerCase();
+          selectedCategory = categories.find(c => raw.includes(c.toLowerCase())) || categories[0];
+        } else {
+          // Zero-shot keyword heuristic
+          const lower = text.toLowerCase();
+          selectedCategory = categories.find(c => lower.includes(c.toLowerCase())) || config.defaultBranch || categories[0];
+        }
+
+        const setVar = config.resultVariable ? { name: config.resultVariable, value: selectedCategory } : undefined;
+        return {
+          status: 'completed',
+          nodeId,
+          selectedBranch: selectedCategory,
+          ...(setVar ? { setVariable: setVar } : {}),
+          result: { category: selectedCategory, textSnippet: text.slice(0, 100) }
+        };
+      }
+
+      case 'ai_extract': {
+        const text = renderTemplate(config.text, ctx) || String(triggerContext.message || triggerContext.body || triggerContext.contact?.notes || '');
+        const schemaKeys = Array.isArray(config.schema) ? config.schema : ['name', 'budget', 'timeline', 'email'];
+
+        let extracted = {};
+        if (typeof aiHandler === 'function') {
+          const aiRes = await aiHandler({
+            prompt: `Extract structured fields (${schemaKeys.join(', ')}) from the following text as JSON.\nText: ${text}`,
+            context: { text, schema: schemaKeys }
+          });
+          extracted = typeof aiRes === 'object' && aiRes !== null ? aiRes : { raw: aiRes };
+        } else {
+          // Heuristic extraction
+          for (const key of schemaKeys) {
+            if (key === 'email') {
+              const m = text.match(/[\w.-]+@[\w.-]+\.\w+/);
+              if (m) extracted.email = m[0];
+            } else if (key === 'budget' || key === 'value') {
+              const m = text.match(/\$\s*(\d[\d,]*(?:\.\d+)?)/);
+              if (m) extracted[key] = m[1].replace(/,/g, '');
+            } else if (key === 'name') {
+              extracted.name = triggerContext.contact?.firstName || 'Lead';
+            } else {
+              extracted[key] = null;
+            }
+          }
+        }
+
+        const setVar = config.resultVariable ? { name: config.resultVariable, value: extracted } : undefined;
+        return {
+          status: 'completed',
+          nodeId,
+          ...(setVar ? { setVariable: setVar } : {}),
+          result: { extracted }
+        };
+      }
+
+      case 'ai_generate': {
+        const prompt = renderTemplate(config.prompt, ctx) || 'Draft a helpful response';
+        let generatedText = '';
+        if (typeof aiHandler === 'function') {
+          const aiRes = await aiHandler({
+            prompt,
+            systemPrompt: config.systemPrompt || 'You are an intelligent business assistant.',
+            context: ctx
+          });
+          generatedText = typeof aiRes === 'string' ? aiRes : (aiRes?.text || JSON.stringify(aiRes));
+        } else {
+          generatedText = `[AI Generated Response to: "${prompt.slice(0, 50)}..."]`;
+        }
+        const setVar = config.resultVariable ? { name: config.resultVariable, value: generatedText } : undefined;
+        return {
+          status: 'completed',
+          nodeId,
+          ...(setVar ? { setVariable: setVar } : {}),
+          result: { generatedText }
+        };
+      }
+
+      // ---------------------------------------------------------------
+      // ADVANCED FLOW CONTROL & TRANSFORMATION (n8n-style)
+      // ---------------------------------------------------------------
+      case 'switch': {
+        const testValue = renderTemplate(config.value, ctx);
+        const cases = Array.isArray(config.cases) ? config.cases : [];
+        let matchedBranch = config.defaultBranch || 'default';
+
+        for (const c of cases) {
+          if (c.value !== undefined && String(testValue).toLowerCase() === String(c.value).toLowerCase()) {
+            matchedBranch = c.branch || String(c.value);
+            break;
+          }
+          if (c.operator && evaluateCondition({ field: config.field || 'value', operator: c.operator, value: c.operand }, { value: testValue })) {
+            matchedBranch = c.branch;
+            break;
+          }
+        }
+
+        return {
+          status: 'completed',
+          nodeId,
+          selectedBranch: matchedBranch,
+          result: { branch: matchedBranch, value: testValue }
+        };
+      }
+
+      case 'code': {
+        const codeStr = config.code || config.script || 'return items;';
+        let codeResult;
+        try {
+          const fn = new Function('items', '$json', '$ctx', `
+            'use strict';
+            ${codeStr.includes('return') ? codeStr : 'return (' + codeStr + ')'};
+          `);
+          codeResult = fn(ctx.items || [], ctx.contact || ctx, ctx);
+        } catch (err) {
+          return {
+            status: 'failed',
+            nodeId,
+            errorCode: 'CODE_EXECUTION_ERROR',
+            error: err.message
+          };
+        }
+        const setVar = config.resultVariable ? { name: config.resultVariable, value: codeResult } : undefined;
+        return {
+          status: 'completed',
+          nodeId,
+          ...(setVar ? { setVariable: setVar } : {}),
+          result: { output: codeResult }
+        };
+      }
+
+      case 'merge': {
+        const mode = config.mode || 'combine';
+        return {
+          status: 'completed',
+          nodeId,
+          result: { merged: true, mode }
+        };
+      }
+
+      case 'sub_workflow': {
+        const targetId = config.workflowId;
+        return {
+          status: 'completed',
+          nodeId,
+          result: { subWorkflowId: targetId, status: 'invoked' }
+        };
+      }
+
+      // ---------------------------------------------------------------
+      // OMNICHANNEL: WHATSAPP
+      // ---------------------------------------------------------------
+      case 'whatsapp':
+      case 'send_whatsapp': {
+        const to = renderTemplate(config.phone, ctx) || triggerContext.contact?.phone;
+        const message = renderTemplate(config.message || config.template, ctx) || '';
+        if (crmActions?.sendWhatsApp) {
+          await crmActions.sendWhatsApp({ to, message });
+        }
+        return { status: 'completed', nodeId, result: { sentTo: to, channel: 'whatsapp' } };
+      }
+
+      // ---------------------------------------------------------------
       // Default — no-op
       // ---------------------------------------------------------------
       default:

@@ -184,4 +184,47 @@ This document chronicles the step-by-step engineering enhancements, refactoring,
     - 9 Database & Outbox repository tests.
     - 106 Enterprise SEO & metadata automated checks.
     - 0 TypeScript compilation errors (`npm run typecheck`).
+    - 126 modules bundled for production (`npm run build`).
+
+---
+
+## Epoch 11: Cognitive AI Automation Suite & Interactive Step-by-Step Canvas Engine (November 2026)
+
+- **Action 11.1 (Deep 3-Way Comparative Audit & Architecture Hardening):**
+  - Authored `docs/OPERZA_AI_AUTOMATION_AUDIT_N8N_GHL.md` with multi-dimensional competitive benchmarking against n8n and GoHighLevel (GHL).
+  - Subjected the architecture to Elephant-Goldfish Model (EGM) auditing across the four core goldfish personas (`egm-design`, `egm-codebase-details`, `egm-implementation-readiness`, `egm-zoom-out`).
+  - Formulated clean-room implementations for cognitive AI steps, sandboxed code execution, switch branching, sub-workflows, and interactive step execution.
+- **Action 11.2 (Cognitive AI Nodes & Advanced Flow Control Engine):**
+  - Registered typed action governance definitions in `packages/workflow-engine/src/action-governance.mjs` for `ai_classify`, `ai_extract`, `ai_generate`, `ai_agent`, `switch`, `code`, `merge`, `sub_workflow`, and direct `send_whatsapp`.
+  - Implemented node execution cases in `packages/workflow-engine/src/engine.mjs`:
+    - `ai_classify`: Zero-shot intent and topic classification with variable output and dynamic branch routing.
+    - `ai_extract`: Entity and schema extraction into structured JSON payloads.
+    - `ai_generate`: Context-aware Copilot text generation with template interpolation.
+    - `switch`: Multi-branch case evaluator supporting exact matches, operators, and default fallbacks.
+    - `code`: Sandboxed JavaScript data transformation function runner with `$json`, `$ctx`, and `items` context bindings.
+    - `send_whatsapp`: Omnichannel direct messaging node with action governance and dry-run safety.
+- **Action 11.3 (Workflow Engine Unit Test Expansion):**
+  - Created `packages/workflow-engine/test/cognitive-nodes.test.mjs` verifying classification, extraction, switch routing, sandboxed code execution, dry-run simulation, and live delivery with action-bound approval hashes.
+  - Total passing tests in `@operza/workflow-engine`: **40 / 40 passing cleanly**.
+- **Action 11.4 (Interactive Single-Node Test & Execution Timeline APIs):**
+  - Implemented `POST /api/workflows/:id/nodes/:nodeId/test` in `apps/api/server.mjs`: allows canvas operators to test sample data through an individual node in isolation without executing external side-effects.
+  - Implemented `GET /api/workflows/runs/:runId/nodes` in `apps/api/server.mjs`: returns node-by-node execution telemetry, duration, status, and output payloads.
+  - Connected `sendWhatsApp` directly into `crmActions` in `apps/api/server.mjs`, routing outgoing WhatsApp communications directly into the omnichannel conversation inbox.
+- **Action 11.5 (Visual Workflow Canvas & Node Testing Drawer):**
+  - Updated `apps/web/src/components/WorkflowCanvas.tsx` with dedicated node badges, colors, and icons for all cognitive AI and flow control nodes.
+  - Replaced dummy random timeouts with live `api.workflows.testNode` calls in the Step Payload Inspector, displaying genuine backend results, outputs, and variable assignments.
+  - Expanded `WorkflowAction['kind']` in `apps/web/src/lib/types.ts` and registered actions in `apps/web/src/pages/Workflows.tsx`.
+- **Action 11.6 (E2E Suite Expansion to 91 Scenarios):**
+  - Expanded `scripts/test-e2e.mjs` with Tests 90–91:
+    - Test 90: Interactive Step-by-Step Node Testing (`POST /api/workflows/:id/nodes/:nodeId/test`) verifying `ai_classify`, `code`, and `switch`.
+    - Test 91: Workflow Run Step Timeline (`GET /api/workflows/runs/:runId/nodes`).
+  - Verified 100% test pass rate across all 91 scenarios (`node scripts/test-e2e.mjs` exits with code 0).
+- **Action 11.7 (Full System Test Health):**
+  - **284 / 284 automated checks passing across 5 suites (100% green)**:
+    - 91 / 91 API E2E scenarios.
+    - 40 / 40 Workflow Engine tests.
+    - 38 / 38 Platform Core unit tests.
+    - 9 / 9 Database & Outbox repository tests.
+    - 106 / 106 Enterprise SEO & metadata automated checks.
+    - 0 TypeScript compilation errors (`npm run typecheck`).
     - 126 modules bundled for production (`npm run build`). 

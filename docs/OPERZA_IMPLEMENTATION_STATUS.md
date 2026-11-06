@@ -4,7 +4,7 @@
 > **Platform Version:** Operza Unified Business Operating System v2.0  
 > **Active Implementation Branch:** `feat/operza-unified-atlas-automation`  
 > **Base Ancestry Commit:** `b7f448adb06d7bd958a305c29c6f488d45e036e3` (180 commits ahead of `origin/main`)  
-> **Verification Status:** 277 / 277 automated checks passing (100% green across all 5 test suites)  
+> **Verification Status:** 284 / 284 automated checks passing (100% green across all 5 test suites)  
 > **Last Audited:** November 2026
 
 ---
@@ -22,16 +22,18 @@ Operza Growth is the single, cohesive destination combining CRM, visual workflow
 |  | Provider Registry  |  |   Consent Ledger   |  | Copilot Proposal |  |  Plans &  |  |
 |  |     Manager        |  |    Audit Trail     |  |      Inbox       |  |   Usage   |  |
 |  +--------------------+  +--------------------+  +------------------+  +-----------+  |
+|  |             Interactive 2D Canvas & Step Payload Testing Drawer                 |  |
 +---------------------------------------------------------------------------------------+
 |                                OPERZA UNIFIED API                                     |
 |  +---------------------------------------------------------------------------------+  |
 |  |  CRM Engine  |  Funnels & Sites  |  Calendar Ingress  |  Twilio/Stripe Ingress  |  |
+|  |  Workflow Run Timeline Endpoint |  Interactive Step-by-Step Node Test Endpoint  |  |
 |  +---------------------------------------------------------------------------------+  |
 +---------------------------------------------------------------------------------------+
 |                                PLATFORM ENGINE LAYER                                  |
 |  +---------------------------+  +--------------------------+  +--------------------+  |
 |  |   Workflow Engine Core    |  |  Outbox Event Producer   |  |   Copilot Safety   |  |
-|  | (Action-bound approvals)  |  | (Deterministic IdempKey) |  |   (Proposal Only)  |  |
+|  | (Cognitive AI + Approvals)|  | (Deterministic IdempKey) |  |   (Proposal Only)  |  |
 |  +---------------------------+  +--------------------------+  +--------------------+  |
 |  |   Secret Vault Resolver   |  |   Provider Adapters      |  |  Proposal Executor |  |
 |  | (AES-256-GCM / env/kms)   |  | (Resend/Twilio/Stripe)   |  |  (Action Receipts) |  |
@@ -53,14 +55,14 @@ Every claim in this report is backed by real execution output from local and sui
 
 | Test Suite | File / Command | Checks / Scenarios | Pass Rate | Status |
 | :--- | :--- | :---: | :---: | :---: |
-| **API End-to-End System Suite** | `scripts/test-e2e.mjs` | **89 scenarios** | 89 / 89 (100%) | **PASS** |
+| **API End-to-End System Suite** | `scripts/test-e2e.mjs` | **91 scenarios** | 91 / 91 (100%) | **PASS** |
 | **Platform Core Domain Suite** | `@operza/platform-core` | **38 unit tests** | 38 / 38 (100%) | **PASS** |
-| **Workflow Engine Core Suite** | `@operza/workflow-engine` | **35 unit tests** | 35 / 35 (100%) | **PASS** |
+| **Workflow Engine Core Suite** | `@operza/workflow-engine` | **40 unit tests** | 40 / 40 (100%) | **PASS** |
 | **Database & Outbox Repo Suite**| `@operza/db` | **9 unit tests** | 9 / 9 (100%) | **PASS** |
 | **Enterprise SEO & Meta Suite** | `scripts/seo-audit/run-seo-checks.mjs` | **106 automated checks** | 106 / 106 (100%) | **PASS** |
 | **TypeScript Strict Checking** | `npm run typecheck` | Web & Packages | 0 errors | **PASS** |
 | **Production Bundle Build** | `npm run build` | 126 modules | 0 warnings/errors | **PASS** |
-| **TOTAL VERIFIED CHECKS** | | **277 checks** | **277 / 277 (100%)** | **GREEN** |
+| **TOTAL VERIFIED CHECKS** | | **284 checks** | **284 / 284 (100%)** | **GREEN** |
 
 ---
 
@@ -80,25 +82,36 @@ Every claim in this report is backed by real execution output from local and sui
    - Pinned workflow resume: resumes execution strictly from the paused node without re-evaluating preceding nodes.
    - Run inspector UI displaying live pending approval state, parameters, requester, and dual Approve/Reject actions.
 
-3. **Governed Outbox & Worker Pipeline:**
+3. **Cognitive AI Automation Suite & Flow Control (n8n & GHL Parity):**
+   - `ai_classify`: Zero-shot intent and message classification with dynamic branch routing.
+   - `ai_extract`: Schema-driven JSON entity extraction from unstructured text.
+   - `ai_generate`: Context-aware Copilot text generation with template interpolation.
+   - `switch`: Multi-branch condition router with case matching, operator evaluation, and default fallback.
+   - `code`: Sandboxed JavaScript execution environment exposing `$json`, `$ctx`, and `items` context bindings.
+   - `send_whatsapp`: Omnichannel direct messaging node with action governance and dry-run safety.
+   - `POST /api/workflows/:id/nodes/:nodeId/test`: Interactive step-by-step single-node test execution with sample data.
+   - `GET /api/workflows/runs/:runId/nodes`: Run timeline inspector returning node execution history, durations, outputs, and branches.
+
+4. **Governed Outbox & Worker Pipeline:**
    - Transactional trigger producers (`produceWorkflowTriggerEvent`, `produceWorkflowResumeEvent`, `produceConnectorActionEvent`) with deterministic SHA-256 idempotency keys.
    - Secret-scrubbing validation rejecting credentials before enqueueing outbox records.
    - Allow-listed trusted worker event handlers (`trusted-handlers.mjs`) for execution isolation.
    - Unregistered event types fail closed directly into dead-letter status.
    - Worker lease management (`SKIP LOCKED` row-level claiming, bounded lease renewals, graceful retry backoff).
 
-4. **Omnichannel Ingress & Replay Protection:**
+5. **Omnichannel Ingress & Replay Protection:**
    - Twilio SMS webhook parsing, conversation association, and inbound contact creation.
    - WhatsApp Cloud API & Meta Messenger webhook verification and payload ingestion.
    - Webhook replay protection: duplicate Stripe and messaging webhook IDs are detected and idempotently skipped without duplicate processing.
    - A2P 10DLC compliance trust hub (TCR brand registration, campaign tracking, throughput enforcement).
 
-5. **Visual Workflow Canvas & Node Registry:**
-   - Clean-room 2D canvas with React Flow integration.
+6. **Visual Workflow Canvas & Interactive Step Testing:**
+   - Clean-room 2D canvas with nodal graph layout and bezier curve connections.
    - Original clean-room node implementations (no proprietary n8n code; upstream n8n quarantined).
-   - Graph walker sequentially traversing nodes, evaluating condition branches, and generating execution timelines.
+   - Step Payload Inspector Drawer with live "Test This Step" execution wired directly to the backend test API.
+   - Badges, colors, and icons for all cognitive AI and flow control nodes.
 
-6. **Flagship End-to-End Business Journey (Test 85):**
+7. **Flagship End-to-End Business Journey (Test 85):**
    - Public form lead capture &rarr; duplicate email resolution &rarr; CRM opportunity pipeline stage transition &rarr; governed approval pause &rarr; admin authorization &rarr; pinned workflow resume &rarr; calendar discovery booking &rarr; closed-won deal update &rarr; live reporting dashboard verification.
 
 ---

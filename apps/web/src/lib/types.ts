@@ -395,7 +395,7 @@ export interface WorkflowStepConfig {
 
 export interface WorkflowAction {
   id: ID;
-  kind: 'sms' | 'email' | 'wait' | 'tag' | 'task' | 'webhook' | 'condition';
+  kind: 'sms' | 'email' | 'wait' | 'tag' | 'task' | 'webhook' | 'condition' | 'whatsapp' | 'ai_classify' | 'ai_extract' | 'ai_generate' | 'ai_agent' | 'switch' | 'code' | 'merge' | 'sub_workflow';
   label: string;
   /** Delay for wait steps, in hours. Ignored by every other kind. */
   delayHours?: number;

@@ -896,6 +896,42 @@ async function executeWorkflowInstance({
       });
       broadcast('crm.conversation.updated', { id: conv.id, contactName });
     },
+    sendWhatsApp: async ({ phone, message }) => {
+      console.log(`[OPERZA WORKFLOW WHATSAPP] To: ${phone} | Message: ${message}`);
+      const contact = triggerContext.contact;
+      const contactName = contact ? `${contact.firstName} ${contact.lastName}` : (phone || 'Customer');
+      let conv = (state.records.conversations || []).find(
+        c => c.agencyId === agencyId && c.locationId === locationId && c.contactName === contactName
+      );
+      if (!conv) {
+        conv = {
+          id: randomUUID(),
+          agencyId,
+          locationId,
+          contactName,
+          channel: 'whatsapp',
+          subject: 'WhatsApp Conversation',
+          status: 'open',
+          lastMessage: message || '',
+          assignedTo: 'Automated Bot',
+          messages: [],
+          createdAt: new Date().toISOString()
+        };
+        state.records.conversations = state.records.conversations || [];
+        state.records.conversations.push(conv);
+      }
+      conv.lastMessage = message || '';
+      conv.messages = conv.messages || [];
+      conv.messages.push({
+        id: randomUUID(),
+        author: 'Operza Bot',
+        channel: 'whatsapp',
+        direction: 'outbound',
+        text: message || '',
+        timestamp: new Date().toISOString()
+      });
+      broadcast('crm.conversation.updated', { id: conv.id, contactName });
+    },
     addContactTag: async ({ contactId, tag }) => {
       const contact = (state.records.contacts || []).find(c => c.id === contactId);
       if (contact) {
@@ -951,7 +987,21 @@ async function executeWorkflowInstance({
   };
 
   const aiHandler = async ({ prompt, context }) => {
-    return `[Operza Copilot AI Analysis]: Lead qualified for ${context.contact?.company || 'inquiry'}. Confidence: 94%.`;
+    const lowerText = ((context && (context.text || context.prompt)) || prompt || '').toLowerCase();
+    if (Array.isArray(context?.categories)) {
+      const matched = context.categories.find(c => lowerText.includes(c.toLowerCase()));
+      if (matched) return { category: matched };
+    }
+    if (Array.isArray(context?.schema)) {
+      const extracted = {};
+      for (const key of context.schema) {
+        const regex = new RegExp(`${key}[:\\s]+([^,\\n]+)`, 'i');
+        const m = lowerText.match(regex);
+        if (m) extracted[key] = m[1].trim();
+      }
+      return extracted;
+    }
+    return `[Operza Copilot AI Analysis]: Lead qualified for ${context?.contact?.company || 'inquiry'}. Confidence: 94%.`;
   };
 
 
@@ -6297,6 +6347,25 @@ const server = createServer(async (req, res) => {
       });
     }
 
+    // GET /api/workflows/runs/:runId/nodes — inspect steps and execution timeline
+    if (method === 'GET' && pathname.startsWith('/api/workflows/runs/') && pathname.endsWith('/nodes')) {
+      const runId = pathname.replace('/api/workflows/runs/', '').replace('/nodes', '').trim();
+      const run = (state.workflowExecutions || []).find(
+        w => w.id === runId && w.agencyId === agency.id && w.locationId === activeLocation.id
+      );
+      if (!run) return sendJson(res, 404, { error: 'Workflow execution not found' });
+      return sendJson(res, 200, {
+        executionId: run.id,
+        workflowId: run.workflowId,
+        workflowName: run.workflowName,
+        status: run.status,
+        mode: run.mode,
+        steps: run.steps || [],
+        durationMs: run.durationMs || 0,
+        createdAt: run.createdAt
+      });
+    }
+
     // POST /api/workflows/:id/run — on-demand execution trigger
     if (method === 'POST' && pathname.startsWith('/api/workflows/') && pathname.endsWith('/run')) {
       const workflowId = pathname.replace('/api/workflows/', '').replace('/run', '').trim();
@@ -6340,6 +6409,89 @@ const server = createServer(async (req, res) => {
       });
 
       return sendJson(res, 201, { success: true, execution: publicWorkflowExecution(execution) });
+    }
+
+    // POST /api/workflows/:id/nodes/:nodeId/test — interactive single-node step test (n8n-style)
+    if (method === 'POST' && pathname.startsWith('/api/workflows/') && pathname.endsWith('/test') && pathname.includes('/nodes/')) {
+      const parts = pathname.replace('/api/workflows/', '').split('/');
+      const workflowId = parts[0];
+      const nodeId = parts[2];
+
+      const flow = (state.records.workflows || []).find(
+        w => w.id === workflowId && w.agencyId === agency.id && w.locationId === activeLocation.id
+      );
+      if (!flow) return sendJson(res, 404, { error: 'Workflow not found' });
+
+      const node = (flow.nodes || []).find(n => n.id === nodeId);
+      if (!node) return sendJson(res, 404, { error: 'Node not found in workflow' });
+
+      const body = await readBody(req);
+      const triggerContext = {
+        contact: body.contact || { id: 'test-contact-1', firstName: 'Test', lastName: 'Contact', email: 'test@example.com' },
+        payload: body.payload || {},
+        ...(body.inputData || body.triggerContext || {})
+      };
+
+      const testExecution = {
+        id: `test-exec-${randomUUID().slice(0, 8)}`,
+        agencyId: agency.id,
+        locationId: activeLocation.id,
+        workflowId: flow.id,
+        mode: 'dry_run',
+        status: 'running',
+        actorId: actor.user.id
+      };
+
+      const stepStart = Date.now();
+      const stepRes = await executeStep({
+        node,
+        execution: testExecution,
+        triggerContext,
+        crmActions: {
+          sendEmail: async () => {},
+          sendSms: async () => {},
+          sendWhatsApp: async () => {},
+          addContactTag: async () => {},
+          createTask: async () => {},
+          updateOpportunityStage: async () => {},
+          updateContact: async () => {},
+          createOpportunity: async () => {},
+          assignContact: async () => {},
+          sendReviewRequest: async () => {}
+        },
+        aiHandler: async ({ prompt, context }) => {
+          const lowerText = ((context && (context.text || context.prompt)) || prompt || '').toLowerCase();
+          if (Array.isArray(context?.categories)) {
+            const matched = context.categories.find(c => lowerText.includes(c.toLowerCase()));
+            if (matched) return { category: matched };
+          }
+          if (Array.isArray(context?.schema)) {
+            const extracted = {};
+            for (const key of context.schema) {
+              const regex = new RegExp(`${key}[:\\s]+([^,\\n]+)`, 'i');
+              const m = lowerText.match(regex);
+              if (m) extracted[key] = m[1].trim();
+            }
+            return extracted;
+          }
+          return `[Operza AI Test Step]: Analyzed input successfully for ${node.type}.`;
+        }
+      });
+      const durationMs = Date.now() - stepStart;
+
+      return sendJson(res, 200, {
+        success: stepRes.status !== 'failed',
+        nodeId: node.id,
+        nodeType: node.type,
+        status: stepRes.status,
+        durationMs,
+        result: stepRes.result || null,
+        selectedBranch: stepRes.selectedBranch || null,
+        setVariable: stepRes.setVariable || null,
+        errorCode: stepRes.errorCode || null,
+        error: stepRes.error || null,
+        testedAt: new Date().toISOString()
+      });
     }
 
     // ═════════════════════════════════════════════════════════════
