@@ -32,7 +32,9 @@ const DEFINITIONS = [
   ['switch', 'flow.switch.route', 'read', 'none', null],
   ['code', 'flow.code.transform', 'read', 'none', null],
   ['merge', 'flow.merge.branches', 'read', 'none', null],
-  ['sub_workflow', 'automation.sub_workflow.invoke', 'write', 'none', null]
+  ['sub_workflow', 'automation.sub_workflow.invoke', 'write', 'none', null],
+  ['zapier', 'automation.zapier.dispatch', 'write', 'none', null],
+  ['zapier_webhook', 'automation.zapier.dispatch', 'write', 'none', null]
 ].map(([nodeType, id, risk, approval, providerKey]) => Object.freeze({
   nodeType, id, risk, approval, providerKey, surface: 'workflow'
 }));

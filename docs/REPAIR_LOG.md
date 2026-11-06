@@ -227,4 +227,60 @@ This document chronicles the step-by-step engineering enhancements, refactoring,
     - 9 / 9 Database & Outbox repository tests.
     - 106 / 106 Enterprise SEO & metadata automated checks.
     - 0 TypeScript compilation errors (`npm run typecheck`).
+    - 126 modules bundled for production (`npm run build`).
+
+## Epoch 12: Universal Zapier Integration Subsystem, Embedded Local LLM Runtime & Multi-Agent Copilot Swarm (November 2026)
+
+- **Action 12.1 (Zapier Platform Connector Catalog & Governance):**
+  - Implemented `packages/platform-core/src/connector-catalog.mjs` defining 22+ pre-configured universal SaaS app connectors (Slack, Gmail, Google Sheets, HubSpot, Stripe, Shopify, Airtable, Calendly, Notion, Quickbooks, Discord, Twilio, Zoom, etc.) with category classifications, authentication scopes, trigger events, and inbound actions.
+  - Registered `zapier` and `zapier_webhook` actions in `packages/workflow-engine/src/action-governance.mjs` with `write` risk classification.
+  - Implemented the `zapier` workflow node in `packages/workflow-engine/src/engine.mjs` enforcing strict HTTPS Zapier hooks validation, HMAC-SHA256 payload signing (`X-Operza-Signature`), and dry-run simulation mode without external side effects.
+  - Authored unit test suite `packages/workflow-engine/test/zapier-node.test.mjs` (3 / 3 passing).
+- **Action 12.2 (Zapier REST Hooks & Inbound Actions API Subsystem):**
+  - Built `apps/api/zapier-router.mjs` implementing the full Zapier CLI developer platform specification:
+    - `GET /api/v1/zapier/auth/me`: Verifies tenant credentials and returns authorized scopes.
+    - `POST /api/v1/zapier/hooks/subscribe`: Registers REST hook subscriptions with RFC SSRF loopback/private IP blocking and per-subscription HMAC secrets.
+    - `DELETE /api/v1/zapier/hooks/unsubscribe` & `DELETE /api/v1/zapier/hooks/unsubscribe/:id`: Deactivates webhook subscriptions cleanly.
+    - `GET /api/v1/zapier/samples/:event`: Returns canonical mock/sample data for Zapier performList field mapping.
+    - 5 Inbound Actions: `create_contact`, `update_opportunity`, `trigger_workflow`, `send_communication`, and `add_tag`.
+    - `dispatchZapierEvent`: Outbound event dispatcher with HMAC-SHA256 signing (`t=...,v1=...`), replay defense timestamps, and circuit-breaker failure tracking.
+  - Wired live event triggers in `apps/api/server.mjs` for `contact.created`, `contact.updated`, and `opportunity.stage_changed`.
+  - Authored unit test suite `apps/api/test/zapier-endpoints.test.mjs` (3 / 3 passing).
+- **Action 12.3 (Embedded Local LLM Runtime Engine):**
+  - Created modular LLM runtime subsystem in `packages/platform-core/src/llm-runtime/`:
+    - `interfaces.mjs`: Strict TypeScript-compatible contracts for LLM messages, tools, streaming chunks, and provider adapters.
+    - `providers/embedded-offline.mjs`: Zero-network, offline heuristic cognitive engine with token streaming, CRM tool intent recognition, and 100% air-gapped availability.
+    - `providers/ollama-provider.mjs`: Native local HTTP daemon adapter with SSE streaming support.
+    - `providers/localai-provider.mjs`: LocalAI/vLLM OpenAI-compatible daemon adapter.
+    - `providers/cloud-providers.mjs`: OpenAI/Anthropic cloud streaming adapters.
+    - `runtime-engine.mjs`: Cascading engine with automatic, seamless fallback from local daemons to embedded offline heuristic engine.
+  - Authored unit test suite `packages/platform-core/test/llm-runtime.test.mjs` (5 / 5 passing).
+- **Action 12.4 (Multi-Agent Framework & Autonomous Swarm):**
+  - Created `packages/platform-core/src/multi-agent/`:
+    - `agents.mjs`: Defined 4 specialized personas: Supervisor/Triage (`supervisor`), CRM Specialist (`crm_agent`), Automation Architect (`automation_agent`), and Customer Support (`support_agent`) with tailored system prompts and tool constraints.
+    - `orchestrator.mjs`: Multi-agent event loop coordinating conversational state, autonomous handoffs (`transfer_to_agent`), tool dispatching, proposal generation (`pending_review` fail-closed safety), and real-time SSE token streaming.
+  - Authored unit test suite `packages/platform-core/test/multi-agent.test.mjs` (3 / 3 passing).
+  - Re-exported all new platform modules in `packages/platform-core/src/index.mjs`.
+- **Action 12.5 (PostgreSQL DDL Migration 010):**
+  - Authored `packages/db/migrations/010_zapier_and_agent_suite.sql` implementing PostgreSQL DDL with strict Row-Level Security (RLS) for:
+    - `zapier_hook_subscriptions` & `zapier_hook_deliveries`
+    - `agent_conversation_sessions`, `agent_conversation_messages`, and `agent_tool_executions`.
+- **Action 12.6 (Live Copilot SSE Stream & Public Webchat Ingress):**
+  - Implemented `GET & POST /api/copilot/chat/stream` in `apps/api/server.mjs`: multi-agent SSE token stream providing real-time responses and proposal creation for authenticated workspace operators.
+  - Mounted public unauthenticated webchat ingress:
+    - `GET /api/widget/embed.js`: Serves the embeddable chat script for visitor websites.
+    - `GET & POST /api/widget/chat/stream`: Public visitor stream with Support Agent routing.
+- **Action 12.7 (E2E Test Suite Expansion to 93 Scenarios):**
+  - Expanded `scripts/test-e2e.mjs` with Tests 92–93:
+    - Test 92: Zapier REST Hooks Lifecycle (`auth/me`, `samples`, SSRF blocking, `subscribe`, `create_contact`, `add_tag`, `unsubscribe`).
+    - Test 93: Multi-Agent Copilot SSE Stream (`/api/copilot/chat/stream`) and Public Webchat Widget (`/api/widget/embed.js`, `/api/widget/chat/stream`).
+  - Verified 100% test pass rate across all 93 scenarios (`node scripts/test-e2e.mjs` exits with code 0).
+- **Action 12.8 (System Verification & Test Metrics):**
+  - **297 / 297 automated checks passing across 5 suites (100% green)**:
+    - 93 / 93 API E2E scenarios.
+    - 43 / 43 Workflow Engine tests.
+    - 46 / 46 Platform Core unit tests.
+    - 9 / 9 Database & Outbox repository tests.
+    - 106 / 106 Enterprise SEO & metadata automated checks.
+    - 0 TypeScript compilation errors (`npm run typecheck`).
     - 126 modules bundled for production (`npm run build`). 

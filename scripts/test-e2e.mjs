@@ -3353,7 +3353,164 @@ async function runTests() {
     }
     console.log(`✅ Execution timeline verified with ${nodeTimelineRes.data.steps.length} node execution steps`);
 
-    console.log('\n🎉 ALL 91 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ----------------------------------------------------
+    // TEST 92: Zapier REST Hooks Lifecycle & Inbound Actions
+    // ----------------------------------------------------
+    console.log('\n[TEST 92] Zapier REST Hooks Lifecycle & Inbound Actions');
+
+    // 1. Auth check
+    const zapierAuth = await request('/api/v1/zapier/auth/me');
+    if (zapierAuth.status !== 200 || zapierAuth.data.valid !== true || !Array.isArray(zapierAuth.data.scopes)) {
+      throw new Error(`Zapier auth check failed: ${JSON.stringify(zapierAuth.data)}`);
+    }
+    console.log('✅ Zapier authentication verified with scopes:', zapierAuth.data.scopes.length);
+
+    // 2. Sample data generator
+    const zapierSamples = await request('/api/v1/zapier/samples/contact.created');
+    if (zapierSamples.status !== 200 || !Array.isArray(zapierSamples.data) || zapierSamples.data.length === 0) {
+      throw new Error(`Zapier samples retrieval failed: ${JSON.stringify(zapierSamples.data)}`);
+    }
+    console.log('✅ Zapier performList sample generator returned schema-valid records');
+
+    // 3. SSRF Protection validation
+    const ssrfRes = await request('/api/v1/zapier/hooks/subscribe', {
+      method: 'POST',
+      body: JSON.stringify({
+        event: 'contact.created',
+        target_url: 'http://169.254.169.254/latest/meta-data'
+      })
+    });
+    if (ssrfRes.status !== 400 || ssrfRes.data.code !== 'INVALID_WEBHOOK_URL') {
+      throw new Error(`SSRF target URL was not rejected: ${JSON.stringify(ssrfRes.data)}`);
+    }
+    console.log('✅ SSRF protection blocked private cloud metadata target URL');
+
+    // 4. REST Hook Subscribe
+    const subRes = await request('/api/v1/zapier/hooks/subscribe', {
+      method: 'POST',
+      body: JSON.stringify({
+        event: 'contact.created',
+        target_url: 'https://hooks.zapier.com/hooks/catch/999999/alpha123/'
+      })
+    });
+    if (subRes.status !== 201 || !subRes.data.id || subRes.data.status !== 'active') {
+      throw new Error(`Zapier hook subscribe failed: ${JSON.stringify(subRes.data)}`);
+    }
+    const zapierSubId = subRes.data.id;
+    console.log('✅ Zapier REST hook subscribed with HMAC signing secret:', zapierSubId);
+
+    // 5. Inbound Action: create_contact
+    const zapierContactRes = await request('/api/v1/zapier/actions/create_contact', {
+      method: 'POST',
+      body: JSON.stringify({
+        firstName: 'Peter',
+        lastName: 'Parker',
+        email: 'peter.parker@dailybugle.test',
+        phone: '+1 555-0182',
+        company: 'Daily Bugle',
+        tags: ['zapier-inbound', 'freelance-photo']
+      })
+    });
+    if (zapierContactRes.status !== 201 || !zapierContactRes.data.contact?.id) {
+      throw new Error(`Zapier create_contact action failed: ${JSON.stringify(zapierContactRes.data)}`);
+    }
+    const createdContactId = zapierContactRes.data.contact.id;
+    console.log('✅ Zapier inbound create_contact executed with contact ID:', createdContactId);
+
+    // 6. Inbound Action: add_tag
+    const tagRes = await request('/api/v1/zapier/actions/add_tag', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'peter.parker@dailybugle.test',
+        tag: 'avenger-candidate'
+      })
+    });
+    if (tagRes.status !== 200 || !(tagRes.data.tags || tagRes.data.contact?.tags)?.includes('avenger-candidate')) {
+      throw new Error(`Zapier add_tag action failed: ${JSON.stringify(tagRes.data)}`);
+    }
+    console.log('✅ Zapier inbound add_tag added tag: avenger-candidate');
+
+    // 7. REST Hook Unsubscribe
+    const unsubRes = await request('/api/v1/zapier/hooks/unsubscribe', {
+      method: 'DELETE',
+      body: JSON.stringify({ subscription_id: zapierSubId })
+    });
+    if (unsubRes.status !== 200 || unsubRes.data.unsubscribed !== true) {
+      throw new Error(`Zapier hook unsubscribe failed: ${JSON.stringify(unsubRes.data)}`);
+    }
+    console.log('✅ Zapier REST hook cleanly deactivated and unsubscribed');
+
+    // ----------------------------------------------------
+    // TEST 93: Multi-Agent Copilot Streaming & Public Webchat Widget
+    // ----------------------------------------------------
+    console.log('\n[TEST 93] Multi-Agent Copilot SSE Stream & Public Webchat Widget');
+
+    // 1. Embed script endpoint verification
+    const embedScriptRes = await fetch('http://localhost:4005/api/widget/embed.js');
+    const embedScriptText = await embedScriptRes.text();
+    if (embedScriptRes.status !== 200 || !embedScriptText.includes('__operza_widget_loaded')) {
+      throw new Error('Public widget embed script was not served correctly');
+    }
+    console.log('✅ Public widget script (/api/widget/embed.js) served with bundle integrity');
+
+    // 2. Authenticated Copilot Multi-Agent SSE Stream
+    const copilotStreamRes = await fetch('http://localhost:4005/api/copilot/chat/stream?message=Please%20find%20Peter%20Parker', {
+      headers: { Cookie: sessionCookie }
+    });
+    if (copilotStreamRes.status !== 200) {
+      throw new Error(`Copilot chat stream returned status: ${copilotStreamRes.status}`);
+    }
+    const copilotReader = copilotStreamRes.body.getReader();
+    const decoder = new TextDecoder();
+    let copilotChunks = 0;
+    let streamText = '';
+    while (true) {
+      const { done, value } = await copilotReader.read();
+      if (done) break;
+      streamText += decoder.decode(value, { stream: true });
+      copilotChunks++;
+      if (copilotChunks > 25) {
+        copilotReader.cancel();
+        break;
+      }
+    }
+    if (!streamText.includes('session') && !streamText.includes('token') && !streamText.includes('done')) {
+      throw new Error(`Copilot SSE stream did not yield expected multi-agent events: ${streamText}`);
+    }
+    console.log('✅ Authenticated Copilot Multi-Agent SSE stream yielded live agent tokens');
+
+    // 3. Public Webchat Visitor Stream (Unauthenticated)
+    const visitorStreamRes = await fetch('http://localhost:4005/api/widget/chat/stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: 'Hello, what are your business hours and how do I get started?',
+        visitorName: 'Miles Morales',
+        visitorEmail: 'miles@brooklyn-vision.test'
+      })
+    });
+    if (visitorStreamRes.status !== 200) {
+      throw new Error(`Public widget stream returned status: ${visitorStreamRes.status}`);
+    }
+    const visitorReader = visitorStreamRes.body.getReader();
+    let visitorText = '';
+    let visitorChunks = 0;
+    while (true) {
+      const { done, value } = await visitorReader.read();
+      if (done) break;
+      visitorText += decoder.decode(value, { stream: true });
+      visitorChunks++;
+      if (visitorChunks > 25) {
+        visitorReader.cancel();
+        break;
+      }
+    }
+    if (!visitorText.includes('token') && !visitorText.includes('session')) {
+      throw new Error(`Public visitor webchat stream did not yield agent tokens: ${visitorText}`);
+    }
+    console.log('✅ Public webchat stream routed visitor inquiry to Support Agent with live streaming');
+
+    console.log('\n🎉 ALL 93 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

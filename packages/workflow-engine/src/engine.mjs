@@ -13,7 +13,7 @@
  * 4. Step Walkers: Supports SMS, email, tags, tasks, webhooks, loops, splits, and math nodes.
  */
 
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { authorizeActionInvocation, createActionInvocation, getWorkflowActionDefinition, isDirectNetworkNode } from './action-governance.mjs';
 
 // ---------------------------------------------------------------------------
@@ -738,6 +738,64 @@ export async function executeStep({
           await crmActions.sendWhatsApp({ to, message });
         }
         return { status: 'completed', nodeId, result: { sentTo: to, channel: 'whatsapp' } };
+      }
+
+      // ---------------------------------------------------------------
+      // ZAPIER INTEGRATION NODE
+      // ---------------------------------------------------------------
+      case 'zapier':
+      case 'zapier_webhook': {
+        const zapUrl = renderTemplate(config.webhookUrl || config.targetUrl || config.url, ctx);
+        if (!zapUrl || !zapUrl.startsWith('https://hooks.zapier.com/')) {
+          if (execution?.mode !== 'dry_run' && execution) {
+            return {
+              status: 'failed',
+              nodeId,
+              errorCode: 'INVALID_ZAPIER_URL',
+              error: 'Target URL must be a valid HTTPS Zapier webhook URL (https://hooks.zapier.com/...)'
+            };
+          }
+        }
+        if (execution?.mode === 'dry_run' || !execution) {
+          return {
+            status: 'simulated',
+            nodeId,
+            result: {
+              mode: 'dry_run',
+              sideEffectsDisabled: true,
+              wouldPostTo: zapUrl || 'https://hooks.zapier.com/hooks/catch/preview/',
+              payloadPreview: config.payload || triggerContext
+            }
+          };
+        }
+        const payload = {
+          event: config.eventName || 'workflow.action',
+          executionId: execution.id,
+          workflowId: execution.workflowId,
+          timestamp: new Date(now).toISOString(),
+          data: config.payload
+            ? (typeof config.payload === 'string' ? JSON.parse(renderTemplate(config.payload, ctx)) : config.payload)
+            : triggerContext
+        };
+        const secretKey = config.signingSecret || execution.agencyId || 'operza_zapier_secret';
+        const signature = createHmac('sha256', secretKey).update(JSON.stringify(payload)).digest('hex');
+        const res = await fetch(zapUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Operza-Signature': `sha256=${signature}`,
+            'X-Operza-Execution-Id': execution.id || ''
+          },
+          body: JSON.stringify(payload)
+        });
+        return {
+          status: res.ok ? 'completed' : 'failed',
+          nodeId,
+          result: {
+            httpStatus: res.status,
+            zapierStatus: res.ok ? 'dispatched' : 'rejected'
+          }
+        };
       }
 
       // ---------------------------------------------------------------

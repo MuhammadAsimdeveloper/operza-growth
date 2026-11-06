@@ -4,7 +4,7 @@
 > **Platform Version:** Operza Unified Business Operating System v2.0  
 > **Active Implementation Branch:** `feat/operza-unified-atlas-automation`  
 > **Base Ancestry Commit:** `b7f448adb06d7bd958a305c29c6f488d45e036e3` (180 commits ahead of `origin/main`)  
-> **Verification Status:** 284 / 284 automated checks passing (100% green across all 5 test suites)  
+> **Verification Status:** 297 / 297 automated checks passing (100% green across all 5 test suites)  
 > **Last Audited:** November 2026
 
 ---
@@ -23,11 +23,13 @@ Operza Growth is the single, cohesive destination combining CRM, visual workflow
 |  |     Manager        |  |    Audit Trail     |  |      Inbox       |  |   Usage   |  |
 |  +--------------------+  +--------------------+  +------------------+  +-----------+  |
 |  |             Interactive 2D Canvas & Step Payload Testing Drawer                 |  |
+|  |             Multi-Agent Live Copilot & Embeddable Webchat Widget                |  |
 +---------------------------------------------------------------------------------------+
 |                                OPERZA UNIFIED API                                     |
 |  +---------------------------------------------------------------------------------+  |
 |  |  CRM Engine  |  Funnels & Sites  |  Calendar Ingress  |  Twilio/Stripe Ingress  |  |
 |  |  Workflow Run Timeline Endpoint |  Interactive Step-by-Step Node Test Endpoint  |  |
+|  |  Zapier REST Hooks & Inbound Actions API  |  Multi-Agent SSE Copilot Stream     |  |
 |  +---------------------------------------------------------------------------------+  |
 +---------------------------------------------------------------------------------------+
 |                                PLATFORM ENGINE LAYER                                  |
@@ -38,10 +40,13 @@ Operza Growth is the single, cohesive destination combining CRM, visual workflow
 |  |   Secret Vault Resolver   |  |   Provider Adapters      |  |  Proposal Executor |  |
 |  | (AES-256-GCM / env/kms)   |  | (Resend/Twilio/Stripe)   |  |  (Action Receipts) |  |
 |  +---------------------------+  +--------------------------+  +--------------------+  |
+|  |  Local LLM Runtime Engine |  |  Multi-Agent Orchestrator|  |  Zapier Connectors |  |
+|  | (Offline / Ollama / Cloud)|  | (Handoffs / Role Scopes) |  | (22+ App Catalog)  |  |
+|  +---------------------------+  +--------------------------+  +--------------------+  |
 +---------------------------------------------------------------------------------------+
 |                                PERSISTENCE LAYER                                      |
 |  +------------------------------------------+  +-----------------------------------+  |
-|  |    Local JSON Store (Dev & Testing)      |  | PostgreSQL RLS Migrations 001-009 |  |
+|  |    Local JSON Store (Dev & Testing)      |  | PostgreSQL RLS Migrations 001-010 |  |
 |  |    Atomic transactional disk flush       |  | Strict app.current_agency_id RLS  |  |
 |  +------------------------------------------+  +-----------------------------------+  |
 +---------------------------------------------------------------------------------------+

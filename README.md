@@ -6,7 +6,7 @@
 **Unified Multi-Tenant CRM + Visual Node Automation + Autonomous AI Copilot**
 
 [![CI Status](https://github.com/MuhammadAsimdeveloper/operza-growth/actions/workflows/ci.yml/badge.svg)](https://github.com/MuhammadAsimdeveloper/operza-growth/actions)
-[![E2E Scenarios](https://img.shields.io/badge/E2E%20Cases-89-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
+[![E2E Scenarios](https://img.shields.io/badge/E2E%20Cases-93-10b981.svg?style=flat-square)](scripts/test-e2e.mjs)
 [![Node.js Version](https://img.shields.io/badge/Node.js-%3E%3D20.0.0-339933.svg?style=flat-square&logo=node.js)](package.json)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178c6.svg?style=flat-square&logo=typescript)](apps/web)
 [![React](https://img.shields.io/badge/React-18.3.1.0-61dafb.svg?style=flat-square&logo=react)](apps/web)
@@ -144,6 +144,19 @@ flowchart TD
 - **Stripe Invoicing & Payment Links:** Create branded invoices, line items, and public checkout pages with 1-click order bumps.
 - **Digital Contract E-Signatures:** Legally timestamped digital contract generation, public signing links, and audit trails.
 - **White-Label Client Portal:** Dedicated client-facing dashboard for tracking project progress, paying invoices, and accessing LMS course modules.
+
+### 7. Universal Zapier Integration Subsystem & 22+ Pre-Configured App Connectors
+- **22+ Universal SaaS App Connectors:** Pre-configured connectors for Slack, Gmail, Google Sheets, HubSpot, Stripe, Shopify, Airtable, Calendly, Notion, Quickbooks, Discord, Twilio, Zoom, and more.
+- **REST Hooks Subscription Lifecycle:** `/api/v1/zapier/hooks/subscribe` & `/api/v1/zapier/hooks/unsubscribe` with per-subscription HMAC signing secrets and RFC SSRF loopback/private IP protection.
+- **Outbound Signed Event Dispatcher:** Real-time event streaming (`contact.created`, `contact.updated`, `opportunity.stage_changed`) with HMAC-SHA256 signatures (`X-Operza-Signature`) and replay defense.
+- **Inbound Actions & Field Mapping Samples:** 5 inbound actions (`create_contact`, `update_opportunity`, `trigger_workflow`, `send_communication`, `add_tag`) and schema-accurate performList sample generator.
+- **Governed `zapier` Workflow Node:** Direct visual workflow node with dry-run simulation mode and payload signing.
+
+### 8. Multi-Agent Copilot Swarm & Embedded Local LLM Runtime
+- **Multi-Provider Cascading Runtime:** Zero-downtime LLM engine with automatic cascading across an Embedded Offline Cognitive Engine (100% air-gapped availability), Ollama, LocalAI/vLLM, and Cloud (OpenAI/Anthropic/Gemini) fallbacks.
+- **Specialized Multi-Agent Swarm:** Supervisor/Triage (`supervisor`), CRM Specialist (`crm_agent`), Automation Architect (`automation_agent`), and Customer Support (`support_agent`) with autonomous handoffs (`transfer_to_agent`).
+- **Proposal-Only Write Safety:** High-risk write operations produce pending proposals for human authorization, preventing hallucinated mutations.
+- **Live SSE Streaming & Embeddable Webchat:** Real-time token streaming at `/api/copilot/chat/stream` (authenticated) and `/api/widget/embed.js` + `/api/widget/chat/stream` (public visitor webchat).
 
 ---
 

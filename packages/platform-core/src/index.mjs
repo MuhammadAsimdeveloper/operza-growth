@@ -9,3 +9,6 @@ export * from './secret-vault.mjs';
 export * from './provider-adapters.mjs';
 export * from './proposal-executor.mjs';
 export * from './outbox-worker.mjs';
+export * from './connector-catalog.mjs';
+export * from './llm-runtime/index.mjs';
+export * from './multi-agent/index.mjs';

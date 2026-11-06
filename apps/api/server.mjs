@@ -38,10 +38,55 @@ import { authorizeCopilotTool, createCopilotProposal, getCopilotToolDefinition }
 import { resolveEntitlements, listPlans, checkFeatureAccess, checkUsageLimit, createUsageEvent, aggregateUsage } from '../../packages/platform-core/src/entitlements.mjs';
 import { createPlatformRepository } from '../../packages/db/lib/platform-repository.mjs';
 import { workflowQueue } from './queue.mjs';
+import { handleZapierRoute, dispatchZapierEvent } from './zapier-router.mjs';
+import { createDefaultLLMRuntime } from '../../packages/platform-core/src/llm-runtime/index.mjs';
+import { MultiAgentOrchestrator, AGENT_ROLES } from '../../packages/platform-core/src/multi-agent/index.mjs';
 
 const secretResolver = createSecretResolver();
 const providerAdapterRegistry = createProviderAdapterRegistry();
 const memoryOutboxRepo = createMemoryOutboxRepository();
+const defaultLLMRuntime = createDefaultLLMRuntime({
+  ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+  localAIBaseUrl: process.env.LOCALAI_BASE_URL || 'http://localhost:8080/v1',
+  openAIApiKey: process.env.OPENAI_API_KEY
+});
+
+function getMultiAgentOrchestrator(agencyId, locationId, actor) {
+  return new MultiAgentOrchestrator({
+    llmRuntime: defaultLLMRuntime,
+    toolExecutor: {
+      search_contacts: async ({ query }) => {
+        state.records.contacts = state.records.contacts || [];
+        const q = String(query || '').toLowerCase();
+        const results = state.records.contacts.filter(c =>
+          (!agencyId || c.agencyId === agencyId) &&
+          (!locationId || c.locationId === locationId) &&
+          (`${c.firstName || ''} ${c.lastName || ''} ${c.email || ''} ${c.company || ''}`.toLowerCase().includes(q))
+        );
+        return { results: results.slice(0, 5) };
+      }
+    },
+    proposalStore: async (toolName, params) => {
+      state.copilotProposals = state.copilotProposals || [];
+      const proposal = {
+        id: `prop_${randomUUID().replace(/-/g, '').slice(0, 12)}`,
+        tenantId: agencyId || state.agencies[0]?.id,
+        locationId: locationId || state.locations[0]?.id,
+        agentId: 'crm_agent',
+        status: 'pending_review',
+        suggestedAction: toolName,
+        payload: params,
+        title: `Copilot Action: ${toolName}`,
+        summary: `AI Agent proposed executing ${toolName} with parameters: ${JSON.stringify(params)}`,
+        risk: 'medium',
+        createdAt: new Date().toISOString()
+      };
+      state.copilotProposals.push(proposal);
+      await saveState();
+      return proposal;
+    }
+  });
+}
 
 // Conditionally load ws — gracefully degrade if not installed
 let WebSocketServer;
@@ -723,22 +768,65 @@ async function saveState() {
 }
 
 function getActor(req) {
-  const token = cookieValue(req.headers.cookie, cookieSession);
+  let token = cookieValue(req.headers.cookie, cookieSession);
+  let isBearer = false;
+  if (!token && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+    token = req.headers.authorization.slice(7).trim();
+    isBearer = true;
+  }
   if (!token) return null;
+
   const tokenHash = hash(token);
   const session = state.sessions.find(s => s.tokenHash === tokenHash && s.expiresAt > Date.now());
-  if (!session) return null;
+  if (session) {
+    const user = state.users.find(u => u.id === session.userId && u.status === 'active');
+    const agency = state.agencies.find(a => a.id === session.agencyId && a.status === 'active');
+    const membership = state.memberships.find(m => m.agencyId === session.agencyId && m.userId === session.userId && m.status === 'active');
+    const locations = state.locations.filter(l => l.agencyId === session.agencyId && l.status === 'active');
+    if (!user || !agency || !membership || locations.length === 0) return null;
 
-  const user = state.users.find(u => u.id === session.userId && u.status === 'active');
-  const agency = state.agencies.find(a => a.id === session.agencyId && a.status === 'active');
-  const membership = state.memberships.find(m => m.agencyId === session.agencyId && m.userId === session.userId && m.status === 'active');
-  const locations = state.locations.filter(l => l.agencyId === session.agencyId && l.status === 'active');
-  if (!user || !agency || !membership || locations.length === 0) return null;
+    const requestedLoc = req.headers['x-operza-location'];
+    const activeLocation = locations.find(l => l.id === requestedLoc) || locations[0];
 
-  const requestedLoc = req.headers['x-operza-location'];
-  const activeLocation = locations.find(l => l.id === requestedLoc) || locations[0];
+    return { user, agency, membership, locations, activeLocation, csrfHash: session.csrfHash, isBearer };
+  }
 
-  return { user, agency, membership, locations, activeLocation, csrfHash: session.csrfHash };
+  // Developer API Key check
+  state.records = state.records || {};
+  state.records.apiKeys = state.records.apiKeys || [];
+  const apiKey = state.records.apiKeys.find(k => k.keyHash === tokenHash);
+  if (apiKey) {
+    const agency = state.agencies.find(a => a.id === apiKey.agencyId && a.status === 'active');
+    if (!agency) return null;
+    const locations = state.locations.filter(l => l.agencyId === apiKey.agencyId && l.status === 'active');
+    if (locations.length === 0) return null;
+    const membership = state.memberships.find(m => m.agencyId === apiKey.agencyId && m.status === 'active');
+    const user = (membership ? state.users.find(u => u.id === membership.userId && u.status === 'active') : null) || {
+      id: 'usr_apikey_service',
+      name: apiKey.label,
+      email: `api+${agency.id}@operza.io`,
+      role: 'admin',
+      status: 'active'
+    };
+    const requestedLoc = req.headers['x-operza-location'];
+    const activeLocation = locations.find(l => l.id === requestedLoc) || locations[0];
+
+    apiKey.lastUsedAt = new Date().toISOString();
+
+    return {
+      user,
+      agency,
+      membership: membership || { agencyId: agency.id, userId: user.id, role: 'admin', status: 'active' },
+      locations,
+      activeLocation,
+      csrfHash: null,
+      isBearer: true,
+      isApiKey: true,
+      apiKey
+    };
+  }
+
+  return null;
 }
 
 async function readBody(req) {
@@ -766,6 +854,7 @@ function validateCsrf(req, actor) {
   // Only enforce on mutating methods
   const method = req.method;
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
+  if (actor.isBearer || actor.isApiKey || (req.url && req.url.startsWith('/api/v1/zapier/'))) return true;
   const csrfHeader = req.headers['x-operza-csrf'] || '';
   if (!csrfHeader) return false;
   return safeEqual(hash(csrfHeader), actor.csrfHash);
@@ -2300,6 +2389,71 @@ const server = createServer(async (req, res) => {
         contactId: contact.id,
         reply: aiReply
       });
+    }
+
+    // Public Multi-Agent Webchat Stream
+    if ((method === 'POST' || method === 'GET') && pathname === '/api/widget/chat/stream') {
+      res.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        'connection': 'keep-alive',
+        'access-control-allow-origin': '*'
+      });
+
+      let message = '';
+      let sessionId = randomUUID();
+      let agencyId = null;
+      let locationId = null;
+      let visitorName = 'Visitor';
+      let visitorEmail = 'visitor@webchat.operza.io';
+
+      if (method === 'GET') {
+        message = url.searchParams.get('message') || '';
+        sessionId = url.searchParams.get('sessionId') || sessionId;
+        agencyId = url.searchParams.get('agencyId');
+        locationId = url.searchParams.get('locationId');
+        visitorName = url.searchParams.get('visitorName') || visitorName;
+        visitorEmail = url.searchParams.get('visitorEmail') || visitorEmail;
+      } else {
+        const body = await readBody(req);
+        message = body.message || '';
+        sessionId = body.sessionId || sessionId;
+        agencyId = body.agencyId;
+        locationId = body.locationId;
+        visitorName = body.visitorName || visitorName;
+        visitorEmail = body.visitorEmail || visitorEmail;
+      }
+
+      if (!message.trim()) {
+        res.write(`data: ${JSON.stringify({ error: 'message parameter is required' })}\n\n`);
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        return res.end();
+      }
+
+      const targetAgencyId = agencyId || state.agencies[0]?.id;
+      const targetLoc = (state.locations || []).find(l => l.agencyId === targetAgencyId) || (state.records.locations || []).find(l => l.agencyId === targetAgencyId);
+      const targetLocationId = locationId || targetLoc?.id || targetAgencyId;
+
+      const orchestrator = getMultiAgentOrchestrator(targetAgencyId, targetLocationId, {
+        user: { id: 'usr_visitor', name: visitorName, email: visitorEmail },
+        agency: { id: targetAgencyId },
+        membership: { role: 'guest' }
+      });
+
+      try {
+        for await (const chunk of orchestrator.processUserMessageStream({
+          message,
+          sessionId,
+          startAgent: AGENT_ROLES.SUPPORT,
+          context: { tenantId: targetAgencyId, locationId: targetLocationId }
+        })) {
+          res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        }
+      } catch (streamErr) {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: streamErr.message })}\n\n`);
+      }
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      return res.end();
     }
 
     // Public Calendar Lookup
@@ -4102,8 +4256,77 @@ const server = createServer(async (req, res) => {
     }
 
     // ═════════════════════════════════════════════════════════════
+    // ─── ZAPIER PLATFORM REST HOOKS & ACTIONS ────────────────────
+    // ═════════════════════════════════════════════════════════════
+    if (pathname.startsWith('/api/v1/zapier/')) {
+      await handleZapierRoute(req, res, {
+        method,
+        pathname,
+        actor,
+        agency,
+        activeLocation,
+        state,
+        saveState,
+        sendJson,
+        readBody,
+        executeWorkflowInstance,
+        broadcast
+      });
+      return;
+    }
+
+    // ═════════════════════════════════════════════════════════════
     // ─── COPILOT ────────────────────────────────────────────────
     // ═════════════════════════════════════════════════════════════
+
+    // COPILOT MULTI-AGENT SSE STREAMING ROUTE
+    if ((method === 'GET' || method === 'POST') && pathname === '/api/copilot/chat/stream') {
+      res.writeHead(200, {
+        'content-type': 'text/event-stream',
+        'cache-control': 'no-cache',
+        'connection': 'keep-alive',
+        'access-control-allow-origin': '*',
+        'access-control-allow-credentials': 'true'
+      });
+
+      let message = '';
+      let sessionId = randomUUID();
+      let startAgent = AGENT_ROLES.SUPERVISOR;
+
+      if (method === 'GET') {
+        message = url.searchParams.get('message') || '';
+        sessionId = url.searchParams.get('sessionId') || sessionId;
+        startAgent = url.searchParams.get('startAgent') || startAgent;
+      } else {
+        const body = await readBody(req);
+        message = body.message || '';
+        sessionId = body.sessionId || sessionId;
+        startAgent = body.startAgent || startAgent;
+      }
+
+      if (!message.trim()) {
+        res.write(`data: ${JSON.stringify({ error: 'message parameter is required' })}\n\n`);
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        return res.end();
+      }
+
+      const orchestrator = getMultiAgentOrchestrator(agency.id, activeLocation.id, actor);
+      try {
+        for await (const chunk of orchestrator.processUserMessageStream({
+          message,
+          sessionId,
+          startAgent,
+          context: { tenantId: agency.id, locationId: activeLocation.id },
+          actor
+        })) {
+          res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        }
+      } catch (streamErr) {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: streamErr.message })}\n\n`);
+      }
+      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      return res.end();
+    }
 
     // COPILOT SSE STREAMING ROUTE (legacy)
     if (method === 'GET' && pathname === '/api/copilot/stream') {
@@ -7854,13 +8077,21 @@ const server = createServer(async (req, res) => {
         auditLog(`crm.${collectionName}.created`, actor, { id: newRecord.id });
         broadcast(`crm.${collectionName}.created`, { id: newRecord.id, ...newRecord });
 
-        // Check if creating this record triggers a workflow
+        // Check if creating this record triggers a workflow or Zapier hook
         if (collectionName === 'contacts') {
           triggerWorkflowExecution({
             agencyId: agency.id,
             locationId: activeLocation.id,
             triggerType: 'tag',
             triggerContext: { contact: newRecord }
+          }).catch(console.error);
+
+          dispatchZapierEvent({
+            state,
+            agencyId: agency.id,
+            locationId: activeLocation.id,
+            event: 'contact.created',
+            data: newRecord
           }).catch(console.error);
         }
 
@@ -7902,6 +8133,18 @@ const server = createServer(async (req, res) => {
             triggerType: 'opportunity_stage',
             triggerContext: { opportunity: updated, stage: body.stage, previousStage: previousRecord.stage }
           }).catch(console.error);
+
+          dispatchZapierEvent({
+            state,
+            agencyId: agency.id,
+            locationId: activeLocation.id,
+            event: 'opportunity.stage_changed',
+            data: {
+              opportunity: updated,
+              stage: body.stage,
+              previousStage: previousRecord.stage
+            }
+          }).catch(console.error);
         }
 
         // Contact update trigger
@@ -7911,6 +8154,14 @@ const server = createServer(async (req, res) => {
             locationId: activeLocation.id,
             triggerType: 'contact_updated',
             triggerContext: { contact: updated, previous: previousRecord }
+          }).catch(console.error);
+
+          dispatchZapierEvent({
+            state,
+            agencyId: agency.id,
+            locationId: activeLocation.id,
+            event: 'contact.updated',
+            data: updated
           }).catch(console.error);
         }
 
