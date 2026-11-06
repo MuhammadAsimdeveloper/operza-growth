@@ -58,7 +58,7 @@ export function createPendingApproval({
     expiresAt
   });
 
-  return Object.freeze({
+  return {
     id: request.id,
     tenantId,
     agencyId: tenantId,
@@ -77,7 +77,7 @@ export function createPendingApproval({
     decidedByActorId: null,
     request,
     decision: null
-  });
+  };
 }
 
 /**
