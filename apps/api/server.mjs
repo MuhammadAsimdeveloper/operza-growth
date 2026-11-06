@@ -27,6 +27,10 @@ import { fileURLToPath } from 'node:url';
 import { executeStep, calculateChecksum } from '../../packages/workflow-engine/src/engine.mjs';
 import { createActionInvocation, getWorkflowActionDefinition } from '../../packages/workflow-engine/src/action-governance.mjs';
 import { createPendingApproval, resolvePendingApproval } from '../../packages/workflow-engine/src/approval-lifecycle.mjs';
+import { createProviderConnection, revokeProviderConnection, publicProviderConnection, PROVIDER_CATALOG } from '../../packages/platform-core/src/provider-lifecycle.mjs';
+import { recordConsent } from '../../packages/platform-core/src/consent-policy.mjs';
+import { authorizeCopilotTool, createCopilotProposal } from '../../packages/platform-core/src/tool-permissions.mjs';
+import { resolveEntitlements, listPlans, checkFeatureAccess, checkUsageLimit, createUsageEvent, aggregateUsage } from '../../packages/platform-core/src/entitlements.mjs';
 import { workflowQueue } from './queue.mjs';
 
 // Conditionally load ws — gracefully degrade if not installed
@@ -127,6 +131,11 @@ const emptyState = () => ({
   records: Object.fromEntries(Object.keys(collections).map(key => [key, []])),
   workflowExecutions: [],
   workflowApprovals: [],
+  providerConnections: [],
+  communicationConsents: [],
+  copilotProposals: [],
+  tenantEntitlements: {},
+  usageEvents: [],
   snapshots: [],
   audit: [],
   mediaFiles: {}
@@ -323,6 +332,92 @@ function auditLog(action, actor, details = {}) {
 }
 
 // ─── Utility Functions ────────────────────────────────────────────────
+function getTenantEntitlements(agencyId) {
+  const saved = state.tenantEntitlements?.[agencyId] || {};
+  const agency = (state.agencies || []).find(item => item.id === agencyId);
+  return resolveEntitlements({
+    planId: saved.planId || agency?.planId || 'beta',
+    featureOverrides: saved.featureOverrides || {},
+    limitOverrides: saved.limitOverrides || {}
+  });
+}
+
+function getCurrentUsage(agencyId, now = Date.now()) {
+  const current = new Date(now);
+  const from = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth(), 1));
+  const to = new Date(Date.UTC(current.getUTCFullYear(), current.getUTCMonth() + 1, 1));
+  return aggregateUsage(state.usageEvents || [], {
+    tenantId: agencyId,
+    from: from.toISOString(),
+    to: to.toISOString()
+  });
+}
+
+function checkTenantUsageLimit(agencyId, metric, quantity = 1) {
+  const entitlements = getTenantEntitlements(agencyId);
+  const usage = getCurrentUsage(agencyId);
+  const current = usage[metric] || 0;
+  const limit = checkUsageLimit(entitlements, usage, metric);
+  if (!limit.allowed) return limit;
+  if (current + quantity > limit.limit) {
+    return { allowed: false, code: 'LIMIT_REACHED', consumed: current, limit: limit.limit, remaining: limit.remaining };
+  }
+  return { ...limit, remaining: Math.max(0, limit.limit - current - quantity) };
+}
+
+async function recordTenantUsage({ agencyId, locationId, metric, quantity = 1, source = 'application', eventId = randomUUID() }) {
+  state.usageEvents = state.usageEvents || [];
+  if (state.usageEvents.some(event => event.eventId === eventId && event.tenantId === agencyId)) return false;
+  const event = createUsageEvent({
+    tenantId: agencyId,
+    locationId,
+    eventId,
+    metric,
+    quantity,
+    metadata: { source: String(source).slice(0, 80) }
+  });
+  state.usageEvents.push(event);
+  await saveState();
+  return true;
+}
+
+async function storeCopilotProposal(toolName, params, actor) {
+  const entitlement = checkFeatureAccess(getTenantEntitlements(actor.agency.id), 'copilotProposals');
+  const authorization = authorizeCopilotTool({
+    toolName,
+    actorRole: actor.membership.role,
+    tenantCapability: entitlement.allowed,
+    agentGrant: true
+  });
+  if (authorization.decision !== 'proposal_only') {
+    return { error: authorization.code, decision: authorization.decision };
+  }
+  const proposal = createCopilotProposal({
+    tenantId: actor.agency.id,
+    locationId: actor.activeLocation.id,
+    actorId: actor.user.id,
+    toolName,
+    params
+  });
+  state.copilotProposals = state.copilotProposals || [];
+  state.copilotProposals.push(proposal);
+  await saveState();
+  auditLog('copilot.proposal.created', actor, {
+    proposalId: proposal.id,
+    toolName,
+    risk: proposal.risk,
+    requiresHumanApproval: true
+  });
+  return {
+    id: proposal.id,
+    toolName: proposal.toolName,
+    risk: proposal.risk,
+    status: proposal.status,
+    requiresHumanApproval: proposal.requiresHumanApproval,
+    createdAt: proposal.createdAt
+  };
+}
+
 function hash(val) { return createHash('sha256').update(String(val)).digest('hex'); }
 function safeEqual(a, b) {
   const aa = Buffer.from(String(a));
@@ -3904,10 +3999,42 @@ const server = createServer(async (req, res) => {
     }
 
     // COPILOT CHAT (enhanced with tool calling)
+    if (method === 'GET' && pathname === '/api/copilot/proposals') {
+      const proposals = (state.copilotProposals || []).filter(
+        item => item.tenantId === agency.id && item.locationId === activeLocation.id
+      ).slice().reverse();
+      return sendJson(res, 200, { data: proposals });
+    }
+
+    if (method === 'POST' && pathname.startsWith('/api/copilot/proposals/') && pathname.endsWith('/reject')) {
+      const proposalId = pathname.split('/')[4];
+      const proposal = (state.copilotProposals || []).find(
+        item => item.id === proposalId && item.tenantId === agency.id && item.locationId === activeLocation.id
+      );
+      if (!proposal) return sendJson(res, 404, { error: 'Copilot proposal not found' });
+      if (proposal.status !== 'pending_review') return sendJson(res, 409, { error: 'Proposal is no longer pending review' });
+      proposal.status = 'rejected';
+      proposal.decidedAt = new Date().toISOString();
+      proposal.decidedByActorId = actor.user.id;
+      await saveState();
+      auditLog('copilot.proposal.rejected', actor, { proposalId });
+      return sendJson(res, 200, { success: true, proposal });
+    }
+
     if (method === 'POST' && pathname === '/api/copilot/chat') {
       const body = await readBody(req);
       const { message, sessionId: reqSessionId, tools: requestedTools } = body;
       if (!message) return sendJson(res, 400, { error: 'message is required' });
+      const aiLimit = checkTenantUsageLimit(agency.id, 'monthlyAiRequests', 1);
+      if (!aiLimit.allowed) {
+        return sendJson(res, 429, { error: 'Monthly Copilot request allowance has been reached', code: aiLimit.code, limit: aiLimit.limit, consumed: aiLimit.consumed });
+      }
+      await recordTenantUsage({
+        agencyId: agency.id,
+        locationId: activeLocation.id,
+        metric: 'monthlyAiRequests',
+        source: 'copilot.chat'
+      });
 
       const sessionId = reqSessionId || randomUUID();
       const history = getCopilotHistory(sessionId);
@@ -5445,6 +5572,190 @@ const server = createServer(async (req, res) => {
     // ─── WORKFLOW RUNS & APPROVALS ──────────────────────────────
     // ═════════════════════════════════════════════════════════════
 
+    // ═════════════════════════════════════════════════════════════
+    // ─── PLATFORM FOUNDATION: PROVIDERS, CONSENT, ENTITLEMENTS ──
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'GET' && pathname === '/api/platform/plans') {
+      return sendJson(res, 200, { data: listPlans() });
+    }
+
+    if (method === 'GET' && pathname === '/api/platform/entitlements') {
+      const entitlements = getTenantEntitlements(agency.id);
+      return sendJson(res, 200, {
+        planId: entitlements.planId,
+        label: entitlements.label,
+        features: entitlements.features,
+        limits: entitlements.limits,
+        pricing: null
+      });
+    }
+
+    if (method === 'GET' && pathname === '/api/platform/usage') {
+      const entitlements = getTenantEntitlements(agency.id);
+      return sendJson(res, 200, {
+        period: 'current_utc_month',
+        usage: getCurrentUsage(agency.id),
+        limits: entitlements.limits,
+        features: entitlements.features
+      });
+    }
+
+    if (method === 'GET' && pathname === '/api/platform/providers') {
+      return sendJson(res, 200, {
+        data: PROVIDER_CATALOG.map(provider => ({
+          key: provider.key,
+          channel: provider.channel,
+          label: provider.label,
+          availability: provider.status,
+          liveDispatchEnabled: false
+        }))
+      });
+    }
+
+    if (method === 'GET' && pathname === '/api/platform/connections') {
+      state.providerConnections = state.providerConnections || [];
+      const connections = state.providerConnections.filter(
+        item => item.tenantId === agency.id && item.locationId === activeLocation.id
+      );
+      return sendJson(res, 200, { data: connections.map(publicProviderConnection) });
+    }
+
+    if (method === 'POST' && pathname === '/api/platform/connections') {
+      if (!['owner', 'admin'].includes(actor.membership.role)) {
+        return sendJson(res, 403, { error: 'Only workspace owners and admins can configure providers' });
+      }
+      const body = await readBody(req);
+      if (body.providerKey === 'payments.stripe') {
+        return sendJson(res, 409, { error: 'Payment processing remains disabled until payment verification, reconciliation and refund controls are deployed', code: 'PAYMENTS_DISABLED' });
+      }
+      const connection = createProviderConnection({
+        tenantId: agency.id,
+        locationId: activeLocation.id,
+        providerKey: body.providerKey,
+        secretRef: body.secretRef,
+        label: body.label,
+        config: body.config || {}
+      });
+      state.providerConnections = state.providerConnections || [];
+      state.providerConnections.push(connection);
+      await saveState();
+      auditLog('provider.connection.created', actor, {
+        connectionId: connection.id,
+        providerKey: connection.providerKey,
+        status: connection.status
+      });
+      return sendJson(res, 201, { success: true, connection: publicProviderConnection(connection) });
+    }
+
+    if (method === 'POST' && pathname.startsWith('/api/platform/connections/') && pathname.endsWith('/verify')) {
+      const connectionId = pathname.split('/')[4];
+      const connection = (state.providerConnections || []).find(
+        item => item.id === connectionId && item.tenantId === agency.id && item.locationId === activeLocation.id
+      );
+      if (!connection) return sendJson(res, 404, { error: 'Provider connection not found' });
+      return sendJson(res, 501, {
+        error: 'No trusted provider verification adapter is configured in this deployment',
+        code: 'PROVIDER_ADAPTER_UNAVAILABLE',
+        connection: publicProviderConnection(connection)
+      });
+    }
+
+    if (method === 'POST' && pathname.startsWith('/api/platform/connections/') && pathname.endsWith('/revoke')) {
+      if (!['owner', 'admin'].includes(actor.membership.role)) {
+        return sendJson(res, 403, { error: 'Only workspace owners and admins can revoke providers' });
+      }
+      const connectionId = pathname.split('/')[4];
+      const index = (state.providerConnections || []).findIndex(
+        item => item.id === connectionId && item.tenantId === agency.id && item.locationId === activeLocation.id
+      );
+      if (index < 0) return sendJson(res, 404, { error: 'Provider connection not found' });
+      state.providerConnections[index] = revokeProviderConnection(state.providerConnections[index]);
+      await saveState();
+      auditLog('provider.connection.revoked', actor, {
+        connectionId,
+        providerKey: state.providerConnections[index].providerKey
+      });
+      return sendJson(res, 200, { success: true, connection: publicProviderConnection(state.providerConnections[index]) });
+    }
+
+    if (method === 'GET' && pathname === '/api/platform/consents') {
+      const contactId = url.searchParams.get('contactId');
+      const consents = (state.communicationConsents || []).filter(item =>
+        item.tenantId === agency.id && item.locationId === activeLocation.id &&
+        (!contactId || item.contactId === contactId)
+      );
+      return sendJson(res, 200, { data: consents });
+    }
+
+    if (method === 'POST' && pathname === '/api/platform/consents') {
+      if (!['owner', 'admin'].includes(actor.membership.role)) {
+        return sendJson(res, 403, { error: 'Only workspace owners and admins can record consent evidence' });
+      }
+      const body = await readBody(req);
+      const contact = (state.records.contacts || []).find(
+        item => item.id === body.contactId && item.agencyId === agency.id && item.locationId === activeLocation.id
+      );
+      if (!contact) return sendJson(res, 404, { error: 'Contact not found in the active workspace' });
+      if (body.status === 'granted' && (typeof body.proofRef !== 'string' || body.proofRef.trim().length < 3)) {
+        return sendJson(res, 400, { error: 'Granting consent requires an auditable proof reference', code: 'CONSENT_PROOF_REQUIRED' });
+      }
+      const consent = recordConsent({
+        tenantId: agency.id,
+        locationId: activeLocation.id,
+        contactId: contact.id,
+        channel: body.channel,
+        purpose: body.purpose,
+        status: body.status,
+        source: body.source || 'manual',
+        proofRef: body.proofRef
+      });
+      consent.capturedByActorId = actor.user.id;
+      state.communicationConsents = state.communicationConsents || [];
+      state.communicationConsents.push(consent);
+      await saveState();
+      auditLog('communication.consent.recorded', actor, {
+        consentId: consent.id,
+        contactId: contact.id,
+        channel: consent.channel,
+        purpose: consent.purpose,
+        status: consent.status
+      });
+      return sendJson(res, 201, { success: true, consent });
+    }
+
+    if (method === 'POST' && pathname.startsWith('/api/platform/consents/') && pathname.endsWith('/revoke')) {
+      if (!['owner', 'admin'].includes(actor.membership.role)) {
+        return sendJson(res, 403, { error: 'Only workspace owners and admins can record opt-outs' });
+      }
+      const consentId = pathname.split('/')[4];
+      const existing = (state.communicationConsents || []).find(item =>
+        item.id === consentId && item.tenantId === agency.id && item.locationId === activeLocation.id
+      );
+      if (!existing) return sendJson(res, 404, { error: 'Consent record not found' });
+      const revocation = recordConsent({
+        tenantId: agency.id,
+        locationId: activeLocation.id,
+        contactId: existing.contactId,
+        channel: existing.channel,
+        purpose: existing.purpose,
+        status: 'revoked',
+        source: 'manual',
+        proofRef: 'operator:' + actor.user.id
+      });
+      revocation.capturedByActorId = actor.user.id;
+      state.communicationConsents.push(revocation);
+      await saveState();
+      auditLog('communication.consent.revoked', actor, {
+        consentId: revocation.id,
+        priorConsentId: consentId,
+        contactId: existing.contactId,
+        channel: existing.channel,
+        purpose: existing.purpose
+      });
+      return sendJson(res, 200, { success: true, consent: revocation });
+    }
+
     if (method === 'GET' && pathname === '/api/workflows/runs') {
       await expirePendingWorkflowApprovals();
       const runs = (state.workflowExecutions || []).filter(
@@ -5598,6 +5909,16 @@ const server = createServer(async (req, res) => {
         w => w.id === workflowId && w.agencyId === agency.id && w.locationId === activeLocation.id
       );
       if (!flow) return sendJson(res, 404, { error: 'Workflow not found' });
+      const runLimit = checkTenantUsageLimit(agency.id, 'monthlyWorkflowRuns', 1);
+      if (!runLimit.allowed) {
+        return sendJson(res, 429, { error: 'Monthly workflow run allowance has been reached', code: runLimit.code, limit: runLimit.limit, consumed: runLimit.consumed });
+      }
+      await recordTenantUsage({
+        agencyId: agency.id,
+        locationId: activeLocation.id,
+        metric: 'monthlyWorkflowRuns',
+        source: 'workflow.manual_run'
+      });
 
       const body = await readBody(req);
       let contact = null;
