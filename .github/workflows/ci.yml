@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, main, 'feat/phase-2-durable-approvals']
+    branches: [master, main, 'feat/phase-2-durable-approvals', 'feat/phase-3-6-platform-foundation']
   pull_request:
     branches: [master, main]
 
@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   test:
-    name: Test & Build (Node ${{ matrix.node-version }})
+    name: Test, Lint & Build (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
