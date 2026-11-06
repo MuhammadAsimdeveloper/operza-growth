@@ -151,3 +151,66 @@ export interface WorkflowExecution {
   finishedAt?: string;
   steps?: WorkflowExecutionStep[];
 }
+
+export type ProviderConnectionStatus = 'pending_verification' | 'verified' | 'degraded' | 'revoked';
+export type CommunicationChannel = 'email' | 'sms' | 'whatsapp';
+export type CommunicationPurpose = 'transactional' | 'marketing' | 'appointment' | 'review_request';
+export type ConsentStatus = 'granted' | 'revoked';
+
+export interface ProviderConnectionSummary {
+  id: string;
+  providerKey: string;
+  channel: CommunicationChannel | 'payments';
+  label: string;
+  status: ProviderConnectionStatus;
+  secretConfigured: boolean;
+  createdAt: string;
+  updatedAt: string;
+  verifiedAt: string | null;
+  revokedAt: string | null;
+  lastCheckCode: string | null;
+}
+
+export interface CommunicationConsent {
+  id: string;
+  tenantId: string;
+  locationId: string;
+  contactId: string;
+  channel: CommunicationChannel;
+  purpose: CommunicationPurpose;
+  status: ConsentStatus;
+  source: 'web_form' | 'api' | 'keyword_opt_out' | 'manual' | 'import';
+  proofRef: string | null;
+  capturedAt: string;
+  expiresAt: string | null;
+}
+
+export interface CopilotProposal {
+  id: string;
+  tenantId: string;
+  locationId: string;
+  requestedByActorId: string;
+  toolName: string;
+  params: Record<string, unknown>;
+  risk: 'write' | 'workflow' | 'external_side_effect';
+  status: 'pending_review' | 'rejected' | 'approved';
+  requiresHumanApproval: true;
+  createdAt: string;
+  decidedAt: string | null;
+  decidedByActorId: string | null;
+}
+
+export interface TenantEntitlements {
+  planId: 'beta' | 'studio' | 'growth' | 'enterprise';
+  label: string;
+  pricing: null;
+  features: Record<string, boolean>;
+  limits: Record<string, number>;
+}
+
+export interface TenantUsageSnapshot {
+  period: 'current_utc_month';
+  usage: Record<string, number>;
+  limits: Record<string, number>;
+  features: Record<string, boolean>;
+}
