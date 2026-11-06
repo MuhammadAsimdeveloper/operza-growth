@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "description": "Deterministic authorization fixtures. These evaluate policy boundaries, not model quality or production delivery.",
+  "cases": [
+    {
+      "id": "viewer-read-contact",
+      "tool": "search_contacts",
+      "actorRole": "viewer",
+      "expectedDecision": "allow_read"
+    },
+    {
+      "id": "member-create-lead",
+      "tool": "create_contact",
+      "actorRole": "member",
+      "expectedDecision": "proposal_only"
+    },
+    {
+      "id": "admin-send-message",
+      "tool": "send_communication",
+      "actorRole": "admin",
+      "expectedDecision": "proposal_only"
+    },
+    {
+      "id": "viewer-run-workflow",
+      "tool": "trigger_workflow",
+      "actorRole": "viewer",
+      "expectedDecision": "deny"
+    },
+    {
+      "id": "disabled-tenant-provider",
+      "tool": "send_communication",
+      "actorRole": "admin",
+      "tenantCapability": false,
+      "expectedDecision": "deny"
+    }
+  ]
+}
