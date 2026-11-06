@@ -4046,6 +4046,44 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { data: proposals });
     }
 
+    if (method === 'POST' && pathname.startsWith('/api/copilot/proposals/') && pathname.endsWith('/approve')) {
+      if (!['owner', 'admin', 'member'].includes(actor.membership.role)) {
+        return sendJson(res, 403, { error: 'Your role cannot review Copilot proposals' });
+      }
+      const proposalId = pathname.split('/')[4];
+      let proposal;
+      if (platformRepository) {
+        proposal = await platformRepository.decideCopilotProposal({
+          tenantId: agency.id,
+          locationId: activeLocation.id,
+          proposalId,
+          actorId: actor.user.id,
+          decision: 'approved'
+        });
+        if (!proposal) return sendJson(res, 409, { error: 'Proposal is missing or is no longer pending review' });
+      } else {
+        proposal = (state.copilotProposals || []).find(
+          item => item.id === proposalId && item.tenantId === agency.id && item.locationId === activeLocation.id
+        );
+        if (!proposal) return sendJson(res, 404, { error: 'Copilot proposal not found' });
+        if (proposal.status !== 'pending_review') return sendJson(res, 409, { error: 'Proposal is no longer pending review' });
+        proposal.status = 'approved';
+        proposal.decidedAt = new Date().toISOString();
+        proposal.decidedByActorId = actor.user.id;
+        await saveState();
+      }
+      auditLog('copilot.proposal.approved', actor, { proposalId, executionStatus: 'not_executed' });
+      return sendJson(res, 200, {
+        success: true,
+        proposal,
+        execution: {
+          status: 'not_executed',
+          code: 'APPROVAL_RECORDED_ONLY',
+          message: 'The review decision is saved. An authorized proposal executor is not yet configured.'
+        }
+      });
+    }
+
     if (method === 'POST' && pathname.startsWith('/api/copilot/proposals/') && pathname.endsWith('/reject')) {
       if (!['owner', 'admin', 'member'].includes(actor.membership.role)) {
         return sendJson(res, 403, { error: 'Your role cannot review Copilot proposals' });
