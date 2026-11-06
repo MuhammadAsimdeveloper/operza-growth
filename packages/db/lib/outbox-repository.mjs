@@ -117,8 +117,8 @@ export function createWorkflowOutboxRepository(pool) {
               "SELECT agency_id, location_id, id FROM workflow_outbox " +
               "WHERE (status='pending' AND available_at <= now()) " +
               "OR (status='leased' AND lease_until < now()) " +
-              "ORDER BY priority DESC, available_at ASC, created_at ASC " +
-              "FOR UPDATE SKIP LOCKED LIMIT $2" +
+              "ORDER BY priority DESC, available_at ASC, created_at ASC LIMIT $2 " +
+              "FOR UPDATE SKIP LOCKED" +
             ") " +
             "UPDATE workflow_outbox AS jobs " +
             "SET status='leased', lease_owner=$1, lease_until=now() + ($3 * interval '1 millisecond'), " +
@@ -227,21 +227,30 @@ export function createWorkflowOutboxRepository(pool) {
       if (!HASH.test(actionHash || '')) throw new TypeError('actionHash must be a SHA-256 digest');
       validatePayload(result);
       if (Buffer.byteLength(JSON.stringify(result)) > 8_192) throw new TypeError('Receipt result exceeds 8 KB');
+      if (providerReceipt != null && (typeof providerReceipt !== 'string' || providerReceipt.length > 180 || /bearer\\s|token|secret|key=/i.test(providerReceipt))) {
+        throw Object.assign(new TypeError('Provider receipt must be a non-secret reference'), { code: 'INVALID_PROVIDER_RECEIPT' });
+      }
       return withClient(async client => {
-        await client.query(
-          "SELECT set_config('app.agency_id',$1,true), set_config('app.location_id',$2,true)",
-          [tenantId, locationId]
-        );
-        const updated = await client.query(
-          "UPDATE workflow_action_receipts SET status='succeeded', result=$4::jsonb, " +
-            "provider_receipt=$5, updated_at=now() " +
-          "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 " +
-          "RETURNING id,status,result",
-          [tenantId,locationId,actionHash,JSON.stringify(result),
-            typeof providerReceipt === 'string' ? providerReceipt.slice(0,180) : null]
-        );
-        if (!updated.rowCount) throw Object.assign(new Error('Action receipt not found'), { code: 'ACTION_RECEIPT_NOT_FOUND' });
-        return updated.rows[0];
+        await client.query('BEGIN');
+        try {
+          await client.query(
+            "SELECT set_config('app.agency_id',$1,true), set_config('app.location_id',$2,true)",
+            [tenantId, locationId]
+          );
+          const updated = await client.query(
+            "UPDATE workflow_action_receipts SET status='succeeded', result=$4::jsonb, " +
+              "provider_receipt=$5, updated_at=now() " +
+            "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 " +
+            "RETURNING id,status,result",
+            [tenantId,locationId,actionHash,JSON.stringify(result),providerReceipt || null]
+          );
+          if (!updated.rowCount) throw Object.assign(new Error('Action receipt not found'), { code: 'ACTION_RECEIPT_NOT_FOUND' });
+          await client.query('COMMIT');
+          return updated.rows[0];
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw error;
+        }
       });
     }
   };
