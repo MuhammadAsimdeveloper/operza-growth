@@ -115,13 +115,20 @@ The current implementation starts governance inside packages/workflow-engine to 
 - [x] Add focused unit and engine integration tests.
 - [ ] Verify the branch with the repository's complete CI matrix before merge.
 
-### Phase 2 — durable approvals and execution records
+### Phase 2 — durable approvals and execution records (approval slice implemented; operational guarantees remain open)
 
-- Persist approval requests/decisions with actor, tenant, action hash, expiry and audit references.
-- Add an explicit waiting_approval execution state and a transactional resume operation.
-- Resume from the paused node with the same immutable workflow version and action hash; never restart from a mutable draft.
-- Enforce idempotency at the action boundary so retries cannot duplicate sends, bookings, charges or refunds.
-- Add an execution inspector with input/output redaction, attempts, provider status and an explainable error.
+- [x] Persist approval requests and decisions with requester, approver, tenant, location, execution, node, action hash, request time, expiry and audit events.
+- [x] Persist the workflow snapshot and version on the execution; resume from the paused node rather than reloading a mutable draft.
+- [x] Add explicit `waiting_approval`, `resuming`, `completed` and `failed` transitions; persist the approved transition before resuming.
+- [x] Reject self-approval, cross-tenant/workspace decisions, expired requests, altered action payloads and repeated decisions.
+- [x] Scope approval to one node only; later approval-gated nodes must request their own decisions.
+- [x] Add pending-approval list, approve/reject API routes, execution recovery for persisted `resuming` state, and redacted execution responses.
+- [x] Pass the deterministic action hash to trusted provider executors as the idempotency-key contract.
+- [ ] Add a transactional outbox/action-receipt store and enforce deduplication with a real provider's idempotency API. A hash passed to an adapter is not proof of exactly-once delivery.
+- [ ] Add attempt history, provider acknowledgement/delivery lifecycle and a richer redacted execution inspector after provider adapters exist.
+- [ ] Move approval and execution records from the monolithic application-state envelope into normalized tenant-scoped tables with transactional compare-and-set semantics before multi-instance worker deployment.
+
+**Persistence boundary:** Current approval records are stored in `state.workflowApprovals` and written through `saveState()` to the atomic JSON file or the PostgreSQL `operza_app_state` snapshot. This survives a single application restart but is not a normalized approval table, transactional outbox, or multi-worker lease. The current change does not activate any mail, SMS, Slack, review or payment provider.
 
 ### Phase 3 — real provider connections
 
