@@ -344,6 +344,9 @@ export const api = {
   copilot: {
     chat: (data: { message: string; sessionId?: string; tools?: any[] }) =>
       request('/api/copilot/chat', { method: 'POST', body: JSON.stringify(data) }),
+    getProposals: () => request<{ data: any[] }>('/api/copilot/proposals'),
+    rejectProposal: (id: string) =>
+      request<{ success: boolean; proposal: any }>(`/api/copilot/proposals/${id}/reject`, { method: 'POST' }),
     stream: (message: string, onDelta: (delta: string) => void, onComplete: () => void) => {
       const eventSource = new EventSource(`/api/copilot/stream?message=${encodeURIComponent(message)}`, {
         withCredentials: true
@@ -367,6 +370,25 @@ export const api = {
       };
       return () => eventSource.close();
     }
+  },
+  platform: {
+    getPlans: () => request<{ data: any[] }>('/api/platform/plans'),
+    getEntitlements: () => request<any>('/api/platform/entitlements'),
+    getUsage: () => request<any>('/api/platform/usage'),
+    getProviderCatalog: () => request<{ data: any[] }>('/api/platform/providers'),
+    getConnections: () => request<{ data: any[] }>('/api/platform/connections'),
+    createConnection: (data: { providerKey: string; secretRef: string; label?: string; config?: Record<string, string> }) =>
+      request<{ success: boolean; connection: any }>('/api/platform/connections', { method: 'POST', body: JSON.stringify(data) }),
+    verifyConnection: (id: string) =>
+      request<{ error?: string; code?: string; connection?: any }>(`/api/platform/connections/${id}/verify`, { method: 'POST' }),
+    revokeConnection: (id: string) =>
+      request<{ success: boolean; connection: any }>(`/api/platform/connections/${id}/revoke`, { method: 'POST' }),
+    listConsents: (contactId?: string) =>
+      request<{ data: any[] }>(`/api/platform/consents${contactId ? `?contactId=${encodeURIComponent(contactId)}` : ''}`),
+    recordConsent: (data: { contactId: string; channel: 'email' | 'sms' | 'whatsapp'; purpose: 'transactional' | 'marketing' | 'appointment' | 'review_request'; status: 'granted' | 'revoked'; source?: 'web_form' | 'api' | 'keyword_opt_out' | 'manual' | 'import'; proofRef?: string }) =>
+      request<{ success: boolean; consent: any }>('/api/platform/consents', { method: 'POST', body: JSON.stringify(data) }),
+    revokeConsent: (id: string) =>
+      request<{ success: boolean; consent: any }>(`/api/platform/consents/${id}/revoke`, { method: 'POST' }),
   },
   integrations: {
     list: () => request<{ integrations: any[] }>('/api/integrations'),
