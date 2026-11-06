@@ -19,6 +19,13 @@ function readinessPool({ missing = [], superuser = false, bypassRls = false } = 
       if (sql.includes('FROM pg_roles')) {
         return { rows: [{ rolsuper: superuser, rolbypassrls: bypassRls }] };
       }
+      if (sql.includes('LEFT JOIN pg_policies')) {
+        return {
+          rows: requiredTables.filter(name => !missing.includes(name)).map(table_name => ({
+            table_name, rls_enabled: true, rls_forced: true, policy_count: 1
+          }))
+        };
+      }
       throw new Error('Unexpected readiness query');
     }
   };
@@ -45,5 +52,23 @@ test('normalized platform mode refuses superuser and BYPASSRLS database roles', 
   await assert.rejects(
     createPlatformRepository(readinessPool({ bypassRls: true })).checkReady(),
     { code: 'PLATFORM_ROLE_BYPASSES_RLS' }
+  );
+});
+
+test('normalized platform mode refuses tables without forced RLS policies', async () => {
+  const pool = readinessPool();
+  pool.query = async sql => {
+    if (sql.includes('information_schema.tables')) return { rows: requiredTables.map(table_name => ({ table_name })) };
+    if (sql.includes('FROM pg_roles')) return { rows: [{ rolsuper: false, rolbypassrls: false }] };
+    if (sql.includes('LEFT JOIN pg_policies')) {
+      return { rows: requiredTables.map((table_name, index) => ({
+        table_name, rls_enabled: true, rls_forced: index !== 0, policy_count: 1
+      })) };
+    }
+    throw new Error('Unexpected readiness query');
+  };
+  await assert.rejects(
+    createPlatformRepository(pool).checkReady(),
+    { code: 'PLATFORM_RLS_INCOMPLETE' }
   );
 });
