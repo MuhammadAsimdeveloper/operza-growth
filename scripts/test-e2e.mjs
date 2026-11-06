@@ -2930,7 +2930,32 @@ async function runTests() {
     }
     console.log('✅ Proposal rejection is persisted and does not create the proposed contact');
 
-    console.log('\n🎉 ALL 83 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ─────────────────────────────────────────────────────────────
+    // TEST 84: Proposal Approval Is Not Mistaken for Execution
+    // ─────────────────────────────────────────────────────────────
+    console.log('\\n[TEST 84] Copilot proposal approval records review without performing the mutation');
+    const secondCopilot = await request('/api/copilot/chat', {
+      method: 'POST',
+      body: JSON.stringify({
+        message: 'Create contact John Smith with email john@proposal-example.test and company Example Labs'
+      })
+    });
+    const secondProposalId = secondCopilot.data.message?.toolResults?.find(item => item.tool === 'create_contact')?.result?.id;
+    if (!secondProposalId) throw new Error('Second Copilot contact proposal was not created');
+    const proposalApproval = await request(`/api/copilot/proposals/${secondProposalId}/approve`, { method: 'POST' });
+    if (proposalApproval.status !== 200 ||
+        proposalApproval.data.proposal?.status !== 'approved' ||
+        proposalApproval.data.execution?.status !== 'not_executed' ||
+        proposalApproval.data.execution?.code !== 'APPROVAL_RECORDED_ONLY') {
+      throw new Error('Copilot approval did not clearly distinguish a review decision from execution');
+    }
+    const johnVerify = await request('/api/crm/contacts?search=John');
+    if ((johnVerify.data.data || []).some(item => item.email === 'john@proposal-example.test')) {
+      throw new Error('Approving a proposal unexpectedly executed its CRM mutation');
+    }
+    console.log('✅ Proposal approval is recorded separately from execution and does not mutate CRM data');
+
+    console.log('\n🎉 ALL 84 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;
