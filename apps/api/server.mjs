@@ -29,7 +29,7 @@ import { createActionInvocation, getWorkflowActionDefinition } from '../../packa
 import { createPendingApproval, resolvePendingApproval } from '../../packages/workflow-engine/src/approval-lifecycle.mjs';
 import { createProviderConnection, revokeProviderConnection, publicProviderConnection, PROVIDER_CATALOG } from '../../packages/platform-core/src/provider-lifecycle.mjs';
 import { recordConsent } from '../../packages/platform-core/src/consent-policy.mjs';
-import { authorizeCopilotTool, createCopilotProposal } from '../../packages/platform-core/src/tool-permissions.mjs';
+import { authorizeCopilotTool, createCopilotProposal, getCopilotToolDefinition } from '../../packages/platform-core/src/tool-permissions.mjs';
 import { resolveEntitlements, listPlans, checkFeatureAccess, checkUsageLimit, createUsageEvent, aggregateUsage } from '../../packages/platform-core/src/entitlements.mjs';
 import { workflowQueue } from './queue.mjs';
 
@@ -4061,20 +4061,18 @@ const server = createServer(async (req, res) => {
         toolResults.push({ tool: 'get_calendar_availability', result });
       }
 
-      // Autonomous Tool: Create Contact
+      // AI may read tenant data and draft changes. Mutations are persisted as
+      // proposals only; this endpoint never executes a write tool.
       if (lowerMsg.includes('create contact') || lowerMsg.includes('add contact') || lowerMsg.includes('new contact') || lowerMsg.includes('new lead')) {
-        const emailMatch = message.match(/[\w.-]+@[\w.-]+\.\w+/);
-        const nameMatch = message.match(/(?:contact|lead)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i) ||
-                          message.match(/name[d]?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
-        const companyMatch = message.match(/company\s+(?:is\s+)?([A-Za-z0-9&.\s]+?)(?:$|\s+(?:with|and|email))/i);
-
+        const emailMatch = message.match(/[\\w.-]+@[\\w.-]+\\.\\w+/);
+        const nameMatch = message.match(/(?:contact|lead)\\s+([A-Z][a-z]+(?:\\s+[A-Z][a-z]+)?)/i) ||
+                          message.match(/name[d]?\\s+([A-Z][a-z]+(?:\\s+[A-Z][a-z]+)?)/i);
+        const companyMatch = message.match(/company\\s+(?:is\\s+)?([A-Za-z0-9&.\\s]+?)(?:$|\\s+(?:with|and|email))/i);
         const fullName = nameMatch ? nameMatch[1].trim() : 'New Lead';
         const [firstName, ...rest] = fullName.split(' ');
-        const lastName = rest.join(' ');
-
-        const result = await copilotTools.create_contact.execute({
+        const result = await storeCopilotProposal('create_contact', {
           firstName,
-          lastName,
+          lastName: rest.join(' '),
           email: emailMatch ? emailMatch[0] : '',
           company: companyMatch ? companyMatch[1].trim() : '',
           tags: ['copilot-lead']
@@ -4082,41 +4080,58 @@ const server = createServer(async (req, res) => {
         toolResults.push({ tool: 'create_contact', result });
       }
 
-      // Autonomous Tool: Trigger Workflow
       if (lowerMsg.includes('trigger workflow') || lowerMsg.includes('run workflow') || lowerMsg.includes('execute workflow')) {
-        const wfMatch = message.match(/(?:workflow)\s+["']?([^"'\n]+?)["']?$/i) ||
-                        message.match(/(?:run|trigger|execute)\s+["']?([^"'\n]+?)(?:workflow)?["']?$/i);
-        const wfName = wfMatch ? wfMatch[1].trim() : '';
-        const result = await copilotTools.trigger_workflow.execute({ workflowName: wfName }, actor);
+        const wfMatch = message.match(/(?:workflow)\\s+["']?([^"'\\n]+?)["']?$/i) ||
+                        message.match(/(?:run|trigger|execute)\\s+["']?([^"'\\n]+?)(?:workflow)?["']?$/i);
+        const result = await storeCopilotProposal('trigger_workflow', {
+          workflowName: wfMatch ? wfMatch[1].trim() : ''
+        }, actor);
         toolResults.push({ tool: 'trigger_workflow', result });
       }
 
-      // Autonomous Tool: Move Opportunity / Deal Stage
       if (lowerMsg.includes('move opportunity') || lowerMsg.includes('update stage') || lowerMsg.includes('move deal')) {
-        const stageMatch = message.match(/to\s+([A-Za-z]+)/i);
-        const targetStage = stageMatch ? stageMatch[1] : 'Qualified';
-        const oppMatch = message.match(/(?:opportunity|deal)\s+["']?([^"'\n]+?)["']?\s+to/i);
-        const oppName = oppMatch ? oppMatch[1].trim() : '';
-        const result = await copilotTools.update_opportunity_stage.execute({ name: oppName, stage: targetStage }, actor);
+        const stageMatch = message.match(/to\\s+([A-Za-z]+)/i);
+        const oppMatch = message.match(/(?:opportunity|deal)\\s+["']?([^"'\\n]+?)["']?\\s+to/i);
+        const result = await storeCopilotProposal('update_opportunity_stage', {
+          name: oppMatch ? oppMatch[1].trim() : '',
+          stage: stageMatch ? stageMatch[1] : 'Qualified'
+        }, actor);
         toolResults.push({ tool: 'update_opportunity_stage', result });
       }
 
-      // Autonomous Tool: Send Communication
       if (lowerMsg.includes('send sms') || lowerMsg.includes('send email') || lowerMsg.includes('send message')) {
         const channel = lowerMsg.includes('email') ? 'email' : 'sms';
-        const textMatch = message.match(/(?:saying|message|text)\s+["']?(.+?)["']?$/i);
-        const msgText = textMatch ? textMatch[1].trim() : 'Hello from Operza';
-        const recipientMatch = message.match(/to\s+([A-Za-z0-9@.\s]+?)(?:\s+saying|\s+message|$)/i);
-        const recipient = recipientMatch ? recipientMatch[1].trim() : '';
-        const result = await copilotTools.send_communication.execute({ recipient, channel, message: msgText }, actor);
+        const textMatch = message.match(/(?:saying|message|text)\\s+["']?(.+?)["']?$/i);
+        const recipientMatch = message.match(/to\\s+([A-Za-z0-9@.\\s]+?)(?:\\s+saying|\\s+message|$)/i);
+        const result = await storeCopilotProposal('send_communication', {
+          recipient: recipientMatch ? recipientMatch[1].trim() : '',
+          channel,
+          message: textMatch ? textMatch[1].trim() : 'Hello from Operza'
+        }, actor);
         toolResults.push({ tool: 'send_communication', result });
       }
 
-      // Explicit tool calling mode
       if (requestedTools && Array.isArray(requestedTools)) {
         for (const tc of requestedTools) {
-          const result = await resolveCopilotToolCall(tc.name, tc.params || {}, actor);
-          toolResults.push({ tool: tc.name, result });
+          const toolName = typeof tc?.name === 'string' ? tc.name : '';
+          const definition = getCopilotToolDefinition(toolName);
+          const capability = definition?.readOnly ? 'copilotRead' : 'copilotProposals';
+          const feature = checkFeatureAccess(getTenantEntitlements(agency.id), capability);
+          const decision = authorizeCopilotTool({
+            toolName,
+            actorRole: actor.membership.role,
+            tenantCapability: feature.allowed,
+            agentGrant: state.aiToolGrants?.[agency.id]?.[toolName] !== false
+          });
+          if (decision.decision === 'allow_read') {
+            const result = await resolveCopilotToolCall(toolName, tc.params || {}, actor);
+            toolResults.push({ tool: toolName, result });
+          } else if (decision.decision === 'proposal_only') {
+            const result = await storeCopilotProposal(toolName, tc.params || {}, actor);
+            toolResults.push({ tool: toolName, result });
+          } else {
+            toolResults.push({ tool: toolName || 'unknown', result: { error: decision.code, decision: decision.decision } });
+          }
         }
       }
 
@@ -4128,7 +4143,9 @@ const server = createServer(async (req, res) => {
       if (toolResults.length > 0) {
         const summaries = [];
         for (const tr of toolResults) {
-          if (tr.tool === 'create_contact' && tr.result.success) {
+          if (tr.result?.status === 'pending_review') {
+            summaries.push(`📝 Drafted **${tr.tool}** proposal (${tr.result.id}). No CRM changes or external messages were executed; human review is required.`);
+          } else if (tr.tool === 'create_contact' && tr.result.success) {
             summaries.push(`✅ Created contact **${tr.result.name}** (${tr.result.email || 'no email'}) under **${tr.result.company || 'Direct'}**.`);
           } else if (tr.tool === 'trigger_workflow' && tr.result.success) {
             summaries.push(`⚡ Executed workflow **${tr.result.workflowName}** (Execution ID: ${tr.result.executionId.slice(0, 8)}). Status: **${tr.result.status}** with ${tr.result.stepsExecuted} step(s).`);
@@ -4155,6 +4172,7 @@ const server = createServer(async (req, res) => {
         role: 'assistant',
         content: responseText,
         toolResults: toolResults.length > 0 ? toolResults : undefined,
+        proposals: toolResults.filter(item => item.result?.status === 'pending_review').map(item => item.result),
         timestamp: new Date().toISOString()
       };
       history.push(assistantMsg);
