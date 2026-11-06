@@ -39,3 +39,27 @@ test('transient handler failure is returned to the repository with bounded retry
   assert.equal(repo.state.failed[0].retryable, true);
   assert.equal(repo.state.failed[0].retryDelayMs, 2_000);
 });
+
+
+test('worker does not acknowledge a job after its lease is lost', async () => {
+  const repo = repositoryWith([{ id: 'job_heartbeat', eventType: 'test.slow', payload: {}, attempts: 1 }]);
+  let heartbeatCalls = 0;
+  let acknowledged = false;
+  repo.renewLease = async () => {
+    heartbeatCalls += 1;
+    return false;
+  };
+  repo.acknowledge = async () => { acknowledged = true; };
+  const result = await runOutboxBatch({
+    repository: repo,
+    workerId: 'worker_heartbeat',
+    leaseMs: 2_000,
+    heartbeatMs: 1_000,
+    handlers: {
+      'test.slow': async () => new Promise(resolve => setTimeout(() => resolve({ ok: true }), 1_150))
+    }
+  });
+  assert.equal(heartbeatCalls, 1);
+  assert.equal(acknowledged, false);
+  assert.equal(result.results[0].status, 'lease_lost');
+});
