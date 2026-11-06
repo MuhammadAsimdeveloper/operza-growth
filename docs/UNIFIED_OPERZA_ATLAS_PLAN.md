@@ -113,7 +113,7 @@ The current implementation starts governance inside packages/workflow-engine to 
 - [x] Default external messaging to safe simulation.
 - [x] Disable direct-URL workflow network nodes until a connector-owned egress path exists.
 - [x] Add focused unit and engine integration tests.
-- [ ] Verify the branch with the repository's complete CI matrix before merge.
+- [ ] Verify the branch with the repository's complete CI matrix before merge. The first two attempts exited before runner assignment (runner_id 0, zero steps/logs); a fresh run is queued, so source verification remains open.
 
 ### Phase 2 — durable approvals and execution records (approval slice implemented; operational guarantees remain open)
 
