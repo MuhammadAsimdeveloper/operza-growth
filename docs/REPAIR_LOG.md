@@ -283,4 +283,56 @@ This document chronicles the step-by-step engineering enhancements, refactoring,
     - 9 / 9 Database & Outbox repository tests.
     - 106 / 106 Enterprise SEO & metadata automated checks.
     - 0 TypeScript compilation errors (`npm run typecheck`).
-    - 126 modules bundled for production (`npm run build`). 
+    - 126 modules bundled for production (`npm run build`).
+
+---
+
+## Epoch 13: AI Workflow Generation via Copilot Swarm & Governed Zapier Flagship Journey
+
+- **Action 13.1 (AI Workflow Generation Tool Registration & Multi-Agent Synthesis):**
+  - Registered `generate_workflow` tool permission in `packages/platform-core/src/tool-permissions.mjs` with `'proposal_only'` governance and `'high'` risk profile.
+  - Enhanced `MultiAgentOrchestrator` in `packages/platform-core/src/multi-agent/orchestrator.mjs` to synthesize 4-node production automation graphs (`tag` trigger, `ai_classify` intent extraction, `condition` human approval gate, `zapier` signed notification) and stage `copilot_proposals` in `pending_review` state.
+  - Added unit test in `packages/platform-core/test/multi-agent.test.mjs` verifying AI workflow proposal generation and token streaming (4 / 4 passing).
+- **Action 13.2 (Proposal Execution Engine & Workflow Mutation):**
+  - Added `generate_workflow` and `trigger_workflow` handlers to `proposalHandlers` in `apps/api/server.mjs`.
+  - Upon operator approval (`POST /api/copilot/proposals/:id/approve`), authorized execution (`POST /api/copilot/proposals/:id/execute`) mutates tenant workflows and generates an immutable action receipt (`rcpt_...`).
+  - Added `condition` and `approval_gate` action definitions to `packages/workflow-engine/src/action-governance.mjs`.
+- **Action 13.3 (Web UI Multi-Agent SSE Stream & Zapier Catalog):**
+  - Enhanced `apps/web/src/components/CopilotHub.tsx` with live SSE token streaming (`/api/copilot/chat/stream`), active agent indicator badges (`supervisor`, `crm_agent`, `automation_agent`, `support_agent`), autonomous handoff event cards, and direct proposal review deep-links.
+  - Enhanced `apps/web/src/pages/Integrations.tsx` with "Zapier & Universal Connectors" tab featuring 22+ app cards, category filtering, and live performList schema inspection.
+  - Added `api.zapier` client methods in `apps/web/src/lib/api.ts`.
+- **Action 13.4 (E2E Test Suite Expansion to 95 Scenarios):**
+  - Added Test 94: AI Workflow Generation via Copilot Swarm & Governed Proposal Execution (natural language generation, SSE stream parsing, operator approval, execution to action receipt, CRM workflow verification).
+  - Added Test 95: Lead-to-Booking Flagship Journey with Governed Zapier Delivery (Zapier REST hook subscription, human approval gate pause & resumption, HMAC-SHA256 Zapier node delivery, calendar booking event dispatch, clean unsubscription).
+  - Implemented resilient `/health` readiness polling in `scripts/test-e2e.mjs` eliminating socket race conditions.
+- **Action 13.5 (Full Verification Milestone — 300 / 300 Automated Checks):**
+  - **300 / 300 automated checks passing across all 5 test suites (100% green)**:
+    - 95 / 95 API E2E scenarios (`scripts/test-e2e.mjs`).
+    - 43 / 43 Workflow Engine tests (`@operza/workflow-engine`).
+    - 47 / 47 Platform Core unit tests (`@operza/platform-core`).
+    - 9 / 9 Database & Outbox repository tests (`@operza/db`).
+    - 106 / 106 Enterprise SEO & metadata automated checks (`scripts/seo-audit/run-seo-checks.mjs`).
+  - 0 TypeScript compilation errors (`npm run typecheck`).
+  - 126 modules bundled cleanly in 4.47s for production (`npm run build`).
+
+---
+
+## Epoch 14: Security Hardening & Expert Code Review Remediation
+
+- **Action 14.1 (Browser Client CSRF Auto-Injection):**
+  - Updated `request()` in `apps/web/src/lib/api.ts` to automatically extract the non-HttpOnly `operza_csrf` cookie in browser environments and inject `x-operza-csrf` on mutating HTTP methods (`POST`, `PUT`, `PATCH`, `DELETE`).
+  - Resolves High finding regarding cookie-authenticated browser session mutations failing server-side double-submit CSRF checks.
+- **Action 14.2 (Four-Eyes Governance for Copilot Proposals):**
+  - Updated `storeCopilotProposal` in `apps/api/server.mjs` to set `actorId: 'agent_copilot_assistant'`, establishing the AI agent as the proposer.
+  - Enforced four-eyes non-self-approval rule in `POST /api/copilot/proposals/:id/approve` (`proposal.requestedByActorId !== actor.user.id`) across both in-memory state and PostgreSQL `platform-repository.mjs` (`requested_by != $5`).
+  - Guarantees human operators cannot approve their own mutations while enabling workspace operators to review and authorize AI-generated proposals.
+- **Action 14.3 (SSE CORS Alignment & Credential Inclusion):**
+  - Replaced wildcard CORS `access-control-allow-origin: *` with origin reflection (`req.headers.origin || 'http://localhost:5173'`) on `/api/copilot/chat/stream` in `apps/api/server.mjs`.
+  - Added `credentials: 'include'` to streaming fetch in `apps/web/src/components/CopilotHub.tsx`.
+- **Action 14.4 (Hardened Sandboxed Workflow `code` Step):**
+  - Added AST/keyword regex rejection in `packages/workflow-engine/src/engine.mjs` blocking `process`, `child_process`, `require`, `eval`, `global`, `globalThis`, `__proto__`, and constructor reflection patterns.
+  - Shadowed sensitive globals (`process`, `global`, `globalThis`, `require`) with `undefined` arguments in strict-mode evaluation sandbox.
+- **Action 14.5 (Verification Suite Green):**
+  - 300 / 300 automated checks passing (43 workflow engine, 47 platform core, 9 db, 106 SEO, 95 E2E).
+  - 0 TypeScript errors (`npm run typecheck`).
+  - Production build successful (`npm run build`). 

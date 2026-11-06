@@ -6,6 +6,9 @@ interface Message {
   id: string;
   sender: 'user' | 'assistant';
   text: string;
+  agent?: string;
+  handoff?: { from: string; to: string; reason?: string };
+  proposal?: { id: string; toolName: string; status: string; params: any };
   timestamp: string;
 }
 
@@ -13,20 +16,26 @@ export function CopilotHub() {
   const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
-    const openAtlasCopilot = () => setIsOpen(true);
-    window.addEventListener('atlas:open-copilot', openAtlasCopilot);
-    return () => window.removeEventListener('atlas:open-copilot', openAtlasCopilot);
+    const openOperzaCopilot = () => setIsOpen(true);
+    window.addEventListener('operza:open-copilot', openOperzaCopilot);
+    window.addEventListener('atlas:open-copilot', openOperzaCopilot);
+    return () => {
+      window.removeEventListener('operza:open-copilot', openOperzaCopilot);
+      window.removeEventListener('atlas:open-copilot', openOperzaCopilot);
+    };
   }, []);
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'welcome',
       sender: 'assistant',
-      text: 'Welcome to Atlas Copilot. I can query your contacts, analyze pipelines, summarize inbound leads, and trigger background automations.',
+      text: 'Welcome to Operza Copilot Swarm. Our autonomous agents (Supervisor, CRM, Automation & Support) can query contacts, qualify leads, generate visual workflows, and manage operations.',
+      agent: 'supervisor',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [activeAgentName, setActiveAgentName] = useState<string>('supervisor');
   const [pendingApprovals, setPendingApprovals] = useState<any[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -69,6 +78,7 @@ export function CopilotHub() {
       id: assistantMessageId,
       sender: 'assistant',
       text: 'Analyzing intent...',
+      agent: activeAgentName,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
@@ -76,14 +86,91 @@ export function CopilotHub() {
     setIsStreaming(true);
 
     try {
-      const res = await api.copilot.chat({ message: userMsg });
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantMessageId
-            ? { ...m, text: res.message?.content || 'Action completed.' }
-            : m
-        )
-      );
+      const response = await fetch(`/api/copilot/chat/stream?message=${encodeURIComponent(userMsg)}`, {
+        headers: { 'Accept': 'text/event-stream' },
+        credentials: 'include'
+      });
+
+      if (!response.ok || !response.body) {
+        // Fallback to legacy chat endpoint
+        const res = await api.copilot.chat({ message: userMsg });
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMessageId
+              ? { ...m, text: res.message?.content || 'Action completed.' }
+              : m
+          )
+        );
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let accumulatedText = '';
+      let currentAgent = activeAgentName;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunkStr = decoder.decode(value, { stream: true });
+        const lines = chunkStr.split('\n');
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === 'token') {
+                accumulatedText += event.token;
+                currentAgent = event.agent || currentAgent;
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantMessageId
+                      ? { ...m, text: accumulatedText, agent: currentAgent }
+                      : m
+                  )
+                );
+              } else if (event.type === 'agent_handoff') {
+                currentAgent = event.to;
+                setActiveAgentName(event.to);
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantMessageId
+                      ? { ...m, handoff: { from: event.from, to: event.to, reason: event.reason } }
+                      : m
+                  )
+                );
+              } else if (event.type === 'proposal_created') {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantMessageId
+                      ? {
+                          ...m,
+                          proposal: {
+                            id: event.proposalId,
+                            toolName: event.toolName,
+                            status: event.status,
+                            params: event.params
+                          }
+                        }
+                      : m
+                  )
+                );
+              }
+            } catch {
+              // Non-JSON or comment chunk
+            }
+          }
+        }
+      }
+
+      if (!accumulatedText) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMessageId ? { ...m, text: 'Request analyzed and completed.' } : m
+          )
+        );
+      }
     } catch (err: any) {
       setMessages((prev) =>
         prev.map((m) =>
@@ -135,7 +222,7 @@ export function CopilotHub() {
           }}
         >
           <Icon name="sparkles" size={18} />
-          <span>Atlas Copilot</span>
+          <span>Operza Copilot</span>
           {pendingApprovals.length > 0 && (
             <span
               style={{
@@ -185,9 +272,9 @@ export function CopilotHub() {
                 <Icon name="sparkles" size={18} />
               </span>
               <div>
-                <div style={{ fontWeight: 600, fontSize: '14px' }}>Atlas Copilot Hub</div>
+                <div style={{ fontWeight: 600, fontSize: '14px' }}>Operza Copilot Swarm</div>
                 <div style={{ fontSize: '11px', color: '#94a3b8' }}>
-                  {isStreaming ? 'Streaming response...' : 'Autonomous Assistant Ready'}
+                  {isStreaming ? `Agent streaming (${activeAgentName})...` : `Active Agent: ${activeAgentName.toUpperCase()}`}
                 </div>
               </div>
             </div>
@@ -268,6 +355,34 @@ export function CopilotHub() {
                   maxWidth: '85%'
                 }}
               >
+                {m.handoff && (
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      color: '#a5b4fc',
+                      backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                      padding: '4px 8px',
+                      borderRadius: '6px',
+                      marginBottom: '4px',
+                      borderLeft: '3px solid #6366f1'
+                    }}
+                  >
+                    ⚡ Switched to {m.handoff.to} ({m.handoff.reason})
+                  </div>
+                )}
+                {m.agent && m.sender === 'assistant' && (
+                  <div
+                    style={{
+                      fontSize: '10px',
+                      color: '#818cf8',
+                      fontWeight: 600,
+                      marginBottom: '2px',
+                      textTransform: 'uppercase'
+                    }}
+                  >
+                    {m.agent.replace('_', ' ')}
+                  </div>
+                )}
                 <div
                   style={{
                     backgroundColor: m.sender === 'user' ? '#4f46e5' : '#334155',
@@ -279,6 +394,54 @@ export function CopilotHub() {
                   }}
                 >
                   {m.text || (isStreaming ? 'Thinking...' : '')}
+                  {m.proposal && (
+                    <div
+                      style={{
+                        marginTop: '8px',
+                        padding: '8px 10px',
+                        backgroundColor: '#0f172a',
+                        borderRadius: '8px',
+                        border: '1px solid #4f46e5'
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          marginBottom: '2px'
+                        }}
+                      >
+                        <span style={{ fontSize: '11px', color: '#a5b4fc', fontWeight: 600 }}>
+                          Proposal: {m.proposal.toolName}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: '10px',
+                            backgroundColor: '#334155',
+                            padding: '2px 5px',
+                            borderRadius: '4px',
+                            color: '#cbd5e1'
+                          }}
+                        >
+                          Pending Review
+                        </span>
+                      </div>
+                      <a
+                        href="/copilot-inbox"
+                        style={{
+                          display: 'inline-block',
+                          fontSize: '11px',
+                          color: '#38bdf8',
+                          textDecoration: 'none',
+                          fontWeight: 500,
+                          marginTop: '2px'
+                        }}
+                      >
+                        Review in Copilot Inbox →
+                      </a>
+                    </div>
+                  )}
                 </div>
                 <div
                   style={{

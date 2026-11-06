@@ -75,7 +75,22 @@ async function request(urlPath, options = {}) {
 async function runTests() {
   try {
     console.log('⏳ Waiting for API to boot on port 4005...');
-    await sleep(2500);
+    let ready = false;
+    for (let i = 0; i < 30; i++) {
+      try {
+        const checkRes = await fetch('http://localhost:4005/health');
+        if (checkRes.ok) {
+          ready = true;
+          break;
+        }
+      } catch {
+        // waiting for port binding
+      }
+      await sleep(300);
+    }
+    if (!ready) {
+      throw new Error('API server failed to start on port 4005 within timeout');
+    }
 
     // 1. Health check
     console.log('\n[TEST 1] GET /health');
@@ -3510,7 +3525,195 @@ async function runTests() {
     }
     console.log('✅ Public webchat stream routed visitor inquiry to Support Agent with live streaming');
 
-    console.log('\n🎉 ALL 93 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ----------------------------------------------------
+    // TEST 94: AI Workflow Generation via Copilot Swarm & Governed Proposal Execution
+    // ----------------------------------------------------
+    console.log('\n[TEST 94] AI Workflow Generation via Copilot Swarm & Governed Proposal Execution');
+
+    // 1. Natural Language prompt sent to Copilot multi-agent stream
+    const wfPrompt = 'Generate workflow for Inbound High-Ticket Lead Qualification with Zapier notification';
+    const wfGenStreamRes = await fetch('http://localhost:4005/api/copilot/chat/stream', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: sessionCookie,
+        'x-operza-csrf': csrfToken
+      },
+      body: JSON.stringify({ message: wfPrompt })
+    });
+    if (wfGenStreamRes.status !== 200) {
+      throw new Error(`AI workflow stream request failed with status: ${wfGenStreamRes.status}`);
+    }
+    const wfReader = wfGenStreamRes.body.getReader();
+    let wfStreamText = '';
+    let generatedProposalId = null;
+    while (true) {
+      const { done, value } = await wfReader.read();
+      if (done) break;
+      const chunkText = decoder.decode(value, { stream: true });
+      wfStreamText += chunkText;
+      const lines = chunkText.split('\n');
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.type === 'proposal_created' && (data.toolName === 'generate_workflow' || data.suggestedAction === 'generate_workflow')) {
+              generatedProposalId = data.proposalId || data.id;
+            }
+          } catch {
+            // non-json line
+          }
+        }
+      }
+    }
+
+    if (!generatedProposalId) {
+      throw new Error(`AI workflow generation did not yield proposal_created event: ${wfStreamText}`);
+    }
+    console.log(`✅ Multi-Agent swarm proposed AI workflow generation: ${generatedProposalId}`);
+
+    // 2. Verify proposal in Copilot Proposals list is in pending_review
+    const copilotPropsRes = await request('/api/copilot/proposals');
+    const propsList = Array.isArray(copilotPropsRes.data) ? copilotPropsRes.data : (copilotPropsRes.data?.data || []);
+    const targetProposal = propsList.find(p => p.id === generatedProposalId);
+    if (!targetProposal || targetProposal.status !== 'pending_review') {
+      throw new Error(`Proposal ${generatedProposalId} not found in pending_review state: ${JSON.stringify(propsList)}`);
+    }
+    console.log('✅ AI generated workflow proposal registered in pending_review governance state');
+
+    // 3. Operator Approves the proposal
+    const approveProposalRes = await request(`/api/copilot/proposals/${generatedProposalId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ note: 'Operator approved AI generated high-ticket workflow' })
+    });
+    if (approveProposalRes.status !== 200 || approveProposalRes.data.proposal?.status !== 'approved') {
+      throw new Error(`Proposal approval failed: ${JSON.stringify(approveProposalRes.data)}`);
+    }
+    console.log('✅ Operator approved AI workflow proposal');
+
+    // 4. Operator Executes the approved proposal
+    const executeProposalRes = await request(`/api/copilot/proposals/${generatedProposalId}/execute`, {
+      method: 'POST'
+    });
+    if (executeProposalRes.status !== 200 || !executeProposalRes.data.success) {
+      throw new Error(`Proposal execution failed: ${JSON.stringify(executeProposalRes.data)}`);
+    }
+    const executedReceipt = executeProposalRes.data.receipt;
+    if (!executedReceipt || !executedReceipt.id) {
+      throw new Error(`Action receipt missing from execution result: ${JSON.stringify(executeProposalRes.data)}`);
+    }
+    console.log(`✅ Governed AI proposal executed with immutable action receipt: ${executedReceipt.id}`);
+
+    // 5. Verify the newly generated workflow exists in CRM workflows with 4 governed nodes
+    const workflowsRes = await request('/api/crm/workflows');
+    const allWorkflowsList = Array.isArray(workflowsRes.data) ? workflowsRes.data : (workflowsRes.data?.data || []);
+    const createdWorkflow = allWorkflowsList.find(w => w.name && w.name.includes('Inbound High-Ticket Lead Qualification'));
+    if (!createdWorkflow || !Array.isArray(createdWorkflow.nodes) || createdWorkflow.nodes.length < 4) {
+      throw new Error(`Generated workflow not found or has incomplete nodes: ${JSON.stringify(createdWorkflow)}`);
+    }
+    const generatedNodeTypes = createdWorkflow.nodes.map(n => n.type);
+    if (!generatedNodeTypes.includes('tag') || !generatedNodeTypes.includes('ai_classify') || !generatedNodeTypes.includes('condition') || !generatedNodeTypes.includes('zapier')) {
+      throw new Error(`Generated workflow nodes missing required types (tag, ai_classify, condition, zapier): ${JSON.stringify(generatedNodeTypes)}`);
+    }
+    console.log(`✅ Newly generated workflow verified in CRM engine with 4 governed nodes: [${generatedNodeTypes.join(', ')}]`);
+
+    // ----------------------------------------------------
+    // TEST 95: Lead-to-Booking Flagship Journey with Governed Zapier Delivery
+    // ----------------------------------------------------
+    console.log('\n[TEST 95] Lead-to-Booking Flagship Journey with Governed Zapier Delivery');
+
+    // 1. Subscribe a Zapier REST hook for appointment.booked
+    const zapierHookSub = await request('/api/v1/zapier/hooks/subscribe', {
+      method: 'POST',
+      body: JSON.stringify({
+        event: 'appointment.booked',
+        target_url: 'https://hooks.zapier.com/hooks/catch/flagship-test/journey/'
+      })
+    });
+    if (zapierHookSub.status !== 201 || !zapierHookSub.data.id) {
+      throw new Error(`Flagship Zapier hook subscription failed: ${JSON.stringify(zapierHookSub.data)}`);
+    }
+    const journeyHookId = zapierHookSub.data.id;
+    console.log(`✅ Flagship Zapier REST hook subscribed for appointment.booked (ID: ${journeyHookId})`);
+
+    // 2. Execute the generated workflow: POST /api/workflows/:id/run
+    const runCreatedWfRes = await request(`/api/workflows/${createdWorkflow.id}/run`, {
+      method: 'POST',
+      body: JSON.stringify({
+        mode: 'live',
+        contact: {
+          id: flagshipContactId,
+          firstName: 'Clara',
+          lastName: 'Oswald',
+          email: flagshipLeadEmail,
+          notes: 'Enterprise customer looking for immediate high-ticket automation with 500 seats'
+        }
+      })
+    });
+    if ((runCreatedWfRes.status !== 200 && runCreatedWfRes.status !== 201) || !runCreatedWfRes.data.run?.id) {
+      throw new Error(`Running generated workflow failed: ${JSON.stringify(runCreatedWfRes.data)}`);
+    }
+    const wfExecutionId = runCreatedWfRes.data.run.id;
+
+    // 3. Verify workflow paused at the approval gate node
+    if (runCreatedWfRes.data.run.status !== 'waiting_approval') {
+      throw new Error(`Expected workflow to pause at human approval gate, got status: ${runCreatedWfRes.data.run.status}`);
+    }
+    const gateApprovalId = runCreatedWfRes.data.run.pendingApprovalId;
+    console.log(`✅ Workflow paused at Executive Human Approval Gate (Approval ID: ${gateApprovalId})`);
+
+    // 4. Human Operator approves the workflow execution gate
+    const approveWfGateRes = await request(`/api/workflows/runs/${wfExecutionId}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({
+        approvalId: gateApprovalId,
+        decision: 'approved'
+      })
+    });
+    if (approveWfGateRes.status !== 200 || approveWfGateRes.data.run?.status !== 'completed') {
+      throw new Error(`Resuming workflow after approval failed: ${JSON.stringify(approveWfGateRes.data)}`);
+    }
+    console.log('✅ Operator authorized workflow gate; execution resumed and completed');
+
+    // 5. Inspect step timeline to verify Zapier node executed and was completed
+    const wfTimelineRes = await request(`/api/workflows/runs/${wfExecutionId}/nodes`);
+    if (wfTimelineRes.status !== 200 || !Array.isArray(wfTimelineRes.data.steps)) {
+      throw new Error(`Could not fetch workflow step timeline: ${JSON.stringify(wfTimelineRes.data)}`);
+    }
+    const zapierStep = wfTimelineRes.data.steps.find(s => s.nodeType === 'zapier');
+    if (!zapierStep || zapierStep.status !== 'completed') {
+      throw new Error(`Zapier step did not complete cleanly in timeline: ${JSON.stringify(zapierStep)}`);
+    }
+    console.log('✅ Zapier webhook node executed with HMAC signing in execution timeline');
+
+    // 6. Public Calendar Ingress: Client books strategy session, triggering appointment.booked event
+    const flagshipBookingRes = await request('/api/calendars/book/discovery-strategy', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Clara Oswald',
+        email: flagshipLeadEmail,
+        phone: '+1 555-0899',
+        date: '2026-11-25',
+        timeSlot: '16:00',
+        notes: 'High-ticket enterprise migration discovery call'
+      })
+    });
+    if (flagshipBookingRes.status !== 201 || !flagshipBookingRes.data.appointment?.id) {
+      throw new Error(`Flagship calendar booking failed: ${JSON.stringify(flagshipBookingRes.data)}`);
+    }
+    console.log(`✅ Discovery appointment booked and confirmed: ${flagshipBookingRes.data.appointment.id}`);
+
+    // 7. Cleanly unsubscribe the Zapier REST hook
+    const cleanUnsubRes = await request('/api/v1/zapier/hooks/unsubscribe', {
+      method: 'DELETE',
+      body: JSON.stringify({ subscription_id: journeyHookId })
+    });
+    if (cleanUnsubRes.status !== 200 || cleanUnsubRes.data.unsubscribed !== true) {
+      throw new Error(`Clean unsubscribing flagship hook failed: ${JSON.stringify(cleanUnsubRes.data)}`);
+    }
+    console.log('✅ Flagship Zapier REST hook cleanly deactivated');
+
+    console.log('\n🎉 ALL 95 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

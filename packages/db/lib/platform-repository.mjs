@@ -268,7 +268,8 @@ export function createPlatformRepository(pool) {
       return withTenant(tenantId, locationId, async client => {
         const result = await client.query(
           "UPDATE copilot_proposals SET status=$4, decided_by=$5, decided_at=now(), review_note=$6 " +
-            "WHERE agency_id=$1 AND location_id=$2 AND id=$3 AND status='pending_review' RETURNING *",
+            "WHERE agency_id=$1 AND location_id=$2 AND id=$3 AND status='pending_review' " +
+            "AND ($4 = 'rejected' OR requested_by IS NULL OR requested_by != $5) RETURNING *",
           [tenantId, locationId, proposalId, decision, actorId, typeof note === 'string' ? note.slice(0, 500) : null]
         );
         return result.rows[0] ? proposalRow(result.rows[0]) : null;

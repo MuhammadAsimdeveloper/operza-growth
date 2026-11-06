@@ -24,6 +24,15 @@ export async function request<T = any>(endpoint: string, options: RequestInit = 
     headers.set('x-operza-location', activeLoc);
   }
 
+  // Auto-inject CSRF token for mutating requests in browser environment
+  const method = (options.method || 'GET').toUpperCase();
+  if (typeof document !== 'undefined' && !['GET', 'HEAD', 'OPTIONS'].includes(method) && !headers.has('x-operza-csrf')) {
+    const csrfMatch = document.cookie.match(/(?:^|;\s*)operza_csrf=([^;]+)/);
+    if (csrfMatch) {
+      headers.set('x-operza-csrf', decodeURIComponent(csrfMatch[1]));
+    }
+  }
+
   const response = await fetch(`${BASE}${endpoint}`, {
     ...options,
     headers,
@@ -409,6 +418,12 @@ export const api = {
       request<{ success: boolean; integration: any }>(`/api/integrations/${id}/disconnect`, { method: 'POST' }),
     test: (id: string) =>
       request<{ success: boolean; latencyMs: number; message: string }>(`/api/integrations/${id}/test`, { method: 'POST' }),
+  },
+  zapier: {
+    getAuth: () => request<{ valid: boolean; scopes: string[]; tenantId: string; agencyName: string }>('/api/v1/zapier/auth/me'),
+    getSamples: (event: string) => request<any[]>(`/api/v1/zapier/samples/${encodeURIComponent(event)}`),
+    subscribeHook: (data: { target_url: string; event: string }) => request<any>('/api/v1/zapier/hooks/subscribe', { method: 'POST', body: JSON.stringify(data) }),
+    unsubscribeHook: (subscription_id: string) => request<any>('/api/v1/zapier/hooks/unsubscribe', { method: 'DELETE', body: JSON.stringify({ subscription_id }) })
   },
   aiTrainer: {
     getConfig: () => request<{ config: any }>('/api/ai/config'),

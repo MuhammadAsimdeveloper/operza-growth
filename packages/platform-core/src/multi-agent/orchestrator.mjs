@@ -55,10 +55,10 @@ export class MultiAgentOrchestrator {
       const lower = message.toLowerCase();
 
       if (agent.id === AGENT_ROLES.SUPERVISOR) {
-        if (lower.includes('contact') || lower.includes('deal') || lower.includes('pipeline') || lower.includes('opportunity') || lower.includes('lead') || lower.includes('appointment')) {
-          targetHandoff = { targetAgent: AGENT_ROLES.CRM, reason: 'CRM, pipeline, or contact inquiry detected' };
-        } else if (lower.includes('workflow') || lower.includes('zapier') || lower.includes('automation') || lower.includes('webhook') || lower.includes('trigger')) {
+        if (lower.includes('workflow') || lower.includes('zapier') || lower.includes('automation') || lower.includes('webhook') || lower.includes('trigger')) {
           targetHandoff = { targetAgent: AGENT_ROLES.AUTOMATION, reason: 'Automation, workflow, or Zapier inquiry detected' };
+        } else if (lower.includes('contact') || lower.includes('deal') || lower.includes('pipeline') || lower.includes('opportunity') || lower.includes('lead') || lower.includes('appointment')) {
+          targetHandoff = { targetAgent: AGENT_ROLES.CRM, reason: 'CRM, pipeline, or contact inquiry detected' };
         } else if (lower.includes('support') || lower.includes('help') || lower.includes('hours') || lower.includes('faq') || lower.includes('how do i')) {
           targetHandoff = { targetAgent: AGENT_ROLES.SUPPORT, reason: 'Customer support or knowledge base inquiry detected' };
         }
@@ -107,7 +107,64 @@ export class MultiAgentOrchestrator {
           };
         }
       } else if (agent.id === AGENT_ROLES.AUTOMATION) {
-        if (lower.includes('trigger workflow') || lower.includes('run workflow')) {
+        if (lower.includes('generate workflow') || lower.includes('build workflow') || lower.includes('create workflow') || lower.includes('build automation') || lower.includes('generate automation')) {
+          const nameMatch = message.match(/(?:workflow|automation)(?:\s+(?:named|called|for))?\s+["']?([^"'\n]+?)["']?$/i);
+          const wfName = nameMatch ? nameMatch[1].trim() : 'AI Generated Growth Workflow';
+
+          const generatedNodes = [
+            {
+              id: 'node-trigger-inbound',
+              name: 'Inbound Lead Trigger',
+              type: 'tag',
+              config: { tag: 'inbound-prospect' }
+            },
+            {
+              id: 'node-ai-classify',
+              name: 'Cognitive Intent Classifier',
+              type: 'ai_classify',
+              config: {
+                text: '{{contact.notes}}',
+                categories: ['enterprise_sales', 'standard_support', 'general_inquiry'],
+                resultVariable: 'lead_intent'
+              }
+            },
+            {
+              id: 'node-approval-gate',
+              name: 'Executive Human Approval Gate',
+              type: 'condition',
+              requiresApproval: true,
+              config: { message: 'Verify enterprise lead qualification before outbound transmission' }
+            },
+            {
+              id: 'node-zapier-notify',
+              name: 'Zapier Slack Notification',
+              type: 'zapier',
+              config: {
+                hookUrl: 'https://hooks.zapier.com/hooks/catch/999999/alpha/',
+                payload: { event: 'lead_qualified', contactEmail: '{{contact.email}}' }
+              }
+            }
+          ];
+
+          const toolParams = {
+            name: wfName,
+            status: 'draft',
+            triggerType: 'tag',
+            triggerConfig: { tag: 'inbound-prospect' },
+            nodes: generatedNodes
+          };
+
+          yield { type: 'tool_executing', tool: 'generate_workflow', params: toolParams };
+
+          const proposal = await this.proposalStore('generate_workflow', toolParams, actor, context);
+          yield {
+            type: 'proposal_created',
+            proposalId: proposal.id,
+            toolName: 'generate_workflow',
+            status: proposal.status || 'pending_review',
+            params: toolParams
+          };
+        } else if (lower.includes('trigger workflow') || lower.includes('run workflow')) {
           const wfMatch = message.match(/(?:workflow)\s+["']?([^"'\n]+?)["']?$/i);
           const toolParams = { workflowName: wfMatch ? wfMatch[1].trim() : 'Lead Triage' };
           yield { type: 'tool_executing', tool: 'trigger_workflow', params: toolParams };

@@ -10,6 +10,7 @@ const TOOL_RISK = Object.freeze({
   book_appointment: 'write',
   update_opportunity_stage: 'write',
   trigger_workflow: 'workflow',
+  generate_workflow: 'workflow',
   send_communication: 'external_side_effect'
 });
 

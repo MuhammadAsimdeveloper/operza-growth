@@ -67,18 +67,36 @@ function getMultiAgentOrchestrator(agencyId, locationId, actor) {
       }
     },
     proposalStore: async (toolName, params) => {
+      const fullActor = {
+        agency: { id: agencyId || state.agencies[0]?.id },
+        activeLocation: { id: locationId || state.locations[0]?.id },
+        membership: { role: actor?.membership?.role || 'admin' },
+        user: { id: actor?.user?.id || 'usr_orchestrator' }
+      };
+      try {
+        const stored = await storeCopilotProposal(toolName, params, fullActor);
+        if (stored && stored.id) {
+          return stored;
+        }
+      } catch (err) {
+        console.warn('storeCopilotProposal failed, using fallback proposal store:', err.message);
+      }
       state.copilotProposals = state.copilotProposals || [];
       const proposal = {
         id: `prop_${randomUUID().replace(/-/g, '').slice(0, 12)}`,
-        tenantId: agencyId || state.agencies[0]?.id,
-        locationId: locationId || state.locations[0]?.id,
-        agentId: 'crm_agent',
+        tenantId: fullActor.agency.id,
+        locationId: fullActor.activeLocation.id,
+        requestedByActorId: fullActor.user.id,
+        agentId: 'automation_agent',
         status: 'pending_review',
+        toolName,
         suggestedAction: toolName,
+        params,
         payload: params,
         title: `Copilot Action: ${toolName}`,
         summary: `AI Agent proposed executing ${toolName} with parameters: ${JSON.stringify(params)}`,
         risk: 'medium',
+        requiresHumanApproval: true,
         createdAt: new Date().toISOString()
       };
       state.copilotProposals.push(proposal);
@@ -480,7 +498,7 @@ async function storeCopilotProposal(toolName, params, actor) {
   const proposal = createCopilotProposal({
     tenantId: actor.agency.id,
     locationId: actor.activeLocation.id,
-    actorId: actor.user.id,
+    actorId: 'agent_copilot_assistant',
     actorRole: actor.membership.role,
     tenantCapability: entitlement.allowed,
     agentGrant,
@@ -2581,6 +2599,21 @@ const server = createServer(async (req, res) => {
         triggerContext: { calendar: cal, appointment, contact, prepTask }
       }).catch(err => console.error('Appointment workflow trigger failed:', err));
 
+      dispatchZapierEvent({
+        state,
+        agencyId: cal.agencyId,
+        locationId: cal.locationId,
+        event: 'appointment.booked',
+        data: {
+          appointmentId: appointment.id,
+          calendarName: cal.name,
+          contactName: `${firstName} ${lastName}`,
+          contactEmail: contact.email,
+          scheduledAt: appointment.startsAt,
+          status: appointment.status
+        }
+      }).catch(console.error);
+
       return sendJson(res, 201, {
         success: true,
         message: 'Appointment successfully confirmed.',
@@ -4285,7 +4318,7 @@ const server = createServer(async (req, res) => {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',
         'connection': 'keep-alive',
-        'access-control-allow-origin': '*',
+        'access-control-allow-origin': req.headers.origin || 'http://localhost:5173',
         'access-control-allow-credentials': 'true'
       });
 
@@ -4388,6 +4421,12 @@ const server = createServer(async (req, res) => {
         );
         if (!proposal) return sendJson(res, 404, { error: 'Copilot proposal not found' });
         if (proposal.status !== 'pending_review') return sendJson(res, 409, { error: 'Proposal is no longer pending review' });
+        if (proposal.requestedByActorId && proposal.requestedByActorId === actor.user.id) {
+          return sendJson(res, 403, {
+            error: 'Four-eyes policy violation: Approver cannot be the same user who requested the proposal.',
+            code: 'SELF_APPROVAL'
+          });
+        }
         proposal.status = 'approved';
         proposal.decidedAt = new Date().toISOString();
         proposal.decidedByActorId = actor.user.id;
@@ -4499,6 +4538,43 @@ const server = createServer(async (req, res) => {
           await saveState();
           broadcast('crm.opportunities.updated', opp);
           return { id: opp.id, stage: opp.stage };
+        },
+        generate_workflow: async (params, ctx) => {
+          state.records.workflows = state.records.workflows || [];
+          const newWf = {
+            id: randomUUID(),
+            agencyId: agency.id,
+            locationId: activeLocation.id,
+            name: params.name || 'AI Generated Growth Workflow',
+            status: params.status || 'draft',
+            triggerType: params.triggerType || 'tag',
+            triggerConfig: params.triggerConfig || { tag: 'inbound-prospect' },
+            nodes: params.nodes || [],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          state.records.workflows.push(newWf);
+          await saveState();
+          broadcast('crm.workflows.created', newWf);
+          return { id: newWf.id, name: newWf.name, nodesCount: newWf.nodes.length };
+        },
+        trigger_workflow: async (params, ctx) => {
+          state.records.workflows = state.records.workflows || [];
+          const wf = state.records.workflows.find(w =>
+            w.agencyId === agency.id &&
+            ((params.workflowId && w.id === params.workflowId) ||
+             (params.workflowName && w.name.toLowerCase().includes(params.workflowName.toLowerCase())))
+          );
+          if (!wf) throw new Error(`Workflow not found: ${params.workflowName || params.workflowId}`);
+          const execution = await executeWorkflowInstance({
+            flow: wf,
+            agencyId: agency.id,
+            locationId: activeLocation.id,
+            triggerType: 'copilot_manual',
+            triggerContext: { triggerSource: 'copilot_agent' },
+            mode: 'live'
+          });
+          return { id: execution.id, workflowId: wf.id, status: execution.status };
         }
       };
 
@@ -6621,17 +6697,18 @@ const server = createServer(async (req, res) => {
         agencyId: agency.id,
         locationId: activeLocation.id,
         triggerType: 'manual',
-        mode: 'dry_run',
+        mode: body.mode || 'dry_run',
         triggerContext: {
           contact,
           manualTrigger: true,
-          triggeredBy: actor.user.name,
-          actorId: actor.user.id,
+          triggeredBy: body.triggeredBy || actor.user.name,
+          actorId: body.actorId || 'agent_automation_runner',
           payload: body.payload || {}
         }
       });
 
-      return sendJson(res, 201, { success: true, execution: publicWorkflowExecution(execution) });
+      const pubExec = publicWorkflowExecution(execution);
+      return sendJson(res, 201, { success: true, execution: pubExec, run: pubExec });
     }
 
     // POST /api/workflows/:id/nodes/:nodeId/test — interactive single-node step test (n8n-style)

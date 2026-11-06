@@ -79,3 +79,33 @@ test('MultiAgentOrchestrator converts write requests into pending proposals', as
   assert.equal(proposalEvent.status, 'pending_review');
   assert.equal(proposalCreated.params.email, 'john@resistance.test');
 });
+
+test('MultiAgentOrchestrator routes workflow generation requests to automation agent and creates proposal', async () => {
+  let proposalCreated = null;
+  const runtime = createDefaultLLMRuntime();
+  const orchestrator = new MultiAgentOrchestrator({
+    llmRuntime: runtime,
+    proposalStore: async (toolName, params) => {
+      proposalCreated = { id: 'prop_wf_01', toolName, params, status: 'pending_review' };
+      return proposalCreated;
+    }
+  });
+
+  const events = [];
+  for await (const event of orchestrator.processUserMessageStream({
+    message: 'Generate workflow for Enterprise Lead Qualification with Zapier'
+  })) {
+    events.push(event);
+  }
+
+  const handoff = events.find(e => e.type === 'agent_handoff');
+  assert.ok(handoff);
+  assert.equal(handoff.to, AGENT_ROLES.AUTOMATION);
+
+  const proposalEvent = events.find(e => e.type === 'proposal_created');
+  assert.ok(proposalEvent);
+  assert.equal(proposalEvent.toolName, 'generate_workflow');
+  assert.equal(proposalEvent.status, 'pending_review');
+  assert.ok(proposalCreated.params.nodes.length >= 3);
+  assert.ok(proposalCreated.params.nodes.some(n => n.type === 'zapier'));
+});
