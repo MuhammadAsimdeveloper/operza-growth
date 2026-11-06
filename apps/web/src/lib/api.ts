@@ -94,8 +94,22 @@ export const api = {
   },
   workflows: {
     getRuns: () => request('/api/workflows/runs'),
-    approveRun: (runId: string) =>
-      request(`/api/workflows/runs/${runId}/approve`, { method: 'POST' }),
+    getPendingApprovals: () => request('/api/workflows/approvals'),
+    decideApproval: (runId: string, approvalId: string | undefined, decision: 'approved' | 'rejected') =>
+      request(`/api/workflows/runs/${runId}/${decision === 'approved' ? 'approve' : 'reject'}`, {
+        method: 'POST',
+        body: JSON.stringify({ approvalId, decision }),
+      }),
+    approveRun: (runId: string, approvalId?: string) =>
+      request(`/api/workflows/runs/${runId}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ approvalId, decision: 'approved' }),
+      }),
+    rejectRun: (runId: string, approvalId?: string) =>
+      request(`/api/workflows/runs/${runId}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ approvalId, decision: 'rejected' }),
+      }),
     run: (workflowId: string, data: { contactId?: string; payload?: any } = {}) =>
       request(`/api/workflows/${workflowId}/run`, { method: 'POST', body: JSON.stringify(data) }),
   },
