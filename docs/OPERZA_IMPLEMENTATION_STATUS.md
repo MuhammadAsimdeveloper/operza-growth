@@ -4,7 +4,7 @@
 > **Platform Version:** Operza Unified Business Operating System v2.0  
 > **Active Implementation Branch:** `feat/operza-unified-atlas-automation`  
 > **Base Ancestry Commit:** `b7f448adb06d7bd958a305c29c6f488d45e036e3` (180 commits ahead of `origin/main`)  
-> **Verification Status:** 300 / 300 automated checks passing (100% green across all 5 test suites)  
+> **Verification Status:** 304 / 304 automated checks passing (100% green across all 5 test suites)  
 > **Last Audited:** November 2026
 
 ---
@@ -30,6 +30,7 @@ Operza Growth is the single, cohesive destination combining CRM, visual workflow
 |  |  CRM Engine  |  Funnels & Sites  |  Calendar Ingress  |  Twilio/Stripe Ingress  |  |
 |  |  Workflow Run Timeline Endpoint |  Interactive Step-by-Step Node Test Endpoint  |  |
 |  |  Zapier REST Hooks & Inbound Actions API  |  Multi-Agent SSE Copilot Stream     |  |
+|  |  Sub-Workflow Orchestrator & Timed Delay Scheduler Resumption                  |  |
 |  +---------------------------------------------------------------------------------+  |
 +---------------------------------------------------------------------------------------+
 |                                PLATFORM ENGINE LAYER                                  |
@@ -41,7 +42,7 @@ Operza Growth is the single, cohesive destination combining CRM, visual workflow
 |  | (AES-256-GCM / env/kms)   |  | (Resend/Twilio/Stripe)   |  |  (Action Receipts) |  |
 |  +---------------------------+  +--------------------------+  +--------------------+  |
 |  |  Local LLM Runtime Engine |  |  Multi-Agent Orchestrator|  |  Zapier Connectors |  |
-|  | (Offline / Ollama / Cloud)|  | (Handoffs / Role Scopes) |  | (22+ App Catalog)  |  |
+|  | (smollm:135m / Ollama)    |  | (Handoffs / Role Scopes) |  | (22+ App Catalog)  |  |
 |  +---------------------------+  +--------------------------+  +--------------------+  |
 +---------------------------------------------------------------------------------------+
 |                                PERSISTENCE LAYER                                      |
@@ -60,14 +61,14 @@ Every claim in this report is backed by real execution output from local and sui
 
 | Test Suite | File / Command | Checks / Scenarios | Pass Rate | Status |
 | :--- | :--- | :---: | :---: | :---: |
-| **API End-to-End System Suite** | `scripts/test-e2e.mjs` | **95 scenarios** | 95 / 95 (100%) | **PASS** |
+| **API End-to-End System Suite** | `scripts/test-e2e.mjs` | **96 scenarios** | 96 / 96 (100%) | **PASS** |
 | **Platform Core Domain Suite** | `@operza/platform-core` | **47 unit tests** | 47 / 47 (100%) | **PASS** |
-| **Workflow Engine Core Suite** | `@operza/workflow-engine` | **43 unit tests** | 43 / 43 (100%) | **PASS** |
+| **Workflow Engine Core Suite** | `@operza/workflow-engine` | **46 unit tests** | 46 / 46 (100%) | **PASS** |
 | **Database & Outbox Repo Suite**| `@operza/db` | **9 unit tests** | 9 / 9 (100%) | **PASS** |
 | **Enterprise SEO & Meta Suite** | `scripts/seo-audit/run-seo-checks.mjs` | **106 automated checks** | 106 / 106 (100%) | **PASS** |
 | **TypeScript Strict Checking** | `npm run typecheck` | Web & Packages | 0 errors | **PASS** |
 | **Production Bundle Build** | `npm run build` | 126 modules | 0 warnings/errors | **PASS** |
-| **TOTAL VERIFIED CHECKS** | | **300 checks** | **300 / 300 (100%)** | **GREEN** |
+| **TOTAL VERIFIED CHECKS** | | **304 checks** | **304 / 304 (100%)** | **GREEN** |
 
 ---
 

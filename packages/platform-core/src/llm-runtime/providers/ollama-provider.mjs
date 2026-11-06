@@ -12,14 +12,17 @@ export class OllamaProvider {
     this.id = 'ollama';
     this.name = 'Ollama Local Daemon';
     this.baseUrl = (options.baseUrl || process.env.OLLAMA_HOST || 'http://localhost:11434').replace(/\/$/, '');
-    this.modelName = options.model || process.env.OLLAMA_MODEL || 'llama3';
+    this.modelName = options.model || process.env.OLLAMA_MODEL || 'smollm:135m';
     this.fetchFn = options.fetchFn || globalThis.fetch;
   }
 
   async isAvailable() {
     try {
       const res = await this.fetchFn(`${this.baseUrl}/api/tags`, { method: 'GET', signal: AbortSignal.timeout(1500) });
-      return res.ok;
+      if (!res.ok) return false;
+      const data = await res.json().catch(() => ({}));
+      const models = data.models || [];
+      return Array.isArray(models) && models.length > 0;
     } catch {
       return false;
     }
@@ -36,7 +39,8 @@ export class OllamaProvider {
       messages: formattedMessages,
       stream: false,
       options: {
-        temperature: options.temperature ?? 0.7
+        temperature: options.temperature ?? 0.7,
+        num_predict: options.maxTokens || 128
       }
     };
 
@@ -73,7 +77,8 @@ export class OllamaProvider {
       messages: formattedMessages,
       stream: true,
       options: {
-        temperature: options.temperature ?? 0.7
+        temperature: options.temperature ?? 0.7,
+        num_predict: options.maxTokens || 128
       }
     };
 

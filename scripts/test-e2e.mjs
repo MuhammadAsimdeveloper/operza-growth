@@ -3713,7 +3713,145 @@ async function runTests() {
     }
     console.log('✅ Flagship Zapier REST hook cleanly deactivated');
 
-    console.log('\n🎉 ALL 95 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ----------------------------------------------------
+    // TEST 96: Modular Sub-Workflow Invocation & Timed Delay Resumption
+    // ----------------------------------------------------
+    console.log('\n[TEST 96] Modular Sub-Workflow Invocation & Timed Delay Resumption');
+
+    // 1. Create a child reusable sub-workflow "Lead Enrichment Sub-Workflow"
+    const subWfCreateRes = await request('/api/crm/workflows', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Lead Enrichment Sub-Workflow',
+        status: 'published',
+        triggerType: 'sub_workflow',
+        nodes: [
+          {
+            id: 'node-score-1',
+            name: 'Increment Lead Score',
+            type: 'lead_score',
+            config: { points: 30 }
+          },
+          {
+            id: 'node-alert-1',
+            name: 'Notify Sales Channel',
+            type: 'internal_notification',
+            config: {
+              title: 'Prospect Reached Scoring Threshold',
+              message: 'Lead score increased by 30 points.',
+              channel: 'in_app'
+            }
+          }
+        ]
+      })
+    });
+    if (subWfCreateRes.status !== 201 || !subWfCreateRes.data.id) {
+      throw new Error(`Failed to create sub-workflow: ${JSON.stringify(subWfCreateRes.data)}`);
+    }
+    const subWorkflowId = subWfCreateRes.data.id;
+    console.log(`✅ Child reusable sub-workflow created: ${subWorkflowId}`);
+
+    // 2. Create a parent workflow that includes a wait delay and sub_workflow invocation
+    const parentWfCreateRes = await request('/api/crm/workflows', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Parent Inbound Prospect Flow',
+        status: 'published',
+        triggerType: 'manual',
+        nodes: [
+          {
+            id: 'node-wait-1',
+            name: 'Wait 15 Minutes',
+            type: 'wait',
+            config: { durationMinutes: 15 }
+          },
+          {
+            id: 'node-invoke-sub',
+            name: 'Invoke Enrichment Sub-Workflow',
+            type: 'sub_workflow',
+            config: { workflowId: subWorkflowId }
+          }
+        ]
+      })
+    });
+    if (parentWfCreateRes.status !== 201 || !parentWfCreateRes.data.id) {
+      throw new Error(`Failed to create parent workflow: ${JSON.stringify(parentWfCreateRes.data)}`);
+    }
+    const parentWorkflowId = parentWfCreateRes.data.id;
+    console.log(`✅ Parent workflow created with delay and sub-workflow nodes: ${parentWorkflowId}`);
+
+    // 3. Create a test contact for the workflow run
+    const testLeadContact = await request('/api/crm/contacts', {
+      method: 'POST',
+      body: JSON.stringify({
+        firstName: 'Arthur',
+        lastName: 'Dent',
+        email: `arthur_${Date.now()}@galaxy.test`,
+        phone: '+1 555-4242'
+      })
+    });
+    const contactId = testLeadContact.data.id;
+
+    // 4. Trigger parent workflow execution
+    const runParentRes = await request(`/api/workflows/${parentWorkflowId}/run`, {
+      method: 'POST',
+      body: JSON.stringify({ contactId, mode: 'live' })
+    });
+    if (runParentRes.status !== 201 || runParentRes.data.execution?.status !== 'waiting') {
+      throw new Error(`Expected parent workflow to enter waiting status, got: ${JSON.stringify(runParentRes.data)}`);
+    }
+    const delayedExecutionId = runParentRes.data.execution.id;
+    if (!runParentRes.data.execution.retryAt) {
+      throw new Error(`Expected retryAt timestamp on waiting execution: ${JSON.stringify(runParentRes.data)}`);
+    }
+    console.log(`✅ Parent workflow paused cleanly at wait node in status="waiting" with retryAt="${runParentRes.data.execution.retryAt}"`);
+
+    // 5. Advance the delayed execution via the tick endpoint
+    const tickRes = await request(`/api/workflows/runs/${delayedExecutionId}/tick`, {
+      method: 'POST'
+    });
+    if (tickRes.status !== 200 || tickRes.data.execution?.status !== 'completed') {
+      throw new Error(`Failed to advance waiting workflow execution via tick: ${JSON.stringify(tickRes.data)}`);
+    }
+    console.log('✅ Delayed workflow resumed and executed through sub-workflow to status="completed"');
+
+    // 6. Inspect node execution timeline to verify child sub-workflow invocation
+    const subTimelineRes = await request(`/api/workflows/runs/${delayedExecutionId}/nodes`);
+    if (subTimelineRes.status !== 200 || !Array.isArray(subTimelineRes.data.steps)) {
+      throw new Error(`Failed to fetch node timeline: ${JSON.stringify(subTimelineRes.data)}`);
+    }
+    const subWfStep = subTimelineRes.data.steps.find(s => s.nodeId === 'node-invoke-sub');
+    if (!subWfStep || subWfStep.status !== 'completed' || subWfStep.result?.subWorkflowId !== subWorkflowId) {
+      throw new Error(`Sub-workflow step failed or missing result in timeline: ${JSON.stringify(subTimelineRes.data)}`);
+    }
+    console.log(`✅ Timeline verified child sub-workflow execution: subWorkflowId=${subWfStep.result.subWorkflowId}, subExecutionId=${subWfStep.result.subExecutionId}`);
+
+    // 7. Verify contact lead score was updated by the sub-workflow
+    const contactVerifyRes = await request(`/api/crm/contacts/${contactId}`);
+    if (contactVerifyRes.status !== 200 || (contactVerifyRes.data.leadScore || 0) < 30) {
+      throw new Error(`Contact leadScore was not updated by sub-workflow: ${JSON.stringify(contactVerifyRes.data)}`);
+    }
+    console.log(`✅ Contact leadScore verified updated to ${contactVerifyRes.data.leadScore} by modular sub-workflow`);
+
+    // 8. Verify internal team notification was dispatched and can be read
+    const notifsRes = await request('/api/notifications');
+    if (notifsRes.status !== 200 || !Array.isArray(notifsRes.data.data)) {
+      throw new Error(`Failed to fetch notifications: ${JSON.stringify(notifsRes.data)}`);
+    }
+    const matchingNotif = notifsRes.data.data.find(n => n.title && n.title.includes('Scoring Threshold'));
+    if (!matchingNotif) {
+      throw new Error(`Internal notification not found in notifications list: ${JSON.stringify(notifsRes.data)}`);
+    }
+    console.log(`✅ Internal team alert notification verified in notification center: "${matchingNotif.title}"`);
+
+    // 9. Mark notification as read
+    const markReadRes = await request(`/api/notifications/${matchingNotif.id}/read`, { method: 'POST' });
+    if (markReadRes.status !== 200 || markReadRes.data.notification?.read !== true) {
+      throw new Error(`Failed to mark notification as read: ${JSON.stringify(markReadRes.data)}`);
+    }
+    console.log('✅ Notification marked read successfully');
+
+    console.log('\n🎉 ALL 96 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

@@ -886,10 +886,12 @@ async function executeWorkflowInstance({
   triggerType,
   triggerContext,
   mode = 'live',
-  execution: existingExecution = null
+  execution: passedExecution = null,
+  existingExecution = null
 }) {
   const startedAt = Date.now();
-  const execution = existingExecution || {
+  const currentExecution = passedExecution || existingExecution;
+  const execution = currentExecution || {
     id: randomUUID(),
     agencyId,
     locationId,
@@ -910,7 +912,7 @@ async function executeWorkflowInstance({
     createdAt: new Date().toISOString()
   };
 
-  if (existingExecution) {
+  if (currentExecution) {
     flow = flow || execution.workflowSnapshot;
     agencyId = execution.agencyId;
     locationId = execution.locationId;
@@ -1090,6 +1092,29 @@ async function executeWorkflowInstance({
     },
     sendReviewRequest: async ({ contactId, channel }) => {
       console.log(`[OPERZA WORKFLOW REVIEW] Review request dispatched via ${channel} to contact ${contactId}`);
+    },
+    updateLeadScore: async ({ contactId, points }) => {
+      const contact = (state.records.contacts || []).find(c => c.id === contactId);
+      if (contact) {
+        contact.leadScore = (contact.leadScore || 0) + points;
+        broadcast('crm.contact.updated', { id: contact.id, leadScore: contact.leadScore });
+      }
+    },
+    sendInternalNotification: async ({ title, message, channel }) => {
+      state.notifications = state.notifications || [];
+      const notif = {
+        id: randomUUID(),
+        agencyId,
+        locationId,
+        title: title || 'Workflow Alert',
+        message: message || '',
+        channel: channel || 'in_app',
+        read: false,
+        createdAt: new Date().toISOString()
+      };
+      state.notifications.push(notif);
+      broadcast('crm.notification.created', notif);
+      return notif;
     }
   };
 
@@ -1222,6 +1247,33 @@ async function executeWorkflowInstance({
       crmActions,
       aiHandler
     });
+
+    // Sub-Workflow execution support
+    if (node.type === 'sub_workflow' && node.config?.workflowId) {
+      const subFlow = (state.records.workflows || []).find(
+        w => w.id === node.config.workflowId && w.agencyId === agencyId
+      );
+      if (subFlow) {
+        const subExecution = await executeWorkflowInstance({
+          flow: subFlow,
+          agencyId,
+          locationId,
+          triggerType: 'sub_workflow',
+          triggerContext: {
+            ...triggerContext,
+            parentExecutionId: execution.id,
+            parentNodeId: node.id
+          },
+          mode
+        });
+        stepRes.result = {
+          subWorkflowId: subFlow.id,
+          subExecutionId: subExecution.id,
+          status: subExecution.status
+        };
+      }
+    }
+
     const stepEnd = Date.now();
     const stepEntry = {
       nodeId: node.id,
@@ -1255,6 +1307,9 @@ async function executeWorkflowInstance({
       if (stepRes.status === 'waiting_approval') {
         execution.lastErrorCode = stepRes.errorCode || 'APPROVAL_CONTEXT_MISSING';
       }
+      if (stepRes.status === 'waiting') {
+        execution.retryAt = stepRes.retryAt;
+      }
       break;
     }
     execution.currentNodeIndex = index + 1;
@@ -1281,7 +1336,7 @@ function safeWorkflowStepResult(result) {
     'actionId', 'providerKey', 'dispatch', 'mode', 'sideEffectsDisabled', 'reason',
     'tagAdded', 'stageUpdated', 'branch', 'isMatch', 'wouldWaitMinutes',
     'wouldResumeAt', 'delayAmount', 'delayUnit', 'iterations', 'filteredCount',
-    'httpStatus'
+    'httpStatus', 'retryAt', 'pointsAdded', 'notificationId', 'subWorkflowId', 'subExecutionId'
   ];
   const output = {};
   for (const key of allowed) {
@@ -1318,6 +1373,7 @@ function publicWorkflowExecution(execution) {
     workflowVersion: execution.workflowVersion || 1,
     mode: execution.mode,
     status: execution.status,
+    retryAt: execution.retryAt || null,
     triggerType: execution.triggerType,
     contactId: contact?.id || execution.contactId || null,
     triggerContext: {
@@ -1415,6 +1471,32 @@ async function triggerWorkflowExecution({ agencyId, locationId, triggerType, tri
 function startScheduleTriggerLoop() {
   setInterval(async () => {
     const now = new Date();
+
+    // 1. Resume timed delay workflows that have reached their retryAt threshold
+    state.workflowExecutions = state.workflowExecutions || [];
+    const waitingExecutions = state.workflowExecutions.filter(
+      ex => ex.status === 'waiting' && ex.retryAt && new Date(ex.retryAt) <= now
+    );
+    for (const ex of waitingExecutions) {
+      ex.status = 'resuming';
+      ex.currentNodeIndex = (ex.currentNodeIndex || 0) + 1;
+      await saveState();
+      const flow = ex.workflowSnapshot || (state.records.workflows || []).find(w => w.id === ex.workflowId);
+      if (flow) {
+        console.log(`[OPERZA DELAY] Resuming workflow execution ${ex.id} after wait period`);
+        executeWorkflowInstance({
+          flow,
+          agencyId: ex.agencyId,
+          locationId: ex.locationId,
+          triggerType: ex.triggerType,
+          triggerContext: ex.triggerContext,
+          existingExecution: ex,
+          mode: ex.mode || 'live'
+        }).catch(err => console.error(`[SCHEDULE LOOP RESUME ERROR] id=${ex.id}:`, err));
+      }
+    }
+
+    // 2. Cron schedule triggers
     const workflows = (state.records.workflows || []).filter(
       w => w.status === 'published' && w.triggerType === 'schedule'
     );
@@ -6646,6 +6728,40 @@ const server = createServer(async (req, res) => {
       });
     }
 
+    // POST /api/workflows/runs/:id/tick — advance delayed/waiting workflow execution
+    if (method === 'POST' && pathname.startsWith('/api/workflows/runs/') && pathname.endsWith('/tick')) {
+      const runId = pathname.replace('/api/workflows/runs/', '').replace('/tick', '').trim();
+      const run = (state.workflowExecutions || []).find(
+        w => w.id === runId && w.agencyId === agency.id && w.locationId === activeLocation.id
+      );
+      if (!run) return sendJson(res, 404, { error: 'Workflow execution not found' });
+      if (run.status !== 'waiting') {
+        return sendJson(res, 409, { error: `Cannot tick execution in status "${run.status}". Must be "waiting".` });
+      }
+
+      run.status = 'resuming';
+      run.currentNodeIndex = (run.currentNodeIndex || 0) + 1;
+      await saveState();
+
+      const flow = run.workflowSnapshot || (state.records.workflows || []).find(w => w.id === run.workflowId);
+      if (!flow) return sendJson(res, 404, { error: 'Workflow definition snapshot not found' });
+
+      const resumedRun = await executeWorkflowInstance({
+        flow: structuredClone(flow),
+        agencyId: run.agencyId,
+        locationId: run.locationId,
+        triggerType: run.triggerType,
+        triggerContext: run.triggerContext,
+        existingExecution: run,
+        mode: run.mode || 'live'
+      });
+
+      return sendJson(res, 200, {
+        success: true,
+        execution: publicWorkflowExecution(resumedRun)
+      });
+    }
+
     // GET /api/workflows/runs/:runId/nodes — inspect steps and execution timeline
     if (method === 'GET' && pathname.startsWith('/api/workflows/runs/') && pathname.endsWith('/nodes')) {
       const runId = pathname.replace('/api/workflows/runs/', '').replace('/nodes', '').trim();
@@ -6757,7 +6873,9 @@ const server = createServer(async (req, res) => {
           updateContact: async () => {},
           createOpportunity: async () => {},
           assignContact: async () => {},
-          sendReviewRequest: async () => {}
+          sendReviewRequest: async () => {},
+          updateLeadScore: async ({ points }) => ({ points }),
+          sendInternalNotification: async ({ title, message }) => ({ id: `test-notif-${Date.now()}`, title, message })
         },
         aiHandler: async ({ prompt, context }) => {
           const lowerText = ((context && (context.text || context.prompt)) || prompt || '').toLowerCase();
@@ -6792,6 +6910,31 @@ const server = createServer(async (req, res) => {
         error: stepRes.error || null,
         testedAt: new Date().toISOString()
       });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── NOTIFICATIONS & TEAM ALERTS ─────────────────────────────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'GET' && pathname === '/api/notifications') {
+      state.notifications = state.notifications || [];
+      const notifs = state.notifications.filter(
+        n => n.agencyId === agency.id && (!n.locationId || n.locationId === activeLocation.id)
+      );
+      return sendJson(res, 200, { data: notifs.slice().reverse() });
+    }
+
+    if (method === 'POST' && pathname.startsWith('/api/notifications/') && pathname.endsWith('/read')) {
+      const notifId = pathname.replace('/api/notifications/', '').replace('/read', '').trim();
+      state.notifications = state.notifications || [];
+      const notif = state.notifications.find(
+        n => n.id === notifId && n.agencyId === agency.id
+      );
+      if (!notif) return sendJson(res, 404, { error: 'Notification not found' });
+      notif.read = true;
+      notif.readAt = new Date().toISOString();
+      await saveState();
+      return sendJson(res, 200, { success: true, notification: notif });
     }
 
     // ═════════════════════════════════════════════════════════════

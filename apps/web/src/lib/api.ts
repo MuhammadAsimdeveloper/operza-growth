@@ -128,6 +128,12 @@ export const api = {
       }),
     getNodeTimeline: (runId: string) =>
       request(`/api/workflows/runs/${runId}/nodes`),
+    tick: (runId: string) =>
+      request<{ success: boolean; execution: any }>(`/api/workflows/runs/${runId}/tick`, { method: 'POST' }),
+  },
+  notifications: {
+    list: () => request<{ data: any[] }>('/api/notifications'),
+    markRead: (id: string) => request<{ success: boolean; notification: any }>(`/api/notifications/${id}/read`, { method: 'POST' }),
   },
   reviews: {
     getPublic: (locationId: string) => request(`/api/reviews/public/${locationId}`),

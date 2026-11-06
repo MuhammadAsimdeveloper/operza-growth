@@ -176,3 +176,90 @@ test('whatsapp node simulates in dry-run mode and dispatches in live mode with g
   assert.equal(liveRes.result.dispatch, 'accepted');
   assert.equal(dispatched, true);
 });
+
+test('math node computes arithmetic operations and stores variable', async () => {
+  const node = {
+    id: 'node-math-1',
+    type: 'math',
+    config: {
+      operandA: 150,
+      operandB: 3,
+      operation: 'multiply',
+      resultVariable: 'totalValue'
+    }
+  };
+
+  const res = await executeStep({
+    node,
+    triggerContext: {},
+    crmActions: {}
+  });
+
+  assert.equal(res.status, 'completed');
+  assert.equal(res.result.output, 450);
+  assert.equal(res.setVariable?.name, 'totalValue');
+  assert.equal(res.setVariable?.value, 450);
+});
+
+test('lead_score node increments contact points via CRM action', async () => {
+  let scoredPoints = 0;
+  let scoredContact = null;
+
+  const node = {
+    id: 'node-score-1',
+    type: 'lead_score',
+    config: {
+      points: 25
+    }
+  };
+
+  const res = await executeStep({
+    node,
+    triggerContext: {
+      contact: { id: 'con_lead_123', name: 'John Doe' }
+    },
+    crmActions: {
+      updateLeadScore: async ({ contactId, points }) => {
+        scoredContact = contactId;
+        scoredPoints = points;
+      }
+    }
+  });
+
+  assert.equal(res.status, 'completed');
+  assert.equal(res.result.pointsAdded, 25);
+  assert.equal(scoredContact, 'con_lead_123');
+  assert.equal(scoredPoints, 25);
+});
+
+test('internal_notification node dispatches team alert via CRM action', async () => {
+  let alertDispatched = null;
+
+  const node = {
+    id: 'node-notif-1',
+    type: 'internal_notification',
+    config: {
+      title: 'High Value Lead Alert',
+      message: 'New prospect requested consultation',
+      channel: 'in_app'
+    }
+  };
+
+  const res = await executeStep({
+    node,
+    triggerContext: {
+      contact: { id: 'con_alert_1', name: 'VIP Lead' }
+    },
+    crmActions: {
+      sendInternalNotification: async (data) => {
+        alertDispatched = data;
+        return { id: 'notif_999', ...data };
+      }
+    }
+  });
+
+  assert.equal(res.status, 'completed');
+  assert.equal(res.result.title, 'High Value Lead Alert');
+  assert.equal(res.result.notificationId, 'notif_999');
+  assert.equal(alertDispatched.channel, 'in_app');
+});

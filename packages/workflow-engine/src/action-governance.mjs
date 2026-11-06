@@ -36,7 +36,11 @@ const DEFINITIONS = [
   ['zapier', 'automation.zapier.dispatch', 'write', 'none', null],
   ['zapier_webhook', 'automation.zapier.dispatch', 'write', 'none', null],
   ['condition', 'flow.condition.evaluate', 'read', 'none', null],
-  ['approval_gate', 'flow.approval.gate', 'write', 'human', null]
+  ['approval_gate', 'flow.approval.gate', 'write', 'human', null],
+  ['math', 'flow.math.calculate', 'read', 'none', null],
+  ['wait', 'flow.delay.wait', 'read', 'none', null],
+  ['lead_score', 'crm.contact.score', 'write', 'none', null],
+  ['internal_notification', 'crm.notification.send', 'write', 'none', null]
 ].map(([nodeType, id, risk, approval, providerKey]) => Object.freeze({
   nodeType, id, risk, approval, providerKey, surface: 'workflow'
 }));

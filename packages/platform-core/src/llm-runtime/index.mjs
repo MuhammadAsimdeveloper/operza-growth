@@ -24,11 +24,15 @@ export {
  * @returns {LLMRuntimeEngine}
  */
 export function createDefaultLLMRuntime(options = {}) {
+  const isTest = process.env.NODE_ENV === 'test' || options.forceEmbedded;
   const providers = [
     new OllamaProvider(options.ollama),
     new LocalAIProvider(options.localai),
     new OpenAIProvider(options.openai),
     new EmbeddedOfflineProvider(options.embedded)
   ];
-  return new LLMRuntimeEngine(providers, ['ollama', 'localai', 'openai', 'embedded']);
+  const order = isTest
+    ? ['embedded', 'ollama', 'localai', 'openai']
+    : (options.priority || ['ollama', 'localai', 'openai', 'embedded']);
+  return new LLMRuntimeEngine(providers, order);
 }

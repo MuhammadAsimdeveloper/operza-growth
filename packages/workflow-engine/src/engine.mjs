@@ -33,6 +33,7 @@ export function calculateChecksum(state) {
  * Returns undefined when any segment is missing.
  */
 function resolvePath(obj, path) {
+  if (typeof path !== 'string') return undefined;
   return path.split('.').reduce((cur, key) => cur?.[key], obj);
 }
 
@@ -432,8 +433,10 @@ export async function executeStep({
       // NEW — math
       // ---------------------------------------------------------------
       case 'math': {
-        const a = Number(resolvePath(ctx, config.operandA) ?? config.operandA);
-        const b = Number(resolvePath(ctx, config.operandB) ?? config.operandB);
+        const aVal = typeof config.operandA === 'string' ? (resolvePath(ctx, config.operandA) ?? config.operandA) : config.operandA;
+        const bVal = typeof config.operandB === 'string' ? (resolvePath(ctx, config.operandB) ?? config.operandB) : config.operandB;
+        const a = Number(aVal);
+        const b = Number(bVal);
         const op = config.operation || 'add';
         let mathResult;
         switch (op) {
@@ -452,7 +455,7 @@ export async function executeStep({
           status: 'completed',
           nodeId,
           ...(setVar ? { setVariable: setVar } : {}),
-          result: { mathResult, operation: op },
+          result: { output: mathResult, mathResult, operation: op },
         };
       }
 
@@ -734,6 +737,34 @@ export async function executeStep({
           status: 'completed',
           nodeId,
           result: { subWorkflowId: targetId, status: 'invoked' }
+        };
+      }
+
+      case 'lead_score': {
+        const points = Number(config.points || config.score) || 10;
+        const contactId = ctx.contact?.id;
+        if (crmActions?.updateLeadScore && contactId) {
+          await crmActions.updateLeadScore({ contactId, points });
+        }
+        return {
+          status: 'completed',
+          nodeId,
+          result: { contactId, pointsAdded: points }
+        };
+      }
+
+      case 'internal_notification': {
+        const title = renderTemplate(config.title || 'Workflow Notification', ctx);
+        const message = renderTemplate(config.message || '', ctx);
+        const channel = config.channel || 'in_app';
+        let notif = null;
+        if (crmActions?.sendInternalNotification) {
+          notif = await crmActions.sendInternalNotification({ title, message, channel });
+        }
+        return {
+          status: 'completed',
+          nodeId,
+          result: { title, channel, sent: true, notificationId: notif?.id || null }
         };
       }
 

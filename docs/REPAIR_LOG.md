@@ -335,4 +335,33 @@ This document chronicles the step-by-step engineering enhancements, refactoring,
 - **Action 14.5 (Verification Suite Green):**
   - 300 / 300 automated checks passing (43 workflow engine, 47 platform core, 9 db, 106 SEO, 95 E2E).
   - 0 TypeScript errors (`npm run typecheck`).
-  - Production build successful (`npm run build`). 
+  - Production build successful (`npm run build`).
+
+---
+
+## Epoch 15: Local Ollama LLM, Modular Sub-Workflows, Delay Resumption & Notification Engine
+
+- **Action 15.1 (Local LLM Runtime Daemon & smollm:135m Integration):**
+  - Verified local Ollama executable at `C:\Users\Muhammad Asim\AppData\Local\Programs\Ollama\ollama.exe` and started daemon background service on `127.0.0.1:11434`.
+  - Pulled and configured `smollm:135m` (91MB GGUF quantized) on Ollama.
+  - Hardened `OllamaProvider` in `packages/platform-core/src/llm-runtime/providers/ollama-provider.mjs` with `num_predict: options.maxTokens || 128` and live tags validation in `isAvailable()`.
+  - Cascaded runtime provider ordering in `packages/platform-core/src/llm-runtime/index.mjs` ensuring deterministic sub-second test execution while development and production environments tap into live Ollama inference.
+- **Action 15.2 (n8n & GHL Parity Workflow Nodes):**
+  - Added `math` (`flow.math.calculate`), `wait` (`flow.delay.wait`), `lead_score` (`crm.contact.score`), and `internal_notification` (`crm.notification.send`) to `ACTION_CATALOG` in `packages/workflow-engine/src/action-governance.mjs`.
+  - Implemented execution logic in `packages/workflow-engine/src/engine.mjs` with strict type guard in `resolvePath()`.
+  - Added unit test cases in `packages/workflow-engine/test/cognitive-nodes.test.mjs`, expanding Workflow Engine suite to 46 / 46 passing tests.
+- **Action 15.3 (Modular Sub-Workflow Execution Engine):**
+  - Implemented sub-workflow execution in `executeWorkflowInstance` in `apps/api/server.mjs` (`node.type === 'sub_workflow'`), enabling parent workflows to invoke reusable child workflows and trace execution IDs in execution step timelines.
+- **Action 15.4 (Durable Timed Delay Resumption & Scheduler Tick):**
+  - Enhanced `startScheduleTriggerLoop()` in `apps/api/server.mjs` to automatically scan for workflows in `status: 'waiting'` with `retryAt <= now` and advance them to completion.
+  - Implemented deterministic manual tick endpoint: `POST /api/workflows/runs/:id/tick`.
+  - Added `api.workflows.tick(runId)` to frontend client in `apps/web/src/lib/api.ts`.
+- **Action 15.5 (Internal Team Alert Notifications):**
+  - Implemented in-memory and REST endpoints `GET /api/notifications` and `POST /api/notifications/:id/read` in `apps/api/server.mjs`.
+  - Added `api.notifications` namespace in `apps/web/src/lib/api.ts`.
+- **Action 15.6 (E2E Test Suite Expansion to 96 Scenarios):**
+  - Added Test 96: Modular Sub-Workflow Invocation & Timed Delay Resumption (parent workflow creates child sub-workflow, pauses at wait delay, resumes via scheduler tick, executes child sub-workflow, updates contact leadScore, and delivers internal team alert notification).
+- **Action 15.7 (Milestone Verification — 304 / 304 Automated Checks):**
+  - 304 / 304 automated checks passing (46 workflow engine, 47 platform core, 9 db, 106 SEO, 96 E2E).
+  - 0 TypeScript compilation errors (`npm run typecheck`).
+  - Production build verified in 5.45s (`npm run build`). 
