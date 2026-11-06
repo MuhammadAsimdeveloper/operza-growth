@@ -7,7 +7,7 @@ function fakePool({ duplicateEnqueue = false, duplicateReceipt = false } = {}) {
   const client = {
     async query(sql, params = []) {
       calls.push({ sql, params });
-      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rowCount: 0, rows: [] };
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK' || sql.includes('set_config')) return { rowCount: 0, rows: [] };
       if (sql.includes('INSERT INTO workflow_outbox')) {
         if (duplicateEnqueue) return { rowCount: 0, rows: [] };
         return { rowCount: 1, rows: [{ id: params[0], event_type: params[4], status: 'pending', attempts: 0 }] };
