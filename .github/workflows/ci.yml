@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    branches: [master, main, 'feat/phase-2-durable-approvals']
   pull_request:
     branches: [master, main]
 
@@ -34,5 +34,5 @@ jobs:
       - name: Typecheck & Build Web Application
         run: npm run build
 
-      - name: Run End-to-End System Tests (68 Integration Tests)
+      - name: Run Workflow Unit Tests, SEO Checks, and API Integration Tests
         run: npm test
