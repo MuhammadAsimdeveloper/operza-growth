@@ -2743,8 +2743,14 @@ async function runTests() {
       throw new Error(`Approved workflow did not resume to completion: ${JSON.stringify(resumed.data)}`);
     }
     const resumedStatuses = resumed.data.run.steps.map(step => step.status);
+    const resumedNodeIds = resumed.data.run.steps.map(step => step.nodeId);
     if (!resumedStatuses.includes('completed') || resumed.data.run.currentNodeIndex !== 2) {
       throw new Error('Workflow did not continue past the approved action from its pinned position');
+    }
+    if (resumed.data.run.steps.length !== 2 ||
+        resumedNodeIds[0] !== 'approval_task_node' ||
+        resumedNodeIds[1] !== 'resume_tag_node') {
+      throw new Error('Resumed execution timeline contains a duplicate paused-node row or incorrect step order');
     }
     const tasksAfterApproval = await request('/api/crm/tasks');
     const createdApprovalTasks = (tasksAfterApproval.data?.data || []).filter(task => task.title === approvalTaskTitle);
