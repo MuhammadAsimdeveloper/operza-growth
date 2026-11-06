@@ -37,5 +37,5 @@ test('transient handler failure is returned to the repository with bounded retry
   });
   assert.equal(result.results[0].status, 'retry');
   assert.equal(repo.state.failed[0].retryable, true);
-  assert.equal(repo.state.failed[0].retryDelayMs, undefined);
+  assert.equal(repo.state.failed[0].retryDelayMs, 2_000);
 });
