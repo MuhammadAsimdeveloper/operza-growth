@@ -10,6 +10,7 @@ const requiredTables = [
 
 function readinessPool({ missing = [], superuser = false, bypassRls = false } = {}) {
   return {
+    async connect() { return { release() {} }; },
     async query(sql) {
       if (sql.includes('information_schema.tables')) {
         return {
