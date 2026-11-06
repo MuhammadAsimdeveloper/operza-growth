@@ -84,3 +84,15 @@ This document chronicles the step-by-step engineering enhancements, refactoring,
   - Created `docker-compose.prod.yml` with isolated internal networks, resource limits, persistent volumes, restart policies, and non-root execution.
 - **Action 6.4 (Production Documentation)**:
   - Authored `docs/TECHNICAL_AUDIT.md`, `docs/BUG_TRACKER.md`, `docs/SECURITY_AUDIT.md`, `docs/DEPLOYMENT.md`, `docs/BACKUP_AND_RESTORE.md`, and `docs/FINAL_ENTERPRISE_READINESS_REPORT.md`.
+
+---
+
+## Epoch 7: Durable, Action-Bound Workflow Approvals (6 November 2026)
+
+- **Action 7.1 (Approval Lifecycle Contract):** Added `packages/workflow-engine/src/approval-lifecycle.mjs` to create and resolve approval records bound to tenant, location, workflow, execution, node, requester, action hash and expiry. Self-approval, cross-tenant decisions, stale requests and repeated decisions fail closed.
+- **Action 7.2 (Pinned Execution Resume):** Workflow runs now retain a private workflow snapshot/version and current node index. Approval decisions are persisted before resuming the same run from the paused node; the engine consumes the grant immediately after that node.
+- **Action 7.3 (API & Recovery):** Added `GET /api/workflows/approvals`, approve and reject routes, expiry cleanup, audit events, sanitized execution projections and startup recovery for executions saved in `resuming`.
+- **Action 7.4 (UI):** The workflow run inspector displays the exact action awaiting approval and exposes separate approve/resume and reject controls. It uses the server-returned execution state rather than optimistically setting every approved run to completed.
+- **Action 7.5 (Regression Coverage):** Added workflow-engine tests for the approval lifecycle and single-node scope plus end-to-end scenarios for resume, duplicate decisions and rejection.
+- **Reliability boundary:** Approval persistence uses the current atomic JSON / PostgreSQL application-state snapshot. This is not a normalized transactional outbox or multi-worker lease. Provider-level idempotency and real external delivery remain unimplemented. CI execution is pending; no pass claim is made in this log.
+
