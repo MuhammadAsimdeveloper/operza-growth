@@ -23,6 +23,12 @@ The core deterministic workflow execution engine for Operza. Provides high-throu
 - **Network safety:** Direct workflow URL nodes (webhook, http_request, slack_notify) fail closed until a connector-scoped egress implementation is configured.
 - **Approval evidence:** Approval checksums protect against accidental mutation, but production approval evidence must be loaded from trusted server-side persistence and bound to the immutable execution action.
 
+- **Action-scoped approval lifecycle:** `approval-lifecycle.mjs` creates expiring approval records tied to tenant, location, workflow, execution, node, requester, and action hash. Decisions reject self-approval, cross-tenant/workspace requests, expired requests, mismatched action hashes, and repeated decisions.
+- **Single-node grants:** The engine uses `approvedNodeId`; an approval for one node cannot unlock later steps.
+- **Resume contract:** The API persists a private workflow snapshot and resumes from `currentNodeIndex` after saving the approval decision. The execution API returns a redacted projection instead of the private snapshot or approval evidence.
+- **Idempotency contract:** A trusted `providerExecutor` receives the action hash as `idempotencyKey`. This is a contract for future adapters; no provider-level deduplication is claimed until a real adapter enforces it.
+
+
 ---
 
 ## 📦 Usage Example
