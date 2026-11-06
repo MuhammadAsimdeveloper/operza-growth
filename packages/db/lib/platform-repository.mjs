@@ -175,6 +175,9 @@ export function createPlatformRepository(pool) {
     },
 
     async listConsents({ tenantId, locationId, contactId }) {
+      if (contactId && !/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(contactId)) {
+        throw Object.assign(new TypeError('contactId must be a UUID'), { code: 'INVALID_CONTACT_ID' });
+      }
       return withTenant(tenantId, locationId, async client => {
         const result = await client.query(
           "SELECT * FROM communication_consents WHERE agency_id=$1 AND location_id=$2 " +
