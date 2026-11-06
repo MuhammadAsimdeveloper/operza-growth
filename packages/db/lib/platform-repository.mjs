@@ -127,7 +127,24 @@ export function createPlatformRepository(pool) {
           "SELECT * FROM provider_connections WHERE agency_id=$1 AND location_id=$2 AND id=$3",
           [tenantId, locationId, connectionId]
         );
-        return result.rows[0] || null;
+        const row = result.rows[0];
+        return row ? {
+          id: row.id,
+          tenantId: row.agency_id,
+          locationId: row.location_id,
+          providerKey: row.provider_key,
+          channel: row.channel,
+          label: row.label,
+          secretRef: row.secret_ref,
+          config: row.config || {},
+          status: row.status,
+          verification: row.verification || {},
+          verifiedAt: row.verified_at,
+          revokedAt: row.revoked_at,
+          lastCheckCode: row.last_check_code,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at
+        } : null;
       });
     },
 
