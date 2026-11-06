@@ -4038,9 +4038,11 @@ const server = createServer(async (req, res) => {
 
     // COPILOT CHAT (enhanced with tool calling)
     if (method === 'GET' && pathname === '/api/copilot/proposals') {
-      const proposals = (state.copilotProposals || []).filter(
-        item => item.tenantId === agency.id && item.locationId === activeLocation.id
-      ).slice().reverse();
+      const proposals = platformRepository
+        ? await platformRepository.listCopilotProposals({ tenantId: agency.id, locationId: activeLocation.id })
+        : (state.copilotProposals || []).filter(
+            item => item.tenantId === agency.id && item.locationId === activeLocation.id
+          ).slice().reverse();
       return sendJson(res, 200, { data: proposals });
     }
 
@@ -4049,15 +4051,27 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 403, { error: 'Your role cannot review Copilot proposals' });
       }
       const proposalId = pathname.split('/')[4];
-      const proposal = (state.copilotProposals || []).find(
-        item => item.id === proposalId && item.tenantId === agency.id && item.locationId === activeLocation.id
-      );
-      if (!proposal) return sendJson(res, 404, { error: 'Copilot proposal not found' });
-      if (proposal.status !== 'pending_review') return sendJson(res, 409, { error: 'Proposal is no longer pending review' });
-      proposal.status = 'rejected';
-      proposal.decidedAt = new Date().toISOString();
-      proposal.decidedByActorId = actor.user.id;
-      await saveState();
+      let proposal;
+      if (platformRepository) {
+        proposal = await platformRepository.decideCopilotProposal({
+          tenantId: agency.id,
+          locationId: activeLocation.id,
+          proposalId,
+          actorId: actor.user.id,
+          decision: 'rejected'
+        });
+        if (!proposal) return sendJson(res, 409, { error: 'Proposal is missing or is no longer pending review' });
+      } else {
+        proposal = (state.copilotProposals || []).find(
+          item => item.id === proposalId && item.tenantId === agency.id && item.locationId === activeLocation.id
+        );
+        if (!proposal) return sendJson(res, 404, { error: 'Copilot proposal not found' });
+        if (proposal.status !== 'pending_review') return sendJson(res, 409, { error: 'Proposal is no longer pending review' });
+        proposal.status = 'rejected';
+        proposal.decidedAt = new Date().toISOString();
+        proposal.decidedByActorId = actor.user.id;
+        await saveState();
+      }
       auditLog('copilot.proposal.rejected', actor, { proposalId });
       return sendJson(res, 200, { success: true, proposal });
     }
@@ -5664,7 +5678,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'GET' && pathname === '/api/platform/usage') {
-      const entitlements = getTenantEntitlements(agency.id);
+      const entitlements = await getTenantEntitlements(agency.id);
       return sendJson(res, 200, {
         period: 'current_utc_month',
         usage: await getCurrentUsage(agency.id),
@@ -5686,11 +5700,12 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'GET' && pathname === '/api/platform/connections') {
-      state.providerConnections = state.providerConnections || [];
-      const connections = state.providerConnections.filter(
-        item => item.tenantId === agency.id && item.locationId === activeLocation.id
-      );
-      return sendJson(res, 200, { data: connections.map(publicProviderConnection) });
+      const connections = platformRepository
+        ? await platformRepository.listProviderConnections({ tenantId: agency.id, locationId: activeLocation.id })
+        : (state.providerConnections || []).filter(
+            item => item.tenantId === agency.id && item.locationId === activeLocation.id
+          ).map(publicProviderConnection);
+      return sendJson(res, 200, { data: connections });
     }
 
     if (method === 'POST' && pathname === '/api/platform/connections') {
@@ -5709,15 +5724,20 @@ const server = createServer(async (req, res) => {
         label: body.label,
         config: body.config || {}
       });
-      state.providerConnections = state.providerConnections || [];
-      state.providerConnections.push(connection);
-      await saveState();
+      const savedConnection = platformRepository
+        ? await platformRepository.createProviderConnection(connection)
+        : (() => {
+            state.providerConnections = state.providerConnections || [];
+            state.providerConnections.push(connection);
+            return publicProviderConnection(connection);
+          })();
+      if (!platformRepository) await saveState();
       auditLog('provider.connection.created', actor, {
         connectionId: connection.id,
         providerKey: connection.providerKey,
         status: connection.status
       });
-      return sendJson(res, 201, { success: true, connection: publicProviderConnection(connection) });
+      return sendJson(res, 201, { success: true, connection: savedConnection });
     }
 
     if (method === 'POST' && pathname.startsWith('/api/platform/connections/') && pathname.endsWith('/verify')) {
@@ -5725,9 +5745,11 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 403, { error: 'Only workspace owners and admins can verify providers' });
       }
       const connectionId = pathname.split('/')[4];
-      const connection = (state.providerConnections || []).find(
-        item => item.id === connectionId && item.tenantId === agency.id && item.locationId === activeLocation.id
-      );
+      const connection = platformRepository
+        ? await platformRepository.getProviderConnection({ tenantId: agency.id, locationId: activeLocation.id, connectionId })
+        : (state.providerConnections || []).find(
+            item => item.id === connectionId && item.tenantId === agency.id && item.locationId === activeLocation.id
+          );
       if (!connection) return sendJson(res, 404, { error: 'Provider connection not found' });
       return sendJson(res, 501, {
         error: 'No trusted provider verification adapter is configured in this deployment',
@@ -5741,25 +5763,36 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 403, { error: 'Only workspace owners and admins can revoke providers' });
       }
       const connectionId = pathname.split('/')[4];
-      const index = (state.providerConnections || []).findIndex(
-        item => item.id === connectionId && item.tenantId === agency.id && item.locationId === activeLocation.id
-      );
-      if (index < 0) return sendJson(res, 404, { error: 'Provider connection not found' });
-      state.providerConnections[index] = revokeProviderConnection(state.providerConnections[index]);
-      await saveState();
+      const connection = platformRepository
+        ? await platformRepository.getProviderConnection({ tenantId: agency.id, locationId: activeLocation.id, connectionId })
+        : (state.providerConnections || []).find(
+            item => item.id === connectionId && item.tenantId === agency.id && item.locationId === activeLocation.id
+          );
+      if (!connection) return sendJson(res, 404, { error: 'Provider connection not found' });
+      const revoked = revokeProviderConnection(connection);
+      const savedConnection = platformRepository
+        ? await platformRepository.updateProviderConnection({ tenantId: agency.id, locationId: activeLocation.id, connection: revoked })
+        : publicProviderConnection(revoked);
+      if (!platformRepository) {
+        const index = state.providerConnections.findIndex(item => item.id === connectionId);
+        state.providerConnections[index] = revoked;
+        await saveState();
+      }
       auditLog('provider.connection.revoked', actor, {
         connectionId,
-        providerKey: state.providerConnections[index].providerKey
+        providerKey: connection.providerKey
       });
-      return sendJson(res, 200, { success: true, connection: publicProviderConnection(state.providerConnections[index]) });
+      return sendJson(res, 200, { success: true, connection: savedConnection });
     }
 
     if (method === 'GET' && pathname === '/api/platform/consents') {
       const contactId = url.searchParams.get('contactId');
-      const consents = (state.communicationConsents || []).filter(item =>
-        item.tenantId === agency.id && item.locationId === activeLocation.id &&
-        (!contactId || item.contactId === contactId)
-      );
+      const consents = platformRepository
+        ? await platformRepository.listConsents({ tenantId: agency.id, locationId: activeLocation.id, contactId })
+        : (state.communicationConsents || []).filter(item =>
+            item.tenantId === agency.id && item.locationId === activeLocation.id &&
+            (!contactId || item.contactId === contactId)
+          );
       return sendJson(res, 200, { data: consents });
     }
 
@@ -5786,9 +5819,14 @@ const server = createServer(async (req, res) => {
         proofRef: body.proofRef
       });
       consent.capturedByActorId = actor.user.id;
-      state.communicationConsents = state.communicationConsents || [];
-      state.communicationConsents.push(consent);
-      await saveState();
+      const storedConsent = platformRepository
+        ? await platformRepository.recordConsent(consent)
+        : (() => {
+            state.communicationConsents = state.communicationConsents || [];
+            state.communicationConsents.push(consent);
+            return consent;
+          })();
+      if (!platformRepository) await saveState();
       auditLog('communication.consent.recorded', actor, {
         consentId: consent.id,
         contactId: contact.id,
@@ -5796,7 +5834,7 @@ const server = createServer(async (req, res) => {
         purpose: consent.purpose,
         status: consent.status
       });
-      return sendJson(res, 201, { success: true, consent });
+      return sendJson(res, 201, { success: true, consent: storedConsent });
     }
 
     if (method === 'POST' && pathname.startsWith('/api/platform/consents/') && pathname.endsWith('/revoke')) {
@@ -5804,9 +5842,12 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 403, { error: 'Only workspace owners and admins can record opt-outs' });
       }
       const consentId = pathname.split('/')[4];
-      const existing = (state.communicationConsents || []).find(item =>
-        item.id === consentId && item.tenantId === agency.id && item.locationId === activeLocation.id
-      );
+      const currentConsents = platformRepository
+        ? await platformRepository.listConsents({ tenantId: agency.id, locationId: activeLocation.id })
+        : (state.communicationConsents || []).filter(item =>
+            item.tenantId === agency.id && item.locationId === activeLocation.id
+          );
+      const existing = currentConsents.find(item => item.id === consentId);
       if (!existing) return sendJson(res, 404, { error: 'Consent record not found' });
       const revocation = recordConsent({
         tenantId: agency.id,
@@ -5819,8 +5860,13 @@ const server = createServer(async (req, res) => {
         proofRef: 'operator:' + actor.user.id
       });
       revocation.capturedByActorId = actor.user.id;
-      state.communicationConsents.push(revocation);
-      await saveState();
+      const storedRevocation = platformRepository
+        ? await platformRepository.recordConsent(revocation)
+        : (() => {
+            state.communicationConsents.push(revocation);
+            return revocation;
+          })();
+      if (!platformRepository) await saveState();
       auditLog('communication.consent.revoked', actor, {
         consentId: revocation.id,
         priorConsentId: consentId,
@@ -5828,7 +5874,7 @@ const server = createServer(async (req, res) => {
         channel: existing.channel,
         purpose: existing.purpose
       });
-      return sendJson(res, 200, { success: true, consent: revocation });
+      return sendJson(res, 200, { success: true, consent: storedRevocation });
     }
 
     if (method === 'GET' && pathname === '/api/workflows/runs') {
