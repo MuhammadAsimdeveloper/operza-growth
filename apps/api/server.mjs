@@ -66,7 +66,9 @@ try {
   console.warn('[OPERZA-DB] pg module not available or error initializing pool:', err.message);
 }
 
-const platformRepository = process.env.PLATFORM_DB_ENABLED === 'true' && pgPool ? createPlatformRepository(pgPool) : null;
+const platformDbEnabled = process.env.PLATFORM_DB_ENABLED === 'true';
+if (platformDbEnabled && !pgPool) throw new Error('PLATFORM_DB_ENABLED requires a working DATABASE_URL and the pg module.');
+const platformRepository = platformDbEnabled ? createPlatformRepository(pgPool) : null;
 const scrypt = promisify(scryptCallback);
 const root = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT || 4000);
@@ -7570,6 +7572,11 @@ await initDatabase();
 await workflowQueue.init();
 await loadState();
 state.workflowApprovals = state.workflowApprovals || [];
+if (platformDbEnabled) {
+  if (!pgPool) throw new Error('Platform database connection was not ready; normalized mode cannot fall back to JSON.');
+  await platformRepository.checkReady();
+  console.log('[OPERZA-PLATFORM] Normalized PostgreSQL platform persistence is enabled.');
+}
 
 // Resume executions whose approved transition was durably recorded before a process restart.
 for (const interruptedRun of (state.workflowExecutions || []).filter(
