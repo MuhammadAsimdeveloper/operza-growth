@@ -4066,7 +4066,7 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const { message, sessionId: reqSessionId, tools: requestedTools } = body;
       if (!message) return sendJson(res, 400, { error: 'message is required' });
-      const aiLimit = checkTenantUsageLimit(agency.id, 'monthlyAiRequests', 1);
+      const aiLimit = await checkTenantUsageLimit(agency.id, 'monthlyAiRequests', 1);
       if (!aiLimit.allowed) {
         return sendJson(res, 429, { error: 'Monthly Copilot request allowance has been reached', code: aiLimit.code, limit: aiLimit.limit, consumed: aiLimit.consumed });
       }
@@ -4085,7 +4085,7 @@ const server = createServer(async (req, res) => {
       const toolResults = [];
       const lowerMsg = message.toLowerCase();
       const runCopilotReadTool = async (toolName, params) => {
-        const feature = checkFeatureAccess(getTenantEntitlements(agency.id), 'copilotRead');
+        const feature = checkFeatureAccess(await getTenantEntitlements(agency.id), 'copilotRead');
         const decision = authorizeCopilotTool({
           toolName,
           actorRole: actor.membership.role,
@@ -4170,7 +4170,7 @@ const server = createServer(async (req, res) => {
           const toolName = typeof tc?.name === 'string' ? tc.name : '';
           const definition = getCopilotToolDefinition(toolName);
           const capability = definition?.readOnly ? 'copilotRead' : 'copilotProposals';
-          const feature = checkFeatureAccess(getTenantEntitlements(agency.id), capability);
+          const feature = checkFeatureAccess(await getTenantEntitlements(agency.id), capability);
           const decision = authorizeCopilotTool({
             toolName,
             actorRole: actor.membership.role,
@@ -5653,7 +5653,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'GET' && pathname === '/api/platform/entitlements') {
-      const entitlements = getTenantEntitlements(agency.id);
+      const entitlements = await getTenantEntitlements(agency.id);
       return sendJson(res, 200, {
         planId: entitlements.planId,
         label: entitlements.label,
@@ -5667,7 +5667,7 @@ const server = createServer(async (req, res) => {
       const entitlements = getTenantEntitlements(agency.id);
       return sendJson(res, 200, {
         period: 'current_utc_month',
-        usage: getCurrentUsage(agency.id),
+        usage: await getCurrentUsage(agency.id),
         limits: entitlements.limits,
         features: entitlements.features
       });
@@ -5984,7 +5984,7 @@ const server = createServer(async (req, res) => {
         w => w.id === workflowId && w.agencyId === agency.id && w.locationId === activeLocation.id
       );
       if (!flow) return sendJson(res, 404, { error: 'Workflow not found' });
-      const runLimit = checkTenantUsageLimit(agency.id, 'monthlyWorkflowRuns', 1);
+      const runLimit = await checkTenantUsageLimit(agency.id, 'monthlyWorkflowRuns', 1);
       if (!runLimit.allowed) {
         return sendJson(res, 429, { error: 'Monthly workflow run allowance has been reached', code: runLimit.code, limit: runLimit.limit, consumed: runLimit.consumed });
       }
