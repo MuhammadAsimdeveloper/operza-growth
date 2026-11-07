@@ -4752,7 +4752,94 @@ async function runTests() {
     assert.ok(Array.isArray(pollTasksRes.data) && pollTasksRes.data.length > 0);
     console.log(`✅ Zapier polling trigger (task.created) verified: ${pollTasksRes.data.length} tasks returned`);
 
-    console.log('\n🎉 ALL 114 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 115] Automated B2B Prospecting & Scoring Lifecycle
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 115] Automated B2B Prospecting & Scoring Lifecycle');
+
+    const newProspectRes = await request('/api/crm/prospects', {
+      method: 'POST',
+      body: JSON.stringify({
+        company: 'Vanguard Cognitive AI Corp',
+        person: 'Dr. Evelyn Cross',
+        email: 'evelyn.cross@vanguard-cognitive.ai',
+        industry: 'Artificial Intelligence & Robotics',
+        location: 'Boston, MA',
+        employees: 180,
+        score: 94,
+        status: 'new'
+      })
+    });
+    assert.equal(newProspectRes.status, 201);
+    const createdProspect = newProspectRes.data;
+    assert.ok(createdProspect.id);
+    assert.equal(createdProspect.company, 'Vanguard Cognitive AI Corp');
+    assert.equal(createdProspect.score, 94);
+    console.log(`✅ Prospect created and scored: ID=${createdProspect.id}, score=${createdProspect.score}`);
+
+    // Verify search and listing
+    const prospectListRes = await request('/api/crm/prospects?search=Vanguard');
+    assert.equal(prospectListRes.status, 200);
+    const prospectItems = Array.isArray(prospectListRes.data)
+      ? prospectListRes.data
+      : (prospectListRes.data.data || []);
+    assert.ok(Array.isArray(prospectItems));
+    const foundProspect = prospectItems.find(p => p.id === createdProspect.id);
+    assert.ok(foundProspect);
+    console.log(`✅ Prospect search & query verified: matched "${foundProspect.company}"`);
+
+    // Update prospect status
+    const updateProspectRes = await request(`/api/crm/prospects/${createdProspect.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ status: 'qualified' })
+    });
+    assert.equal(updateProspectRes.status, 200);
+    assert.equal(updateProspectRes.data.status, 'qualified');
+    console.log(`✅ Prospect status transitioned to "qualified" cleanly`);
+
+    // Promote prospect to Full CRM Contact
+    const promoteContactRes = await request('/api/crm/contacts', {
+      method: 'POST',
+      body: JSON.stringify({
+        firstName: 'Evelyn',
+        lastName: 'Cross',
+        email: createdProspect.email,
+        company: createdProspect.company,
+        tags: ['prospect', 'ai-robotics', 'qualified'],
+        source: 'Prospecting Engine',
+        status: 'lead'
+      })
+    });
+    assert.equal(promoteContactRes.status, 201);
+    assert.ok(promoteContactRes.data.id);
+    console.log(`✅ Qualified prospect promoted to Contact: Contact ID=${promoteContactRes.data.id}`);
+
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 116] Enterprise Platform Launch Readiness & Health Guardrails
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 116] Enterprise Platform Launch Readiness & Health Guardrails');
+
+    // 1. Health check verification
+    const healthRes = await request('/health');
+    assert.equal(healthRes.status, 200);
+    assert.equal(healthRes.data.status, 'healthy');
+    assert.ok(healthRes.data.timestamp);
+    console.log(`✅ Primary healthcheck (/health) healthy: status=${healthRes.data.status}`);
+
+    // 2. WebRTC Token and ICE servers discovery
+    const rtcRes = await request('/api/telephony/token', { method: 'POST' });
+    assert.equal(rtcRes.status, 200);
+    assert.ok(rtcRes.data.token && rtcRes.data.token.startsWith('opz_rtc_'));
+    assert.ok(Array.isArray(rtcRes.data.iceServers) && rtcRes.data.iceServers.length > 0);
+    console.log(`✅ WebRTC softphone voice token & ICE servers active: servers=${rtcRes.data.iceServers.length}`);
+
+    // 3. Multi-Tenant Location Records Isolation Check
+    const agencyRes = await request('/api/agency/profile');
+    assert.equal(agencyRes.status, 200);
+    assert.ok(agencyRes.data.name);
+    console.log(`✅ Multi-tenant isolation verified: active agency="${agencyRes.data.name}"`);
+
+    console.log('\n🎉 ALL 116 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

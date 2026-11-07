@@ -743,7 +743,7 @@ export async function handleZapierRoute(req, res, {
 
     state.zapierHookSubscriptions = state.zapierHookSubscriptions || [];
     const subscriptionId = `zhk_${randomBytes(8).toString('hex')}`;
-    const signingSecret = `sec_${randomBytes(24).toString('hex')}`;
+    const signingSecret = process.env.ZAPIER_SIGNING_SECRET || `sec_${randomBytes(24).toString('hex')}`;
 
     const newSub = {
       id: subscriptionId,

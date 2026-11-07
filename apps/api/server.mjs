@@ -194,7 +194,8 @@ const collections = Object.freeze({
   snippets: { label: 'Snippets', required: ['label','body'], fields: ['label','subject','body','channel','uses'] },
   templates: { label: 'Templates', required: ['name','subject'], fields: ['name','category','subject','body','uses','updatedAt'] },
   team: { label: 'Team Members', required: ['name'], fields: ['name','email','role','online','phone','avatar','status','createdAt'] },
-  phoneNumbers: { label: 'Phone Numbers', required: ['number'], fields: ['number','label','type','voice','sms','mms','status','assignedTo','forwardTo','ivrEnabled','ivrMenu','recordingEnabled','areaCode'] }
+  phoneNumbers: { label: 'Phone Numbers', required: ['number'], fields: ['number','label','type','voice','sms','mms','status','assignedTo','forwardTo','ivrEnabled','ivrMenu','recordingEnabled','areaCode'] },
+  prospects: { label: 'Prospects', required: ['company'], fields: ['company','person','email','industry','location','employees','score','status','createdAt'] }
 });
 
 // ─── State Management ─────────────────────────────────────────────────
@@ -6711,13 +6712,22 @@ const server = createServer(async (req, res) => {
       const tenantNumbers = state.records.phoneNumbers.filter(p => p.agencyId === agency.id);
       const defaultNumber = tenantNumbers.find(p => p.voice) || tenantNumbers[0];
 
+      let iceServers = [
+        { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
+      ];
+      if (process.env.WEBRTC_ICE_SERVERS) {
+        try {
+          iceServers = JSON.parse(process.env.WEBRTC_ICE_SERVERS);
+        } catch {
+          // fallback to default STUN
+        }
+      }
+
       const rtcSession = {
         token: `opz_rtc_${randomBytes(16).toString('hex')}`,
         identity: actor?.user?.email || `agent_${actor?.user?.id?.slice(0, 8) || 'operator'}`,
         fromNumber: defaultNumber?.number || '+18005550199',
-        iceServers: [
-          { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
-        ],
+        iceServers,
         expiresAt: new Date(Date.now() + 3600000).toISOString()
       };
 
