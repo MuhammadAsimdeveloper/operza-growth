@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, EmptyState, PageHeader, StatCard, Switch } from '../components/ui';
+import { Badge, EmptyState, Switch } from '../components/ui';
 import { api } from '../lib/api';
 
 interface KnowledgeDoc {
@@ -189,25 +189,61 @@ export default function AiTrainer() {
   };
 
   return (
-    <div className="content">
-      <PageHeader
-        title="AI Copilot Training & Knowledge Center"
-        subtitle="Train your agency bot on internal SOPs, custom guidelines, and autonomous execution guardrails."
-        actions={
-          <button className="btn btn--primary" onClick={() => setNewDocOpen(true)}>
-            <Icon name="upload" size={15} /> Upload training doc
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Artificial Intelligence &amp; Copilot</div>
+          <h1>AI Knowledge Base &amp; Training</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setNewDocOpen(true)}>
+            <Icon name="upload" size={13} /> Upload Training Doc
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Knowledge Documents" value={String(docs.length)} icon={<Icon name="book" size={15} />} meta="indexed SOPs & files" />
-        <StatCard label="Semantic Chunks" value={String(totalChunks)} icon={<Icon name="database" size={15} />} meta={`${totalWords} words vector indexed`} />
-        <StatCard label="Active Persona" value={config.persona.toUpperCase()} icon={<Icon name="sparkles" size={15} />} meta={config.tone} />
-        <StatCard label="Tool Permissions" value="4 Active" icon={<Icon name="lock" size={15} />} meta="safety bounds enforced" />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">RAG VECTOR ENGINE &amp; GUARDRAILS</div>
+        <h2>Enterprise Semantic Knowledge Grounding</h2>
+        <p>Train Operza AI Copilot on your proprietary agency SOPs, service pricing tiers, custom personas, and execution safety bounds.</p>
+      </section>
 
-      <div className="grid grid--2" style={{ gap: 18, alignItems: 'start' }}>
+      <section className="atlas-kpis" aria-label="AI training metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Indexed Documents</span>
+            <span className="atlas-status atlas-status--healthy">Vectorized</span>
+          </div>
+          <div className="atlas-kpi__value">{docs.length}</div>
+          <div className="atlas-kpi__note">Internal SOPs &amp; guidelines</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Semantic Chunks</span>
+            <span className="atlas-status atlas-status--healthy">RAG Ready</span>
+          </div>
+          <div className="atlas-kpi__value">{totalChunks}</div>
+          <div className="atlas-kpi__note">{totalWords} words vector embedded</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Active Persona</span>
+            <span className="atlas-status atlas-status--healthy">Configured</span>
+          </div>
+          <div className="atlas-kpi__value">{config.persona.toUpperCase()}</div>
+          <div className="atlas-kpi__note">{config.tone} tone &amp; voice</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Tool Permissions</span>
+            <span className="atlas-status atlas-status--healthy">Governed</span>
+          </div>
+          <div className="atlas-kpi__value">4 Active</div>
+          <div className="atlas-kpi__note">Human approval &amp; bounds</div>
+        </article>
+      </section>
+
+      <div className="grid grid--2" style={{ marginTop: 22, gap: 18, alignItems: 'start' }}>
         {/* Left Column: Personality & Knowledge Management */}
         <div className="stack" style={{ gap: 14 }}>
           <div className="card">
@@ -592,6 +628,6 @@ export default function AiTrainer() {
           </div>
         </Modal>
       )}
-    </div>
+    </main>
   );
 }

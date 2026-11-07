@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, EmptyState, PageHeader, StatusBadge } from '../components/ui';
+import { Badge, EmptyState, StatusBadge } from '../components/ui';
 import { api } from '../lib/api';
 
 interface ProviderCatalogEntry {
@@ -412,25 +412,32 @@ export default function Integrations() {
   }, [catalog, selectedProviderKey]);
 
   return (
-    <div className="page-container space-y-6">
-      <PageHeader
-        title="Integrations & Provider Connections"
-        subtitle="Manage server-side provider credentials, communication channels, and ecosystem integrations."
-        actions={
-          activeTab === 'connections' && (
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> App Marketplace &amp; Connectors</div>
+          <h1>Integrations &amp; Connectors</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          {activeTab === 'connections' && (
             <button
               onClick={() => {
                 setConnectError(null);
                 setShowConnectModal(true);
               }}
-              className="btn btn--primary flex items-center gap-2 text-sm"
+              className="atlas-quick-action-button"
             >
-              <Icon name="plus" size={16} />
-              Connect Provider Account
+              <Icon name="plus" size={13} /> Connect Provider Account
             </button>
-          )
-        }
-      />
+          )}
+        </div>
+      </header>
+
+      <section className="atlas-hero" style={{ marginBottom: 24 }}>
+        <div className="atlas-eyebrow">INTEGRATIONS ECOSYSTEM &amp; AUTOMATION CONNECTORS</div>
+        <h2>Governed API Connectors &amp; Webhook Event Bus</h2>
+        <p>Manage verified server-side provider credentials, communication channels (Twilio, SendGrid, Meta WhatsApp, Stripe), and bi-directional Zapier automation triggers.</p>
+      </section>
 
       {/* Tabs */}
       <div className="flex border-b border-gray-200 dark:border-gray-800 gap-6 text-sm">
@@ -1484,6 +1491,6 @@ export default function Integrations() {
           </div>
         </Modal>
       )}
-    </div>
+    </main>
   );
 }

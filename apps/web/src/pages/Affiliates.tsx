@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, EmptyState, PageHeader, StatCard, StatusBadge } from '../components/ui';
+import { Avatar, EmptyState, StatCard, StatusBadge } from '../components/ui';
 import { uid, useStore } from '../lib/store';
 import { currency, num, pct } from '../lib/format';
 import { api } from '../lib/api';
@@ -71,21 +71,62 @@ export default function Affiliates() {
   const top = [...affiliates].sort((a, b) => b.conversions - a.conversions)[0];
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Affiliates"
-        subtitle="Partner links, commission tracking and payouts."
-        actions={
-          <>
-            <button className="btn" onClick={() => setReportOpen(true)}>
-              <Icon name="copy" size={15} /> Payout report
-            </button>
-            <button className="btn btn--primary" onClick={() => setInviting(true)}>
-              <Icon name="plus" size={15} /> Invite affiliate
-            </button>
-          </>
-        }
-      />
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Growth &amp; Partners</div>
+          <h1>Affiliate Management</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="btn btn--secondary btn--sm" onClick={() => setReportOpen(true)}>
+            <Icon name="copy" size={14} /> Payout Report
+          </button>
+          <button className="atlas-quick-action-button" onClick={() => setInviting(true)}>
+            <Icon name="plus" size={13} /> Invite Affiliate
+          </button>
+        </div>
+      </header>
+
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">PARTNER NETWORK &amp; COMMISSIONS</div>
+        <h2>Affiliate Attribution &amp; Payout Engine</h2>
+        <p>Track unique partner referral links, click conversions, commission tiers, and generate audited payout batches.</p>
+      </section>
+
+      <section className="atlas-kpis" aria-label="Affiliate metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Registered Partners</span>
+            <span className="atlas-status atlas-status--healthy">Active</span>
+          </div>
+          <div className="atlas-kpi__value">{num(affiliates.length)}</div>
+          <div className="atlas-kpi__note">{affiliates.filter((a) => a.status === 'active').length} active tracking</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Referral Clicks</span>
+            <span className="atlas-status atlas-status--healthy">Tracked</span>
+          </div>
+          <div className="atlas-kpi__value">{num(clicks)}</div>
+          <div className="atlas-kpi__note">Unique partner sessions</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Conversions</span>
+            <span className="atlas-status atlas-status--healthy">Verified</span>
+          </div>
+          <div className="atlas-kpi__value">{num(conversions)}</div>
+          <div className="atlas-kpi__note">{pct(conversions, clicks)} partner conversion</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Commission Owed</span>
+            <span className="atlas-status atlas-status--healthy">Balance</span>
+          </div>
+          <div className="atlas-kpi__value">{currency(payouts)}</div>
+          <div className="atlas-kpi__note">Unpaid partner balance</div>
+        </article>
+      </section>
 
       {notice && (
         <div className="callout" style={{ marginBottom: 16 }}>
@@ -93,15 +134,8 @@ export default function Affiliates() {
         </div>
       )}
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Affiliates" value={num(affiliates.length)} icon={<Icon name="users" size={15} />} meta={`${affiliates.filter((a) => a.status === 'active').length} active`} />
-        <StatCard label="Link clicks" value={num(clicks)} icon={<Icon name="link" size={15} />} meta="all partners" />
-        <StatCard label="Conversions" value={num(conversions)} icon={<Icon name="check" size={15} />} meta={pct(conversions, clicks)} />
-        <StatCard label="Commission owed" value={currency(payouts)} icon={<Icon name="dollar" size={15} />} meta="unpaid balance" />
-      </div>
-
       {top && (
-        <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card-premium" style={{ marginTop: 22, marginBottom: 16 }}>
           <div className="card__body row row--between">
             <span className="row" style={{ gap: 12 }}>
               <span className="avatar avatar--md" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>
@@ -126,7 +160,7 @@ export default function Affiliates() {
         </div>
       )}
 
-      <div className="card">
+      <div className="card-premium">
         <div className="card__head">
           <div>
             <div className="card__title">Partner roster</div>
@@ -199,7 +233,7 @@ export default function Affiliates() {
 
       {inviting && <InviteAffiliateModal onClose={() => setInviting(false)} />}
       {reportOpen && <PayoutReportModal onClose={() => setReportOpen(false)} />}
-    </div>
+    </main>
   );
 }
 
@@ -378,7 +412,7 @@ function PayoutReportModal({ onClose }: { onClose: () => void }) {
         <StatCard label="Total Referrals" value={num(totalConversions)} icon={<Icon name="check" size={15} />} meta="lifetime conversions" />
       </div>
 
-      <div className="card">
+      <div className="card-premium">
         <div className="card__head">
           <div className="card__title">Pending Settlements</div>
         </div>

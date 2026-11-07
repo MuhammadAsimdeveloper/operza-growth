@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, PageHeader, StatCard, StatusBadge, Switch } from '../components/ui';
+import { Badge, StatusBadge, Switch } from '../components/ui';
 import { useStore, uid } from '../lib/store';
 import { num, pct, shortDate } from '../lib/format';
 import { api } from '../lib/api';
@@ -85,35 +85,61 @@ export default function Forms() {
   const embedForm = state.forms[0];
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Forms & Surveys"
-        subtitle="Capture leads with forms and collect feedback with surveys."
-        actions={
-          <button className="btn btn--primary" onClick={() => setCreating(true)}>
-            <Icon name="plus" size={16} /> New {tab === 'survey' ? 'survey' : 'form'}
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Lead Capture &amp; Forms</div>
+          <h1>Forms &amp; Surveys</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={13} /> New {tab === 'survey' ? 'Survey' : 'Form'}
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Live forms" value={`${published}/${state.forms.length}`} icon={<Icon name="clipboard" size={15} />} meta="published" />
-        <StatCard label="Submissions" value={num(submissions)} icon={<Icon name="send" size={15} />} meta="all time" />
-        <StatCard
-          label="Avg per form"
-          value={num(Math.round(submissions / Math.max(state.forms.length, 1)))}
-          icon={<Icon name="chart" size={15} />}
-          meta="submissions"
-        />
-        <StatCard
-          label="Completion"
-          value={pct(state.forms.filter((f) => f.submissions > 0).length, state.forms.length || 1)}
-          icon={<Icon name="check" size={15} />}
-          meta="forms with data"
-        />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">LEAD CAPTURE &amp; SURVEYS</div>
+        <h2>Dynamic Multi-Field Ingestion Engine</h2>
+        <p>Build embeddable forms, multi-step feedback surveys, and route submissions into contact records and automated workflows.</p>
+      </section>
 
-      <div className="card">
+      <section className="atlas-kpis" aria-label="Form metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Published Forms</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{`${published}/${state.forms.length}`}</div>
+          <div className="atlas-kpi__note">Active capture endpoints</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Submissions</span>
+            <span className="atlas-status atlas-status--healthy">Verified</span>
+          </div>
+          <div className="atlas-kpi__value">{num(submissions)}</div>
+          <div className="atlas-kpi__note">Lead records created</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Average per Form</span>
+            <span className="atlas-status atlas-status--healthy">Automated</span>
+          </div>
+          <div className="atlas-kpi__value">{num(Math.round(submissions / Math.max(state.forms.length, 1)))}</div>
+          <div className="atlas-kpi__note">Form performance average</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Active Ratio</span>
+            <span className="atlas-status atlas-status--healthy">Healthy</span>
+          </div>
+          <div className="atlas-kpi__value">{pct(state.forms.filter((f) => f.submissions > 0).length, state.forms.length || 1)}</div>
+          <div className="atlas-kpi__note">Forms with submissions</div>
+        </article>
+      </section>
+
+      <div className="card-premium" style={{ marginTop: 22 }}>
         <div className="card__head">
           <div className="tabs" style={{ borderBottom: 'none', padding: 0 }}>
             {TABS.map((t) => (
@@ -201,9 +227,9 @@ export default function Forms() {
       </div>
 
       <div className="grid grid--2" style={{ marginTop: 16 }}>
-        <div className="card">
+        <div className="card-premium">
           <div className="card__head">
-            <div className="card__title">Top performer</div>
+            <div className="card__title">Top Performer</div>
           </div>
           <div className="card__body">
             {(() => {
@@ -232,9 +258,9 @@ export default function Forms() {
           </div>
         </div>
 
-        <div className="card">
+        <div className="card-premium">
           <div className="card__head">
-            <div className="card__title">Embed snippet</div>
+            <div className="card__title">Embed Snippet &amp; SDK</div>
           </div>
           <div className="card__body stack">
             <div className="note" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
@@ -289,7 +315,7 @@ export default function Forms() {
       {viewingForm && (
         <FormSubmissionsModal form={viewingForm} onClose={() => setViewingSubmissionsId(null)} />
       )}
-    </div>
+    </main>
   );
 }
 

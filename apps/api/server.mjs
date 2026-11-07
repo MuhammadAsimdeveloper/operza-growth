@@ -6706,11 +6706,34 @@ const server = createServer(async (req, res) => {
     // ─── REAL-TIME WEBRTC TELEPHONY & SOFTPHONE CALLS ───────────
     // ═════════════════════════════════════════════════════════════
 
+    // GET /api/telephony/status - Retrieve carrier configuration and live dialing readiness
+    if (method === 'GET' && pathname === '/api/telephony/status') {
+      state.records.phoneNumbers = state.records.phoneNumbers || [];
+      const tenantNumbers = state.records.phoneNumbers.filter(p => p.agencyId === agency.id);
+      const defaultNumber = tenantNumbers.find(p => p.voice) || tenantNumbers[0];
+      const hasTwilio = Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
+      const hasSip = Boolean(process.env.SIP_GATEWAY_URL);
+      const isConfigured = hasTwilio || hasSip;
+
+      return sendJson(res, 200, {
+        configured: isConfigured,
+        provider: hasTwilio ? 'twilio' : (hasSip ? 'sip' : 'none'),
+        status: isConfigured ? 'verified' : 'unconfigured',
+        callerId: process.env.TWILIO_CALLER_ID || defaultNumber?.number || null,
+        liveDispatchReady: isConfigured,
+        sandboxAvailable: true,
+        message: isConfigured
+          ? 'Carrier voice trunk is verified and operational.'
+          : 'Carrier trunk is unconfigured. Live external PSTN dialing is disabled until Twilio or SIP credentials are provided in Integrations. Local sandbox testing is available.'
+      });
+    }
+
     // POST /api/telephony/token - Issue WebRTC voice client token & STUN/TURN ICE config
     if (method === 'POST' && pathname === '/api/telephony/token') {
       state.records.phoneNumbers = state.records.phoneNumbers || [];
       const tenantNumbers = state.records.phoneNumbers.filter(p => p.agencyId === agency.id);
       const defaultNumber = tenantNumbers.find(p => p.voice) || tenantNumbers[0];
+      const hasCarrier = Boolean((process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) || process.env.SIP_GATEWAY_URL);
 
       let iceServers = [
         { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
@@ -6727,6 +6750,8 @@ const server = createServer(async (req, res) => {
         token: `opz_rtc_${randomBytes(16).toString('hex')}`,
         identity: actor?.user?.email || `agent_${actor?.user?.id?.slice(0, 8) || 'operator'}`,
         fromNumber: defaultNumber?.number || '+18005550199',
+        configured: hasCarrier,
+        provider: hasCarrier ? 'twilio' : 'none',
         iceServers,
         expiresAt: new Date(Date.now() + 3600000).toISOString()
       };
@@ -6734,13 +6759,23 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, rtcSession);
     }
 
-    // POST /api/telephony/call/start - Initiate live outbound softphone call
+    // POST /api/telephony/call/start - Initiate outbound softphone call
     if (method === 'POST' && pathname === '/api/telephony/call/start') {
       const body = await readBody(req);
       const to = String(body.to || '').trim();
       if (!to) {
         return sendJson(res, 400, { error: 'Destination phone number (to) is required' });
       }
+
+      const hasCarrier = Boolean((process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) || process.env.SIP_GATEWAY_URL);
+      if (body.mode === 'live' && !hasCarrier) {
+        return sendJson(res, 400, {
+          error: 'Telephony carrier unconfigured',
+          code: 'CARRIER_NOT_CONFIGURED',
+          message: 'No live telephony carrier (Twilio or SIP Trunk) is configured on this server. To place live calls to external phone numbers, configure TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in environment settings.'
+        });
+      }
+      const isSandboxMode = body.mode === 'sandbox' || body.sandbox === true || !hasCarrier;
 
       state.records.phoneNumbers = state.records.phoneNumbers || [];
       const tenantNumbers = state.records.phoneNumbers.filter(p => p.agencyId === agency.id);
@@ -6770,7 +6805,11 @@ const server = createServer(async (req, res) => {
         numberId: defaultNumber?.id || null,
         recordingUrl: null,
         handled: true,
-        notes: body.notes || 'Outbound WebRTC softphone call',
+        mode: hasCarrier ? 'live' : 'sandbox',
+        isSimulated: !hasCarrier,
+        notes: hasCarrier
+          ? (body.notes || 'Outbound WebRTC softphone call')
+          : `[SANDBOX SIMULATION - NO CARRIER DISPATCH] ${body.notes || 'Browser softphone test'}`,
         dtmfLog: [],
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -6790,11 +6829,18 @@ const server = createServer(async (req, res) => {
         callId: call.id,
         from: call.from,
         to: call.to,
-        contactId: call.contactId
+        contactId: call.contactId,
+        mode: call.mode
       });
       broadcast('phone.call.started', call);
 
-      return sendJson(res, 201, { success: true, call });
+      return sendJson(res, 201, {
+        success: true,
+        call,
+        carrierConfigured: hasCarrier,
+        mode: call.mode,
+        notice: hasCarrier ? undefined : 'Carrier trunk unconfigured: call started in browser sandbox simulation mode. Configure Twilio credentials in Integrations for live PSTN connection.'
+      });
     }
 
     // POST /api/telephony/call/:id/end - Terminate active call and record duration & activity
@@ -8440,23 +8486,42 @@ const server = createServer(async (req, res) => {
     // ─── INTEGRATIONS & APP MARKETPLACE ─────────────────────────
     // ═════════════════════════════════════════════════════════════
 
-    const getDefaultIntegrations = () => [
-      { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, and payment links', icon: 'credit-card', connected: true, accountName: 'Operza Alpha Agency (acct_1928)', status: 'connected', lastSyncAt: new Date().toISOString() },
-      { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'SMS messaging, phone numbers, and voice call tracking', icon: 'phone', connected: true, accountName: '+1 (800) 555-0100', status: 'connected', lastSyncAt: new Date().toISOString() },
-      { id: 'sendgrid', name: 'SendGrid', category: 'Communications', description: 'Transactional email delivery and marketing campaigns', icon: 'mail', connected: true, accountName: 'noreply@operza.io', status: 'connected', lastSyncAt: new Date().toISOString() },
-      { id: 'openai', name: 'OpenAI', category: 'AI & Copilot', description: 'Powering autonomous copilot, conversation replies, and summarization', icon: 'sparkles', connected: true, accountName: 'GPT-4o & Embeddings', status: 'connected', lastSyncAt: new Date().toISOString() },
-      { id: 'slack', name: 'Slack', category: 'Notifications', description: 'Real-time notifications for leads, booked appointments, and deals', icon: 'message', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
-      { id: 'zapier', name: 'Zapier', category: 'Automation', description: 'Connect Operza triggers to 5,000+ business applications', icon: 'zap', connected: true, accountName: 'Operza Flow Sync', status: 'connected', lastSyncAt: new Date().toISOString() },
-      { id: 'google_calendar', name: 'Google Calendar', category: 'Calendar', description: 'Two-way appointment synchronization and scheduling', icon: 'calendar', connected: true, accountName: 'team@operza.io', status: 'connected', lastSyncAt: new Date().toISOString() },
-      { id: 'meta_ads', name: 'Meta Ads', category: 'Marketing', description: 'Instant lead sync from Facebook & Instagram lead forms', icon: 'facebook', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null },
-      { id: 'shopify', name: 'Shopify', category: 'Commerce', description: 'E-commerce store orders, customer import, and product sync', icon: 'store', connected: false, accountName: '', status: 'disconnected', lastSyncAt: null }
-    ];
+    const getDefaultIntegrations = () => {
+      const hasStripe = Boolean(process.env.STRIPE_SECRET_KEY);
+      const hasTwilio = Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
+      const hasSendGrid = Boolean(process.env.SENDGRID_API_KEY);
+      const hasOpenAI = Boolean(process.env.OPENAI_API_KEY);
+      const hasSlack = Boolean(process.env.SLACK_WEBHOOK_URL);
+      const hasGoogle = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+
+      return [
+        { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, and payment links', icon: 'credit-card', connected: hasStripe, accountName: hasStripe ? 'Verified Stripe Gateway' : '', status: hasStripe ? 'connected' : 'unconfigured', lastSyncAt: hasStripe ? new Date().toISOString() : null },
+        { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'SMS messaging, phone numbers, and voice call tracking', icon: 'phone', connected: hasTwilio, accountName: hasTwilio ? '+1 (800) 555-0100' : '', status: hasTwilio ? 'connected' : 'unconfigured', lastSyncAt: hasTwilio ? new Date().toISOString() : null },
+        { id: 'sendgrid', name: 'SendGrid', category: 'Communications', description: 'Transactional email delivery and marketing campaigns', icon: 'mail', connected: hasSendGrid, accountName: hasSendGrid ? 'noreply@operza.io' : '', status: hasSendGrid ? 'connected' : 'unconfigured', lastSyncAt: hasSendGrid ? new Date().toISOString() : null },
+        { id: 'openai', name: 'OpenAI', category: 'AI & Copilot', description: 'Powering autonomous copilot, conversation replies, and summarization', icon: 'sparkles', connected: hasOpenAI, accountName: hasOpenAI ? 'GPT-4o & Embeddings' : '', status: hasOpenAI ? 'connected' : 'unconfigured', lastSyncAt: hasOpenAI ? new Date().toISOString() : null },
+        { id: 'slack', name: 'Slack', category: 'Notifications', description: 'Real-time notifications for leads, booked appointments, and deals', icon: 'message', connected: hasSlack, accountName: hasSlack ? '#leads-alerts' : '', status: hasSlack ? 'connected' : 'unconfigured', lastSyncAt: null },
+        { id: 'zapier', name: 'Zapier & Webhooks', category: 'Automation', description: 'Native Operza webhook engine connecting 5,000+ external business applications', icon: 'zap', connected: true, accountName: 'Native Operza Engine', status: 'connected', lastSyncAt: new Date().toISOString() },
+        { id: 'google_calendar', name: 'Google Calendar', category: 'Calendar', description: 'Two-way appointment synchronization and scheduling', icon: 'calendar', connected: hasGoogle, accountName: hasGoogle ? 'team@operza.io' : '', status: hasGoogle ? 'connected' : 'unconfigured', lastSyncAt: null },
+        { id: 'meta_ads', name: 'Meta Ads', category: 'Marketing', description: 'Instant lead sync from Facebook & Instagram lead forms', icon: 'facebook', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+        { id: 'shopify', name: 'Shopify', category: 'Commerce', description: 'E-commerce store orders, customer import, and product sync', icon: 'store', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null }
+      ];
+    };
 
     if (method === 'GET' && pathname === '/api/integrations') {
       state.records.integrations = state.records.integrations || {};
       if (!state.records.integrations[agency.id]) {
         state.records.integrations[agency.id] = getDefaultIntegrations();
         await saveState();
+      } else {
+        const defaults = getDefaultIntegrations();
+        state.records.integrations[agency.id] = state.records.integrations[agency.id].map(item => {
+          const def = defaults.find(d => d.id === item.id);
+          // If marked connected by default seed without user apiKey or verifiedAt, sync with real env reality
+          if (def && item.status === 'connected' && !def.connected && !item.apiKey && !item.verifiedAt) {
+            return { ...item, connected: false, status: 'unconfigured', accountName: '' };
+          }
+          return item;
+        });
       }
       return sendJson(res, 200, { integrations: state.records.integrations[agency.id] });
     }

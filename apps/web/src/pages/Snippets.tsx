@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, EmptyState, PageHeader, StatCard } from '../components/ui';
+import { Badge, EmptyState } from '../components/ui';
 import { num } from '../lib/format';
 import { CHANNEL_META, uid, useStore } from '../lib/store';
 import { api } from '../lib/api';
@@ -75,30 +75,61 @@ export default function Snippets() {
   }
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Snippets"
-        subtitle="Reusable replies that fill merge tokens from the contact and custom values."
-        actions={
-          <button className="btn btn--primary" type="button" onClick={() => setCreating(true)}>
-            <Icon name="plus" size={16} /> New snippet
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Conversations &amp; Responses</div>
+          <h1>Snippets &amp; Quick Replies</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" type="button" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={13} /> New Snippet
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Snippets" value={num(state.snippets.length)} icon={<Icon name="zap" size={15} />} meta="saved replies" />
-        <StatCard label="Inserts" value={num(uses)} icon={<Icon name="send" size={15} />} meta="across all channels" />
-        <StatCard label="Any channel" value={num(shared)} icon={<Icon name="globe" size={15} />} meta="not channel-locked" />
-        <StatCard
-          label="Most used"
-          value={mostUsed ? num(mostUsed.uses) : '0'}
-          icon={<Icon name="chart" size={15} />}
-          meta={mostUsed?.label ?? 'no snippets yet'}
-        />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">SAVED RESPONSES &amp; TEMPLATES</div>
+        <h2>Canned Responses &amp; Fast Insertion</h2>
+        <p>Pre-written message templates that auto-populate recipient data and brand tokens for lightning-fast conversations.</p>
+      </section>
 
-      <div className="card">
+      <section className="atlas-kpis" aria-label="Snippet metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Saved Snippets</span>
+            <span className="atlas-status atlas-status--healthy">Active</span>
+          </div>
+          <div className="atlas-kpi__value">{num(state.snippets.length)}</div>
+          <div className="atlas-kpi__note">Canned response templates</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Inserts</span>
+            <span className="atlas-status atlas-status--healthy">Tracked</span>
+          </div>
+          <div className="atlas-kpi__value">{num(uses)}</div>
+          <div className="atlas-kpi__note">Applied in conversations</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Multi-Channel</span>
+            <span className="atlas-status atlas-status--healthy">Universal</span>
+          </div>
+          <div className="atlas-kpi__value">{num(shared)}</div>
+          <div className="atlas-kpi__note">Usable across all channels</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Top Snippet Uses</span>
+            <span className="atlas-status atlas-status--healthy">Popular</span>
+          </div>
+          <div className="atlas-kpi__value">{mostUsed ? num(mostUsed.uses) : '0'}</div>
+          <div className="atlas-kpi__note">{mostUsed?.label ?? 'No snippets yet'}</div>
+        </article>
+      </section>
+
+      <div className="card-premium" style={{ marginTop: 22 }}>
         <div className="card__head">
           <div>
             <div className="card__title">Reply library</div>
@@ -293,7 +324,7 @@ export default function Snippets() {
           </div>
         </Modal>
       )}
-    </div>
+    </main>
   );
 }
 

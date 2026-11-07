@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, EmptyState, PageHeader, StatCard, Switch } from '../components/ui';
+import { Avatar, Badge, EmptyState, Switch } from '../components/ui';
 import { currency, num, shortDate } from '../lib/format';
 import { uid, useStore } from '../lib/store';
 import { api } from '../lib/api';
@@ -61,51 +61,64 @@ export default function Memberships() {
   const detail = courses.find((c) => c.id === detailId) ?? null;
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Memberships"
-        subtitle="Courses, communities and the people learning inside them."
-        actions={
-          <>
-            <button className="btn" onClick={() => setMembersOpen(true)}>
-              <Icon name="users" size={15} /> Members
-            </button>
-            <button className="btn btn--primary" onClick={() => setCreating(true)}>
-              <Icon name="plus" size={15} /> New offer
-            </button>
-          </>
-        }
-      />
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Learning &amp; Community</div>
+          <h1>Memberships &amp; Courses</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="btn btn--secondary btn--sm" onClick={() => setMembersOpen(true)}>
+            <Icon name="users" size={14} /> Member Roster
+          </button>
+          <button className="atlas-quick-action-button" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={13} /> New Course Offer
+          </button>
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard
-          label="Active members"
-          value={num(totalEnrollments)}
-          icon={<Icon name="users" size={15} />}
-          trend={{ direction: 'up', value: '9.2%' }}
-          meta="vs. last month"
-        />
-        <StatCard
-          label="Offers live"
-          value={`${courses.filter((c) => c.published).length}/${courses.length}`}
-          icon={<Icon name="book" size={15} />}
-          meta="published"
-        />
-        <StatCard
-          label="Avg. completion"
-          value={`${Math.round(completion)}%`}
-          icon={<Icon name="chart" size={15} />}
-          meta="across enrollments"
-        />
-        <StatCard
-          label="Course revenue"
-          value={currency(revenue)}
-          icon={<Icon name="dollar" size={15} />}
-          meta="lifetime"
-        />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">DIGITAL COURSES &amp; PORTALS</div>
+        <h2>Course Delivery &amp; Community Learning OS</h2>
+        <p>Deliver video curricula, configure automated drip schedules, monitor student completion rates, and manage private communities.</p>
+      </section>
 
-      <div className="row row--between" style={{ marginBottom: 12 }}>
+      <section className="atlas-kpis" aria-label="Membership metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Enrolled Members</span>
+            <span className="atlas-status atlas-status--healthy">+9.2%</span>
+          </div>
+          <div className="atlas-kpi__value">{num(totalEnrollments)}</div>
+          <div className="atlas-kpi__note">Active learning seats</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Published Offers</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{`${courses.filter((c) => c.published).length}/${courses.length}`}</div>
+          <div className="atlas-kpi__note">Available digital courses</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Average Completion</span>
+            <span className="atlas-status atlas-status--healthy">Engaged</span>
+          </div>
+          <div className="atlas-kpi__value">{`${Math.round(completion)}%`}</div>
+          <div className="atlas-kpi__note">Across all curriculum seats</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Course Revenue</span>
+            <span className="atlas-status atlas-status--healthy">Settled</span>
+          </div>
+          <div className="atlas-kpi__value">{currency(revenue)}</div>
+          <div className="atlas-kpi__note">Lifetime digital receipts</div>
+        </article>
+      </section>
+
+      <div className="row row--between" style={{ marginTop: 22, marginBottom: 12 }}>
         <div className="tabs" style={{ margin: 0 }}>
           {(['all', 'published', 'draft'] as Filter[]).map((f) => (
             <button
@@ -196,7 +209,7 @@ export default function Memberships() {
         </div>
       )}
 
-      <div className="card">
+      <div className="card-premium">
         <div className="card__head">
           <div>
             <div className="card__title">Recent enrollments</div>
@@ -302,7 +315,7 @@ export default function Memberships() {
       )}
 
       {creating && <NewOfferModal onClose={() => setCreating(false)} />}
-    </div>
+    </main>
   );
 }
 

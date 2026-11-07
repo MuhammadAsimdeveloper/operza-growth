@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, EmptyState, PageHeader, StatCard } from '../components/ui';
+import { Avatar, Badge, EmptyState } from '../components/ui';
 import { fullDate, num, sameDay, timeOf } from '../lib/format';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
@@ -84,30 +84,64 @@ export default function AuditLog() {
   };
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Audit Log"
-        subtitle="A record of the changes made in this workspace, newest first."
-        actions={
-          <div className="row" style={{ gap: 8 }}>
-            <button className="btn" onClick={handleExportCsv} disabled={rows.length === 0} title="Export audit trail to CSV">
-              <Icon name="download" size={15} /> Export CSV
-            </button>
-            <button className="btn" onClick={() => setConfirmClear(true)} disabled={combinedLogs.length === 0}>
-              <Icon name="trash" size={15} /> Clear log
-            </button>
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Governance &amp; Security</div>
+          <h1>System Audit Trail</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="btn btn--secondary btn--sm" onClick={handleExportCsv} disabled={rows.length === 0} title="Export audit trail to CSV">
+            <Icon name="download" size={14} /> Export CSV
+          </button>
+          <button className="btn btn--secondary btn--sm" onClick={() => setConfirmClear(true)} disabled={combinedLogs.length === 0}>
+            <Icon name="trash" size={14} /> Clear Log
+          </button>
+        </div>
+      </header>
+
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">SECURITY &amp; COMPLIANCE</div>
+        <h2>Immutable System Activity Ledger</h2>
+        <p>Comprehensive chronological trail of user sessions, resource creations, mutations, and policy governance events.</p>
+      </section>
+
+      <section className="atlas-kpis" aria-label="Audit log metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Audit Events</span>
+            <span className="atlas-status atlas-status--healthy">Logged</span>
           </div>
-        }
-      />
+          <div className="atlas-kpi__value">{num(state.auditLog.length)}</div>
+          <div className="atlas-kpi__note">Recent chronological trail</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Events Today</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{num(today)}</div>
+          <div className="atlas-kpi__note">Dispatched since midnight</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Active Actors</span>
+            <span className="atlas-status atlas-status--healthy">Verified</span>
+          </div>
+          <div className="atlas-kpi__value">{num(actors.length)}</div>
+          <div className="atlas-kpi__note">Team members &amp; system bots</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Entities Tracked</span>
+            <span className="atlas-status atlas-status--healthy">Governed</span>
+          </div>
+          <div className="atlas-kpi__value">{num(entities.length)}</div>
+          <div className="atlas-kpi__note">Domain model entities</div>
+        </article>
+      </section>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Events" value={num(state.auditLog.length)} icon={<Icon name="clipboard" size={15} />} meta="last 250 kept" />
-        <StatCard label="Today" value={num(today)} icon={<Icon name="clock" size={15} />} meta="since midnight" />
-        <StatCard label="Actors" value={num(actors.length)} icon={<Icon name="users" size={15} />} meta="people and integrations" />
-        <StatCard label="Entities" value={num(entities.length)} icon={<Icon name="sliders" size={15} />} meta="record types touched" />
-      </div>
-
-      <div className="card">
+      <div className="card-premium" style={{ marginTop: 22 }}>
         <div className="card__head" style={{ gap: 8, flexWrap: 'wrap' }}>
           <div className="search" style={{ flex: '1 1 220px', maxWidth: 300 }}>
             <Icon name="search" size={15} />
@@ -232,6 +266,6 @@ export default function AuditLog() {
           </p>
         </Modal>
       )}
-    </div>
+    </main>
   );
 }

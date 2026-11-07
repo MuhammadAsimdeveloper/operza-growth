@@ -17,7 +17,7 @@ interface NavEntry {
   badge?: number;
 }
 
-function Sidebar({ onNavigate, compact = false }: { onNavigate: () => void; compact?: boolean }) {
+function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   const { state } = useStore();
   const { user, agency, locations, activeLocation, switchLocation } = useAuth();
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
@@ -110,20 +110,6 @@ function Sidebar({ onNavigate, compact = false }: { onNavigate: () => void; comp
     },
   ];
 
-  const controlPlaneItems: NavEntry[] = [
-    { to: '/', label: 'Overview', icon: 'dashboard', end: true },
-    { to: '/reporting', label: 'Command Center', icon: 'chart' },
-    { to: '/contacts', label: 'CRM', icon: 'users' },
-    { to: '/conversations', label: 'Conversations', icon: 'message', badge: unread },
-    { to: '/workflows', label: 'Automations', icon: 'zap' },
-    { to: '/integrations', label: 'Integrations', icon: 'plug' },
-    { to: '/campaigns', label: 'Growth', icon: 'target' },
-    { to: '/ai-trainer', label: 'AI Operations', icon: 'sparkles' },
-    { to: '/developers', label: 'AI Workforce', icon: 'webhook' },
-    { to: '/documents', label: 'Knowledge', icon: 'book' },
-    { to: '/payments', label: 'Revenue OS', icon: 'wallet' },
-  ];
-
   return (
     <aside className="sidebar">
       <div className="sidebar__brand">
@@ -200,9 +186,9 @@ function Sidebar({ onNavigate, compact = false }: { onNavigate: () => void; comp
         )}
       </div>
 
-      <nav className={compact ? "sidebar__nav sidebar__nav--compact" : "sidebar__nav"}>
-        {(compact ? [{ items: controlPlaneItems } as { label?: string; items: NavEntry[] }] : groups).map((group, gi) => (
-          <div key={group.label ?? `g${gi}`} className={compact ? "atlas-sidebar__links" : undefined}>
+      <nav className="sidebar__nav">
+        {groups.map((group, gi) => (
+          <div key={group.label ?? `g${gi}`}>
             {group.label && <div className="nav__group-label">{group.label}</div>}
             {group.items.map((item) => (
               <NavLink
@@ -213,7 +199,7 @@ function Sidebar({ onNavigate, compact = false }: { onNavigate: () => void; comp
                 onClick={onNavigate}
               >
                 <span className="nav__icon">
-                  <Icon name={item.icon} size={17} />
+                  <Icon name={item.icon} size={16} />
                 </span>
                 <span className="nav__label">{item.label}</span>
                 {!!item.badge && <span className="nav__count">{item.badge}</span>}
@@ -224,26 +210,20 @@ function Sidebar({ onNavigate, compact = false }: { onNavigate: () => void; comp
       </nav>
 
       <div className="sidebar__footer">
-        {compact && <div className="atlas-sidebar__section-label">WORKSPACE</div>}
+        <div className="atlas-sidebar__section-label">WORKSPACE</div>
         <NavLink to="/settings" className={({ isActive }) => `nav__item${isActive ? ' is-active' : ''}`} onClick={onNavigate}>
           <span className="nav__icon">
-            <Icon name="settings" size={17} />
+            <Icon name="settings" size={16} />
           </span>
           <span className="nav__label">Settings</span>
         </NavLink>
-        {compact && (
-          <NavLink to="/audit-log" className="nav__item" onClick={onNavigate}>
-            <span className="nav__icon"><Icon name="lock" size={17} /></span>
-            <span className="nav__label">Audit &amp; Security</span>
-          </NavLink>
-        )}
-        {compact && <div className="atlas-sidebar__user">{user?.name || "Workspace user"}</div>}
-        <button className="nav__item" type="button" style={{ width: '100%' }}>
+        <NavLink to="/audit-log" className={({ isActive }) => `nav__item${isActive ? ' is-active' : ''}`} onClick={onNavigate}>
           <span className="nav__icon">
-            <Icon name="sparkles" size={17} />
+            <Icon name="lock" size={16} />
           </span>
-          <span className="nav__label">What&apos;s new</span>
-        </button>
+          <span className="nav__label">Audit &amp; Security</span>
+        </NavLink>
+        <div className="atlas-sidebar__user">{user?.name || "Workspace user"}</div>
       </div>
     </aside>
   );
@@ -825,15 +805,9 @@ export function AppShell({ children }: { children?: ReactNode }) {
     setNavOpen(false);
   }, [location.pathname]);
 
-  const isControlPlane =
-    location.pathname === "/" ||
-    location.pathname === "/dashboard" ||
-    location.pathname === "/reporting" ||
-    location.pathname === "/command-center";
-
   return (
-    <div className={["shell", navOpen && "is-nav-open", isControlPlane && "shell--overview"].filter(Boolean).join(" ")}>
-      <Sidebar onNavigate={() => setNavOpen(false)} compact={isControlPlane} />
+    <div className={["shell", "shell--overview", navOpen && "is-nav-open"].filter(Boolean).join(" ")}>
+      <Sidebar onNavigate={() => setNavOpen(false)} />
       <div className="scrim" onClick={() => setNavOpen(false)} />
       <div className="main">
         <TopBar onOpenNav={() => setNavOpen(true)} />

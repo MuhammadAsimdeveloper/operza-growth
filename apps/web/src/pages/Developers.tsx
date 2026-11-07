@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, EmptyState, PageHeader, StatCard, StatusBadge } from '../components/ui';
+import { Badge, EmptyState, StatusBadge } from '../components/ui';
 import { api } from '../lib/api';
 
 interface ApiKey {
@@ -199,31 +199,67 @@ export default function Developers() {
   };
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Developer Hub & Webhooks"
-        subtitle="Manage API keys, register real-time outbound webhooks, and inspect delivery logs."
-        actions={
-          activeTab === 'keys' ? (
-            <button className="btn btn--primary" onClick={() => { setNewKeyOpen(true); setCreatedSecretToken(null); setKeyLabel(''); }}>
-              <Icon name="plus" size={15} /> Generate API key
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Developer Platform</div>
+          <h1>Developer Hub &amp; Webhooks</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          {activeTab === 'keys' ? (
+            <button className="atlas-quick-action-button" onClick={() => { setNewKeyOpen(true); setCreatedSecretToken(null); setKeyLabel(''); }}>
+              <Icon name="plus" size={13} /> Generate API Key
             </button>
           ) : (
-            <button className="btn btn--primary" onClick={() => setNewWebhookOpen(true)}>
-              <Icon name="plus" size={15} /> Add webhook endpoint
+            <button className="atlas-quick-action-button" onClick={() => setNewWebhookOpen(true)}>
+              <Icon name="plus" size={13} /> Add Webhook Endpoint
             </button>
-          )
-        }
-      />
+          )}
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="API Keys" value={String(keys.length)} icon={<Icon name="lock" size={15} />} meta="active credentials" />
-        <StatCard label="Webhooks" value={String(webhooks.length)} icon={<Icon name="webhook" size={15} />} meta="subscribed endpoints" />
-        <StatCard label="Total Deliveries" value={String(deliveries.length)} icon={<Icon name="send" size={15} />} meta="dispatched events" />
-        <StatCard label="Success Rate" value="99.8%" icon={<Icon name="check" size={15} />} meta="HTTP 200 delivery" />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">DEVELOPER APIS &amp; WEBHOOKS</div>
+        <h2>Programmable Business Infrastructure</h2>
+        <p>Provision scoped API access keys, register real-time outbound event webhooks, and inspect delivery telemetry.</p>
+      </section>
 
-      <div className="card" style={{ marginBottom: 16 }}>
+      <section className="atlas-kpis" aria-label="Developer metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Active API Keys</span>
+            <span className="atlas-status atlas-status--healthy">Secure</span>
+          </div>
+          <div className="atlas-kpi__value">{keys.length}</div>
+          <div className="atlas-kpi__note">Hashed access credentials</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Registered Webhooks</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{webhooks.length}</div>
+          <div className="atlas-kpi__note">Subscribed event endpoints</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Dispatched Deliveries</span>
+            <span className="atlas-status atlas-status--healthy">Tracked</span>
+          </div>
+          <div className="atlas-kpi__value">{deliveries.length}</div>
+          <div className="atlas-kpi__note">Recorded outbox events</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Delivery Success</span>
+            <span className="atlas-status atlas-status--healthy">Optimal</span>
+          </div>
+          <div className="atlas-kpi__value">99.8%</div>
+          <div className="atlas-kpi__note">HTTP 200 delivery rate</div>
+        </article>
+      </section>
+
+      <div className="card-premium" style={{ marginTop: 22, marginBottom: 16 }}>
         <div className="card__head">
           <div className="segmented">
             <button
@@ -645,6 +681,6 @@ export default function Developers() {
           </pre>
         </Modal>
       )}
-    </div>
+    </main>
   );
 }

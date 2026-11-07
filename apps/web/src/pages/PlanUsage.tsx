@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
-import { Badge, PageHeader } from '../components/ui';
+import { Badge } from '../components/ui';
 import { api } from '../lib/api';
 
 interface PlanDefinition {
@@ -87,40 +87,78 @@ export default function PlanUsage() {
   const copilotPercent = Math.min(100, Math.round((copilotUsage / copilotLimit) * 100));
 
   return (
-    <div className="page-container space-y-6">
-      <PageHeader
-        title="Plan Entitlements & Resource Usage"
-        subtitle="Inspect active subscription capabilities, monthly quota consumption, and platform limits."
-        actions={
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__crumbs" aria-label="Breadcrumb">
+          <span className="atlas-dashboard__crumb">Control Plane</span>
+          <span className="atlas-dashboard__crumb-separator" aria-hidden="true">/</span>
+          <span className="atlas-dashboard__crumb atlas-dashboard__crumb--current">Plan & Quotas</span>
+        </div>
+        <div className="atlas-dashboard__actions">
           <button
             onClick={fetchPlatformCommercials}
-            className="btn btn--secondary flex items-center gap-2 text-sm"
+            className="atlas-quick-action-button"
+            type="button"
           >
-            <Icon name="refresh" size={16} className={loading ? 'animate-spin' : ''} />
+            <Icon name="refresh" size={14} className={loading ? 'animate-spin' : ''} />
             Refresh Quotas
           </button>
-        }
-      />
+        </div>
+      </header>
+
+      <section className="atlas-hero">
+        <h1 className="atlas-hero__title">Plan Entitlements & Resource Usage</h1>
+        <p>Inspect active subscription capabilities, monthly quota consumption, and platform limits.</p>
+      </section>
 
       {/* Honest Pricing & Billing Notice */}
-      <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 flex items-start gap-3">
-        <Icon name="info" size={20} className="text-blue-500 mt-0.5 flex-shrink-0" />
-        <div className="text-sm">
-          <p className="font-semibold text-blue-900 dark:text-blue-200">
-            Unpriced Beta & Development Entitlements Active
-          </p>
-          <p className="text-blue-800/90 dark:text-blue-300/90 mt-1">
-            All commercial plans in this phase have <code className="font-mono bg-blue-100 dark:bg-blue-950 px-1 py-0.5 rounded">pricing: null</code>. No billing gateway, automated credit card capture, or subscription payments are activated. Live external messaging and payment processing remain explicitly disabled.
-          </p>
-        </div>
+      <div className="callout callout--info" style={{ marginTop: 20, marginBottom: 20 }}>
+        <strong>Unpriced Beta & Development Entitlements Active:</strong> All commercial plans in this phase have pricing: null. No billing gateway, automated credit card capture, or subscription payments are activated. Live external messaging and payment processing remain explicitly disabled.
       </div>
 
+      <section className="atlas-kpis" aria-label="Quota metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Workflow Executions</span>
+            <span className="atlas-status atlas-status--healthy">{wfPercent}%</span>
+          </div>
+          <div className="atlas-kpi__value">{wfUsage} / {wfLimit}</div>
+          <div className="atlas-kpi__note">Monthly engine quota</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Copilot AI Requests</span>
+            <span className="atlas-status atlas-status--healthy">{copilotPercent}%</span>
+          </div>
+          <div className="atlas-kpi__value">{copilotUsage} / {copilotLimit}</div>
+          <div className="atlas-kpi__note">Inference consumption</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Location Seats</span>
+            <span className="atlas-status atlas-status--healthy">Provisioned</span>
+          </div>
+          <div className="atlas-kpi__value">{entitlements?.limits?.locations || 10} Locations</div>
+          <div className="atlas-kpi__note">Multi-tenant accounts</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Active Tier</span>
+            <span className="atlas-status atlas-status--healthy">Active</span>
+          </div>
+          <div className="atlas-kpi__value">{entitlements?.planName || 'Agency Partner'}</div>
+          <div className="atlas-kpi__note">Evaluation entitlement</div>
+        </article>
+      </section>
+
       {loading ? (
-        <div className="py-12 text-center text-gray-400">Loading entitlements and usage...</div>
+        <div className="card-premium" style={{ marginTop: 24, padding: 40, textAlign: 'center' }}>
+          <div className="text-gray-400">Loading entitlements and usage...</div>
+        </div>
       ) : (
         <>
           {/* Active Plan Overview */}
-          <div className="card p-6 space-y-6">
+          <div className="card-premium" style={{ marginTop: 24, padding: 24 }}>
             <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-200 dark:border-gray-800 pb-4">
               <div>
                 <span className="text-xs uppercase tracking-wider text-gray-400 font-semibold">Active Plan</span>
@@ -287,6 +325,6 @@ export default function PlanUsage() {
           </div>
         </>
       )}
-    </div>
+    </main>
   );
 }

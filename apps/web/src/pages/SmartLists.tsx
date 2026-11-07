@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, PageHeader, StatCard } from '../components/ui';
+import { Badge } from '../components/ui';
 import { uid, useStore } from '../lib/store';
 import { num } from '../lib/format';
 import { api } from '../lib/api';
@@ -47,32 +47,82 @@ export default function SmartLists() {
   const largest = [...smartLists].sort((a, b) => b.count - a.count)[0];
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Smart Lists"
-        subtitle="Saved filters that update themselves as contacts change."
-        actions={
-          <>
-            <button className="btn">
-              <Icon name="sliders" size={15} /> Manage rules
-            </button>
-            <button className="btn btn--primary" onClick={() => setAdding(true)}>
-              <Icon name="plus" size={15} /> New smart list
-            </button>
-          </>
-        }
-      />
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> CRM Segmentation</div>
+          <h1>Smart Lists</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setAdding(true)}>
+            <Icon name="plus" size={13} /> New Smart List
+          </button>
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Smart lists" value={num(smartLists.length)} icon={<Icon name="sliders" size={15} />} meta="saved filters" />
-        <StatCard label="Contacts covered" value={num(total)} icon={<Icon name="users" size={15} />} meta="across all lists" />
-        <StatCard label="Largest list" value={largest?.name ?? '—'} icon={<Icon name="chart" size={15} />} meta={`${num(largest?.count ?? 0)} contacts`} />
-        <StatCard label="Updated" value="Live" icon={<Icon name="refresh" size={15} />} meta="recalculated on change" />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">AUDIENCE SEGMENTATION &amp; DYNAMIC FILTERS</div>
+        <h2>Real-Time Dynamic Contact Segments</h2>
+        <p>Saved audience criteria that continuously re-evaluate as contact attributes, behavior, and deal stages evolve.</p>
+      </section>
 
-      <div className="grid grid--3">
+      <section className="atlas-kpis" aria-label="Smart list metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="sliders" size={15} /></span>
+            <span className="operza-kpi__trend">Lists</span>
+          </div>
+          <div className="atlas-kpi__label">Smart Lists</div>
+          <div className="atlas-kpi__value tabular">{num(smartLists.length)}</div>
+          <div className="atlas-kpi__note">Active dynamic segments</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 16 Q25 12 50 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: 'var(--accent)', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="users" size={15} /></span>
+            <span className="operza-kpi__trend">Audience</span>
+          </div>
+          <div className="atlas-kpi__label">Covered Contacts</div>
+          <div className="atlas-kpi__value tabular">{num(total)}</div>
+          <div className="atlas-kpi__note">Total segmented records</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 14 Q30 8 60 12 T100 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#3b82f6', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="chart" size={15} /></span>
+            <span className="operza-kpi__trend">Top List</span>
+          </div>
+          <div className="atlas-kpi__label">Largest Segment</div>
+          <div className="atlas-kpi__value tabular" style={{ fontSize: 18 }}>{largest?.name ?? '—'}</div>
+          <div className="atlas-kpi__note">{num(largest?.count ?? 0)} contacts matched</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 18 Q35 14 70 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#10b981', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="refresh" size={15} /></span>
+            <span className="operza-kpi__trend">Realtime</span>
+          </div>
+          <div className="atlas-kpi__label">Engine Sync</div>
+          <div className="atlas-kpi__value tabular">Live</div>
+          <div className="atlas-kpi__note">Dynamic trigger evaluation</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 10 Q30 14 60 8 T100 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#f59e0b', opacity: 0.8 }} />
+          </svg>
+        </article>
+      </section>
+
+      <div className="grid grid--3" style={{ marginTop: 22 }}>
         {smartLists.map((list) => (
-          <div key={list.id} className="card smart-list">
+          <div key={list.id} className="card-premium smart-list" style={{ padding: '18px 20px' }}>
             <div className="card__head">
               <div className="row" style={{ gap: 10, minWidth: 0 }}>
                 <span className={`smart-list__dot smart-list__dot--${list.tone}`} />
@@ -115,7 +165,7 @@ export default function SmartLists() {
       </div>
 
       {adding && <NewListModal onClose={() => setAdding(false)} />}
-    </div>
+    </main>
   );
 }
 

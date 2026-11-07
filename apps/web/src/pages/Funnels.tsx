@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, PageHeader, StatCard, StatusBadge, Switch } from '../components/ui';
+import { Badge, StatusBadge, Switch } from '../components/ui';
 import { VisualPageBuilder } from '../components/VisualPageBuilder';
 import { uid, useStore } from '../lib/store';
 import { currency, num, pct } from '../lib/format';
@@ -102,38 +102,72 @@ export default function Funnels() {
   };
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Funnels"
-        subtitle="Multi-step opt-in flows and their conversion performance."
-        actions={
-          <div className="row" style={{ gap: 10 }}>
-            <div className="segmented">
-              {(['all', 'published', 'draft'] as const).map((f) => (
-                <button key={f} className={filter === f ? 'is-active' : ''} onClick={() => setFilter(f)} style={{ textTransform: 'capitalize' }}>
-                  {f}
-                </button>
-              ))}
-            </div>
-            <button className="btn btn--primary" onClick={() => setCreatingFunnel(true)}>
-              <Icon name="plus" size={15} /> New funnel
-            </button>
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Sites &amp; Funnels</div>
+          <h1>Conversion Funnels</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <div className="segmented">
+            {(['all', 'published', 'draft'] as const).map((f) => (
+              <button key={f} className={filter === f ? 'is-active' : ''} onClick={() => setFilter(f)} style={{ textTransform: 'capitalize' }}>
+                {f}
+              </button>
+            ))}
           </div>
-        }
-      />
+          <button className="atlas-quick-action-button" onClick={() => setCreatingFunnel(true)}>
+            <Icon name="plus" size={13} /> New Funnel
+          </button>
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Total visits" value={num(visits)} icon={<Icon name="eye" size={15} />} meta="all funnels" />
-        <StatCard label="Opt-ins" value={num(optins)} icon={<Icon name="users" size={15} />} meta="form submissions" />
-        <StatCard label="Conversion" value={pct(optins, visits || 1)} icon={<Icon name="chart" size={15} />} meta="visits → opt-in" />
-        <StatCard label="Live funnels" value={`${funnels.filter((f) => f.published).length}/${funnels.length}`} icon={<Icon name="play" size={15} />} meta="published" />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">HIGH-CONVERTING FUNNELS</div>
+        <h2>Multi-Step Conversion Architecture</h2>
+        <p>Design high-velocity opt-in funnels, 1-click upsells, order bumps, and track drop-off percentages step-by-step.</p>
+      </section>
 
-      <div className="grid grid--2">
+      <section className="atlas-kpis" aria-label="Funnel metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Visits</span>
+            <span className="atlas-status atlas-status--healthy">Tracked</span>
+          </div>
+          <div className="atlas-kpi__value">{num(visits)}</div>
+          <div className="atlas-kpi__note">Unique page sessions</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Opt-In Submissions</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{num(optins)}</div>
+          <div className="atlas-kpi__note">Lead capture forms</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Conversion Rate</span>
+            <span className="atlas-status atlas-status--healthy">Automated</span>
+          </div>
+          <div className="atlas-kpi__value">{pct(optins, visits || 1)}</div>
+          <div className="atlas-kpi__note">Overall session-to-lead</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Active Funnels</span>
+            <span className="atlas-status atlas-status--healthy">Published</span>
+          </div>
+          <div className="atlas-kpi__value">{`${funnels.filter((f) => f.published).length}/${funnels.length}`}</div>
+          <div className="atlas-kpi__note">Live production flows</div>
+        </article>
+      </section>
+
+      <div className="grid grid--2" style={{ marginTop: 22 }}>
         {rows.map((funnel, i) => {
           const liveBumps = funnel.checkout?.bumps.filter((b) => b.enabled).length ?? 0;
           return (
-            <div className="card" key={funnel.id}>
+            <div className="card-premium site-card" key={funnel.id}>
               <div className="site-card__banner" style={{ background: BANNERS[i % BANNERS.length] }}>
                 <Icon name="funnel" size={26} />
               </div>
@@ -199,7 +233,7 @@ export default function Funnels() {
 
       {editing && <FunnelBuilder funnel={editing} onClose={() => setEditingId(null)} />}
       {creatingFunnel && <NewFunnelModal onClose={() => setCreatingFunnel(false)} />}
-    </div>
+    </main>
   );
 }
 

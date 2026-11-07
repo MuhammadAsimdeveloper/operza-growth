@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { PageHeader, StatCard } from '../components/ui';
+
 import { uid, useStore } from '../lib/store';
 import { num, relative } from '../lib/format';
 import { api } from '../lib/api';
@@ -103,27 +103,63 @@ export default function QrCodes() {
   }
 
   return (
-    <div className="content">
-      <PageHeader
-        title="QR Codes"
-        subtitle="Print-ready dynamic codes that route directly to any funnel, calendar or checkout page."
-        actions={
-          <button className="btn btn--primary" type="button" onClick={() => setAdding(true)}>
-            <Icon name="plus" size={15} /> New QR code
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Brand &amp; Offline Routing</div>
+          <h1>QR Codes &amp; Dynamic Routers</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" type="button" onClick={() => setAdding(true)}>
+            <Icon name="plus" size={13} /> New QR Code
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Total scans" value={num(scans)} icon={<Icon name="qr" size={15} />} meta="all codes" />
-        <StatCard label="Codes" value={num(qrCodes.length)} icon={<Icon name="tag" size={15} />} meta="active" />
-        <StatCard label="Top code" value={best?.name ?? '—'} icon={<Icon name="star" size={15} />} meta={`${num(best?.scans ?? 0)} scans`} />
-        <StatCard label="Avg. scans" value={num(Math.round(scans / Math.max(qrCodes.length, 1)))} icon={<Icon name="chart" size={15} />} meta="per code" />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">DYNAMIC OFFLINE ROUTING</div>
+        <h2>Print-Ready Vector QR Generator</h2>
+        <p>Dynamic redirectable codes for physical collateral, business cards, point-of-sale, and automated scan attribution.</p>
+      </section>
 
-      <div className="qr-grid">
+      <section className="atlas-kpis" aria-label="QR code metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Scans</span>
+            <span className="atlas-status atlas-status--healthy">Tracked</span>
+          </div>
+          <div className="atlas-kpi__value">{num(scans)}</div>
+          <div className="atlas-kpi__note">Verified redirect events</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Active Codes</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{num(qrCodes.length)}</div>
+          <div className="atlas-kpi__note">Routing endpoints</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Top Scanned</span>
+            <span className="atlas-status atlas-status--healthy">Leader</span>
+          </div>
+          <div className="atlas-kpi__value">{best?.name ?? '—'}</div>
+          <div className="atlas-kpi__note">{num(best?.scans ?? 0)} scans</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Average Scans</span>
+            <span className="atlas-status atlas-status--healthy">Optimal</span>
+          </div>
+          <div className="atlas-kpi__value">{num(Math.round(scans / Math.max(qrCodes.length, 1)))}</div>
+          <div className="atlas-kpi__note">Per dynamic QR asset</div>
+        </article>
+      </section>
+
+      <div className="qr-grid" style={{ marginTop: 22 }}>
         {qrCodes.map((q) => (
-          <div key={q.id} className="card qr-card">
+          <div key={q.id} className="card-premium qr-card">
             <div className="qr-card__art">
               <QrGraphic seed={q.id + q.target} />
             </div>
@@ -179,7 +215,7 @@ export default function QrCodes() {
           }}
         />
       )}
-    </div>
+    </main>
   );
 }
 

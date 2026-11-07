@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { EmptyState, PageHeader } from '../components/ui';
+import { EmptyState } from '../components/ui';
 import { customValueToken } from '../lib/merge';
 import { uid, useStore } from '../lib/store';
 import { api } from '../lib/api';
@@ -59,18 +59,45 @@ export default function CustomValues() {
   };
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Custom Values"
-        subtitle="Reusable fields you can drop into emails, funnels and automations with a merge token."
-        actions={
-          <button className="btn btn--primary" onClick={() => setCreating(true)}>
-            <Icon name="plus" size={16} /> New value
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Variables &amp; Tokens</div>
+          <h1>Custom Values &amp; Merge Tokens</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={13} /> New Value
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="card">
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">GLOBAL MERGE TOKENS</div>
+        <h2>Dynamic Personalization &amp; Brand Constants</h2>
+        <p>Define reusable variables and tokens that dynamically interpolate into emails, SMS campaigns, funnels, and workflows.</p>
+      </section>
+
+      <section className="atlas-kpis" aria-label="Custom value metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Custom Values</span>
+            <span className="atlas-status atlas-status--healthy">Active</span>
+          </div>
+          <div className="atlas-kpi__value">{state.customValues.length}</div>
+          <div className="atlas-kpi__note">Configured workspace tokens</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Token Engine</span>
+            <span className="atlas-status atlas-status--healthy">Real-Time</span>
+          </div>
+          <div className="atlas-kpi__value">Live</div>
+          <div className="atlas-kpi__note">Send-time resolution</div>
+        </article>
+      </section>
+
+      <div className="card-premium" style={{ marginTop: 22 }}>
         <div className="card__head">
           <div>
             <div className="card__title">Workspace values</div>
@@ -142,7 +169,7 @@ export default function CustomValues() {
         )}
       </div>
 
-      <div className="card" style={{ marginTop: 16 }}>
+      <div className="card-premium" style={{ marginTop: 16 }}>
         <div className="card__head">
           <div>
             <div className="card__title">Live Merge Token Playground</div>
@@ -209,7 +236,7 @@ export default function CustomValues() {
           }}
         />
       )}
-    </div>
+    </main>
   );
 }
 

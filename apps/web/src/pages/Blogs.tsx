@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, PageHeader, StatCard, Switch } from '../components/ui';
+import { Avatar, Badge, Switch } from '../components/ui';
 import { useStore } from '../lib/store';
 import { num, relative, shortDate } from '../lib/format';
 import { api } from '../lib/api';
@@ -68,30 +68,61 @@ export default function Blogs() {
   }
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Blogs"
-        subtitle="Long-form content published to your site with automated view analytics."
-        actions={
-          <button className="btn btn--primary" type="button" onClick={() => setNewPostOpen(true)}>
-            <Icon name="plus" size={15} /> New post
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> CMS &amp; Content</div>
+          <h1>Blog Publications &amp; Editorial</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" type="button" onClick={() => setNewPostOpen(true)}>
+            <Icon name="plus" size={13} /> New Post
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Published posts" value={num(published.length)} icon={<Icon name="file" size={15} />} meta={`${drafts} drafts`} />
-        <StatCard label="Total views" value={num(views)} icon={<Icon name="eye" size={15} />} meta="all posts" />
-        <StatCard
-          label="Avg. views"
-          value={num(published.length ? Math.round(views / Math.max(published.length, 1)) : 0)}
-          icon={<Icon name="chart" size={15} />}
-          meta="per published post"
-        />
-        <StatCard label="Last published" value={published[0] ? relative(published[0].publishedAt) : '—'} icon={<Icon name="clock" size={15} />} meta="most recent" />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">EDITORIAL CMS &amp; SEO</div>
+        <h2>Long-Form Content Publishing Hub</h2>
+        <p>Publish SEO-optimized articles, manage editorial workflows, monitor reader analytics, and syndicate to social channels.</p>
+      </section>
 
-      <div className="card">
+      <section className="atlas-kpis" aria-label="Blog metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Published Posts</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{num(published.length)}</div>
+          <div className="atlas-kpi__note">{drafts} in drafting</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Pageviews</span>
+            <span className="atlas-status atlas-status--healthy">Tracked</span>
+          </div>
+          <div className="atlas-kpi__value">{num(views)}</div>
+          <div className="atlas-kpi__note">Verified reader requests</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Average Views</span>
+            <span className="atlas-status atlas-status--healthy">Optimal</span>
+          </div>
+          <div className="atlas-kpi__value">{num(published.length ? Math.round(views / Math.max(published.length, 1)) : 0)}</div>
+          <div className="atlas-kpi__note">Per published article</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Last Publication</span>
+            <span className="atlas-status atlas-status--healthy">Recent</span>
+          </div>
+          <div className="atlas-kpi__value">{published[0] ? relative(published[0].publishedAt) : '—'}</div>
+          <div className="atlas-kpi__note">Fresh editorial activity</div>
+        </article>
+      </section>
+
+      <div className="card-premium" style={{ marginTop: 22 }}>
         <div className="card__head">
           <div>
             <div className="card__title">All posts</div>
@@ -260,7 +291,7 @@ export default function Blogs() {
           )}
         </Modal>
       )}
-    </div>
+    </main>
   );
 }
 

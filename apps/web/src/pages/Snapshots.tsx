@@ -15,7 +15,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, EmptyState, PageHeader, StatCard } from '../components/ui';
+import { Badge, EmptyState } from '../components/ui';
 import { fullDate, num, relative, timeOf } from '../lib/format';
 import { uid, useStore } from '../lib/store';
 import { api } from '../lib/api';
@@ -123,39 +123,53 @@ export default function Snapshots() {
   const latest = state.snapshots[0];
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Account Snapshots"
-        subtitle="Point-in-time copies of the whole workspace you can roll back to. The five most recent are kept."
-        actions={
-          <button className="btn btn--primary" onClick={() => setCreating(true)}>
-            <Icon name="plus" size={15} /> Take snapshot
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Blueprints &amp; Backups</div>
+          <h1>Account Snapshots &amp; Blueprints</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={13} /> Take Snapshot
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--3" style={{ marginBottom: 16 }}>
-        <StatCard
-          label="Snapshots kept"
-          value={`${state.snapshots.length} / ${LIMIT}`}
-          icon={<Icon name="database" size={15} />}
-          meta="oldest rotates out"
-        />
-        <StatCard
-          label="Storage used"
-          value={state.snapshots.length ? formatSize(totalSize) : '—'}
-          icon={<Icon name="folder" size={15} />}
-          meta="in this browser"
-        />
-        <StatCard
-          label="Latest snapshot"
-          value={latest ? relative(latest.createdAt) : 'None yet'}
-          icon={<Icon name="clock" size={15} />}
-          meta={latest ? latest.name : 'take your first copy'}
-        />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">BLUEPRINTS &amp; BACKUPS</div>
+        <h2>Workspace Cloning &amp; Rollback Snapshots</h2>
+        <p>Package complete tenant architectures (funnels, workflows, calendars, forms) into deployable blueprints and recovery checkpoints.</p>
+      </section>
 
-      <div className="callout" style={{ marginBottom: 16 }}>
+      <section className="atlas-kpis" aria-label="Snapshot metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Snapshots Stored</span>
+            <span className="atlas-status atlas-status--healthy">{`${state.snapshots.length} / ${LIMIT}`}</span>
+          </div>
+          <div className="atlas-kpi__value">{state.snapshots.length}</div>
+          <div className="atlas-kpi__note">Rolling retention window</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Archive Storage</span>
+            <span className="atlas-status atlas-status--healthy">Optimal</span>
+          </div>
+          <div className="atlas-kpi__value">{state.snapshots.length ? formatSize(totalSize) : '—'}</div>
+          <div className="atlas-kpi__note">Total bundle payload</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Latest Checkpoint</span>
+            <span className="atlas-status atlas-status--healthy">Verified</span>
+          </div>
+          <div className="atlas-kpi__value">{latest ? relative(latest.createdAt) : 'None'}</div>
+          <div className="atlas-kpi__note">{latest ? latest.name : 'Take your first copy'}</div>
+        </article>
+      </section>
+
+      <div className="callout" style={{ marginTop: 22, marginBottom: 16 }}>
         Snapshot data lives in this browser with the workspace. Restoring replaces every record — contacts,
         deals, invoices and the rest — while the snapshot archive and audit trail are kept. Download a copy to
         keep it outside the app.
@@ -505,7 +519,7 @@ export default function Snapshots() {
           </div>
         </Modal>
       )}
-    </div>
+    </main>
   );
 }
 

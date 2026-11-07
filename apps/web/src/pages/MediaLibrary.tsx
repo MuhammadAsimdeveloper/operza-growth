@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, EmptyState, PageHeader } from '../components/ui';
+import { Badge, EmptyState } from '../components/ui';
 import { useStore } from '../lib/store';
 import { num, relative } from '../lib/format';
 import { api } from '../lib/api';
@@ -64,23 +64,64 @@ export default function MediaLibrary() {
   }
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Media Library"
-        subtitle="Every image, video and PDF used across funnels, emails and social."
-        actions={
-          <>
-            <button className="btn" type="button" onClick={() => setNewFolderOpen(true)}>
-              <Icon name="folder" size={15} /> New folder
-            </button>
-            <button className="btn btn--primary" type="button" onClick={() => setUploadModalOpen(true)}>
-              <Icon name="upload" size={15} /> Upload asset
-            </button>
-          </>
-        }
-      />
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Brand &amp; Creative</div>
+          <h1>Media Asset Storage</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="btn btn--secondary btn--sm" type="button" onClick={() => setNewFolderOpen(true)}>
+            <Icon name="folder" size={14} /> New Folder
+          </button>
+          <button className="atlas-quick-action-button" type="button" onClick={() => setUploadModalOpen(true)}>
+            <Icon name="upload" size={13} /> Upload Asset
+          </button>
+        </div>
+      </header>
 
-      <div className="media-bar">
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">DIGITAL ASSET MANAGEMENT</div>
+        <h2>Global Cloud Media CDN</h2>
+        <p>Centralized image, video, document, and brand asset repository with instant CDN delivery for funnels, campaigns, and websites.</p>
+      </section>
+
+      <section className="atlas-kpis" aria-label="Media metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Stored Files</span>
+            <span className="atlas-status atlas-status--healthy">CDN</span>
+          </div>
+          <div className="atlas-kpi__value">{media.length}</div>
+          <div className="atlas-kpi__note">Images, PDFs &amp; videos</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Storage Used</span>
+            <span className="atlas-status atlas-status--healthy">Optimal</span>
+          </div>
+          <div className="atlas-kpi__value">{sizeLabel(totalKb)}</div>
+          <div className="atlas-kpi__note">High-availability storage</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Folders</span>
+            <span className="atlas-status atlas-status--healthy">Organized</span>
+          </div>
+          <div className="atlas-kpi__value">{folders.length - 1}</div>
+          <div className="atlas-kpi__note">Asset categories</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Filter Matches</span>
+            <span className="atlas-status atlas-status--healthy">Active</span>
+          </div>
+          <div className="atlas-kpi__value">{visible.length}</div>
+          <div className="atlas-kpi__note">Current view assets</div>
+        </article>
+      </section>
+
+      <div className="media-bar" style={{ marginTop: 22 }}>
         <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
           {folders.map((f) => (
             <button
@@ -245,7 +286,7 @@ export default function MediaLibrary() {
           </div>
         </Modal>
       )}
-    </div>
+    </main>
   );
 }
 

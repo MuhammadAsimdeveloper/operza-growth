@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, EmptyState, PageHeader, StatCard, StatusBadge } from '../components/ui';
+import { Badge, EmptyState, StatusBadge } from '../components/ui';
 import { api } from '../lib/api';
 
 interface ConsentRecord {
@@ -122,57 +122,65 @@ export default function ConsentLedger() {
   const revokedCount = consents.filter((c) => c.status === 'revoked').length;
 
   return (
-    <div className="page-container space-y-6">
-      <PageHeader
-        title="Communication Consent Ledger"
-        subtitle="Immutable tenant-scoped evidence ledger for recipient communication consent, channels, and opt-outs."
-        actions={
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__crumbs" aria-label="Breadcrumb">
+          <span className="atlas-dashboard__crumb">Compliance</span>
+          <span className="atlas-dashboard__crumb-separator" aria-hidden="true">/</span>
+          <span className="atlas-dashboard__crumb atlas-dashboard__crumb--current">Consent Ledger</span>
+        </div>
+        <div className="atlas-dashboard__actions">
           <button
             onClick={() => {
               setErrorMsg(null);
               setShowRecordModal(true);
             }}
-            className="btn btn--primary flex items-center gap-2"
+            className="atlas-quick-action-button"
+            type="button"
           >
-            <Icon name="plus" size={16} />
+            <Icon name="plus" size={14} />
             Record Consent Evidence
           </button>
-        }
-      />
-
-      <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4 flex items-start gap-3">
-        <Icon name="shield" size={20} className="text-amber-500 mt-0.5 flex-shrink-0" />
-        <div className="text-sm">
-          <p className="font-semibold text-amber-900 dark:text-amber-200">
-            Consent Policy Guard Active
-          </p>
-          <p className="text-amber-800/90 dark:text-amber-300/90 mt-1">
-            Operza enforces explicit, current recipient authorization per channel (Email, SMS, WhatsApp) and purpose (Marketing, Transactional, Appointment, Review). Missing or revoked consent strictly prevents outbound delivery. Revocation appends an audit event and never destroys evidence history.
-          </p>
         </div>
+      </header>
+
+      <section className="atlas-hero">
+        <h1 className="atlas-hero__title">Communication Consent Ledger</h1>
+        <p>Immutable tenant-scoped evidence ledger for recipient communication consent, channels, and opt-outs.</p>
+      </section>
+
+      <div className="callout callout--info" style={{ marginTop: 20, marginBottom: 20 }}>
+        <strong>Consent Policy Guard Active:</strong> Operza enforces explicit, current recipient authorization per channel (Email, SMS, WhatsApp) and purpose (Marketing, Transactional, Appointment, Review). Missing or revoked consent strictly prevents outbound delivery.
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard
-          label="Total Consent Records"
-          value={String(consents.length)}
-          icon={<Icon name="clipboard" size={16} />}
-        />
-        <StatCard
-          label="Active Grants"
-          value={String(grantedCount)}
-          icon={<Icon name="check" size={16} />}
-          trend={{ value: `${grantedCount} Active`, direction: 'up' }}
-        />
-        <StatCard
-          label="Revoked / Opt-Outs"
-          value={String(revokedCount)}
-          icon={<Icon name="x" size={16} />}
-          trend={{ value: `${revokedCount} Revoked`, direction: 'down' }}
-        />
-      </div>
+      <section className="atlas-kpis" aria-label="Consent metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Consent Records</span>
+            <span className="atlas-status atlas-status--healthy">Logged</span>
+          </div>
+          <div className="atlas-kpi__value">{String(consents.length)}</div>
+          <div className="atlas-kpi__note">Verified compliance trails</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Active Grants</span>
+            <span className="atlas-status atlas-status--healthy">Valid</span>
+          </div>
+          <div className="atlas-kpi__value">{String(grantedCount)}</div>
+          <div className="atlas-kpi__note">Delivery authorized</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Revoked / Opt-Outs</span>
+            <span className="atlas-status atlas-status--warning">Suppressed</span>
+          </div>
+          <div className="atlas-kpi__value">{String(revokedCount)}</div>
+          <div className="atlas-kpi__note">Outbound hard blocked</div>
+        </article>
+      </section>
 
-      <div className="card p-4 space-y-4">
+      <div className="card-premium" style={{ marginTop: 24, padding: 20 }}>
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex flex-wrap items-center gap-3">
             <div className="relative">
@@ -478,6 +486,6 @@ export default function ConsentLedger() {
           </div>
         </Modal>
       )}
-    </div>
+    </main>
   );
 }

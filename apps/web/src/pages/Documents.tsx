@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, EmptyState, PageHeader, StatCard } from '../components/ui';
+import { Avatar, Badge, EmptyState } from '../components/ui';
 import { uid, useStore } from '../lib/store';
 import { currency, num, relative, shortDate } from '../lib/format';
 import { api } from '../lib/api';
@@ -69,25 +69,80 @@ export default function Documents() {
   };
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Documents & Contracts"
-        subtitle="Author proposals, send legally binding contracts, and capture cryptographic e-signatures."
-        actions={
-          <button className="btn btn--primary" onClick={() => setAdding(true)}>
-            <Icon name="plus" size={15} /> New document
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Legal OS &amp; Contracts</div>
+          <h1>Documents &amp; Contracts</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setAdding(true)}>
+            <Icon name="plus" size={13} /> New Document
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Signed value" value={currency(signedValue)} icon={<Icon name="check" size={15} />} meta="all time signed" />
-        <StatCard label="Awaiting signature" value={currency(pendingValue)} icon={<Icon name="clock" size={15} />} meta="sent documents" />
-        <StatCard label="Drafts" value={num(draftCount)} icon={<Icon name="file" size={15} />} meta="not sent yet" />
-        <StatCard label="Documents" value={num(documents.length)} icon={<Icon name="folder" size={15} />} meta="in this workspace" />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">CONTRACT LIFECYCLE &amp; CRYPTOGRAPHIC E-SIGNATURES</div>
+        <h2>Proposals, Estimates, &amp; Legally Binding Agreements</h2>
+        <p>Author proposal documents, dispatch legally enforceable contracts, track signer delivery status, and capture immutable cryptographic verification trails.</p>
+      </section>
 
-      <div className="card">
+      <section className="atlas-kpis" aria-label="Document metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="check" size={15} /></span>
+            <span className="operza-kpi__trend"><Icon name="arrow-up-right" size={12} /> +24%</span>
+          </div>
+          <div className="atlas-kpi__label">Signed Value</div>
+          <div className="atlas-kpi__value tabular">{currency(signedValue)}</div>
+          <div className="atlas-kpi__note">Executed revenue</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 16 Q25 12 50 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#10b981', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="clock" size={15} /></span>
+            <span className="operza-kpi__trend">Pending</span>
+          </div>
+          <div className="atlas-kpi__label">Awaiting Signature</div>
+          <div className="atlas-kpi__value tabular">{currency(pendingValue)}</div>
+          <div className="atlas-kpi__note">{documents.filter(d => d.status === 'sent').length} sent documents</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 14 Q30 8 60 12 T100 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#3b82f6', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="file" size={15} /></span>
+            <span className="operza-kpi__trend">Staged</span>
+          </div>
+          <div className="atlas-kpi__label">Active Drafts</div>
+          <div className="atlas-kpi__value tabular">{num(draftCount)}</div>
+          <div className="atlas-kpi__note">Authoring pipeline</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 18 Q35 14 70 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#f59e0b', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="folder" size={15} /></span>
+            <span className="operza-kpi__trend">Active</span>
+          </div>
+          <div className="atlas-kpi__label">Total Documents</div>
+          <div className="atlas-kpi__value tabular">{num(documents.length)}</div>
+          <div className="atlas-kpi__note">Workspace repository</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 10 Q30 14 60 8 T100 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: 'var(--accent)', opacity: 0.8 }} />
+          </svg>
+        </article>
+      </section>
+
+      <section className="card-premium" style={{ marginTop: 22, padding: '20px 24px' }}>
         <div className="card__head">
           <div>
             <div className="card__title">All documents</div>
@@ -180,15 +235,15 @@ export default function Documents() {
             </table>
           </div>
         )}
-      </div>
+      </section>
 
-      <div className="grid grid--3" style={{ marginTop: 16 }}>
+      <div className="grid grid--3" style={{ marginTop: 20 }}>
         {(['proposal', 'contract', 'estimate'] as const).map((kind) => {
           const items = documents.filter((d) => d.kind === kind);
           return (
-            <div key={kind} className="card">
-              <div className="card__head">
-                <div className="card__title">{KIND_META[kind].label}s</div>
+            <div key={kind} className="card-premium" style={{ padding: '18px 20px' }}>
+              <div className="card__head" style={{ marginBottom: 12 }}>
+                <div className="card__title" style={{ fontSize: 14, fontWeight: 700 }}>{KIND_META[kind].label}s</div>
                 <div className="card__actions">
                   <Badge>{items.length}</Badge>
                 </div>
@@ -233,7 +288,7 @@ export default function Documents() {
           }}
         />
       )}
-    </div>
+    </main>
   );
 }
 

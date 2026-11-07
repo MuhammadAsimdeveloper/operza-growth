@@ -4,7 +4,7 @@ import { simulateWorkflowActions } from '../../../../packages/workflow-engine/sr
 import { exportWorkflowPackage, importWorkflowPackage } from '../../../../packages/workflow-engine/src/workflow-package.mjs';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, EmptyState, PageHeader, StatCard, StatusBadge, Switch } from '../components/ui';
+import { Badge, EmptyState, StatusBadge, Switch } from '../components/ui';
 import { WorkflowCanvas } from '../components/WorkflowCanvas';
 import { num, pct, relative } from '../lib/format';
 import { uid, useStore } from '../lib/store';
@@ -419,45 +419,69 @@ export default function Workflows() {
     });
 
   return (
-    <div className="content">
+    <main className="operza-dashboard atlas-dashboard">
       <input ref={importInputRef} type="file" accept=".json,application/json" hidden onChange={importWorkflowFile} />
       {importFeedback && <div className="atlas-workflow-feedback" role="status">{importFeedback}</div>}
-      <PageHeader
-        title="Workflows"
-        subtitle="Automations that run on triggers, waits, if/else branches and webhooks."
-        actions={
-          <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-            <button className="btn btn--secondary btn--sm" type="button" onClick={() => importInputRef.current?.click()}>
-              <Icon name="upload" size={14} /> Import package
-            </button>
-            <button className="btn btn--secondary btn--sm" type="button" onClick={exportSelectedWorkflow} disabled={!selected}>
-              <Icon name="download" size={14} /> Export JSON
-            </button>
-            <button className="btn btn--primary" type="button" onClick={() => setCreating(true)}>
-              <Icon name="plus" size={16} /> New workflow
-            </button>
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Visual Automations</div>
+          <h1>Durable Workflow Engine</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="btn btn--secondary btn--sm" type="button" onClick={() => importInputRef.current?.click()}>
+            <Icon name="upload" size={14} /> Import Package
+          </button>
+          <button className="btn btn--secondary btn--sm" type="button" onClick={exportSelectedWorkflow} disabled={!selected}>
+            <Icon name="download" size={14} /> Export JSON
+          </button>
+          <button className="atlas-quick-action-button" type="button" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={13} /> New Workflow
+          </button>
+        </div>
+      </header>
+
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">DURABLE ORCHESTRATION &amp; GOVERNANCE</div>
+        <h2>Enterprise Visual Automation Platform</h2>
+        <p>Build branchable customer journeys with durable state machines, idempotency keys, action governance, and human-in-the-loop approvals.</p>
+      </section>
+
+      <section className="atlas-kpis" aria-label="Workflow metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Live Workflows</span>
+            <span className="atlas-status atlas-status--healthy">Active</span>
           </div>
-        }
-      />
+          <div className="atlas-kpi__value">{`${live.length}/${state.workflows.length}`}</div>
+          <div className="atlas-kpi__note">Published automation graphs</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Enrolled Contacts</span>
+            <span className="atlas-status atlas-status--healthy">Verified</span>
+          </div>
+          <div className="atlas-kpi__value">{num(enrolled)}</div>
+          <div className="atlas-kpi__note">Unique customer executions</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Execution History</span>
+            <span className="atlas-status atlas-status--healthy">Healthy</span>
+          </div>
+          <div className="atlas-kpi__value">{num(state.workflowRuns.length)}</div>
+          <div className="atlas-kpi__note">{succeeded} passed · {state.workflowRuns.length - succeeded} exceptions</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Graph Steps</span>
+            <span className="atlas-status atlas-status--healthy">Monitored</span>
+          </div>
+          <div className="atlas-kpi__value">{String(state.workflows.reduce((s, w) => s + countSteps(w.actions), 0))}</div>
+          <div className="atlas-kpi__note">Triggers, conditions &amp; actions</div>
+        </article>
+      </section>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Live workflows" value={`${live.length}/${state.workflows.length}`} icon={<Icon name="zap" size={15} />} meta="published" />
-        <StatCard label="Ever enrolled" value={num(enrolled)} icon={<Icon name="users" size={15} />} meta="across all flows" />
-        <StatCard
-          label="Test runs"
-          value={num(state.workflowRuns.length)}
-          icon={<Icon name="play" size={15} />}
-          meta={`${succeeded} passed Â· ${state.workflowRuns.length - succeeded} failed`}
-        />
-        <StatCard
-          label="Steps"
-          value={String(state.workflows.reduce((s, w) => s + countSteps(w.actions), 0))}
-          icon={<Icon name="sliders" size={15} />}
-          meta="including branches"
-        />
-      </div>
-
-      <div className="grid grid--sidebar">
+      <div className="grid grid--sidebar" style={{ marginTop: 22 }}>
         <div className="stack">
           {state.workflows.map((w) => (
             <div
@@ -782,7 +806,7 @@ export default function Workflows() {
           }}
         />
       )}
-    </div>
+    </main>
   );
 }
 

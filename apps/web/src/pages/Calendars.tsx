@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, EmptyState, PageHeader, StatusBadge, Switch } from '../components/ui';
+import { Avatar, Badge, EmptyState, StatusBadge, Switch } from '../components/ui';
 import { useStore, uid } from '../lib/store';
 import { monthMatrix, sameDay, timeOf, toDateTimeInput } from '../lib/format';
 import { api } from '../lib/api';
@@ -113,20 +113,67 @@ export default function Calendars() {
   };
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Calendars"
-        subtitle="Bookings across discovery, onboarding and internal meetings."
-        actions={
-          <button className="btn btn--primary" onClick={() => setCreating(new Date().toISOString())}>
-            <Icon name="plus" size={16} /> New appointment
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Scheduling &amp; Bookings</div>
+          <h1>Calendars &amp; Appointments</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setCreating(new Date().toISOString())}>
+            <Icon name="plus" size={13} /> New Appointment
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--sidebar">
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">SCHEDULING &amp; DISCOVERY</div>
+        <h2>Multi-Calendar Unified Booking Engine</h2>
+        <p>Manage round-robin routing, 2-way external synchronization, buffer windows, and team availability in one view.</p>
+      </section>
+
+      <section className="atlas-kpis" aria-label="Calendar metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Upcoming Appointments</span>
+            <span className="atlas-status atlas-status--healthy">Active</span>
+          </div>
+          <div className="atlas-kpi__value">{upcoming.length}</div>
+          <div className="atlas-kpi__note">Confirmed in next 30 days</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Calendars</span>
+            <span className="atlas-status atlas-status--healthy">Ready</span>
+          </div>
+          <div className="atlas-kpi__value">{state.calendars.length}</div>
+          <div className="atlas-kpi__note">Discovery, demos &amp; support</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Active Synced</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">
+            {state.calendars.filter(c => c.externalSync?.status === 'active').length}
+          </div>
+          <div className="atlas-kpi__note">2-way sync enabled</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Routing Mode</span>
+            <span className="atlas-status atlas-status--healthy">Automated</span>
+          </div>
+          <div className="atlas-kpi__value">
+            {state.calendars.some(c => c.roundRobin) ? 'Round-Robin' : 'Direct'}
+          </div>
+          <div className="atlas-kpi__note">Team load-balancing</div>
+        </article>
+      </section>
+
+      <div className="grid grid--sidebar" style={{ marginTop: 22 }}>
         <div className="stack">
-          <div className="card">
+          <div className="card-premium">
             <div className="card__head">
               <div className="row" style={{ gap: 6 }}>
                 <button className="icon-btn" onClick={() => shift(-1)} aria-label="Previous month">
@@ -225,9 +272,9 @@ export default function Calendars() {
             </div>
           </div>
 
-          <div className="card">
+          <div className="card-premium">
             <div className="card__head">
-              <div className="card__title">Upcoming</div>
+              <div className="card__title">Upcoming Appointments</div>
               <div className="card__actions">
                 <Badge>{upcoming.length}</Badge>
               </div>
@@ -284,7 +331,7 @@ export default function Calendars() {
           dispatch={dispatch}
         />
       )}
-    </div>
+    </main>
   );
 }
 

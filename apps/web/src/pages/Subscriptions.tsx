@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, PageHeader, StatCard, StatusBadge } from '../components/ui';
+import { Avatar, StatusBadge } from '../components/ui';
 import { useStore, uid } from '../lib/store';
 import { currency, num, shortDate } from '../lib/format';
 import { api } from '../lib/api';
@@ -61,30 +61,64 @@ export default function Subscriptions() {
   };
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Subscriptions"
-        subtitle="Recurring revenue, renewals and dunning in one list."
-        actions={
-          <>
-            <button className="btn" type="button" onClick={() => window.location.reload()}>
-              <Icon name="repeat" size={15} /> Refresh
-            </button>
-            <button className="btn btn--primary" type="button" onClick={() => setCreating(true)}>
-              <Icon name="plus" size={15} /> New subscription
-            </button>
-          </>
-        }
-      />
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Revenue &amp; Subscriptions</div>
+          <h1>Recurring Subscriptions</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="btn btn--secondary btn--sm" type="button" onClick={() => window.location.reload()}>
+            <Icon name="repeat" size={14} /> Refresh
+          </button>
+          <button className="atlas-quick-action-button" type="button" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={13} /> New Subscription
+          </button>
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="MRR" value={currency(Math.round(mrr))} icon={<Icon name="repeat" size={15} />} trend={{ direction: 'up', value: '7.1%' }} meta="active plans" />
-        <StatCard label="Active" value={num(active.length)} icon={<Icon name="check" size={15} />} meta="paying customers" />
-        <StatCard label="Renewing in 7 days" value={num(dueSoon.length)} icon={<Icon name="calendar" size={15} />} meta="next cycle" />
-        <StatCard label="Past due" value={num(pastDue.length)} icon={<Icon name="bell" size={15} />} meta={currency(pastDue.reduce((s, x) => s + x.amount, 0))} />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">RECURRING REVENUE &amp; DUNNING</div>
+        <h2>SaaS &amp; Retainer Subscription Lifecycle</h2>
+        <p>Monitor Monthly Recurring Revenue (MRR), upcoming auto-renewals, churn prevention, and dunning cycles.</p>
+      </section>
 
-      <div className="card">
+      <section className="atlas-kpis" aria-label="Subscription metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Monthly Recurring Revenue</span>
+            <span className="atlas-status atlas-status--healthy">+7.1%</span>
+          </div>
+          <div className="atlas-kpi__value">{currency(Math.round(mrr))}</div>
+          <div className="atlas-kpi__note">Active paying subscribers</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Active Subscriptions</span>
+            <span className="atlas-status atlas-status--healthy">Healthy</span>
+          </div>
+          <div className="atlas-kpi__value">{num(active.length)}</div>
+          <div className="atlas-kpi__note">Current recurring contracts</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Renewing (7 Days)</span>
+            <span className="atlas-status atlas-status--healthy">Pending</span>
+          </div>
+          <div className="atlas-kpi__value">{num(dueSoon.length)}</div>
+          <div className="atlas-kpi__note">Upcoming billing cycle</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Past Due Invoices</span>
+            <span className="atlas-status atlas-status--healthy">{pastDue.length > 0 ? 'Dunning' : 'Zero'}</span>
+          </div>
+          <div className="atlas-kpi__value">{num(pastDue.length)}</div>
+          <div className="atlas-kpi__note">{currency(pastDue.reduce((s, x) => s + x.amount, 0))} at risk</div>
+        </article>
+      </section>
+
+      <div className="card-premium" style={{ marginTop: 22 }}>
         <div className="card__head">
           <div>
             <div className="card__title">All subscriptions</div>
@@ -170,7 +204,7 @@ export default function Subscriptions() {
           }}
         />
       )}
-    </div>
+    </main>
   );
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, PageHeader, StatCard, StatusBadge, Switch } from '../components/ui';
+import { Badge, StatusBadge, Switch } from '../components/ui';
 import { VisualPageBuilder, type FunnelBlock } from '../components/VisualPageBuilder';
 import { useStore, uid } from '../lib/store';
 import { num, pct } from '../lib/format';
@@ -256,27 +256,63 @@ export default function Websites() {
   }
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Websites"
-        subtitle="Hosted site pages, navigation and lead capture."
-        actions={
-          <button className="btn btn--primary" onClick={() => setNewSiteOpen(true)}>
-            <Icon name="plus" size={15} /> New website
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Sites &amp; Funnels</div>
+          <h1>Hosted Websites &amp; CMS</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setNewSiteOpen(true)}>
+            <Icon name="plus" size={13} /> New Website
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Websites" value={String(sites.length)} icon={<Icon name="globe" size={15} />} meta="hosted in workspace" />
-        <StatCard label="Pages" value={String(pages)} icon={<Icon name="copy" size={15} />} meta="total published pages" />
-        <StatCard label="Visits" value={num(visits)} icon={<Icon name="eye" size={15} />} meta="all time" />
-        <StatCard label="Opt-ins" value={num(optins)} icon={<Icon name="users" size={15} />} meta={`${pct(optins, visits || 1)} conversion`} />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">HEADLESS CMS &amp; VISUAL BUILDER</div>
+        <h2>Production Web Properties &amp; Client Portals</h2>
+        <p>Deploy responsive websites, manage custom domains, maintain global reusable symbols, and track visual block revisions.</p>
+      </section>
 
-      <div className="stack">
+      <section className="atlas-kpis" aria-label="Website metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Hosted Sites</span>
+            <span className="atlas-status atlas-status--healthy">Active</span>
+          </div>
+          <div className="atlas-kpi__value">{sites.length}</div>
+          <div className="atlas-kpi__note">Multi-page web applications</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Pages</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{pages}</div>
+          <div className="atlas-kpi__note">Published CMS routes</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">All-Time Traffic</span>
+            <span className="atlas-status atlas-status--healthy">Monitored</span>
+          </div>
+          <div className="atlas-kpi__value">{num(visits)}</div>
+          <div className="atlas-kpi__note">Unique visitor requests</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Lead Ingestion</span>
+            <span className="atlas-status atlas-status--healthy">Automated</span>
+          </div>
+          <div className="atlas-kpi__value">{pct(optins, visits || 1)}</div>
+          <div className="atlas-kpi__note">{num(optins)} direct submissions</div>
+        </article>
+      </section>
+
+      <div className="stack" style={{ marginTop: 22 }}>
         {sites.map((site) => (
-          <div className="card" key={site.id}>
+          <div className="card-premium" key={site.id}>
             <div className="card__head">
               <div
                 className="avatar avatar--md avatar--square"
@@ -527,7 +563,7 @@ export default function Websites() {
           </p>
         </Modal>
       )}
-    </div>
+    </main>
   );
 }
 

@@ -14,9 +14,10 @@
  */
 
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, EmptyState, PageHeader, StatCard, Switch } from '../components/ui';
+import { Avatar, Badge, EmptyState, Switch } from '../components/ui';
 import { relative, sameDay, toDateTimeInput } from '../lib/format';
 import { uid, useStore } from '../lib/store';
 import { api } from '../lib/api';
@@ -91,8 +92,16 @@ export default function PhoneSystem() {
   const [isOnHold, setIsOnHold] = useState(false);
   const [rtcToken, setRtcToken] = useState<any>(null);
   const [selectedContactId, setSelectedContactId] = useState<string>('');
+  const [carrierStatus, setCarrierStatus] = useState<any>(null);
+  const [callMode, setCallMode] = useState<'live' | 'sandbox'>('sandbox');
+  const [callNotice, setCallNotice] = useState<string | null>(null);
 
   useEffect(() => {
+    api.telephony.getStatus().then((res) => {
+      setCarrierStatus(res);
+      setCallMode(res.configured ? 'live' : 'sandbox');
+    }).catch(() => {});
+
     api.telephony.getToken().then((res) => {
       setRtcToken(res);
       if (res?.fromNumber && !selectedFromNumber) {
@@ -127,23 +136,35 @@ export default function PhoneSystem() {
   const handleStartCall = async (numToCall?: string, contactToBind?: string) => {
     const target = numToCall || dialNumber;
     if (!target.trim()) return;
+
+    if (!carrierStatus?.configured && callMode === 'live') {
+      setCallNotice('Carrier trunk (Twilio / SIP) is unconfigured. Cannot place live call. Switch to Offline Sandbox Mode to test the dialer interface.');
+      return;
+    }
+
+    setCallNotice(null);
     setCallStatus('dialing');
     try {
       const res = await api.telephony.startCall({
         to: target.trim(),
         from: selectedFromNumber || rtcToken?.fromNumber || '+18005550199',
         contactId: contactToBind || (selectedContactId || undefined),
-        notes: 'Outbound WebRTC softphone call',
+        mode: callMode,
+        notes: callMode === 'sandbox' ? 'Offline Sandbox Simulation Test' : 'Outbound WebRTC softphone call',
       });
       if (res?.call) {
         setActiveCallId(res.call.id);
         dispatch({ type: 'call/log', call: res.call });
+        if (res.notice) {
+          setCallNotice(res.notice);
+        }
         setTimeout(() => {
           setCallStatus('connected');
         }, 1000);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Call initiation failed:', err);
+      setCallNotice(err?.message || 'Call initiation failed. Please verify carrier configuration.');
       setCallStatus('idle');
     }
   };
@@ -291,51 +312,95 @@ export default function PhoneSystem() {
     });
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Phone System"
-        subtitle="Manage virtual business lines, IVR call routing, voicemail, and omni-channel telephony logs."
-        actions={
-          <div className="row" style={{ gap: 8 }}>
-            <button className="btn" onClick={() => setLogging(true)}>
-              <Icon name="phone" size={15} /> Log a call
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Telephony &amp; Voice Hub</div>
+          <h1>Phone System</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {carrierStatus?.configured ? (
+              <span style={{ fontSize: 11, fontWeight: 600, color: '#10b981', background: '#ecfdf5', padding: '4px 10px', borderRadius: 'var(--r-pill)', border: '1px solid #a7f3d0' }}>
+                🟢 Live Carrier Trunk Active
+              </span>
+            ) : (
+              <span style={{ fontSize: 11, fontWeight: 600, color: '#b45309', background: '#fffbeb', padding: '4px 10px', borderRadius: 'var(--r-pill)', border: '1px solid #fde68a' }}>
+                ⚪ Carrier Trunk Unconfigured (Sandbox Mode)
+              </span>
+            )}
+            <button className="atlas-quick-action-button" style={{ background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--text)' }} onClick={() => setLogging(true)}>
+              <Icon name="phone" size={13} /> Log Call
             </button>
-            <button className="btn btn--primary" onClick={() => setProvisioning(true)}>
-              <Icon name="plus" size={15} /> Provision number
+            <button className="atlas-quick-action-button" onClick={() => setProvisioning(true)}>
+              <Icon name="plus" size={13} /> Provision Line
             </button>
           </div>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard
-          label="Calls today"
-          value={String(callsToday.length)}
-          icon={<Icon name="phone" size={15} />}
-          meta={`${callsToday.filter((c) => c.direction === 'inbound').length} inbound`}
-        />
-        <StatCard
-          label="Answer rate"
-          value={inbound.length ? `${Math.round((answered.length / inbound.length) * 100)}%` : '—'}
-          icon={<Icon name="check" size={15} />}
-          meta={`${answered.length} of ${inbound.length} inbound`}
-        />
-        <StatCard
-          label="Avg. talk time"
-          value={talkTime(avgTalk)}
-          icon={<Icon name="clock" size={15} />}
-          meta="completed calls"
-        />
-        <StatCard
-          label="Needs follow-up"
-          value={String(followUps.length)}
-          icon={<Icon name="bell" size={15} />}
-          meta="missed or voicemail"
-        />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">REAL-TIME WEBRTC VOICE &amp; A2P 10DLC TRUST HUB</div>
+        <h2>Telephony Infrastructure &amp; Softphone Console</h2>
+        <p>In-browser WebRTC softphone dialing, virtual business number routing, TCR carrier campaign vetting, and automated missed-call task triggers.</p>
+      </section>
+
+      <section className="atlas-kpis" aria-label="Telephony metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="phone" size={15} /></span>
+            <span className="operza-kpi__trend"><Icon name="arrow-up-right" size={12} /> Today</span>
+          </div>
+          <div className="atlas-kpi__label">Calls Today</div>
+          <div className="atlas-kpi__value tabular">{callsToday.length}</div>
+          <div className="atlas-kpi__note">{callsToday.filter((c) => c.direction === 'inbound').length} inbound calls</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 16 Q25 12 50 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: 'var(--accent)', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="check" size={15} /></span>
+            <span className="operza-kpi__trend">Inbound</span>
+          </div>
+          <div className="atlas-kpi__label">Answer Rate</div>
+          <div className="atlas-kpi__value tabular">{inbound.length ? `${Math.round((answered.length / inbound.length) * 100)}%` : '—'}</div>
+          <div className="atlas-kpi__note">{answered.length} of {inbound.length} answered</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 14 Q30 8 60 12 T100 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#10b981', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="clock" size={15} /></span>
+            <span className="operza-kpi__trend">Duration</span>
+          </div>
+          <div className="atlas-kpi__label">Avg. Talk Time</div>
+          <div className="atlas-kpi__value tabular">{talkTime(avgTalk)}</div>
+          <div className="atlas-kpi__note">Completed sessions</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 18 Q35 14 70 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#3b82f6', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="bell" size={15} /></span>
+            <span className="operza-kpi__trend">Attention</span>
+          </div>
+          <div className="atlas-kpi__label">Needs Follow-Up</div>
+          <div className="atlas-kpi__value tabular">{followUps.length}</div>
+          <div className="atlas-kpi__note">Missed or voicemail</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 10 Q30 14 60 8 T100 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#f59e0b', opacity: 0.8 }} />
+          </svg>
+        </article>
+      </section>
 
       {/* Phone System Navigation Tabs */}
-      <div className="row" style={{ gap: 8, marginBottom: 16 }}>
+      <div className="row" style={{ gap: 8, marginTop: 22, marginBottom: 16 }}>
         <button
           type="button"
           className={`btn ${activeTab === 'dialer' ? 'btn--primary' : 'btn--ghost'}`}
@@ -377,14 +442,62 @@ export default function PhoneSystem() {
       {activeTab === 'dialer' && (
         <div className="grid grid--2" style={{ gap: 20, marginBottom: 20, alignItems: 'start' }}>
           {/* Dialer Console */}
-          <div className="card" style={{ padding: 24 }}>
+          <div className="card-premium" style={{ padding: 24 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
               <div>
                 <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>WebRTC Softphone Dialer</h3>
                 <p className="cell-sub" style={{ margin: '2px 0 0' }}>Place outbound HD voice calls directly from your browser</p>
               </div>
-              <Badge tone="green">WebRTC Ready</Badge>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  type="button"
+                  className={`btn btn--sm ${callMode === 'live' ? 'btn--primary' : 'btn--ghost'}`}
+                  onClick={() => {
+                    if (!carrierStatus?.configured) {
+                      setCallNotice('Live carrier dialing is unavailable: Twilio credentials are not configured in Integrations.');
+                    } else {
+                      setCallMode('live');
+                      setCallNotice(null);
+                    }
+                  }}
+                  style={{ fontSize: 11, padding: '3px 8px', borderRadius: 'var(--r-pill)' }}
+                  title={carrierStatus?.configured ? 'Live telecom dispatch' : 'Disabled: Twilio credentials not configured'}
+                >
+                  {carrierStatus?.configured ? '🟢 Live Carrier' : '🔒 Live Carrier'}
+                </button>
+                <button
+                  type="button"
+                  className={`btn btn--sm ${callMode === 'sandbox' ? 'btn--primary' : 'btn--ghost'}`}
+                  onClick={() => {
+                    setCallMode('sandbox');
+                    setCallNotice(null);
+                  }}
+                  style={{ fontSize: 11, padding: '3px 8px', borderRadius: 'var(--r-pill)' }}
+                >
+                  🧪 Sandbox Mode
+                </button>
+              </div>
             </div>
+
+            {!carrierStatus?.configured && (
+              <div style={{ background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: 10, padding: '10px 14px', marginBottom: 14, fontSize: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                  <div>
+                    <strong style={{ color: 'var(--text)' }}>Carrier Trunk Unconfigured:</strong>{' '}
+                    <span style={{ color: 'var(--text-2)' }}>Calls run in Offline Sandbox Mode. Web Audio &amp; DTMF tones generated locally. No real telecom call is placed.</span>
+                  </div>
+                  <Link to="/integrations" style={{ color: 'var(--accent)', fontWeight: 600, whiteSpace: 'nowrap', textDecoration: 'none' }}>
+                    Configure in Integrations →
+                  </Link>
+                </div>
+              </div>
+            )}
+
+            {callNotice && (
+              <div className="callout callout--warning" style={{ marginBottom: 14, fontSize: 12 }}>
+                {callNotice}
+              </div>
+            )}
 
             {/* Virtual Line Selector */}
             <div className="field" style={{ marginBottom: 14 }}>
@@ -476,8 +589,8 @@ export default function PhoneSystem() {
             {/* Call State / Live Call Control Banner */}
             {callStatus !== 'idle' && (
               <div style={{
-                background: callStatus === 'connected' ? '#ecfdf5' : '#fffbeb',
-                border: `1px solid ${callStatus === 'connected' ? '#86efac' : '#fde68a'}`,
+                background: callStatus === 'connected' ? (callMode === 'sandbox' || !carrierStatus?.configured ? 'var(--surface-2)' : '#ecfdf5') : '#fffbeb',
+                border: `1px solid ${callStatus === 'connected' ? (callMode === 'sandbox' || !carrierStatus?.configured ? 'var(--accent)' : '#86efac') : '#fde68a'}`,
                 borderRadius: 12,
                 padding: '16px 20px',
                 marginBottom: 18,
@@ -488,15 +601,23 @@ export default function PhoneSystem() {
                     width: 10,
                     height: 10,
                     borderRadius: '50%',
-                    background: callStatus === 'connected' ? '#10b981' : '#f59e0b',
-                    boxShadow: callStatus === 'connected' ? '0 0 0 4px rgba(16, 185, 129, 0.2)' : '0 0 0 4px rgba(245, 158, 11, 0.2)'
+                    background: callStatus === 'connected' ? (callMode === 'sandbox' || !carrierStatus?.configured ? 'var(--accent)' : '#10b981') : '#f59e0b',
+                    boxShadow: callStatus === 'connected' ? (callMode === 'sandbox' || !carrierStatus?.configured ? '0 0 0 4px var(--accent-soft)' : '0 0 0 4px rgba(16, 185, 129, 0.2)') : '0 0 0 4px rgba(245, 158, 11, 0.2)'
                   }} />
-                  <strong style={{ fontSize: 14, color: callStatus === 'connected' ? '#065f46' : '#92400e' }}>
-                    {callStatus === 'connected' ? `Active HD Voice Call · ${talkTime(callDuration)}` : 'Connecting WebRTC Session...'}
+                  <strong style={{ fontSize: 14, color: 'var(--text)' }}>
+                    {callStatus === 'connected'
+                      ? (callMode === 'sandbox' || !carrierStatus?.configured
+                          ? `[OFFLINE SANDBOX SIMULATION] · ${talkTime(callDuration)}`
+                          : `Active Live Voice Call · ${talkTime(callDuration)}`)
+                      : (callMode === 'sandbox' || !carrierStatus?.configured ? 'Starting Sandbox Audio Session...' : 'Connecting Carrier PSTN Trunk...')}
                   </strong>
                 </div>
-                <div style={{ fontSize: 13, color: callStatus === 'connected' ? '#047857' : '#b45309' }}>
-                  Connected to: <strong>{dialNumber}</strong>
+                <div style={{ fontSize: 13, color: 'var(--text-2)' }}>
+                  {callMode === 'sandbox' || !carrierStatus?.configured ? (
+                    <span>Simulating call to: <strong>{dialNumber}</strong> (Browser Audio Only — No live phone traffic)</span>
+                  ) : (
+                    <span>Connected to: <strong>{dialNumber}</strong> via Twilio Carrier Trunk</span>
+                  )}
                   {isOnHold && <span style={{ marginLeft: 8, color: '#b45309', fontWeight: 700 }}>(ON HOLD)</span>}
                   {isMuted && <span style={{ marginLeft: 8, color: '#dc2626', fontWeight: 700 }}>(MUTED)</span>}
                 </div>
@@ -576,7 +697,7 @@ export default function PhoneSystem() {
                     padding: '14px',
                     fontSize: 15,
                     fontWeight: 700,
-                    background: dialNumber.trim() ? '#10b981' : 'var(--border)',
+                    background: dialNumber.trim() ? (callMode === 'sandbox' || !carrierStatus?.configured ? 'var(--accent)' : '#10b981') : 'var(--border)',
                     color: '#fff',
                     borderRadius: 12,
                     border: 'none',
@@ -588,7 +709,7 @@ export default function PhoneSystem() {
                     boxShadow: dialNumber.trim() ? '0 4px 12px rgba(16, 185, 129, 0.25)' : 'none'
                   }}
                 >
-                  <Icon name="phone" size={16} /> Place Outbound Call
+                  <Icon name="phone" size={16} /> {callMode === 'sandbox' || !carrierStatus?.configured ? 'Run Sandbox Simulation Call' : 'Place Live Outbound Call'}
                 </button>
               ) : (
                 <button
@@ -699,7 +820,7 @@ export default function PhoneSystem() {
       )}
 
       {activeTab === 'lines' && (
-      <div className="card" style={{ marginBottom: 16 }}>
+      <div className="card-premium" style={{ marginBottom: 16, padding: '20px 24px' }}>
         <div className="card__head">
           <div>
             <div className="card__title">Workspace numbers ({state.phoneNumbers.length})</div>
@@ -795,7 +916,7 @@ export default function PhoneSystem() {
       )}
 
       {activeTab === 'logs' && (
-      <div className="card">
+      <div className="card-premium" style={{ padding: '20px 24px' }}>
         <div className="card__head">
           <div>
             <div className="card__title">Call log</div>
@@ -1221,7 +1342,7 @@ export default function PhoneSystem() {
           }}
         />
       )}
-    </div>
+    </main>
   );
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, PageHeader, StatCard, Switch } from '../components/ui';
+import { Badge, Switch } from '../components/ui';
 import { currency, num } from '../lib/format';
 import { uid, useStore } from '../lib/store';
 import { api } from '../lib/api';
@@ -35,25 +35,61 @@ export default function Products() {
     state.paymentLinks.filter((link) => link.productIds.includes(id)).length;
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Products & Price Book"
-        subtitle="One-time and recurring items available to invoices, orders and payment links."
-        actions={
-          <button className="btn btn--primary" onClick={() => setCreating(true)}>
-            <Icon name="plus" size={16} /> New product
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Commerce &amp; Catalog</div>
+          <h1>Products &amp; Price Book</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={13} /> New Product
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Products" value={num(state.products.length)} icon={<Icon name="tag" size={15} />} meta="in the price book" />
-        <StatCard label="Active" value={num(active.length)} icon={<Icon name="check" size={15} />} meta="sellable today" />
-        <StatCard label="Recurring MRR" value={currency(mrr)} icon={<Icon name="refresh" size={15} />} meta={`${recurring.length} recurring items`} />
-        <StatCard label="Average price" value={currency(average)} icon={<Icon name="chart" size={15} />} meta="one-time + recurring" />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">COMMERCE &amp; INVENTORY</div>
+        <h2>Enterprise Product Catalog &amp; Subscriptions</h2>
+        <p>Define one-time items, recurring subscriptions, SKUs, and attach products directly to checkout funnels and payment links.</p>
+      </section>
 
-      <div className="card">
+      <section className="atlas-kpis" aria-label="Product metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Catalog Items</span>
+            <span className="atlas-status atlas-status--healthy">Active</span>
+          </div>
+          <div className="atlas-kpi__value">{num(state.products.length)}</div>
+          <div className="atlas-kpi__note">Price book entries</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Active Sellable</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{num(active.length)}</div>
+          <div className="atlas-kpi__note">Available in checkout</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Recurring Potential MRR</span>
+            <span className="atlas-status atlas-status--healthy">Growing</span>
+          </div>
+          <div className="atlas-kpi__value">{currency(mrr)}</div>
+          <div className="atlas-kpi__note">{recurring.length} recurring plans</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Average Unit Price</span>
+            <span className="atlas-status atlas-status--healthy">Computed</span>
+          </div>
+          <div className="atlas-kpi__value">{currency(average)}</div>
+          <div className="atlas-kpi__note">Blended catalog price</div>
+        </article>
+      </section>
+
+      <div className="card-premium" style={{ marginTop: 22 }}>
         <div className="card__head">
           <div>
             <div className="card__title">Price book</div>
@@ -148,7 +184,7 @@ export default function Products() {
           }}
         />
       )}
-    </div>
+    </main>
   );
 }
 

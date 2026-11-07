@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, EmptyState, PageHeader, StatCard, Switch } from '../components/ui';
+import { Avatar, Badge, EmptyState, Switch } from '../components/ui';
 import { useStore, uid } from '../lib/store';
 import { resolveMerge } from '../lib/merge';
 import { fullDate, num, relative, shortDate, timeOf, toDateTimeInput } from '../lib/format';
@@ -165,59 +165,73 @@ export default function Reputation() {
   };
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Reputation"
-        subtitle="Collect reviews, reply to feedback and watch your listings."
-        actions={
-          <>
-            <button className="btn" onClick={copyReviewLink}>
-              <Icon name={linkCopied ? 'check' : 'link'} size={15} /> {linkCopied ? 'Link copied' : 'Review link'}
-            </button>
-            <a
-              href="/review/main"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn"
-              style={{ textDecoration: 'none' }}
-            >
-              <Icon name="link" size={15} /> Open Portal
-            </a>
-            <button className="btn btn--primary" onClick={() => setRequesting(true)}>
-              <Icon name="send" size={15} /> Request reviews
-            </button>
-          </>
-        }
-      />
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Brand &amp; Reviews</div>
+          <h1>Reputation &amp; Feedback</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="btn btn--secondary btn--sm" onClick={copyReviewLink}>
+            <Icon name={linkCopied ? 'check' : 'link'} size={14} /> {linkCopied ? 'Link Copied' : 'Review Link'}
+          </button>
+          <a
+            href="/review/main"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn btn--secondary btn--sm"
+            style={{ textDecoration: 'none' }}
+          >
+            <Icon name="link" size={14} /> Open Portal
+          </a>
+          <button className="atlas-quick-action-button" onClick={() => setRequesting(true)}>
+            <Icon name="send" size={13} /> Request Reviews
+          </button>
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard
-          label="Average rating"
-          value={avg.toFixed(1)}
-          icon={<Icon name="star" size={15} />}
-          meta={`${reviews.length} reviews`}
-        />
-        <StatCard
-          label="Awaiting reply"
-          value={num(pending)}
-          icon={<Icon name="message" size={15} />}
-          meta="respond within 24h"
-        />
-        <StatCard
-          label="Response rate"
-          value={`${Math.round((replied / Math.max(reviews.length, 1)) * 100)}%`}
-          icon={<Icon name="check" size={15} />}
-          meta={`${replied} replied`}
-        />
-        <StatCard
-          label="Requests sent"
-          value={num(sentRequests)}
-          icon={<Icon name="send" size={15} />}
-          meta={`${queuedRequests} scheduled`}
-        />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">REPUTATION &amp; REVIEWS</div>
+        <h2>Customer Sentiment &amp; Review Management</h2>
+        <p>Monitor Google and local business reviews, automate multi-channel review requests, and respond with speed.</p>
+      </section>
 
-      <div className="grid grid--3" style={{ marginBottom: 16 }}>
+      <section className="atlas-kpis" aria-label="Reputation metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Average Rating</span>
+            <span className="atlas-status atlas-status--healthy">Verified</span>
+          </div>
+          <div className="atlas-kpi__value">{avg.toFixed(1)} ★</div>
+          <div className="atlas-kpi__note">Across {reviews.length} reviews</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Awaiting Reply</span>
+            <span className="atlas-status atlas-status--healthy">{pending > 0 ? 'Action Needed' : 'Clear'}</span>
+          </div>
+          <div className="atlas-kpi__value">{num(pending)}</div>
+          <div className="atlas-kpi__note">Respond within 24h</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Response Rate</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{`${Math.round((replied / Math.max(reviews.length, 1)) * 100)}%`}</div>
+          <div className="atlas-kpi__note">{replied} answered reviews</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Review Requests</span>
+            <span className="atlas-status atlas-status--healthy">Active</span>
+          </div>
+          <div className="atlas-kpi__value">{num(sentRequests)}</div>
+          <div className="atlas-kpi__note">{queuedRequests} queued for dispatch</div>
+        </article>
+      </section>
+
+      <div className="grid grid--3" style={{ marginTop: 22, marginBottom: 16 }}>
         <div className="card">
           <div className="card__head">
             <div className="card__title">Rating breakdown</div>
@@ -392,10 +406,10 @@ export default function Reputation() {
         )}
       </div>
 
-      <div className="card">
+      <div className="card-premium">
         <div className="card__head">
           <div>
-            <div className="card__title">Reviews</div>
+            <div className="card__title">Verified Customer Reviews</div>
             <div className="card__sub">{visible.length} shown</div>
           </div>
           <div className="card__actions">
@@ -506,7 +520,7 @@ export default function Reputation() {
       </div>
 
       {requesting && <RequestModal onClose={() => setRequesting(false)} />}
-    </div>
+    </main>
   );
 }
 

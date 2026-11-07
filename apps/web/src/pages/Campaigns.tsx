@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, EmptyState, PageHeader, StatCard, StatusBadge } from '../components/ui';
+import { Badge, EmptyState, StatusBadge } from '../components/ui';
 import { BarChart } from '../components/Chart';
 import { num, pct, shortDate } from '../lib/format';
 import { uid, useStore } from '../lib/store';
@@ -116,16 +116,59 @@ export default function Campaigns() {
   const tagOptions = Array.from(new Set(state.contacts.flatMap((c) => c.tags))).sort();
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Campaigns"
-        subtitle="Visual email campaigns, SMS broadcasts, dynamic segmentation, and engagement analytics."
-        actions={
-          <button className="btn btn--primary" onClick={() => setCreating(true)}>
-            <Icon name="plus" size={16} /> New campaign
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Marketing Automation</div>
+          <h1>Campaigns &amp; Broadcasts</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={13} /> New Campaign
           </button>
-        }
-      />
+        </div>
+      </header>
+
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">OMNICHANNEL MARKETING OS</div>
+        <h2>Visual Email &amp; SMS Broadcast Engine</h2>
+        <p>Compose rich responsive email templates, run high-throughput SMS broadcasts, and track real-time open and click telemetry.</p>
+      </section>
+
+      <section className="atlas-kpis" aria-label="Campaign metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Messages Dispatched</span>
+            <span className="atlas-status atlas-status--healthy">Tracked</span>
+          </div>
+          <div className="atlas-kpi__value">{num(totalSent)}</div>
+          <div className="atlas-kpi__note">{sent.length} active campaigns</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Open Rate</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{pct(totalOpened, totalSent)}</div>
+          <div className="atlas-kpi__note">{num(totalOpened)} verified opens</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Click-Through</span>
+            <span className="atlas-status atlas-status--healthy">Direct</span>
+          </div>
+          <div className="atlas-kpi__value">{pct(totalClicked, totalSent)}</div>
+          <div className="atlas-kpi__note">{num(totalClicked)} click events</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Audience</span>
+            <span className="atlas-status atlas-status--healthy">Synced</span>
+          </div>
+          <div className="atlas-kpi__value">{num(state.contacts.length)}</div>
+          <div className="atlas-kpi__note">Addressable contacts</div>
+        </article>
+      </section>
 
       {notice && (
         <div className="callout callout--info" style={{ marginBottom: 16 }}>
@@ -133,15 +176,8 @@ export default function Campaigns() {
         </div>
       )}
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Messages sent" value={num(totalSent)} icon={<Icon name="send" size={15} />} meta={`${sent.length} campaigns`} />
-        <StatCard label="Open rate" value={pct(totalOpened, totalSent)} icon={<Icon name="eye" size={15} />} meta={`${num(totalOpened)} opens`} />
-        <StatCard label="Click rate" value={pct(totalClicked, totalSent)} icon={<Icon name="link" size={15} />} meta={`${num(totalClicked)} clicks`} />
-        <StatCard label="Audience" value={num(state.contacts.length)} icon={<Icon name="users" size={15} />} meta="contacts in workspace" />
-      </div>
-
-      <div className="grid grid--sidebar" style={{ marginBottom: 16 }}>
-        <div className="card">
+      <div className="grid grid--sidebar" style={{ marginTop: 22, marginBottom: 16 }}>
+        <div className="card-premium">
           <div className="card__head">
             <div className="card__title">Clicks by campaign</div>
             <div className="card__actions">
@@ -157,9 +193,9 @@ export default function Campaigns() {
           </div>
         </div>
 
-        <div className="card">
+        <div className="card-premium">
           <div className="card__head">
-            <div className="card__title">Delivery funnel</div>
+            <div className="card__title">Delivery Funnel &amp; Engagement</div>
           </div>
           <div className="card__body stack" style={{ gap: 14 }}>
             {[
@@ -188,7 +224,7 @@ export default function Campaigns() {
         </div>
       </div>
 
-      <div className="card">
+      <div className="card-premium">
         <div className="card__head" style={{ gap: 8, flexWrap: 'wrap' }}>
           <div className="search" style={{ flex: '1 1 220px', maxWidth: 300 }}>
             <Icon name="search" size={15} />
@@ -339,7 +375,7 @@ export default function Campaigns() {
           onClose={() => setPreviewCampaign(null)}
         />
       )}
-    </div>
+    </main>
   );
 }
 

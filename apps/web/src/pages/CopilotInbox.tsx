@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, EmptyState, PageHeader, StatCard, StatusBadge } from '../components/ui';
+import { Badge, EmptyState, StatusBadge } from '../components/ui';
 import { api } from '../lib/api';
 
 interface CopilotProposal {
@@ -145,78 +145,73 @@ export default function CopilotInbox() {
   const rejectedCount = proposals.filter((p) => p.status === 'rejected').length;
 
   return (
-    <div className="page-container space-y-6">
-      <PageHeader
-        title="Copilot Proposal Review Inbox"
-        subtitle="Inspect, review, and govern autonomous Copilot proposals, workflow changes, and communication drafts."
-        actions={
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__crumbs" aria-label="Breadcrumb">
+          <span className="atlas-dashboard__crumb">AI Workforce</span>
+          <span className="atlas-dashboard__crumb-separator" aria-hidden="true">/</span>
+          <span className="atlas-dashboard__crumb atlas-dashboard__crumb--current">Proposal Review Inbox</span>
+        </div>
+        <div className="atlas-dashboard__actions">
           <button
             onClick={fetchProposals}
-            className="btn btn--secondary flex items-center gap-2 text-sm"
+            className="atlas-quick-action-button"
+            type="button"
           >
-            <Icon name="refresh" size={16} className={loading ? 'animate-spin' : ''} />
+            <Icon name="refresh" size={14} className={loading ? 'animate-spin' : ''} />
             Refresh Inbox
           </button>
-        }
-      />
+        </div>
+      </header>
+
+      <section className="atlas-hero">
+        <h1 className="atlas-hero__title">Copilot Proposal Review Inbox</h1>
+        <p>Inspect, review, and govern autonomous Copilot proposals, workflow changes, and communication drafts.</p>
+      </section>
 
       {/* Governance Banner */}
-      <div className="bg-indigo-500/10 border border-indigo-500/30 rounded-xl p-4 flex items-start gap-3">
-        <Icon name="sparkles" size={20} className="text-indigo-500 mt-0.5 flex-shrink-0" />
-        <div className="text-sm">
-          <p className="font-semibold text-indigo-900 dark:text-indigo-200">
-            Three-Stage Human-in-the-Loop Governance
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-2 text-xs">
-            <div className="p-2 bg-white/60 dark:bg-gray-900/60 rounded border border-indigo-200 dark:border-indigo-800">
-              <span className="font-semibold block text-indigo-700 dark:text-indigo-300">1. Proposal Drafted</span>
-              Agent generates structured mutation proposal with bounds.
-            </div>
-            <div className="p-2 bg-white/60 dark:bg-gray-900/60 rounded border border-indigo-200 dark:border-indigo-800">
-              <span className="font-semibold block text-indigo-700 dark:text-indigo-300">2. Decision Recorded</span>
-              Authorized human marks proposal approved or rejected.
-            </div>
-            <div className="p-2 bg-white/60 dark:bg-gray-900/60 rounded border border-indigo-200 dark:border-indigo-800">
-              <span className="font-semibold block text-indigo-700 dark:text-indigo-300">3. Execution Status</span>
-              Guaranteed fail-closed (<code className="font-mono">not_executed</code>) until dedicated executor runs.
-            </div>
-          </div>
-        </div>
+      <div className="callout callout--info" style={{ marginTop: 20, marginBottom: 20 }}>
+        <strong>Three-Stage Human-in-the-Loop Governance:</strong> Operza enforces proposal drafting, explicit human review/decision, and governed action receipt execution before any mutation occurs.
       </div>
 
       {decisionFeedback && (
-        <div className="p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl flex items-start gap-3">
-          <Icon name="check" size={18} className="text-blue-500 mt-0.5" />
-          <div className="text-sm">
-            <div className="font-semibold text-blue-900 dark:text-blue-200">{decisionFeedback.title}</div>
-            <div className="text-blue-800 dark:text-blue-300 text-xs mt-0.5">{decisionFeedback.message}</div>
-          </div>
+        <div className="callout callout--success" style={{ marginBottom: 20 }}>
+          <strong>{decisionFeedback.title}:</strong> {decisionFeedback.message}
         </div>
       )}
 
       {/* Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard
-          label="Pending Review"
-          value={String(pendingCount)}
-          icon={<Icon name="clock" size={16} />}
-          trend={{ value: `${pendingCount} Pending`, direction: pendingCount === 0 ? 'up' : 'down' }}
-        />
-        <StatCard
-          label="Decisions: Approved"
-          value={String(approvedCount)}
-          icon={<Icon name="check" size={16} />}
-          trend={{ value: `${approvedCount} Approved`, direction: 'up' }}
-        />
-        <StatCard
-          label="Decisions: Rejected"
-          value={String(rejectedCount)}
-          icon={<Icon name="x" size={16} />}
-        />
-      </div>
+      <section className="atlas-kpis" aria-label="Proposal metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Pending Review</span>
+            <span className={`atlas-status ${pendingCount > 0 ? 'atlas-status--warning' : 'atlas-status--healthy'}`}>
+              {pendingCount > 0 ? 'Action Needed' : 'Clear'}
+            </span>
+          </div>
+          <div className="atlas-kpi__value">{String(pendingCount)}</div>
+          <div className="atlas-kpi__note">Awaiting human approval</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Decisions: Approved</span>
+            <span className="atlas-status atlas-status--healthy">Validated</span>
+          </div>
+          <div className="atlas-kpi__value">{String(approvedCount)}</div>
+          <div className="atlas-kpi__note">Passed human safety gate</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Decisions: Rejected</span>
+            <span className="atlas-status atlas-status--neutral">Declined</span>
+          </div>
+          <div className="atlas-kpi__value">{String(rejectedCount)}</div>
+          <div className="atlas-kpi__note">Halted by operator</div>
+        </article>
+      </section>
 
       {/* Inbox Controls & Filter Tabs */}
-      <div className="card p-4 space-y-4">
+      <div className="card-premium" style={{ marginTop: 24, padding: 20 }}>
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-gray-200 dark:border-gray-800 pb-3">
           <div className="flex items-center gap-2">
             {(['pending', 'approved', 'rejected', 'all'] as const).map((tab) => (
@@ -451,6 +446,6 @@ export default function CopilotInbox() {
           </form>
         </Modal>
       )}
-    </div>
+    </main>
   );
 }

@@ -166,7 +166,7 @@ export default function Conversations() {
   const smsSegments = Math.max(1, Math.ceil(smsChars / 160));
 
   return (
-    <div className="content content--flush">
+    <main className="operza-dashboard atlas-dashboard content--flush">
       <div className="inbox">
         <section className={`inbox__list${selected ? ' is-hidden-mobile' : ''}`}>
           <div className="inbox__list-head">
@@ -441,7 +441,7 @@ export default function Conversations() {
       {widgetModalOpen && (
         <WebchatWidgetModal onClose={() => setWidgetModalOpen(false)} />
       )}
-    </div>
+    </main>
   );
 }
 

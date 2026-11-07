@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, PageHeader, StatCard, Switch } from '../components/ui';
+import { Avatar, Badge, Switch } from '../components/ui';
 import { useStore } from '../lib/store';
 import { currency, num } from '../lib/format';
 import { api } from '../lib/api';
@@ -65,30 +65,66 @@ export default function ClientPortal() {
   }
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Client Portal"
-        subtitle="A branded, unified space where clients see documents, courses and invoices."
-        actions={
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Client Experience &amp; Portal</div>
+          <h1>Client Portal OS</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
           <button
-            className="btn btn--primary"
+            className="atlas-quick-action-button"
             type="button"
             disabled={members.length === 0}
             onClick={() => handleOpenPreview(members[0]?.id || '')}
           >
-            <Icon name="globe" size={15} /> Preview portal
+            <Icon name="globe" size={13} /> Preview Portal
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Portal members" value={num(members.length)} icon={<Icon name="users" size={15} />} meta={`${candidates.length} invites pending`} />
-        <StatCard label="Shared documents" value={num(sharedDocs)} icon={<Icon name="file" size={15} />} meta="visible to members" />
-        <StatCard label="Course seats" value={num(seats)} icon={<Icon name="book" size={15} />} meta="inside the portal" />
-        <StatCard label="Pending invites" value={num(candidates.length)} icon={<Icon name="clock" size={15} />} meta="contacts without access" />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">WHITE-LABEL CLIENT PORTAL</div>
+        <h2>Unified Self-Service Client Environment</h2>
+        <p>A branded client experience where buyers access signed contracts, ongoing courses, outstanding invoices, and appointments.</p>
+      </section>
 
-      <div className="grid grid--2" style={{ marginBottom: 16 }}>
+      <section className="atlas-kpis" aria-label="Client portal metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Active Members</span>
+            <span className="atlas-status atlas-status--healthy">Access Granted</span>
+          </div>
+          <div className="atlas-kpi__value">{num(members.length)}</div>
+          <div className="atlas-kpi__note">{candidates.length} invites pending</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Shared Contracts</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{num(sharedDocs)}</div>
+          <div className="atlas-kpi__note">Visible in member vault</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Curriculum Seats</span>
+            <span className="atlas-status atlas-status--healthy">Active</span>
+          </div>
+          <div className="atlas-kpi__value">{num(seats)}</div>
+          <div className="atlas-kpi__note">Unlocked learning modules</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Pending Invites</span>
+            <span className="atlas-status atlas-status--healthy">Available</span>
+          </div>
+          <div className="atlas-kpi__value">{num(candidates.length)}</div>
+          <div className="atlas-kpi__note">Contacts eligible for access</div>
+        </article>
+      </section>
+
+      <div className="grid grid--2" style={{ marginTop: 22, marginBottom: 16 }}>
         <div className="card">
           <div className="card__head">
             <div>
@@ -339,6 +375,6 @@ export default function ClientPortal() {
           )}
         </Modal>
       )}
-    </div>
+    </main>
   );
 }

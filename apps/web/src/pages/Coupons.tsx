@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, EmptyState, PageHeader, StatCard, Switch } from '../components/ui';
+import { Badge, EmptyState, Switch } from '../components/ui';
 import { currency, fullDate, num } from '../lib/format';
 import { uid, useStore } from '../lib/store';
 import { api } from '../lib/api';
@@ -68,25 +68,61 @@ export default function Coupons() {
   const expired = state.coupons.filter((c) => stateOf(c) === 'expired');
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Coupons"
-        subtitle="Discount codes that can be applied at checkout on payment links and invoices."
-        actions={
-          <button className="btn btn--primary" onClick={() => setCreating(true)}>
-            <Icon name="plus" size={16} /> New coupon
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Commerce &amp; Promotions</div>
+          <h1>Coupons &amp; Discounts</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={13} /> New Coupon
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Active codes" value={num(active.length)} icon={<Icon name="tag" size={15} />} meta={`${state.coupons.length} total`} />
-        <StatCard label="Redemptions" value={num(redemptions)} icon={<Icon name="check" size={15} />} meta="across all codes" />
-        <StatCard label="At limit" value={num(exhausted.length)} icon={<Icon name="bell" size={15} />} meta="no redemptions left" />
-        <StatCard label="Expired" value={num(expired.length)} icon={<Icon name="clock" size={15} />} meta="past their end date" />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">DISCOUNTS &amp; PROMOTIONS</div>
+        <h2>Promotional Incentive Engine</h2>
+        <p>Create percentage and fixed discount codes, redemption caps, expiration rules, and checkout minimums.</p>
+      </section>
 
-      <div className="card">
+      <section className="atlas-kpis" aria-label="Coupon metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Active Codes</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{num(active.length)}</div>
+          <div className="atlas-kpi__note">Usable at checkout</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Redemptions</span>
+            <span className="atlas-status atlas-status--healthy">Tracked</span>
+          </div>
+          <div className="atlas-kpi__value">{num(redemptions)}</div>
+          <div className="atlas-kpi__note">Verified promo uses</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Exhausted Caps</span>
+            <span className="atlas-status atlas-status--healthy">Capped</span>
+          </div>
+          <div className="atlas-kpi__value">{num(exhausted.length)}</div>
+          <div className="atlas-kpi__note">Reached max usage limit</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Expired Promos</span>
+            <span className="atlas-status atlas-status--healthy">Archived</span>
+          </div>
+          <div className="atlas-kpi__value">{num(expired.length)}</div>
+          <div className="atlas-kpi__note">Past valid end date</div>
+        </article>
+      </section>
+
+      <div className="card-premium" style={{ marginTop: 22 }}>
         <div className="card__head">
           <div>
             <div className="card__title">Discount codes</div>
@@ -255,7 +291,7 @@ export default function Coupons() {
           }}
         />
       )}
-    </div>
+    </main>
   );
 }
 

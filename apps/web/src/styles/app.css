@@ -2619,30 +2619,73 @@ a {
   color: #1b2435;
 }
 
+.shell--overview .sidebar__nav,
 .shell--overview .sidebar__nav--compact {
-  padding: 0 14px 8px;
+  padding: 0 14px 16px;
+  overflow-y: auto;
 }
 
+.shell--overview .nav__group-label {
+  padding: 14px 10px 6px;
+  color: #72809a;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.shell--overview .nav__item,
 .shell--overview .atlas-sidebar__links .nav__item {
-  height: 38px;
-  min-height: 38px;
-  padding: 0 16px;
-  margin: 0 0 10px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 12px;
+  margin: 0 0 3px;
   border-radius: 8px;
-  gap: 0;
-  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
   font-weight: 500;
   color: #172033;
+  transition: all 0.15s ease;
 }
 
+.shell--overview .nav__item:hover,
+.shell--overview .atlas-sidebar__links .nav__item:hover {
+  background: #f0f3f8;
+  color: #0b101c;
+}
+
+.shell--overview .nav__icon,
 .shell--overview .atlas-sidebar__links .nav__icon {
-  display: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  color: #72809a;
+  flex-shrink: 0;
 }
 
+.shell--overview .nav__item.is-active,
 .shell--overview .atlas-sidebar__links .nav__item.is-active {
   background: #ecefff;
   color: #3446e8;
   font-weight: 650;
+}
+
+.shell--overview .nav__item.is-active .nav__icon,
+.shell--overview .atlas-sidebar__links .nav__item.is-active .nav__icon {
+  color: #3446e8;
+}
+
+.shell--overview .nav__count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
 }
 
 .shell--overview .sidebar__footer {
@@ -3117,18 +3160,40 @@ a {
   background: var(--surface-2);
 }
 
-[data-theme="dark"] .shell--overview .sidebar__account .account__name,
+[data-theme="dark"] .shell--overview .nav__group-label {
+  color: var(--text-3);
+}
+
+[data-theme="dark"] .shell--overview .nav__item,
 [data-theme="dark"] .shell--overview .atlas-sidebar__links .nav__item,
 [data-theme="dark"] .shell--overview .sidebar__footer .nav__item,
 [data-theme="dark"] .shell--overview .atlas-sidebar__user {
+  color: var(--text-2);
+}
+
+[data-theme="dark"] .shell--overview .nav__item:hover,
+[data-theme="dark"] .shell--overview .atlas-sidebar__links .nav__item:hover {
+  background: var(--surface-2);
   color: var(--text);
 }
 
+[data-theme="dark"] .shell--overview .nav__icon,
+[data-theme="dark"] .shell--overview .atlas-sidebar__links .nav__icon {
+  color: var(--text-3);
+}
+
+[data-theme="dark"] .shell--overview .nav__item.is-active,
 [data-theme="dark"] .shell--overview .atlas-sidebar__links .nav__item.is-active {
   background: var(--accent-soft);
   color: var(--accent-ink);
 }
 
+[data-theme="dark"] .shell--overview .nav__item.is-active .nav__icon,
+[data-theme="dark"] .shell--overview .atlas-sidebar__links .nav__item.is-active .nav__icon {
+  color: var(--accent-ink);
+}
+
+[data-theme="dark"] .content,
 [data-theme="dark"] .atlas-dashboard {
   background: var(--bg);
   color: var(--text);

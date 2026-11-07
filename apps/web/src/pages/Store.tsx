@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, EmptyState, PageHeader, StatCard, Switch } from '../components/ui';
+import { Badge, EmptyState, Switch } from '../components/ui';
 import { currency, num, shortDate } from '../lib/format';
 import { uid, useStore } from '../lib/store';
 import type { Coupon, Order } from '../lib/types';
@@ -172,30 +172,61 @@ export default function Store() {
   };
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Store"
-        subtitle="Sell your price book through a hosted checkout with simulated payment processing."
-        actions={
-          <button className="btn">
-            <Icon name="eye" size={15} /> View storefront
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Commerce &amp; POS</div>
+          <h1>Digital Storefront &amp; POS</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button">
+            <Icon name="eye" size={13} /> View Storefront
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard
-          label="Store revenue"
-          value={currency(storeRevenue)}
-          icon={<Icon name="wallet" size={15} />}
-          meta={`${paidOrders.length} paid orders`}
-        />
-        <StatCard label="Average order" value={currency(Math.round(average))} icon={<Icon name="chart" size={15} />} meta="paid only" />
-        <StatCard label="Coupons used" value={num(couponOrders)} icon={<Icon name="tag" size={15} />} meta="checkouts with a code" />
-        <StatCard label="Gateways" value={`${state.paymentGateways.filter((g) => g.connected).length}/${state.paymentGateways.length}`} icon={<Icon name="credit-card" size={15} />} meta="connected processors" />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">HOSTED POINT OF SALE &amp; CHECKOUT</div>
+        <h2>Self-Serve Digital Storefront</h2>
+        <p>Sell catalog items, subscriptions, and services through a high-conversion checkout with coupon redemption and gateway routing.</p>
+      </section>
 
-      <div className="store-layout">
+      <section className="atlas-kpis" aria-label="Store metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Storefront Gross</span>
+            <span className="atlas-status atlas-status--healthy">Processed</span>
+          </div>
+          <div className="atlas-kpi__value">{currency(storeRevenue)}</div>
+          <div className="atlas-kpi__note">{paidOrders.length} settled checkouts</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Average Order</span>
+            <span className="atlas-status atlas-status--healthy">Settled</span>
+          </div>
+          <div className="atlas-kpi__value">{currency(Math.round(average))}</div>
+          <div className="atlas-kpi__note">Realized average basket</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Coupons Applied</span>
+            <span className="atlas-status atlas-status--healthy">Tracked</span>
+          </div>
+          <div className="atlas-kpi__value">{num(couponOrders)}</div>
+          <div className="atlas-kpi__note">Incentivized orders</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Payment Gateways</span>
+            <span className="atlas-status atlas-status--healthy">Active</span>
+          </div>
+          <div className="atlas-kpi__value">{`${state.paymentGateways.filter((g) => g.connected).length}/${state.paymentGateways.length}`}</div>
+          <div className="atlas-kpi__note">Connected payment processors</div>
+        </article>
+      </section>
+
+      <div className="store-layout" style={{ marginTop: 22 }}>
         <div>
           <div className="card" style={{ marginBottom: 16 }}>
             <div className="card__head">
@@ -584,6 +615,6 @@ export default function Store() {
           </div>
         </Modal>
       )}
-    </div>
+    </main>
   );
 }

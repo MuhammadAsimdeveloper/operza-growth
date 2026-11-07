@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, PageHeader, StatCard, StatusBadge } from '../components/ui';
+import { Badge, StatusBadge } from '../components/ui';
 import { useStore, uid } from '../lib/store';
 import { num, shortDate, timeOf, toDateTimeInput } from '../lib/format';
 import { api } from '../lib/api';
@@ -57,25 +57,77 @@ export default function Social() {
   const engagement = published.reduce((s, p) => s + p.likes + p.comments, 0);
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Social Planner"
-        subtitle="Plan, schedule and review posts across every connected channel."
-        actions={
-          <button className="btn btn--primary" onClick={() => setComposing(true)}>
-            <Icon name="plus" size={16} /> New post
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Marketing &amp; Social</div>
+          <h1>Social Planner &amp; Broadcasts</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setComposing(true)}>
+            <Icon name="plus" size={13} /> New Post
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Scheduled" value={String(state.posts.filter((p) => p.status === 'scheduled').length)} icon={<Icon name="clock" size={15} />} meta="upcoming posts" />
-        <StatCard label="Published" value={String(published.length)} icon={<Icon name="check" size={15} />} meta="this month" />
-        <StatCard label="Engagement" value={num(engagement)} icon={<Icon name="sparkles" size={15} />} meta="likes + comments" />
-        <StatCard label="Channels" value={String(new Set(state.posts.flatMap((p) => p.platforms)).size)} icon={<Icon name="share" size={15} />} meta="connected networks" />
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">MULTI-NETWORK SOCIAL OS</div>
+        <h2>Omnichannel Content Planner &amp; Scheduler</h2>
+        <p>Coordinate posts across X, LinkedIn, Facebook, and Instagram, schedule content calendars, and track audience engagement.</p>
+      </section>
+
+      <section className="atlas-kpis" aria-label="Social metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Scheduled Posts</span>
+            <span className="atlas-status atlas-status--healthy">Queued</span>
+          </div>
+          <div className="atlas-kpi__value">{state.posts.filter((p) => p.status === 'scheduled').length}</div>
+          <div className="atlas-kpi__note">Upcoming calendar queue</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Published Posts</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{published.length}</div>
+          <div className="atlas-kpi__note">Published this month</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Engagement</span>
+            <span className="atlas-status atlas-status--healthy">Interactions</span>
+          </div>
+          <div className="atlas-kpi__value">{num(engagement)}</div>
+          <div className="atlas-kpi__note">Likes, replies &amp; shares</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Connected Networks</span>
+            <span className="atlas-status atlas-status--healthy">Synced</span>
+          </div>
+          <div className="atlas-kpi__value">{new Set(state.posts.flatMap((p) => p.platforms)).size}</div>
+          <div className="atlas-kpi__note">Active publishing channels</div>
+        </article>
+      </section>
+
+      <div className="card-premium" style={{ marginTop: 22, padding: '16px 20px', marginBottom: 20 }}>
+        <div className="card__head" style={{ marginBottom: 12 }}>
+          <div className="card__title">Publishing Channels</div>
+          <div className="card__actions">
+            <span className="badge badge--accent">Multi-Network Ready</span>
+          </div>
+        </div>
+        <div className="row row--wrap" style={{ gap: 10 }}>
+          {PLATFORMS.map((p) => (
+            <span key={p} className="tag" style={{ height: 28, padding: '0 11px', gap: 7, textTransform: 'capitalize' }}>
+              <Icon name={p} size={14} /> {p}
+            </span>
+          ))}
+        </div>
       </div>
 
-      <div className="board">
+      <div className="board" style={{ marginTop: 0 }}>
         {COLUMNS.map((col) => {
           const posts = state.posts
             .filter((p) => p.status === col.status)
@@ -146,22 +198,6 @@ export default function Social() {
         })}
       </div>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <div className="card__head">
-          <div className="card__title">Connected channels</div>
-          <div className="card__actions">
-            <button className="btn btn--ghost btn--sm">Manage</button>
-          </div>
-        </div>
-        <div className="card__body row row--wrap" style={{ gap: 10 }}>
-          {PLATFORMS.map((p) => (
-            <span key={p} className="tag" style={{ height: 28, padding: '0 11px', gap: 7, textTransform: 'capitalize' }}>
-              <Icon name={p} size={14} /> {p}
-            </span>
-          ))}
-        </div>
-      </div>
-
       {composing && (
         <Composer
           onClose={() => setComposing(false)}
@@ -185,7 +221,7 @@ export default function Social() {
           }}
         />
       )}
-    </div>
+    </main>
   );
 }
 

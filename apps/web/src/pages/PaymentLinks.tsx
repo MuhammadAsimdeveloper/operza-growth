@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, EmptyState, PageHeader, StatCard, Switch } from '../components/ui';
+import { Badge, EmptyState, Switch } from '../components/ui';
 import { currency, num, pct } from '../lib/format';
 import { uid, useStore } from '../lib/store';
 import { api } from '../lib/api';
@@ -71,26 +71,62 @@ export default function PaymentLinks() {
   };
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Payment Links"
-        subtitle="Shareable checkouts that bundle products for one-time or recurring payments."
-        actions={
-          <button className="btn btn--primary" onClick={() => setCreating(true)}>
-            <Icon name="plus" size={16} /> New payment link
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Commerce &amp; Checkouts</div>
+          <h1>Payment Links</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={13} /> New Payment Link
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Links" value={num(state.paymentLinks.length)} icon={<Icon name="link" size={15} />} meta={`${active} active`} />
-        <StatCard label="Visits" value={num(visits)} icon={<Icon name="eye" size={15} />} meta="all links" />
-        <StatCard label="Conversions" value={num(conversions)} icon={<Icon name="check" size={15} />} meta="completed checkouts" />
-        <StatCard label="Conversion rate" value={pct(conversions, visits)} icon={<Icon name="chart" size={15} />} meta="visits → paid" />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">ONE-CLICK CHECKOUTS</div>
+        <h2>Direct Product Payment Links</h2>
+        <p>Generate frictionless checkout pages for social selling, email invoices, and custom service proposals.</p>
+      </section>
+
+      <section className="atlas-kpis" aria-label="Payment link metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Payment Links</span>
+            <span className="atlas-status atlas-status--healthy">Active</span>
+          </div>
+          <div className="atlas-kpi__value">{num(state.paymentLinks.length)}</div>
+          <div className="atlas-kpi__note">{active} accepting payments</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Checkout Visits</span>
+            <span className="atlas-status atlas-status--healthy">Tracked</span>
+          </div>
+          <div className="atlas-kpi__value">{num(visits)}</div>
+          <div className="atlas-kpi__note">Unique visitor pageviews</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Conversions</span>
+            <span className="atlas-status atlas-status--healthy">Paid</span>
+          </div>
+          <div className="atlas-kpi__value">{num(conversions)}</div>
+          <div className="atlas-kpi__note">Completed transactions</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Conversion Rate</span>
+            <span className="atlas-status atlas-status--healthy">Optimized</span>
+          </div>
+          <div className="atlas-kpi__value">{pct(conversions, visits)}</div>
+          <div className="atlas-kpi__note">Visits into paid revenue</div>
+        </article>
+      </section>
 
       {state.paymentLinks.length === 0 ? (
-        <div className="card">
+        <div className="card-premium" style={{ marginTop: 22 }}>
           <EmptyState
             icon={<Icon name="link" size={22} />}
             title="No payment links"
@@ -103,12 +139,12 @@ export default function PaymentLinks() {
           />
         </div>
       ) : (
-        <div className="grid grid--2">
+        <div className="grid grid--2" style={{ marginTop: 22 }}>
           {state.paymentLinks.map((link) => {
             const products = state.products.filter((p) => link.productIds.includes(p.id));
             const rate = pct(link.conversions, link.visits);
             return (
-              <div className="card" key={link.id}>
+              <div className="card-premium" key={link.id}>
                 <div className="card__head">
                   <div style={{ minWidth: 0 }}>
                     <div className="card__title">{link.name}</div>
@@ -183,7 +219,7 @@ export default function PaymentLinks() {
       )}
 
       {creating && <NewLink onClose={() => setCreating(false)} />}
-    </div>
+    </main>
   );
 }
 

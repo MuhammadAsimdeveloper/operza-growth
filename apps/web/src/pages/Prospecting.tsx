@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, EmptyState, PageHeader, StatCard } from '../components/ui';
+import { Avatar, Badge, EmptyState } from '../components/ui';
 import { uid, useStore } from '../lib/store';
 import { num } from '../lib/format';
 import { api } from '../lib/api';
@@ -53,6 +53,8 @@ export default function Prospecting() {
 
   const qualified = prospects.filter((p) => p.status === 'qualified').length;
   const contacted = prospects.filter((p) => p.status === 'contacted').length;
+  const uncontacted = prospects.filter((p) => p.status === 'new').length;
+  const highFit = prospects.filter((p) => p.score >= 80).length;
   const avgScore = prospects.length
     ? Math.round(prospects.reduce((s, p) => s + p.score, 0) / prospects.length)
     : 0;
@@ -160,38 +162,79 @@ export default function Prospecting() {
   }
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Prospecting"
-        subtitle="Find lookalike businesses, score them, then push the good ones into your CRM."
-        actions={
-          <>
-            <button
-              className={`btn${showFilters ? ' is-active' : ''}`}
-              type="button"
-              onClick={() => setShowFilters((prev) => !prev)}
-            >
-              <Icon name="sliders" size={15} /> Filters {minScore > 0 || minEmployees > 0 ? `(Active)` : ''}
-            </button>
-            <button
-              className="btn btn--primary"
-              type="button"
-              onClick={() => setSearchModalOpen(true)}
-            >
-              <Icon name="search" size={15} /> Run search
-            </button>
-          </>
-        }
-      />
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Sales &amp; Prospecting</div>
+          <h1>Prospect Discovery &amp; Fit Scoring</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button
+            className={`btn btn--secondary btn--sm${showFilters ? ' is-active' : ''}`}
+            type="button"
+            onClick={() => setShowFilters((prev) => !prev)}
+          >
+            <Icon name="sliders" size={14} /> Filters {minScore > 0 || minEmployees > 0 ? `(Active)` : ''}
+          </button>
+          <button
+            className="atlas-quick-action-button"
+            type="button"
+            onClick={() => setSearchModalOpen(true)}
+          >
+            <Icon name="search" size={13} /> Run Search
+          </button>
+        </div>
+      </header>
+
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">LEAD SOURCING &amp; INTELLIGENCE</div>
+        <h2>Automated Prospect Discovery &amp; ICP Fit</h2>
+        <p>Find lookalike B2B accounts, score company fit with machine intelligence, and convert verified leads directly into CRM pipelines.</p>
+      </section>
+
+      <section className="atlas-kpis" aria-label="Prospecting metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Discovered Prospects</span>
+            <span className="atlas-status atlas-status--healthy">Sourced</span>
+          </div>
+          <div className="atlas-kpi__value">{num(state.prospects.length)}</div>
+          <div className="atlas-kpi__note">{num(uncontacted)} uncontacted leads</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">High Fit Leads</span>
+            <span className="atlas-status atlas-status--healthy">Hot</span>
+          </div>
+          <div className="atlas-kpi__value">{num(highFit)}</div>
+          <div className="atlas-kpi__note">ICP score 80 or above</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Contacted Outreach</span>
+            <span className="atlas-status atlas-status--healthy">Engaged</span>
+          </div>
+          <div className="atlas-kpi__value">{num(contacted)}</div>
+          <div className="atlas-kpi__note">Outreach dispatched</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Average Fit Score</span>
+            <span className="atlas-status atlas-status--healthy">Optimal</span>
+          </div>
+          <div className="atlas-kpi__value">{String(avgScore)} / 100</div>
+          <div className="atlas-kpi__note">{num(qualified)} qualified opportunities</div>
+        </article>
+      </section>
 
       {notice && (
-        <div className="callout callout--success" style={{ marginBottom: 16 }}>
+        <div className="callout callout--success" style={{ marginTop: 22, marginBottom: 16 }}>
           {notice}
         </div>
       )}
 
       {showFilters && (
-        <div className="card" style={{ marginBottom: 16, padding: '16px' }}>
+        <div className="card-premium" style={{ marginBottom: 16, padding: '16px' }}>
           <div className="row" style={{ gap: 20, alignItems: 'flex-end', flexWrap: 'wrap' }}>
             <div style={{ minWidth: 200 }}>
               <label className="label" style={{ fontSize: 12, marginBottom: 4 }}>Min Fit Score: <strong>{minScore}</strong></label>
@@ -234,14 +277,7 @@ export default function Prospecting() {
         </div>
       )}
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Prospects found" value={num(prospects.length)} icon={<Icon name="target" size={15} />} meta="this search" />
-        <StatCard label="Qualified" value={num(qualified)} icon={<Icon name="check" size={15} />} meta="ready to import" />
-        <StatCard label="Contacted" value={num(contacted)} icon={<Icon name="send" size={15} />} meta="outreach sent" />
-        <StatCard label="Avg. fit score" value={String(avgScore)} icon={<Icon name="chart" size={15} />} meta="out of 100" />
-      </div>
-
-      <div className="card">
+      <div className="card-premium" style={{ marginTop: showFilters ? 0 : 22 }}>
         <div className="card__head">
           <div>
             <div className="card__title">Results</div>
@@ -412,6 +448,6 @@ export default function Prospecting() {
           </form>
         </Modal>
       )}
-    </div>
+    </main>
   );
 }

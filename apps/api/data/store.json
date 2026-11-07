@@ -1,30 +1,736 @@
 {
-  "users": [],
-  "agencies": [],
-  "locations": [],
-  "memberships": [],
+  "users": [
+    {
+      "id": "3e1ca8ea-f883-4d3e-be50-6994975d2c36",
+      "name": "Admin Operator",
+      "email": "admin@operza.io",
+      "passwordHash": "329fcaba0c0b13e3e47acf70068caa64:f6058bbecff0026b3b49deb0a07753cb075f51ad63d9c3435c368df04348c0251efd96f5d0f28a857f694a61ccfd65ecb8778b765a7e05a34f88ad0b6e0172c3",
+      "status": "active",
+      "createdAt": "2026-11-07T09:02:22.430Z"
+    },
+    {
+      "id": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "name": "Asim",
+      "email": "sanjarkhanabbasi786@gmail.com",
+      "passwordHash": "4882b5f4ac9d17bc2afb7eecf0e63687:683994d2f05423837a71ec12124a59988a50ea178b1734a0ca89a0d0b03b665a994169cddb3aee4eb41e9453ef7183cbcda3f5b73f2095cf34be6e5b428b36b8",
+      "status": "active",
+      "createdAt": "2026-11-07T09:05:52.104Z"
+    }
+  ],
+  "agencies": [
+    {
+      "id": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+      "name": "Operza Global Agency",
+      "slug": "admin",
+      "status": "active",
+      "createdAt": "2026-11-07T09:02:22.430Z"
+    },
+    {
+      "id": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "name": "ASIM tech",
+      "slug": "sanjarkhanabbasi786",
+      "status": "active",
+      "createdAt": "2026-11-07T09:05:52.104Z"
+    }
+  ],
+  "locations": [
+    {
+      "id": "507d630f-648a-4c30-a737-9bec4cd9e1d9",
+      "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+      "name": "Main Workspace",
+      "timezone": "UTC",
+      "status": "active",
+      "createdAt": "2026-11-07T09:02:22.430Z"
+    },
+    {
+      "id": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "name": "Main Workspace",
+      "timezone": "UTC",
+      "status": "active",
+      "createdAt": "2026-11-07T09:05:52.104Z"
+    }
+  ],
+  "memberships": [
+    {
+      "id": "a862a601-d0eb-4c15-b756-4728b2136104",
+      "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+      "userId": "3e1ca8ea-f883-4d3e-be50-6994975d2c36",
+      "role": "owner",
+      "status": "active",
+      "createdAt": "2026-11-07T09:02:22.430Z"
+    },
+    {
+      "id": "cc14a984-2e58-490d-9e9a-b9a0d534d22f",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "role": "owner",
+      "status": "active",
+      "createdAt": "2026-11-07T09:05:52.104Z"
+    }
+  ],
   "invitations": [],
-  "sessions": [],
+  "sessions": [
+    {
+      "id": "017a2d67-86a6-49db-b769-1dd65ddcf960",
+      "tokenHash": "ce513ce66992f480031c7b47b20592ac646d3adaec8529918354420378fda918",
+      "csrfHash": "83aaeda03510201b273ee2c5a9b7fb18afe8c4b22d36a4926f69043e61687474",
+      "userId": "3e1ca8ea-f883-4d3e-be50-6994975d2c36",
+      "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+      "expiresAt": 1794085342435
+    },
+    {
+      "id": "86610a43-b50a-4b98-b935-dea3ecacbef4",
+      "tokenHash": "7667710de21b612a5b58850b1ef74b962a0499b9718db0704045d9c9fd4a09c9",
+      "csrfHash": "bf18254f6d7d36b74344b877985d6ece5dc377cc9bc95099f4b5816ab854d83f",
+      "userId": "3e1ca8ea-f883-4d3e-be50-6994975d2c36",
+      "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+      "expiresAt": 1794085349353
+    },
+    {
+      "id": "51bcd470-ef72-4370-87db-04ace2fb9046",
+      "tokenHash": "9cb2acb8a42f5fc82727213591d786ae0ae09bb372b00f5fb270b8bb66e07ef8",
+      "csrfHash": "49394db09d329d9c5dde05a432ab4ad4a14100bd6466da7fb14395ce778434a7",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "expiresAt": 1794085552104
+    },
+    {
+      "id": "db4b5f0b-2c1f-4ade-a63a-ad9d9685b0c3",
+      "tokenHash": "642a8e262edebef0f82a1c1e87450026e79e56d530eb336389c67237f579d00f",
+      "csrfHash": "3e42bfbf88b7d69424df83faf3866899b5845c33588dc22a4399c7267441e774",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "expiresAt": 1794085613850
+    }
+  ],
   "records": {
     "contacts": [],
     "opportunities": [],
-    "pipelines": [],
+    "pipelines": [
+      {
+        "id": "aa729b29-78e9-4ade-8814-ac72f3398e46",
+        "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+        "locationId": "507d630f-648a-4c30-a737-9bec4cd9e1d9",
+        "name": "Lead Pipeline",
+        "stages": [
+          "New Inbound Lead",
+          "Discovery Call Booked",
+          "Proposal Sent",
+          "Won",
+          "Lost"
+        ],
+        "status": "active",
+        "description": "Primary customer acquisition pipeline",
+        "createdAt": "2026-11-07T09:02:22.430Z"
+      },
+      {
+        "id": "6c91dd67-e78f-43ce-8aac-3b5e107dbf3b",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+        "name": "Lead Pipeline",
+        "stages": [
+          "New Inbound Lead",
+          "Discovery Call Booked",
+          "Proposal Sent",
+          "Won",
+          "Lost"
+        ],
+        "status": "active",
+        "description": "Primary customer acquisition pipeline",
+        "createdAt": "2026-11-07T09:05:52.104Z"
+      }
+    ],
     "customFields": [],
     "smartLists": [],
     "tasks": [],
     "conversations": [],
     "appointments": [],
-    "workflows": [],
-    "forms": [],
+    "workflows": [
+      {
+        "id": "a4a9e2e8-0db1-49f3-a904-6972aa63e958",
+        "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+        "locationId": "507d630f-648a-4c30-a737-9bec4cd9e1d9",
+        "name": "Automated Lead Qualification & AI Scoring",
+        "description": "Auto-scores new leads with Copilot AI, applies qualification tags, and creates team follow-up tasks.",
+        "status": "published",
+        "triggerType": "form",
+        "triggerConfig": {
+          "formName": "contact-us"
+        },
+        "nodes": [
+          {
+            "id": "node-ai-score",
+            "name": "AI Lead Evaluation",
+            "type": "ai_agent",
+            "config": {
+              "prompt": "Analyze lead data and score purchase intent from 1 to 100."
+            }
+          },
+          {
+            "id": "node-tag",
+            "name": "Apply High-Intent Tag",
+            "type": "tag",
+            "config": {
+              "tag": "ai-qualified"
+            }
+          },
+          {
+            "id": "node-task",
+            "name": "Create Priority Outreach Task",
+            "type": "task",
+            "config": {
+              "title": "High-Intent Lead Review",
+              "priority": "high",
+              "dueInDays": 1
+            }
+          },
+          {
+            "id": "node-approval",
+            "name": "Executive Proposal Gate",
+            "type": "condition",
+            "requiresApproval": true,
+            "config": {
+              "message": "Review enterprise proposal before final transmission"
+            }
+          }
+        ],
+        "createdAt": "2026-11-07T09:02:22.430Z"
+      },
+      {
+        "id": "36d3d6cb-40bc-440a-87e4-1d9cc3526ccc",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+        "name": "Automated Lead Qualification & AI Scoring",
+        "description": "Auto-scores new leads with Copilot AI, applies qualification tags, and creates team follow-up tasks.",
+        "status": "published",
+        "triggerType": "form",
+        "triggerConfig": {
+          "formName": "contact-us"
+        },
+        "nodes": [
+          {
+            "id": "node-ai-score",
+            "name": "AI Lead Evaluation",
+            "type": "ai_agent",
+            "config": {
+              "prompt": "Analyze lead data and score purchase intent from 1 to 100."
+            }
+          },
+          {
+            "id": "node-tag",
+            "name": "Apply High-Intent Tag",
+            "type": "tag",
+            "config": {
+              "tag": "ai-qualified"
+            }
+          },
+          {
+            "id": "node-task",
+            "name": "Create Priority Outreach Task",
+            "type": "task",
+            "config": {
+              "title": "High-Intent Lead Review",
+              "priority": "high",
+              "dueInDays": 1
+            }
+          },
+          {
+            "id": "node-approval",
+            "name": "Executive Proposal Gate",
+            "type": "condition",
+            "requiresApproval": true,
+            "config": {
+              "message": "Review enterprise proposal before final transmission"
+            }
+          }
+        ],
+        "createdAt": "2026-11-07T09:05:52.104Z"
+      }
+    ],
+    "forms": [
+      {
+        "id": "93b9c6c1-df00-4407-a7c5-830d9e6f68f8",
+        "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+        "locationId": "507d630f-648a-4c30-a737-9bec4cd9e1d9",
+        "name": "Inbound Consultation Request",
+        "publicSlug": "contact-us",
+        "fields": [
+          "firstName",
+          "lastName",
+          "email",
+          "phone",
+          "company",
+          "projectDetails"
+        ],
+        "status": "published",
+        "submissions": 0,
+        "description": "Book your strategy consultation with our growth engineering team.",
+        "createdAt": "2026-11-07T09:02:22.430Z"
+      },
+      {
+        "id": "48d6ff63-599e-4799-8c43-a714479f9773",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+        "name": "Inbound Consultation Request",
+        "publicSlug": "contact-us",
+        "fields": [
+          "firstName",
+          "lastName",
+          "email",
+          "phone",
+          "company",
+          "projectDetails"
+        ],
+        "status": "published",
+        "submissions": 0,
+        "description": "Book your strategy consultation with our growth engineering team.",
+        "createdAt": "2026-11-07T09:05:52.104Z"
+      }
+    ],
     "formSubmissions": [],
     "websites": [],
     "campaigns": [],
     "products": [],
     "invoices": [],
+    "calendars": [
+      {
+        "id": "c74eb8cb-033d-41d5-88d0-bbb8e563e102",
+        "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+        "locationId": "507d630f-648a-4c30-a737-9bec4cd9e1d9",
+        "name": "Discovery & Strategy Session",
+        "slug": "discovery-strategy",
+        "color": "#6366f1",
+        "durationMin": 30,
+        "description": "30-minute discovery call to evaluate automation requirements and team fit.",
+        "status": "active",
+        "roundRobin": true,
+        "availability": [
+          {
+            "weekday": 1,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 2,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 3,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 4,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 5,
+            "start": "09:00",
+            "end": "17:00"
+          }
+        ],
+        "createdAt": "2026-11-07T09:02:22.430Z"
+      },
+      {
+        "id": "f84bd9f7-c46c-4064-9048-312cf299121f",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+        "name": "Discovery & Strategy Session",
+        "slug": "discovery-strategy",
+        "color": "#6366f1",
+        "durationMin": 30,
+        "description": "30-minute discovery call to evaluate automation requirements and team fit.",
+        "status": "active",
+        "roundRobin": true,
+        "availability": [
+          {
+            "weekday": 1,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 2,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 3,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 4,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 5,
+            "start": "09:00",
+            "end": "17:00"
+          }
+        ],
+        "createdAt": "2026-11-07T09:05:52.104Z"
+      }
+    ],
+    "paymentLinks": [
+      {
+        "id": "a6ac255e-710c-4d22-b2ec-70a195a6d656",
+        "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+        "locationId": "507d630f-648a-4c30-a737-9bec4cd9e1d9",
+        "name": "Growth Retainer - Starter Pack",
+        "slug": "starter-retainer",
+        "amount": 1500,
+        "currency": "USD",
+        "productIds": [],
+        "visits": 0,
+        "conversions": 0,
+        "active": true,
+        "description": "Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.",
+        "createdAt": "2026-11-07T09:02:22.430Z"
+      },
+      {
+        "id": "0a3b505b-2925-4728-a3e6-fdb15cf310af",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+        "name": "Growth Retainer - Starter Pack",
+        "slug": "starter-retainer",
+        "amount": 1500,
+        "currency": "USD",
+        "productIds": [],
+        "visits": 0,
+        "conversions": 0,
+        "active": true,
+        "description": "Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.",
+        "createdAt": "2026-11-07T09:05:52.104Z"
+      }
+    ],
+    "orders": [],
     "reviews": [],
+    "reviewRequests": [],
     "courses": [],
-    "notes": []
+    "notes": [],
+    "socialPosts": [],
+    "subscriptions": [],
+    "documents": [],
+    "triggerLinks": [],
+    "customValues": [],
+    "calls": [
+      {
+        "id": "2dd79c83-d8c6-4dc1-922f-0d8c8649c8b3",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+        "from": "+18005550199",
+        "to": "03013829910",
+        "direction": "outbound",
+        "status": "completed",
+        "outcome": "completed",
+        "durationSec": 12,
+        "startedAt": "2026-11-07T09:18:09.449Z",
+        "endedAt": "2026-11-07T09:18:23.441Z",
+        "contactId": null,
+        "numberId": null,
+        "recordingUrl": null,
+        "handled": true,
+        "notes": "Outbound WebRTC softphone call - Call ended via in-browser WebRTC Softphone",
+        "dtmfLog": [],
+        "createdAt": "2026-11-07T09:18:09.449Z",
+        "updatedAt": "2026-11-07T09:18:23.441Z"
+      },
+      {
+        "from": "+1 800-555-0100",
+        "to": "+1 (415) 555-0132",
+        "durationSec": 240,
+        "outcome": "completed",
+        "direction": "outbound",
+        "contactId": "c1",
+        "startedAt": "2026-11-07T09:17:00.000Z",
+        "handled": true,
+        "numberId": "pn1",
+        "id": "56465200-3f48-4e23-bdeb-dbc2dc1ba06a",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+        "createdAt": "2026-11-07T09:17:45.315Z",
+        "updatedAt": "2026-11-07T09:17:45.315Z"
+      }
+    ],
+    "enrollments": [],
+    "affiliates": [],
+    "coupons": [],
+    "media": [
+      {
+        "id": "71e5989e-5720-4542-a2b5-2f788f5a9c4c",
+        "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+        "locationId": "507d630f-648a-4c30-a737-9bec4cd9e1d9",
+        "name": "brand-hero-logo.svg",
+        "folder": "Logos",
+        "kind": "image",
+        "sizeKb": 34,
+        "mimeType": "image/svg+xml",
+        "url": "/api/media/file/brand-hero-logo",
+        "uploadedAt": "2026-11-07T09:02:22.430Z"
+      },
+      {
+        "id": "29bc2d91-3e8e-4278-81db-ce63d27d2905",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+        "name": "brand-hero-logo.svg",
+        "folder": "Logos",
+        "kind": "image",
+        "sizeKb": 34,
+        "mimeType": "image/svg+xml",
+        "url": "/api/media/file/brand-hero-logo",
+        "uploadedAt": "2026-11-07T09:05:52.104Z"
+      }
+    ],
+    "blogs": [
+      {
+        "id": "7d5d77d9-875b-4561-a826-15991e994793",
+        "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+        "locationId": "507d630f-648a-4c30-a737-9bec4cd9e1d9",
+        "title": "How AI Automation Scales 7-Figure Marketing Agencies",
+        "slug": "how-ai-automation-scales-agencies",
+        "author": "Elena Rostova",
+        "category": "Strategy",
+        "content": "Scaling a modern marketing agency requires moving from fragmented manual tools to unified autonomous agent infrastructure. In this guide, we break down end-to-end inbound capture, AI pipeline qualification, and automated fulfillment.",
+        "status": "published",
+        "views": 142,
+        "publishedAt": "2026-11-07T09:02:22.430Z",
+        "createdAt": "2026-11-07T09:02:22.430Z"
+      },
+      {
+        "id": "d365a685-a1a6-4c2f-8d35-12d75b826955",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+        "title": "How AI Automation Scales 7-Figure Marketing Agencies",
+        "slug": "how-ai-automation-scales-agencies",
+        "author": "Elena Rostova",
+        "category": "Strategy",
+        "content": "Scaling a modern marketing agency requires moving from fragmented manual tools to unified autonomous agent infrastructure. In this guide, we break down end-to-end inbound capture, AI pipeline qualification, and automated fulfillment.",
+        "status": "published",
+        "views": 142,
+        "publishedAt": "2026-11-07T09:05:52.104Z",
+        "createdAt": "2026-11-07T09:05:52.104Z"
+      }
+    ],
+    "qrCodes": [
+      {
+        "id": "7d33b7a5-58da-4f14-b78f-052e945d69b1",
+        "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+        "locationId": "507d630f-648a-4c30-a737-9bec4cd9e1d9",
+        "name": "Discovery Booking QR",
+        "target": "/calendars/public/discovery-strategy",
+        "scans": 12,
+        "createdAt": "2026-11-07T09:02:22.430Z"
+      },
+      {
+        "id": "ed801839-7b36-48e4-910d-18609baec537",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+        "name": "Discovery Booking QR",
+        "target": "/calendars/public/discovery-strategy",
+        "scans": 12,
+        "createdAt": "2026-11-07T09:05:52.104Z"
+      }
+    ],
+    "snippets": [
+      {
+        "id": "f3933f78-86df-4ec8-9767-d93e7f341952",
+        "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+        "locationId": "507d630f-648a-4c30-a737-9bec4cd9e1d9",
+        "label": "Discovery Call Follow-up",
+        "subject": "Following up on our discovery conversation",
+        "body": "Hi {{contact.firstName}}, great speaking with you today! We look forward to scaling {{contact.company}} with {{agency.name}}.",
+        "channel": "email",
+        "uses": 8
+      },
+      {
+        "id": "9aaca56a-47f7-42b6-849f-b095d90cca0c",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+        "label": "Discovery Call Follow-up",
+        "subject": "Following up on our discovery conversation",
+        "body": "Hi {{contact.firstName}}, great speaking with you today! We look forward to scaling {{contact.company}} with {{agency.name}}.",
+        "channel": "email",
+        "uses": 8
+      }
+    ],
+    "templates": [
+      {
+        "id": "4cd451bf-d992-4cec-931e-4a4c920f675a",
+        "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+        "locationId": "507d630f-648a-4c30-a737-9bec4cd9e1d9",
+        "name": "Welcome & Onboarding Packet",
+        "category": "Onboarding",
+        "subject": "Welcome to {{agency.name}}, {{contact.firstName}}!",
+        "body": "Hello {{contact.firstName}},\n\nWelcome to {{agency.name}}! Your dedicated growth portal is ready.\n\nBest regards,\n{{agency.name}} Team",
+        "uses": 15,
+        "updatedAt": "2026-11-07T09:02:22.430Z"
+      },
+      {
+        "id": "3e6cc8b9-f068-433e-bbb6-d4580e98eb00",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+        "name": "Welcome & Onboarding Packet",
+        "category": "Onboarding",
+        "subject": "Welcome to {{agency.name}}, {{contact.firstName}}!",
+        "body": "Hello {{contact.firstName}},\n\nWelcome to {{agency.name}}! Your dedicated growth portal is ready.\n\nBest regards,\n{{agency.name}} Team",
+        "uses": 15,
+        "updatedAt": "2026-11-07T09:05:52.104Z"
+      }
+    ],
+    "team": [],
+    "phoneNumbers": [],
+    "prospects": []
   },
   "workflowExecutions": [],
-  "audit": []
+  "workflowApprovals": [],
+  "providerConnections": [],
+  "communicationConsents": [],
+  "copilotProposals": [],
+  "tenantEntitlements": {},
+  "usageEvents": [],
+  "snapshots": [],
+  "audit": [
+    {
+      "id": "0a9bc930-0214-4e16-b8a0-b82f77a386db",
+      "action": "auth.signup",
+      "userId": "3e1ca8ea-f883-4d3e-be50-6994975d2c36",
+      "userName": "Admin Operator",
+      "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+      "locationId": "507d630f-648a-4c30-a737-9bec4cd9e1d9",
+      "details": {
+        "email": "admin@operza.io"
+      },
+      "timestamp": "2026-11-07T09:02:22.441Z"
+    },
+    {
+      "id": "b32bd2c2-7dbe-47d6-9533-c9262860accc",
+      "action": "auth.login",
+      "userId": "3e1ca8ea-f883-4d3e-be50-6994975d2c36",
+      "userName": "Admin Operator",
+      "agencyId": "70d86fce-c789-4b4f-878e-e47cc460c95c",
+      "locationId": "507d630f-648a-4c30-a737-9bec4cd9e1d9",
+      "details": {},
+      "timestamp": "2026-11-07T09:02:29.356Z"
+    },
+    {
+      "id": "6660a1b3-8497-4259-84ea-36fed6f1eaa9",
+      "action": "auth.signup",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "userName": "Asim",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "details": {
+        "email": "sanjarkhanabbasi786@gmail.com"
+      },
+      "timestamp": "2026-11-07T09:05:52.106Z"
+    },
+    {
+      "id": "8690ca05-cc0e-4105-a063-d4eb520aa6ce",
+      "action": "auth.login",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "userName": "Asim",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "details": {},
+      "timestamp": "2026-11-07T09:06:53.853Z"
+    },
+    {
+      "id": "3dc68a26-761c-42f0-9d52-9d24be993191",
+      "action": "crm.calls.created",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "userName": "Asim",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "details": {
+        "id": "56465200-3f48-4e23-bdeb-dbc2dc1ba06a"
+      },
+      "timestamp": "2026-11-07T09:17:45.319Z"
+    },
+    {
+      "id": "4c5e4a59-bcac-48db-a284-2c84885e3e0c",
+      "action": "telephony.call.started",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "userName": "Asim",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "details": {
+        "callId": "2dd79c83-d8c6-4dc1-922f-0d8c8649c8b3",
+        "from": "+18005550199",
+        "to": "03013829910",
+        "contactId": null
+      },
+      "timestamp": "2026-11-07T09:18:09.451Z"
+    },
+    {
+      "id": "85f039a8-b0e9-451b-bd9f-a8a51e2a17a3",
+      "action": "telephony.call.ended",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "userName": "Asim",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "details": {
+        "callId": "2dd79c83-d8c6-4dc1-922f-0d8c8649c8b3",
+        "durationSec": 12,
+        "outcome": "completed"
+      },
+      "timestamp": "2026-11-07T09:18:23.446Z"
+    }
+  ],
+  "mediaFiles": {},
+  "notifications": [],
+  "a2pRegistrations": [
+    {
+      "id": "d7010f99-778a-4548-99bf-dd87ba212665",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "status": "VERIFIED_10DLC",
+      "isRegistered": true,
+      "tcrBrandId": "BN-FED0E4BB",
+      "campaignSid": "CP-60320BBE42",
+      "trustScore": 88,
+      "dailyLimit": 200000,
+      "throughputMPS": 75,
+      "brand": {
+        "legalBusinessName": "Operza Alpha Agency LLC",
+        "ein": "12-3456789",
+        "entityType": "LLC",
+        "vertical": "Professional Services",
+        "address": "100 Growth Way, Suite 400",
+        "city": "Austin",
+        "state": "TX",
+        "postalCode": "78701",
+        "country": "US",
+        "website": "https://operza.io"
+      },
+      "campaign": {
+        "useCase": "low_volume_mixed",
+        "description": "Customer engagement, appointment reminders, and account alerts.",
+        "sampleMessages": [
+          "Hi [Name], your strategy session with Operza is confirmed for tomorrow at 2 PM. Reply STOP to cancel.",
+          "Hi [Name], here is your weekly account summary. Reply HELP for support or STOP to opt out."
+        ],
+        "optInWorkflow": "Leads check an explicit SMS opt-in checkbox on public booking and contact forms agreeing to SMS notifications.",
+        "optInKeywords": [
+          "START",
+          "YES",
+          "SUBSCRIBE"
+        ],
+        "optOutKeywords": [
+          "STOP",
+          "CANCEL",
+          "UNSUBSCRIBE",
+          "QUIT"
+        ],
+        "helpKeywords": [
+          "HELP",
+          "INFO"
+        ]
+      },
+      "registeredAt": "2026-11-07T09:18:57.701Z"
+    }
+  ]
 }

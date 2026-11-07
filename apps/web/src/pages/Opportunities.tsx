@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, PageHeader, StatCard } from '../components/ui';
+import { Avatar, Badge } from '../components/ui';
 import { useStore, uid } from '../lib/store';
 import { currency, num } from '../lib/format';
 
@@ -55,42 +55,92 @@ export default function Opportunities() {
   if (!pipeline) return null;
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Opportunities"
-        subtitle="Track deals through every stage of the pipeline."
-        actions={
-          <>
-            <select
-              className="select"
-              style={{ width: 180 }}
-              value={pipeline.id}
-              onChange={(e) => setPipelineId(e.target.value)}
-            >
-              {state.pipelines.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-            <button className="btn btn--primary" onClick={() => setAdding(pipeline.stages[0].id)}>
-              <Icon name="plus" size={16} /> Add opportunity
-            </button>
-          </>
-        }
-      />
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Sales Pipeline</div>
+          <h1>Opportunities</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <select
+            className="select"
+            style={{ width: 190, background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--text)' }}
+            value={pipeline.id}
+            onChange={(e) => setPipelineId(e.target.value)}
+          >
+            {state.pipelines.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <button className="atlas-quick-action-button" onClick={() => setAdding(pipeline.stages[0].id)}>
+            <Icon name="plus" size={13} /> Add Opportunity
+          </button>
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Open pipeline" value={currency(totalOpen)} icon={<Icon name="kanban" size={15} />} meta={`${openDeals.length} deals`} />
-        <StatCard label="Won" value={currency(totalWon)} icon={<Icon name="check" size={15} />} meta={`${won.length} closed won`} />
-        <StatCard label="Average deal" value={currency(Math.round(avgDeal))} icon={<Icon name="dollar" size={15} />} meta="open deals only" />
-        <StatCard
-          label="Win rate"
-          value={`${deals.length ? Math.round((won.length / deals.length) * 100) : 0}%`}
-          icon={<Icon name="chart" size={15} />}
-          meta={`${deals.length} total`}
-        />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">DEAL VELOCITY &amp; REVENUE PIPELINE</div>
+        <h2>Interactive Sales Pipeline &amp; Conversion Throughput</h2>
+        <p>Track high-value prospects, stage progression velocity, won deal values, and forecasted revenue from an interactive Kanban board.</p>
+      </section>
+
+      <section className="atlas-kpis" aria-label="Pipeline metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="kanban" size={15} /></span>
+            <span className="operza-kpi__trend"><Icon name="arrow-up-right" size={12} /> +14%</span>
+          </div>
+          <div className="atlas-kpi__label">Open Pipeline</div>
+          <div className="atlas-kpi__value tabular">{currency(totalOpen)}</div>
+          <div className="atlas-kpi__note">{openDeals.length} active deals</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 16 Q25 12 50 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: 'var(--accent)', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="check" size={15} /></span>
+            <span className="operza-kpi__trend"><Icon name="arrow-up-right" size={12} /> +22%</span>
+          </div>
+          <div className="atlas-kpi__label">Won Revenue</div>
+          <div className="atlas-kpi__value tabular">{currency(totalWon)}</div>
+          <div className="atlas-kpi__note">{won.length} closed won</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 14 Q30 8 60 12 T100 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#10b981', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="dollar" size={15} /></span>
+            <span className="operza-kpi__trend"><Icon name="arrow-up-right" size={12} /> +5%</span>
+          </div>
+          <div className="atlas-kpi__label">Average Deal</div>
+          <div className="atlas-kpi__value tabular">{currency(Math.round(avgDeal))}</div>
+          <div className="atlas-kpi__note">Open pipeline avg</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 18 Q35 14 70 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#3b82f6', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="chart" size={15} /></span>
+            <span className="operza-kpi__trend">Solid</span>
+          </div>
+          <div className="atlas-kpi__label">Win Rate</div>
+          <div className="atlas-kpi__value tabular">{deals.length ? Math.round((won.length / deals.length) * 100) : 0}%</div>
+          <div className="atlas-kpi__note">{deals.length} total opportunities</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 10 Q30 14 60 8 T100 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#f59e0b', opacity: 0.8 }} />
+          </svg>
+        </article>
+      </section>
+
+      <section className="card-premium" style={{ marginTop: 22, padding: '20px 24px' }}>
 
       <div className="board">
         {pipeline.stages.map((stage) => {
@@ -152,9 +202,10 @@ export default function Opportunities() {
         })}
       </div>
 
-      <div className="hint" style={{ marginTop: 4 }}>
+      <div className="hint" style={{ marginTop: 12 }}>
         Tip: drag a card to move it between stages. Changes save automatically.
       </div>
+    </section>
 
       {adding && (
         <AddDeal
@@ -169,7 +220,7 @@ export default function Opportunities() {
           }}
         />
       )}
-    </div>
+    </main>
   );
 }
 

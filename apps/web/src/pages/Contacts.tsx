@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, EmptyState, PageHeader, StatusBadge } from '../components/ui';
+import { Avatar, Badge, EmptyState, StatusBadge } from '../components/ui';
 import { useStore, uid } from '../lib/store';
 import { shortDate } from '../lib/format';
 import type { Contact, ContactStatus } from '../lib/types';
@@ -139,29 +139,93 @@ export default function Contacts() {
   };
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Contacts"
-        subtitle={`${state.contacts.length} people in this workspace`}
-        actions={
-          <>
-            <button className="btn" onClick={() => setImporting(true)}>
-              <Icon name="upload" size={15} /> Import CSV
-            </button>
-            <button className="btn btn--primary" onClick={() => setAdding(true)}>
-              <Icon name="plus" size={16} /> Add contact
-            </button>
-          </>
-        }
-      />
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> CRM &amp; Audience</div>
+          <h1>Contacts</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button
+            className="atlas-quick-action-button"
+            style={{ background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--text)' }}
+            onClick={() => setImporting(true)}
+          >
+            <Icon name="upload" size={13} /> Import CSV
+          </button>
+          <button className="atlas-quick-action-button" onClick={() => setAdding(true)}>
+            <Icon name="plus" size={13} /> Add Contact
+          </button>
+        </div>
+      </header>
+
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">CUSTOMER RELATIONSHIP MANAGEMENT &amp; IDENTITY GRAPH</div>
+        <h2>Unified Audience Directory &amp; Contact 360</h2>
+        <p>Centralized view of customer records, interaction timelines, attribution sources, and engagement status across all communication channels.</p>
+      </section>
+
+      <section className="atlas-kpis" aria-label="Contact metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="users" size={15} /></span>
+            <span className="operza-kpi__trend"><Icon name="arrow-up-right" size={12} /> +12%</span>
+          </div>
+          <div className="atlas-kpi__label">All Contacts</div>
+          <div className="atlas-kpi__value tabular">{state.contacts.length}</div>
+          <div className="atlas-kpi__note">Workspace directory</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 16 Q25 12 50 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: 'var(--accent)', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="target" size={15} /></span>
+            <span className="operza-kpi__trend"><Icon name="arrow-up-right" size={12} /> +18%</span>
+          </div>
+          <div className="atlas-kpi__label">Active Leads</div>
+          <div className="atlas-kpi__value tabular">{state.contacts.filter(c => c.status === 'lead').length}</div>
+          <div className="atlas-kpi__note">Pipeline opportunities</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 14 Q30 8 60 12 T100 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#3b82f6', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="check-circle" size={15} /></span>
+            <span className="operza-kpi__trend"><Icon name="arrow-up-right" size={12} /> +8%</span>
+          </div>
+          <div className="atlas-kpi__label">Paying Customers</div>
+          <div className="atlas-kpi__value tabular">{state.contacts.filter(c => c.status === 'customer').length}</div>
+          <div className="atlas-kpi__note">Active accounts</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 18 Q35 14 70 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#10b981', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="clock" size={15} /></span>
+            <span className="operza-kpi__trend">Nurture</span>
+          </div>
+          <div className="atlas-kpi__label">Cold / Re-engage</div>
+          <div className="atlas-kpi__value tabular">{state.contacts.filter(c => c.status === 'cold').length}</div>
+          <div className="atlas-kpi__note">Long-tail accounts</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 10 Q30 14 60 8 T100 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#f59e0b', opacity: 0.8 }} />
+          </svg>
+        </article>
+      </section>
 
       {notice && (
-        <div className="callout callout--info" style={{ marginBottom: 14 }}>
+        <div className="callout callout--info" style={{ marginTop: 18, marginBottom: 14 }}>
           {notice}
         </div>
       )}
 
-      <div className="card">
+      <section className="card-premium" style={{ marginTop: 20, padding: '20px 24px' }}>
         <div className="card__head" style={{ gap: 8, flexWrap: 'wrap' }}>
           <div className="search" style={{ flex: '1 1 240px', maxWidth: 320 }}>
             <Icon name="search" size={15} />
@@ -328,7 +392,7 @@ export default function Contacts() {
             </table>
           </div>
         )}
-      </div>
+      </section>
 
       {adding && (
         <AddContact
@@ -420,7 +484,7 @@ export default function Contacts() {
           </p>
         </Modal>
       )}
-    </div>
+    </main>
   );
 }
 

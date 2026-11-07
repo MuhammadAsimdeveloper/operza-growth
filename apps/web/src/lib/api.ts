@@ -305,15 +305,25 @@ export const api = {
       request(`/api/calls/handled/${id}`, { method: 'PUT', body: JSON.stringify({ handled }) }),
   },
   telephony: {
+    getStatus: () =>
+      request<{
+        configured: boolean;
+        provider: string;
+        status: string;
+        callerId: string | null;
+        liveDispatchReady: boolean;
+        sandboxAvailable: boolean;
+        message: string;
+      }>('/api/telephony/status'),
     getA2PStatus: () => request<any>('/api/telephony/a2p/status'),
     registerA2P: (data: any) => request('/api/telephony/a2p/register', { method: 'POST', body: JSON.stringify(data) }),
     getToken: () =>
-      request<{ token: string; identity: string; fromNumber: string; iceServers: any[]; expiresAt: string }>(
+      request<{ token: string; identity: string; fromNumber: string; iceServers: any[]; expiresAt: string; configured?: boolean }>(
         '/api/telephony/token',
         { method: 'POST' }
       ),
-    startCall: (data: { to: string; from?: string; contactId?: string; notes?: string }) =>
-      request<{ success: boolean; call: any }>('/api/telephony/call/start', {
+    startCall: (data: { to: string; from?: string; contactId?: string; notes?: string; mode?: 'live' | 'sandbox' }) =>
+      request<{ success: boolean; call: any; carrierConfigured?: boolean; mode?: string; notice?: string }>('/api/telephony/call/start', {
         method: 'POST',
         body: JSON.stringify(data),
       }),

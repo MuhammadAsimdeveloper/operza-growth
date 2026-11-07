@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { PageHeader, StatCard } from '../components/ui';
+
 import { uid, useStore } from '../lib/store';
 import { num, relative } from '../lib/format';
 import { api } from '../lib/api';
@@ -48,30 +48,61 @@ export default function TriggerLinks() {
   }
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Trigger Links"
-        subtitle="Short links that fire a workflow whenever someone clicks."
-        actions={
-          <button className="btn btn--primary" onClick={() => setAdding(true)}>
-            <Icon name="plus" size={15} /> New link
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Automations &amp; Links</div>
+          <h1>Trigger Links &amp; URL Handlers</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setAdding(true)}>
+            <Icon name="plus" size={13} /> New Link
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Total clicks" value={num(clicks)} icon={<Icon name="link" size={15} />} meta="all links" />
-        <StatCard label="Links" value={num(triggerLinks.length)} icon={<Icon name="tag" size={15} />} meta="active triggers" />
-        <StatCard label="Top link" value={best?.name ?? '—'} icon={<Icon name="star" size={15} />} meta={`${num(best?.clicks ?? 0)} clicks`} />
-        <StatCard
-          label="Last click"
-          value={triggerLinks[0] ? relative(triggerLinks[0].lastClickAt) : '—'}
-          icon={<Icon name="clock" size={15} />}
-          meta="most recent"
-        />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">AUTOMATION ROUTING LINKS</div>
+        <h2>Click-Triggered Workflow Enrollment</h2>
+        <p>Shortened tracking links that automatically tag contacts and trigger multi-step automations upon visitor click.</p>
+      </section>
 
-      <div className="card">
+      <section className="atlas-kpis" aria-label="Trigger link metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Link Clicks</span>
+            <span className="atlas-status atlas-status--healthy">Tracked</span>
+          </div>
+          <div className="atlas-kpi__value">{num(clicks)}</div>
+          <div className="atlas-kpi__note">Verified redirect events</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Active Links</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{num(triggerLinks.length)}</div>
+          <div className="atlas-kpi__note">Configured handlers</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Top Performer</span>
+            <span className="atlas-status atlas-status--healthy">Leader</span>
+          </div>
+          <div className="atlas-kpi__value">{best?.name ?? '—'}</div>
+          <div className="atlas-kpi__note">{num(best?.clicks ?? 0)} click events</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Most Recent Click</span>
+            <span className="atlas-status atlas-status--healthy">Real-Time</span>
+          </div>
+          <div className="atlas-kpi__value">{triggerLinks[0] ? relative(triggerLinks[0].lastClickAt) : '—'}</div>
+          <div className="atlas-kpi__note">Active traffic</div>
+        </article>
+      </section>
+
+      <div className="card-premium" style={{ marginTop: 22 }}>
         <div className="card__head">
           <div>
             <div className="card__title">All trigger links</div>
@@ -123,7 +154,7 @@ export default function TriggerLinks() {
       </div>
 
       {adding && <NewLinkModal onClose={() => setAdding(false)} />}
-    </div>
+    </main>
   );
 }
 

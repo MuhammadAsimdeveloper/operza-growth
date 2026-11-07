@@ -27,7 +27,7 @@ export default function ContactDetail() {
 
   if (!contact) {
     return (
-      <div className="content">
+      <main className="operza-dashboard atlas-dashboard">
         <EmptyState
           icon={<Icon name="user" size={22} />}
           title="Contact not found"
@@ -38,7 +38,7 @@ export default function ContactDetail() {
             </Link>
           }
         />
-      </div>
+      </main>
     );
   }
 
@@ -106,17 +106,30 @@ export default function ContactDetail() {
   };
 
   return (
-    <div className="content">
-      <Link to="/contacts" className="row" style={{ gap: 6, fontSize: 12.5, color: 'var(--text-3)', marginBottom: 12 }}>
-        <Icon name="chevron-left" size={15} /> All contacts
-      </Link>
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">
+            <Link to="/contacts" style={{ color: 'inherit', textDecoration: 'none' }}>Contacts</Link> <span>/</span> {name}
+          </div>
+          <h1>Contact 360</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <Link className="atlas-quick-action-button" style={{ background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--text)' }} to="/conversations">
+            <Icon name="message" size={13} /> Message
+          </Link>
+          <button className="atlas-quick-action-button" onClick={() => setEditing(true)}>
+            <Icon name="edit" size={13} /> Edit Profile
+          </button>
+        </div>
+      </header>
 
-      <div className="card" style={{ padding: 18, marginBottom: 14 }}>
+      <section className="card-premium" style={{ padding: 20, marginBottom: 18 }}>
         <div className="row row--wrap" style={{ gap: 16 }}>
           <Avatar name={name} size="lg" />
           <div style={{ minWidth: 0, flex: '1 1 260px' }}>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <h1 style={{ fontSize: 19, fontWeight: 680, letterSpacing: '-0.02em' }}>{name}</h1>
+              <h2 style={{ fontSize: 19, fontWeight: 700, margin: 0, letterSpacing: '-0.02em', color: 'var(--text)' }}>{name}</h2>
               <StatusBadge status={contact.status} />
             </div>
             <div className="hint" style={{ marginTop: 3 }}>
@@ -131,21 +144,15 @@ export default function ContactDetail() {
             </div>
           </div>
           <div className="row" style={{ gap: 8 }}>
-            <Link className="btn" to="/conversations">
-              <Icon name="message" size={15} /> Message
-            </Link>
-            <button className="btn" onClick={() => setEditing(true)}>
-              <Icon name="edit" size={15} /> Edit
-            </button>
             <button className="icon-btn" onClick={() => setConfirmDelete(true)} aria-label="Delete contact">
               <Icon name="trash" size={16} />
             </button>
           </div>
         </div>
-      </div>
+      </section>
 
       <div className="grid grid--sidebar">
-        <div className="card">
+        <div className="card-premium" style={{ padding: '16px 20px' }}>
           <div className="tabs" style={{ padding: '0 8px' }}>
             {TABS.map((t) => (
               <button key={t} className={`tab${tab === t ? ' is-active' : ''}`} onClick={() => setTab(t)} style={{ textTransform: 'capitalize' }}>
@@ -457,7 +464,7 @@ export default function ContactDetail() {
         </div>
 
         <div className="stack">
-          <div className="card">
+          <div className="card-premium" style={{ padding: '16px 20px', marginTop: 16 }}>
             <div className="card__head">
               <div className="card__title">Summary</div>
             </div>
@@ -486,7 +493,7 @@ export default function ContactDetail() {
             </div>
           </div>
 
-          <div className="card">
+          <div className="card-premium" style={{ padding: '16px 20px', marginTop: 16 }}>
             <div className="card__head">
               <div className="card__title">Recent invoices</div>
               <div className="card__actions">
@@ -556,7 +563,7 @@ export default function ContactDetail() {
           </p>
         </Modal>
       )}
-    </div>
+    </main>
   );
 }
 

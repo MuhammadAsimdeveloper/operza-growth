@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
-import { Badge, PageHeader, StatCard, StatusBadge } from '../components/ui';
+import { Badge, StatusBadge } from '../components/ui';
 import { api } from '../lib/api';
 
 interface BrandingConfig {
@@ -95,43 +95,63 @@ export default function Branding() {
   };
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Agency White-Label & Custom Branding"
-        subtitle="Deliver a high-touch branded experience to your clients with custom domains, themes, and email identity."
-        actions={
-          <button className="btn btn--primary" onClick={handleSave} disabled={saving}>
-            <Icon name="check" size={15} /> {saving ? 'Saving...' : 'Save branding'}
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Agency &amp; White-Label</div>
+          <h1>Custom Branding &amp; White-Label</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={handleSave} disabled={saving}>
+            <Icon name="check" size={13} /> {saving ? 'Saving...' : 'Save Branding'}
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard
-          label="Custom Domain"
-          value={branding.isDomainVerified ? 'Verified' : 'Pending'}
-          icon={<Icon name="globe" size={15} />}
-          meta={branding.sslActive ? 'SSL certificate active' : 'Awaiting DNS CNAME'}
-        />
-        <StatCard
-          label="Sender Identity"
-          value={branding.isDkimVerified ? 'Authenticated' : 'Unverified'}
-          icon={<Icon name="mail" size={15} />}
-          meta={branding.senderEmail}
-        />
-        <StatCard
-          label="Primary Theme"
-          value={branding.primaryColor.toUpperCase()}
-          icon={<Icon name="sliders" size={15} />}
-          meta="accent & button styling"
-        />
-        <StatCard
-          label="Portal Subdomain"
-          value={`${branding.subdomain}.operza.io`}
-          icon={<Icon name="link" size={15} />}
-          meta="agency client portal"
-        />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">WHITE-LABEL AGENCY OS</div>
+        <h2>Enterprise Brand Isolation &amp; Domains</h2>
+        <p>Configure custom CNAME domains, DNS DKIM authentication, primary palette theming, and portal welcome screens.</p>
+      </section>
+
+      <section className="atlas-kpis" aria-label="Branding metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Custom Domain</span>
+            <span className={`atlas-status atlas-status--${branding.isDomainVerified ? 'healthy' : 'review'}`}>
+              {branding.isDomainVerified ? 'Verified' : 'Pending'}
+            </span>
+          </div>
+          <div className="atlas-kpi__value">{branding.isDomainVerified ? 'Active' : 'DNS Pending'}</div>
+          <div className="atlas-kpi__note">{branding.sslActive ? 'SSL certificate active' : 'Awaiting CNAME check'}</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Sender Identity</span>
+            <span className={`atlas-status atlas-status--${branding.isDkimVerified ? 'healthy' : 'review'}`}>
+              {branding.isDkimVerified ? 'Authenticated' : 'Unverified'}
+            </span>
+          </div>
+          <div className="atlas-kpi__value">{branding.isDkimVerified ? 'DKIM Signed' : 'Pending'}</div>
+          <div className="atlas-kpi__note">{branding.senderEmail}</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Primary Palette</span>
+            <span className="atlas-status atlas-status--healthy">Custom</span>
+          </div>
+          <div className="atlas-kpi__value">{branding.primaryColor.toUpperCase()}</div>
+          <div className="atlas-kpi__note">Theme accent &amp; buttons</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Portal Hostname</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{branding.subdomain}</div>
+          <div className="atlas-kpi__note">{branding.customDomain || `${branding.subdomain}.operza.io`}</div>
+        </article>
+      </section>
 
       {savedBanner && (
         <div
@@ -417,6 +437,6 @@ export default function Branding() {
           </div>
         </div>
       </div>
-    </div>
+    </main>
   );
 }

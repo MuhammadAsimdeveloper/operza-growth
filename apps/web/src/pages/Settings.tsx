@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, PageHeader, Switch } from '../components/ui';
+import { Avatar, Badge, Switch } from '../components/ui';
 import { INTEGRATION_CATEGORIES, useStore, uid } from '../lib/store';
 import { num } from '../lib/format';
 import { api } from '../lib/api';
@@ -54,13 +54,24 @@ export default function Settings() {
   };
 
   return (
-    <div className="content">
-      <PageHeader title="Settings" subtitle="Workspace configuration, team access and connected apps." />
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Control Plane</div>
+          <h1>System &amp; Workspace Settings</h1>
+        </div>
+      </header>
+
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">CONFIGURATION &amp; ACCESS</div>
+        <h2>Enterprise Workspace Governance</h2>
+        <p>Manage business entity profiles, team seats, RBAC permissions, custom data models, and external connectors.</p>
+      </section>
 
       <div
         className="settings-layout"
         style={{
-          marginTop: 24,
+          marginTop: 22,
           gap: 24,
           display: 'grid',
           gridTemplateColumns: '240px minmax(0, 1fr)',
@@ -368,7 +379,7 @@ export default function Settings() {
           </p>
         </Modal>
       )}
-    </div>
+    </main>
   );
 }
 

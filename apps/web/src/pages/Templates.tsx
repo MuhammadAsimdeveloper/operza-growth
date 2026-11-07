@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, EmptyState, PageHeader } from '../components/ui';
+import { Badge, EmptyState } from '../components/ui';
 import { useStore, uid } from '../lib/store';
 import { customValueToken, resolveMerge } from '../lib/merge';
 import { num, relative } from '../lib/format';
@@ -65,16 +65,43 @@ export default function Templates() {
   }
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Email Templates"
-        subtitle="Reusable copy for campaigns, workflows and one-off sends."
-        actions={
-          <button className="btn btn--primary" onClick={() => setEditing('new')}>
-            <Icon name="plus" size={16} /> New template
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Marketing &amp; Email</div>
+          <h1>Email Templates &amp; Layouts</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setEditing('new')}>
+            <Icon name="plus" size={13} /> New Template
           </button>
-        }
-      />
+        </div>
+      </header>
+
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">RESPONSIVE EMAIL LAYOUTS</div>
+        <h2>Omnichannel Email Layout Engine</h2>
+        <p>Pre-formatted email structures, personalized merge tokens, dynamic signatures, and reusable layouts for marketing campaigns.</p>
+      </section>
+
+      <section className="atlas-kpis" aria-label="Template metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Templates</span>
+            <span className="atlas-status atlas-status--healthy">Active</span>
+          </div>
+          <div className="atlas-kpi__value">{state.templates.length}</div>
+          <div className="atlas-kpi__note">Pre-built email layouts</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Template Categories</span>
+            <span className="atlas-status atlas-status--healthy">Organized</span>
+          </div>
+          <div className="atlas-kpi__value">{categories.length - 1}</div>
+          <div className="atlas-kpi__note">Onboarding, sales &amp; nurture</div>
+        </article>
+      </section>
 
       <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
         {categories.map((c) => (
@@ -94,7 +121,7 @@ export default function Templates() {
       ) : (
         <div className="grid grid--3">
           {visible.map((t) => (
-            <div key={t.id} className="card template">
+            <div key={t.id} className="card-premium template">
               <div className="card__head">
                 <div style={{ minWidth: 0 }}>
                   <div className="card__title" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -178,7 +205,7 @@ export default function Templates() {
           onClose={() => setEditing(null)}
         />
       )}
-    </div>
+    </main>
   );
 }
 

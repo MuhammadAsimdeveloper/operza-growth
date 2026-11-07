@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Badge, EmptyState, PageHeader, StatCard } from '../components/ui';
+import { Badge, EmptyState } from '../components/ui';
 import { currency, num, shortDate } from '../lib/format';
 import { uid, useStore } from '../lib/store';
 import { api } from '../lib/api';
@@ -77,45 +77,61 @@ export default function SubAccounts() {
   });
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Sub-accounts"
-        subtitle="Every client workspace your agency runs, with plan limits and billing in one place."
-        actions={
-          <button className="btn btn--primary" onClick={() => setCreating(true)}>
-            <Icon name="plus" size={16} /> New sub-account
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Multi-Tenant &amp; Agency</div>
+          <h1>Sub-Accounts &amp; Tenants</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={13} /> New Sub-Account
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard
-          label="Sub-accounts"
-          value={num(state.subAccounts.length)}
-          icon={<Icon name="building" size={15} />}
-          meta={`${active.length} active`}
-        />
-        <StatCard
-          label="Monthly recurring"
-          value={currency(mrr)}
-          icon={<Icon name="wallet" size={15} />}
-          meta="from active accounts"
-        />
-        <StatCard
-          label="On trial"
-          value={num(trials.length)}
-          icon={<Icon name="clock" size={15} />}
-          meta="not yet billed"
-        />
-        <StatCard
-          label="Seats sold"
-          value={num(seats)}
-          icon={<Icon name="users" size={15} />}
-          meta="across all accounts"
-        />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">MULTI-TENANT AGENCY OS</div>
+        <h2>Client Workspace &amp; SaaS Provisioning</h2>
+        <p>Isolate client data, manage automated tiered SaaS subscriptions, quota limits, and white-label access.</p>
+      </section>
 
-      <div className="grid grid--sidebar">
+      <section className="atlas-kpis" aria-label="Sub-account metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Client Workspaces</span>
+            <span className="atlas-status atlas-status--healthy">Active</span>
+          </div>
+          <div className="atlas-kpi__value">{num(state.subAccounts.length)}</div>
+          <div className="atlas-kpi__note">{active.length} active tenants</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Agency MRR</span>
+            <span className="atlas-status atlas-status--healthy">Live</span>
+          </div>
+          <div className="atlas-kpi__value">{currency(mrr)}</div>
+          <div className="atlas-kpi__note">Recurring tenant billing</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">On Trial</span>
+            <span className="atlas-status atlas-status--healthy">Trial</span>
+          </div>
+          <div className="atlas-kpi__value">{num(trials.length)}</div>
+          <div className="atlas-kpi__note">Converting in 14 days</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total User Seats</span>
+            <span className="atlas-status atlas-status--healthy">Provisioned</span>
+          </div>
+          <div className="atlas-kpi__value">{num(seats)}</div>
+          <div className="atlas-kpi__note">Across all sub-tenants</div>
+        </article>
+      </section>
+
+      <div className="grid grid--sidebar" style={{ marginTop: 22 }}>
         <div className="stack">
           <div className="card">
             <div className="card__head">
@@ -397,7 +413,7 @@ export default function SubAccounts() {
           }}
         />
       )}
-    </div>
+    </main>
   );
 }
 

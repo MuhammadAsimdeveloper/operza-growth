@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, EmptyState, PageHeader, StatCard, StatusBadge, Switch } from '../components/ui';
+import { Avatar, Badge, EmptyState, StatusBadge, Switch } from '../components/ui';
 import { useStore, uid } from '../lib/store';
 import { currency, fullDate, pct } from '../lib/format';
 import { api } from '../lib/api';
@@ -92,25 +92,80 @@ export default function Payments() {
   const contactOf = (id: string) => state.contacts.find((c) => c.id === id);
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Payments"
-        subtitle="Invoices, products and subscription revenue."
-        actions={
-          <button className="btn btn--primary" onClick={() => setCreating(true)}>
-            <Icon name="plus" size={16} /> New invoice
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Revenue OS</div>
+          <h1>Payments &amp; Invoices</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setCreating(true)}>
+            <Icon name="plus" size={13} /> New Invoice
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Collected" value={currency(paid)} icon={<Icon name="wallet" size={15} />} meta={`${pct(paid, total)} of billed`} />
-        <StatCard label="Outstanding" value={currency(outstanding)} icon={<Icon name="clock" size={15} />} meta="sent + overdue" />
-        <StatCard label="Overdue" value={currency(overdue)} icon={<Icon name="bell" size={15} />} meta="needs follow-up" />
-        <StatCard label="Invoices" value={String(state.invoices.length)} icon={<Icon name="clipboard" size={15} />} meta="this workspace" />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">REVENUE OPERATIONS &amp; BILLING ENGINE</div>
+        <h2>Accounts Receivable, Invoicing &amp; Product Catalog</h2>
+        <p>Track cash collections, outstanding invoices, customer billing history, and configure one-time and recurring product plans.</p>
+      </section>
 
-      <div className="card">
+      <section className="atlas-kpis" aria-label="Revenue metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="wallet" size={15} /></span>
+            <span className="operza-kpi__trend"><Icon name="arrow-up-right" size={12} /> +19%</span>
+          </div>
+          <div className="atlas-kpi__label">Collected Revenue</div>
+          <div className="atlas-kpi__value tabular">{currency(paid)}</div>
+          <div className="atlas-kpi__note">{pct(paid, total)} of billed amount</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 16 Q25 12 50 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#10b981', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="clock" size={15} /></span>
+            <span className="operza-kpi__trend">Pending</span>
+          </div>
+          <div className="atlas-kpi__label">Outstanding</div>
+          <div className="atlas-kpi__value tabular">{currency(outstanding)}</div>
+          <div className="atlas-kpi__note">Sent &amp; overdue receivables</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 14 Q30 8 60 12 T100 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#3b82f6', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="bell" size={15} /></span>
+            <span className="operza-kpi__trend">Overdue</span>
+          </div>
+          <div className="atlas-kpi__label">Past Due Invoices</div>
+          <div className="atlas-kpi__value tabular">{currency(overdue)}</div>
+          <div className="atlas-kpi__note">Requires dunning follow-up</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 18 Q35 14 70 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#ef4444', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="clipboard" size={15} /></span>
+            <span className="operza-kpi__trend">Total</span>
+          </div>
+          <div className="atlas-kpi__label">Total Invoices</div>
+          <div className="atlas-kpi__value tabular">{state.invoices.length}</div>
+          <div className="atlas-kpi__note">Workspace invoice volume</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 10 Q30 14 60 8 T100 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: 'var(--accent)', opacity: 0.8 }} />
+          </svg>
+        </article>
+      </section>
+
+      <section className="card-premium" style={{ marginTop: 22, padding: '20px 24px' }}>
         <div className="card__head" style={{ paddingBottom: 0, borderBottom: 'none' }}>
           <div className="tabs" style={{ borderBottom: 'none', padding: 0 }}>
             <button className={`tab${tab === 'invoices' ? ' is-active' : ''}`} onClick={() => setTab('invoices')}>
@@ -210,7 +265,7 @@ export default function Payments() {
             )}
           </div>
         )}
-      </div>
+      </section>
 
       {tab === 'invoices' && (
         <div className="hint" style={{ marginTop: 10 }}>
@@ -240,7 +295,7 @@ export default function Payments() {
           }}
         />
       )}
-    </div>
+    </main>
   );
 }
 

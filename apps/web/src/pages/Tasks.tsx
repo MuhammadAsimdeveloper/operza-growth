@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, EmptyState, PageHeader, StatCard } from '../components/ui';
+import { Avatar, Badge, EmptyState } from '../components/ui';
 import { uid, useStore } from '../lib/store';
 import { shortDate, timeOf, toDateTimeInput } from '../lib/format';
 import { api } from '../lib/api';
@@ -105,25 +105,80 @@ export default function Tasks() {
   const doneTasks = tasks.filter((t) => t.done);
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Tasks"
-        subtitle="Follow-ups across contacts and deals, sorted by what is due next."
-        actions={
-          <button className="btn btn--primary" onClick={() => setAdding(true)}>
-            <Icon name="plus" size={16} /> New task
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Action Center</div>
+          <h1>Tasks</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="atlas-quick-action-button" onClick={() => setAdding(true)}>
+            <Icon name="plus" size={13} /> New Task
           </button>
-        }
-      />
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Open tasks" value={String(open.length)} icon={<Icon name="task" size={15} />} meta="across the team" />
-        <StatCard label="Overdue" value={String(overdue.length)} icon={<Icon name="clock" size={15} />} meta="needs attention" />
-        <StatCard label="Due today" value={String(dueToday.length)} icon={<Icon name="calendar" size={15} />} meta="before end of day" />
-        <StatCard label="Completed" value={String(completed.length)} icon={<Icon name="check" size={15} />} meta="all time" />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">ACTION ITEMS &amp; TEAM ACCOUNTABILITY</div>
+        <h2>Operational Follow-Ups &amp; Due Dates</h2>
+        <p>Prioritized action queues across customer relationships, opportunities, and automated workflow triggers.</p>
+      </section>
 
-      <div className="card">
+      <section className="atlas-kpis" aria-label="Task metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="task" size={15} /></span>
+            <span className="operza-kpi__trend">Active</span>
+          </div>
+          <div className="atlas-kpi__label">Open Tasks</div>
+          <div className="atlas-kpi__value tabular">{open.length}</div>
+          <div className="atlas-kpi__note">Pending completion</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 16 Q25 12 50 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: 'var(--accent)', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="clock" size={15} /></span>
+            <span className="operza-kpi__trend">Urgent</span>
+          </div>
+          <div className="atlas-kpi__label">Overdue</div>
+          <div className="atlas-kpi__value tabular">{overdue.length}</div>
+          <div className="atlas-kpi__note">Past due deadline</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 14 Q30 8 60 12 T100 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#ef4444', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="calendar" size={15} /></span>
+            <span className="operza-kpi__trend">Today</span>
+          </div>
+          <div className="atlas-kpi__label">Due Today</div>
+          <div className="atlas-kpi__value tabular">{dueToday.length}</div>
+          <div className="atlas-kpi__note">Due before EOD</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 18 Q35 14 70 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#f59e0b', opacity: 0.8 }} />
+          </svg>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="operza-kpi__header">
+            <span className="operza-kpi__icon"><Icon name="check" size={15} /></span>
+            <span className="operza-kpi__trend">Done</span>
+          </div>
+          <div className="atlas-kpi__label">Completed</div>
+          <div className="atlas-kpi__value tabular">{completed.length}</div>
+          <div className="atlas-kpi__note">All-time executed</div>
+          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+            <path d="M0 10 Q30 14 60 8 T100 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#10b981', opacity: 0.8 }} />
+          </svg>
+        </article>
+      </section>
+
+      <section className="card-premium" style={{ marginTop: 22, padding: '20px 24px' }}>
         <div className="card__head" style={{ gap: 8, flexWrap: 'wrap' }}>
           <div className="segmented">
             {(['open', 'done', 'all'] as const).map((f) => (
@@ -176,10 +231,10 @@ export default function Tasks() {
             )}
           </>
         )}
-      </div>
+      </section>
 
       {adding && <NewTask onClose={() => setAdding(false)} />}
-    </div>
+    </main>
   );
 }
 

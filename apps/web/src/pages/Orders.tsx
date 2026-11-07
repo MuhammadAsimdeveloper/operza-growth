@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
-import { Avatar, PageHeader, StatCard } from '../components/ui';
+import { Avatar } from '../components/ui';
 import { useStore } from '../lib/store';
 import { currency, num, shortDate } from '../lib/format';
 import { api } from '../lib/api';
@@ -51,30 +51,61 @@ export default function Orders() {
   });
 
   return (
-    <div className="content">
-      <PageHeader
-        title="Orders"
-        subtitle="Every checkout from funnels, order forms and payment links."
-        actions={
-          <>
-            <button className="btn">
-              <Icon name="copy" size={15} /> Export
-            </button>
-            <button className="btn btn--primary">
-              <Icon name="plus" size={15} /> New order form
-            </button>
-          </>
-        }
-      />
+    <main className="operza-dashboard atlas-dashboard">
+      <header className="atlas-dashboard__header">
+        <div className="atlas-dashboard__heading">
+          <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Commerce &amp; Orders</div>
+          <h1>Customer Orders &amp; Transactions</h1>
+        </div>
+        <div className="atlas-dashboard__toolbar">
+          <button className="btn btn--secondary btn--sm">
+            <Icon name="copy" size={14} /> Export CSV
+          </button>
+        </div>
+      </header>
 
-      <div className="grid grid--4" style={{ marginBottom: 16 }}>
-        <StatCard label="Order revenue" value={currency(revenue)} icon={<Icon name="wallet" size={15} />} meta={`${paid.length} paid orders`} />
-        <StatCard label="Orders" value={num(orders.length)} icon={<Icon name="clipboard" size={15} />} meta="all statuses" />
-        <StatCard label="Average order" value={currency(Math.round(aov))} icon={<Icon name="chart" size={15} />} meta="paid only" />
-        <StatCard label="Refunded" value={currency(refunded)} icon={<Icon name="refresh" size={15} />} meta="lifetime" />
-      </div>
+      <section className="atlas-hero">
+        <div className="atlas-eyebrow">ORDER MANAGEMENT &amp; FULFILLMENT</div>
+        <h2>Direct Sales &amp; Funnel Checkout Stream</h2>
+        <p>Complete ledger of sales across order forms, funnel checkout steps, digital products, and payment links.</p>
+      </section>
 
-      <div className="card">
+      <section className="atlas-kpis" aria-label="Order metrics">
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Gross Order Volume</span>
+            <span className="atlas-status atlas-status--healthy">Processed</span>
+          </div>
+          <div className="atlas-kpi__value">{currency(revenue)}</div>
+          <div className="atlas-kpi__note">{paid.length} settled orders</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Orders</span>
+            <span className="atlas-status atlas-status--healthy">Tracked</span>
+          </div>
+          <div className="atlas-kpi__value">{num(orders.length)}</div>
+          <div className="atlas-kpi__note">All checkout events</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Average Order Value</span>
+            <span className="atlas-status atlas-status--healthy">Settled</span>
+          </div>
+          <div className="atlas-kpi__value">{currency(Math.round(aov))}</div>
+          <div className="atlas-kpi__note">Net realized per order</div>
+        </article>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Refunded</span>
+            <span className="atlas-status atlas-status--healthy">Recorded</span>
+          </div>
+          <div className="atlas-kpi__value">{currency(refunded)}</div>
+          <div className="atlas-kpi__note">Processed reversals</div>
+        </article>
+      </section>
+
+      <div className="card-premium" style={{ marginTop: 22 }}>
         <div className="card__head">
           <div>
             <div className="card__title">Recent orders</div>
@@ -137,6 +168,6 @@ export default function Orders() {
           </table>
         </div>
       </div>
-    </div>
+    </main>
   );
 }
