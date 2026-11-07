@@ -392,6 +392,24 @@ export interface WorkflowStepConfig {
   dueInDays?: number;
   /** Rule evaluated by condition steps. */
   rule?: ConditionRule;
+  /** Zapier hook target. */
+  hookUrl?: string;
+  /** Batch size for loop_items. */
+  batchSize?: number;
+  /** Items expression or variable name for loop. */
+  itemsPath?: string;
+  /** Split percentage A/B for split_test. */
+  splitPercent?: number;
+  /** Math operation. */
+  operation?: string;
+  /** Operand value. */
+  operand?: number;
+  /** Filter field. */
+  filterField?: string;
+  /** Filter operator. */
+  filterOperator?: string;
+  /** Filter value. */
+  filterValue?: string;
 }
 
 export interface WorkflowAction {

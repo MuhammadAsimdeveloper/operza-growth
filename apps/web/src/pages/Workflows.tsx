@@ -986,6 +986,15 @@ function StepModal({
   const [field, setField] = useState<ConditionField>(step?.config?.rule?.field ?? 'status');
   const [operator, setOperator] = useState<ConditionOperator>(step?.config?.rule?.operator ?? 'is');
   const [value, setValue] = useState(step?.config?.rule?.value ?? 'customer');
+  const [zapierHookUrl, setZapierHookUrl] = useState(step?.config?.hookUrl ?? '');
+  const [batchSize, setBatchSize] = useState(String(step?.config?.batchSize ?? 2));
+  const [itemsPath, setItemsPath] = useState(step?.config?.itemsPath ?? 'leads');
+  const [splitPercent, setSplitPercent] = useState(String(step?.config?.splitPercent ?? 50));
+  const [filterField, setFilterField] = useState(step?.config?.filterField ?? 'leadScore');
+  const [filterOperator, setFilterOperator] = useState(step?.config?.filterOperator ?? 'greater_than');
+  const [filterValue, setFilterValue] = useState(step?.config?.filterValue ?? '50');
+  const [mathOp, setMathOp] = useState(step?.config?.operation ?? 'add');
+  const [mathOperand, setMathOperand] = useState(String(step?.config?.operand ?? 10));
 
   const hours = Number(delay);
   const trimmedUrl = url.trim();
@@ -996,7 +1005,9 @@ function StepModal({
     (kind !== 'webhook' || urlValid) &&
     (kind !== 'tag' || tagName.trim().length > 0) &&
     (kind !== 'task' || taskTitle.trim().length > 0) &&
-    (kind !== 'condition' || value.trim().length > 0);
+    (kind !== 'condition' || value.trim().length > 0) &&
+    (kind !== 'zapier' || zapierHookUrl.trim().length > 0) &&
+    (kind !== 'data_filter' || filterField.trim().length > 0);
 
   const changeKind = (next: WorkflowAction['kind']) => {
     const previousDefault = KINDS.find((option) => option.value === kind)?.defaultLabel ?? '';
@@ -1022,6 +1033,11 @@ function StepModal({
       return { title: taskTitle.trim(), dueInDays: Math.max(0, Math.round(Number(dueDays) || 0)) };
     }
     if (kind === 'condition') return { rule: { field, operator, value: value.trim() } };
+    if (kind === 'zapier') return { hookUrl: zapierHookUrl.trim() };
+    if (kind === 'loop_items') return { batchSize: Math.max(1, Math.round(Number(batchSize) || 2)), itemsPath: itemsPath.trim() || 'leads' };
+    if (kind === 'split_test') return { splitPercent: Math.min(99, Math.max(1, Math.round(Number(splitPercent) || 50))) };
+    if (kind === 'data_filter') return { filterField: filterField.trim(), filterOperator, filterValue: filterValue.trim() };
+    if (kind === 'math') return { operation: mathOp, operand: Number(mathOperand) || 1 };
     return undefined;
   };
 
@@ -1249,6 +1265,141 @@ function StepModal({
           <div className="callout" style={{ marginTop: 10 }}>
             Condition steps open two paths in the flow: steps added under <strong>Yes</strong> run when the rule
             matches, and steps under <strong>No</strong> run otherwise.
+          </div>
+        </div>
+      )}
+
+      {kind === 'zapier' && (
+        <div className="field" style={{ marginTop: 12 }}>
+          <label htmlFor="step-zapier-url">Zapier Catch Hook URL</label>
+          <input
+            id="step-zapier-url"
+            className="input"
+            placeholder="https://hooks.zapier.com/hooks/catch/12345/abcde/"
+            style={{ fontFamily: 'var(--font-mono)' }}
+            value={zapierHookUrl}
+            onChange={(e) => setZapierHookUrl(e.target.value)}
+          />
+          <div className="hint" style={{ marginTop: 4 }}>
+            Dispatches HMAC SHA-256 signed JSON payload to your Zapier trigger webhook.
+          </div>
+        </div>
+      )}
+
+      {kind === 'loop_items' && (
+        <div className="grid grid--2" style={{ marginTop: 12 }}>
+          <div className="field">
+            <label htmlFor="step-loop-items">Array variable / path</label>
+            <input
+              id="step-loop-items"
+              className="input"
+              placeholder="leads"
+              value={itemsPath}
+              onChange={(e) => setItemsPath(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="step-loop-batch">Batch size per iteration</label>
+            <input
+              id="step-loop-batch"
+              className="input"
+              type="number"
+              min="1"
+              max="50"
+              value={batchSize}
+              onChange={(e) => setBatchSize(e.target.value)}
+            />
+          </div>
+        </div>
+      )}
+
+      {kind === 'data_filter' && (
+        <div className="grid grid--3" style={{ marginTop: 12 }}>
+          <div className="field">
+            <label htmlFor="step-filter-field">Field to filter</label>
+            <input
+              id="step-filter-field"
+              className="input"
+              placeholder="leadScore"
+              value={filterField}
+              onChange={(e) => setFilterField(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="step-filter-op">Operator</label>
+            <select
+              id="step-filter-op"
+              className="select"
+              value={filterOperator}
+              onChange={(e) => setFilterOperator(e.target.value)}
+            >
+              <option value="greater_than">Greater than (&gt;)</option>
+              <option value="less_than">Less than (&lt;)</option>
+              <option value="equals">Equals (==)</option>
+              <option value="contains">Contains</option>
+              <option value="exists">Exists / Is not empty</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="step-filter-val">Threshold value</label>
+            <input
+              id="step-filter-val"
+              className="input"
+              placeholder="50"
+              value={filterValue}
+              onChange={(e) => setFilterValue(e.target.value)}
+            />
+          </div>
+        </div>
+      )}
+
+      {kind === 'split_test' && (
+        <div className="field" style={{ marginTop: 12 }}>
+          <label htmlFor="step-split-percent">Path A traffic share (%)</label>
+          <div className="row" style={{ gap: 10 }}>
+            <input
+              id="step-split-percent"
+              className="input"
+              type="number"
+              min="1"
+              max="99"
+              value={splitPercent}
+              onChange={(e) => setSplitPercent(e.target.value)}
+              style={{ width: 100 }}
+            />
+            <span style={{ fontSize: 13, color: 'var(--text-3)', alignSelf: 'center' }}>
+              Path A: {splitPercent}% · Path B: {100 - Number(splitPercent || 50)}%
+            </span>
+          </div>
+        </div>
+      )}
+
+      {kind === 'math' && (
+        <div className="grid grid--2" style={{ marginTop: 12 }}>
+          <div className="field">
+            <label htmlFor="step-math-op">Operation</label>
+            <select
+              id="step-math-op"
+              className="select"
+              value={mathOp}
+              onChange={(e) => setMathOp(e.target.value)}
+            >
+              <option value="add">Add (+)</option>
+              <option value="subtract">Subtract (-)</option>
+              <option value="multiply">Multiply (×)</option>
+              <option value="divide">Divide (/)</option>
+              <option value="round">Round to nearest</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="step-math-operand">Operand value</label>
+            <input
+              id="step-math-operand"
+              className="input"
+              type="number"
+              value={mathOperand}
+              onChange={(e) => setMathOperand(e.target.value)}
+            />
           </div>
         </div>
       )}

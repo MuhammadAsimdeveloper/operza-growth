@@ -4215,7 +4215,7 @@ async function runTests() {
 
     const manualRunRes = await request(`/api/workflows/${targetWfId}/run`, {
       method: 'POST',
-      body: JSON.stringify({ contactId: testContactId })
+      body: JSON.stringify({ contactId: typeof testContactId !== 'undefined' ? testContactId : (contact?.data?.id || 'contact-outbox-test') })
     });
     if (![200, 201].includes(manualRunRes.status) || !manualRunRes.data.execution?.id) {
       throw new Error(`Workflow manual execution failed: ${JSON.stringify(manualRunRes.data)}`);

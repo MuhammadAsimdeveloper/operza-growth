@@ -4719,6 +4719,120 @@ const server = createServer(async (req, res) => {
             mode: 'live'
           });
           return { id: execution.id, workflowId: wf.id, status: execution.status };
+        },
+        create_campaign: async (params, ctx) => {
+          state.records.campaigns = state.records.campaigns || [];
+          const newCampaign = {
+            id: randomUUID(),
+            agencyId: agency.id,
+            locationId: activeLocation.id,
+            name: params.name || 'AI Marketing Campaign',
+            subject: params.subject || params.name || 'Special Update from Operza',
+            channel: params.channel || 'email',
+            status: 'draft',
+            audienceTag: params.audienceTag || 'all',
+            content: params.content || params.body || '',
+            scheduledAt: params.scheduledAt || null,
+            sentCount: 0,
+            openCount: 0,
+            clickCount: 0,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+          };
+          state.records.campaigns.push(newCampaign);
+          await saveState();
+          broadcast('crm.campaigns.created', newCampaign);
+          return { id: newCampaign.id, name: newCampaign.name, channel: newCampaign.channel };
+        },
+        create_campaign_proposal: async (params, ctx) => {
+          return proposalHandlers.create_campaign(params, ctx);
+        },
+        create_payment_link: async (params, ctx) => {
+          state.records.paymentLinks = state.records.paymentLinks || [];
+          const newLink = {
+            id: randomUUID(),
+            agencyId: agency.id,
+            locationId: activeLocation.id,
+            name: params.name || 'Product Checkout Link',
+            slug: params.slug || (params.name ? params.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') : `pay-${Date.now()}`),
+            amount: typeof params.amount === 'number' ? params.amount : 99,
+            currency: params.currency || 'USD',
+            productIds: Array.isArray(params.productIds) ? params.productIds : [],
+            visits: 0,
+            conversions: 0,
+            active: true,
+            description: params.description || '',
+            createdAt: new Date().toISOString()
+          };
+          state.records.paymentLinks.push(newLink);
+          await saveState();
+          broadcast('crm.payments.created', newLink);
+          return { id: newLink.id, name: newLink.name, amount: newLink.amount, slug: newLink.slug };
+        },
+        create_payment_link_proposal: async (params, ctx) => {
+          return proposalHandlers.create_payment_link(params, ctx);
+        },
+        create_website_page: async (params, ctx) => {
+          state.records.websites = state.records.websites || [];
+          let site = state.records.websites.find(w => w.agencyId === agency.id && (params.websiteId ? w.id === params.websiteId : true));
+          if (!site) {
+            site = {
+              id: randomUUID(),
+              agencyId: agency.id,
+              locationId: activeLocation.id,
+              name: params.websiteName || 'Main Website',
+              domain: params.domain || 'growth.operza.com',
+              published: false,
+              status: 'draft',
+              pages: [],
+              createdAt: new Date().toISOString(),
+              updatedAt: new Date().toISOString()
+            };
+            state.records.websites.push(site);
+          }
+          const newPage = {
+            id: randomUUID(),
+            name: params.name || 'New Landing Page',
+            path: params.path || `/${(params.name || 'page').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+            headline: params.headline || params.name || 'Welcome',
+            subhead: params.subhead || '',
+            cta: params.cta || 'Get started',
+            theme: params.theme || 'plain',
+            visits: 0,
+            optins: 0,
+            createdAt: new Date().toISOString()
+          };
+          site.pages = Array.isArray(site.pages) ? [...site.pages, newPage] : [newPage];
+          site.updatedAt = new Date().toISOString();
+          await saveState();
+          broadcast('crm.website.page_created', { siteId: site.id, page: newPage });
+          return { siteId: site.id, pageId: newPage.id, name: newPage.name, path: newPage.path };
+        },
+        create_website_page_proposal: async (params, ctx) => {
+          return proposalHandlers.create_website_page(params, ctx);
+        },
+        generate_api_key: async (params, ctx) => {
+          const secret = randomBytes(24).toString('hex');
+          const secretToken = `op_live_${secret}`;
+          const maskedKey = `op_live_${secret.slice(0, 4)}...${secret.slice(-4)}`;
+          state.records.apiKeys = state.records.apiKeys || [];
+          const newKey = {
+            id: randomUUID(),
+            agencyId: agency.id,
+            label: (params.label || 'Copilot Generated API Key').trim(),
+            keyHash: hash(secretToken),
+            maskedKey,
+            scopes: Array.isArray(params.scopes) ? params.scopes : ['contacts:read', 'workflows:trigger'],
+            createdAt: new Date().toISOString(),
+            lastUsedAt: null
+          };
+          state.records.apiKeys.push(newKey);
+          await saveState();
+          auditLog('developer.key_created', actor, { keyId: newKey.id, label: newKey.label });
+          return { id: newKey.id, label: newKey.label, maskedKey: newKey.maskedKey, secretToken };
+        },
+        generate_api_key_proposal: async (params, ctx) => {
+          return proposalHandlers.generate_api_key(params, ctx);
         }
       };
 
