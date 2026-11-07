@@ -96,7 +96,17 @@ export default function SmartLists() {
                   <Icon name="refresh" size={12} /> {evaluatingId === list.id ? 'Evaluating...' : 'Evaluate'}
                 </button>
               </span>
-              <button type="button" className="btn btn--sm" onClick={() => navigate('/contacts')}>
+              <button
+                type="button"
+                className="btn btn--sm"
+                onClick={() => {
+                  if (list.rule?.startsWith('tag:')) {
+                    navigate(`/contacts?tag=${encodeURIComponent(list.rule.replace('tag:', '').trim())}`);
+                  } else {
+                    navigate(`/contacts?filter=${encodeURIComponent(list.rule || '')}`);
+                  }
+                }}
+              >
                 View contacts <Icon name="arrow-right" size={12} />
               </button>
             </div>

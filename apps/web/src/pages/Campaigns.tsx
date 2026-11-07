@@ -88,8 +88,8 @@ export default function Campaigns() {
         patch: {
           status: 'sent',
           sent: res.recipientCount ?? c.audience,
-          opened: Math.round((res.recipientCount ?? c.audience) * 0.45),
-          clicked: Math.round((res.recipientCount ?? c.audience) * 0.18),
+          opened: res.opened ?? 0,
+          clicked: res.clicked ?? 0,
         },
       });
       setNotice(`Campaign “${c.name}” successfully dispatched to ${res.recipientCount ?? c.audience} contact(s)!`);

@@ -5305,8 +5305,8 @@ const server = createServer(async (req, res) => {
       // Update campaign metrics
       campaign.status = 'sent';
       campaign.sent = matched.length;
-      campaign.opened = Math.round(matched.length * 0.45);
-      campaign.clicked = Math.round(matched.length * 0.18);
+      campaign.opened = 0;
+      campaign.clicked = 0;
       campaign.sentAt = new Date().toISOString();
       campaign.updatedAt = new Date().toISOString();
 
@@ -5327,8 +5327,44 @@ const server = createServer(async (req, res) => {
         success: true,
         campaign,
         recipientCount: matched.length,
-        sentCount: matched.length
+        sentCount: matched.length,
+        opened: 0,
+        clicked: 0
       });
+    }
+
+    // Public Email Open Tracking Pixel (1x1 Transparent GIF)
+    if (method === 'GET' && pathname.startsWith('/api/campaigns/track/open/')) {
+      const campaignId = pathname.replace('/api/campaigns/track/open/', '').trim();
+      const campaign = (state.records.campaigns || []).find(c => c.id === campaignId);
+      if (campaign) {
+        campaign.opened = (campaign.opened || 0) + 1;
+        campaign.updatedAt = new Date().toISOString();
+        await saveState();
+        broadcast('crm.campaign.opened', { campaignId, opened: campaign.opened });
+      }
+      const pixel = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
+      res.writeHead(200, {
+        'Content-Type': 'image/gif',
+        'Content-Length': pixel.length,
+        'Cache-Control': 'no-store, no-cache, must-revalidate, private'
+      });
+      return res.end(pixel);
+    }
+
+    // Public Email Click Tracking Redirect
+    if (method === 'GET' && pathname.startsWith('/api/campaigns/track/click/')) {
+      const campaignId = pathname.replace('/api/campaigns/track/click/', '').trim();
+      const targetUrl = url.searchParams.get('url') || '/';
+      const campaign = (state.records.campaigns || []).find(c => c.id === campaignId);
+      if (campaign) {
+        campaign.clicked = (campaign.clicked || 0) + 1;
+        campaign.updatedAt = new Date().toISOString();
+        await saveState();
+        broadcast('crm.campaign.clicked', { campaignId, clicked: campaign.clicked });
+      }
+      res.writeHead(302, { Location: targetUrl });
+      return res.end();
     }
 
     if (method === 'POST' && pathname.startsWith('/api/campaigns/') && pathname.endsWith('/test-send')) {

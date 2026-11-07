@@ -41,7 +41,7 @@ const UNIVERSAL_CONNECTORS = [
   { id: 'slack', name: 'Slack', category: 'Communications', auth: 'OAuth 2.0', triggers: ['New Channel Message', 'Reaction Added'], actions: ['Send Channel Message', 'Send Direct Message', 'Create Channel'] },
   { id: 'gmail', name: 'Gmail', category: 'Communications', auth: 'OAuth 2.0', triggers: ['New Email', 'New Attachment', 'New Labeled Email'], actions: ['Send Email', 'Create Draft', 'Add Label'] },
   { id: 'google_sheets', name: 'Google Sheets', category: 'Productivity', auth: 'OAuth 2.0', triggers: ['New Spreadsheet Row', 'Updated Spreadsheet Row'], actions: ['Create Spreadsheet Row', 'Update Row', 'Lookup Row'] },
-  { id: 'hubspot', name: 'HubSpot', category: 'CRM', auth: 'OAuth 2.0', triggers: ['New Contact', 'Updated Deal Stage', 'New Company'], actions: ['Create/Update Contact', 'Create Deal', 'Add Contact to List'] },
+  { id: 'salesforce', name: 'Salesforce', category: 'CRM', auth: 'OAuth 2.0', triggers: ['New Lead', 'Updated Opportunity', 'New Account'], actions: ['Create Lead', 'Update Opportunity', 'Add Contact to Campaign'] },
   { id: 'stripe', name: 'Stripe', category: 'Commerce', auth: 'API Key', triggers: ['Payment Succeeded', 'Subscription Created', 'Invoice Paid'], actions: ['Create Customer', 'Create Invoice', 'Create Payment Link'] },
   { id: 'shopify', name: 'Shopify', category: 'Commerce', auth: 'OAuth 2.0', triggers: ['New Order', 'Paid Order', 'New Customer'], actions: ['Create Product', 'Update Inventory', 'Create Discount Code'] },
   { id: 'airtable', name: 'Airtable', category: 'Productivity', auth: 'API Key', triggers: ['New Record', 'Updated Record'], actions: ['Create Record', 'Update Record', 'Search Records'] },
@@ -591,11 +591,16 @@ export default function Integrations() {
           <div className="space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <h4 className="text-sm font-bold text-gray-900 dark:text-white">
-                  Universal App Connectors Catalog ({UNIVERSAL_CONNECTORS.length})
-                </h4>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-bold text-gray-900 dark:text-white">
+                    Universal App Connectors Catalog ({UNIVERSAL_CONNECTORS.length})
+                  </h4>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                    Zapier REST Hooks & Outbound Ingress
+                  </span>
+                </div>
                 <p className="text-xs text-gray-500">
-                  Pre-configured app connector schemas ready for visual workflows and Zapier dispatches.
+                  Pre-configured app connector schemas ready for visual workflows and Zapier REST hook dispatches.
                 </p>
               </div>
               <div className="flex items-center gap-2">

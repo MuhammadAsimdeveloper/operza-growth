@@ -32,6 +32,24 @@ export default function Contacts() {
   const [confirmBulk, setConfirmBulk] = useState(false);
 
   useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const filterParam = params.get('filter');
+    const tagParam = params.get('tag');
+    const searchParam = params.get('search');
+    if (tagParam) {
+      setTag(tagParam);
+    } else if (filterParam) {
+      if (filterParam.startsWith('tag:')) {
+        setTag(filterParam.replace('tag:', '').trim());
+      } else {
+        setQuery(filterParam);
+      }
+    } else if (searchParam) {
+      setQuery(searchParam);
+    }
+  }, [location.search]);
+
+  useEffect(() => {
     let active = true;
     api.crm.list('contacts').then((res) => {
       if (!active || !res?.data || !Array.isArray(res.data)) return;
