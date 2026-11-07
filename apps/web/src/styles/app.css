@@ -3439,3 +3439,196 @@ a {
   width: 680px;
   height: 720px;
 }
+
+/* ==========================================================================
+   ATLAS ANIMATION ENGINE & HIGH-TECH DARK MODE POLISH
+   ========================================================================== */
+
+/* Keyframe Definitions */
+@keyframes atlasFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes atlasSlideIn {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes atlasPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(1.18);
+  }
+}
+
+@keyframes atlasGlowPulse {
+  0%, 100% {
+    box-shadow: 0 0 14px rgba(99, 102, 241, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 26px rgba(99, 102, 241, 0.55);
+  }
+}
+
+@keyframes atlasShimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+/* Page Entrance Smoothness */
+.atlas-dashboard {
+  animation: atlasFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.atlas-hero {
+  animation: atlasFadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
+}
+
+.atlas-kpis {
+  animation: atlasFadeIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both;
+}
+
+/* Interactive Card Micro-Interactions */
+.card-premium {
+  transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.24s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.24s ease;
+}
+
+.card-premium:hover {
+  border-color: rgba(99, 102, 241, 0.35);
+}
+
+.operza-kpi {
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.22s ease;
+}
+
+.operza-kpi:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md), 0 0 20px rgba(99, 102, 241, 0.18);
+  border-color: rgba(99, 102, 241, 0.4);
+}
+
+/* Button & Action Transitions */
+.atlas-quick-action-button,
+.btn {
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.atlas-quick-action-button:hover,
+.btn:hover {
+  transform: translateY(-1px);
+}
+
+.atlas-quick-action-button:active,
+.btn:active {
+  transform: scale(0.97);
+}
+
+/* Pulsing Status Dot */
+.atlas-pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 10px var(--green);
+  animation: atlasPulse 2s infinite ease-in-out;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+/* Smooth Table Row Transitions */
+.table tbody tr {
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.table tbody tr:hover {
+  background-color: var(--surface-2) !important;
+}
+
+/* Dark Mode Deepening & Contrast Enhancement */
+[data-theme="dark"] body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+[data-theme="dark"] .card-premium {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-md), var(--shadow-specular);
+}
+
+[data-theme="dark"] .operza-kpi {
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+[data-theme="dark"] .atlas-hero {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-md), var(--shadow-specular);
+}
+
+[data-theme="dark"] .topbar {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--line);
+}
+
+[data-theme="dark"] .sidebar {
+  background: var(--sidebar);
+  border-right: 1px solid var(--line);
+}
+
+[data-theme="dark"] .input,
+[data-theme="dark"] .select,
+[data-theme="dark"] textarea {
+  background: #0b101c;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f8fafc;
+}
+
+[data-theme="dark"] .input:focus,
+[data-theme="dark"] .select:focus,
+[data-theme="dark"] textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.32);
+}
+
+[data-theme="dark"] .modal {
+  background: #0d121d;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+[data-theme="dark"] .modal-backdrop,
+[data-theme="dark"] .modal__scrim {
+  background: rgba(3, 5, 10, 0.78);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+

@@ -27,6 +27,7 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
     {
       items: [
         { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
+        { to: '/command-center', label: 'Command Center', icon: 'zap' },
         { to: '/conversations', label: 'Conversations', icon: 'message', badge: unread },
         { to: '/phone', label: 'Phone System', icon: 'phone' },
         { to: '/calendars', label: 'Calendars', icon: 'calendar' },
@@ -106,6 +107,14 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
         { to: '/developers', label: 'Developer Hub', icon: 'webhook' },
         { to: '/custom-values', label: 'Custom Values', icon: 'sliders' },
         { to: '/audit-log', label: 'Audit Log', icon: 'clipboard' },
+      ],
+    },
+    {
+      label: 'Public & Showcase',
+      items: [
+        { to: '/home', label: 'Landing Page', icon: 'globe' },
+        { to: '/pricing', label: 'Pricing & Plans', icon: 'tag' },
+        { to: '/docs', label: 'Documentation', icon: 'clipboard' },
       ],
     },
   ];
@@ -697,6 +706,33 @@ function UserMenu() {
             </div>
           )}
 
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <NavLink
+              to="/home"
+              className="btn btn--ghost btn--sm"
+              style={{ width: '100%', justifyContent: 'flex-start', fontSize: 12 }}
+              onClick={() => setOpen(false)}
+            >
+              <Icon name="globe" size={13} /> View Landing Page
+            </NavLink>
+            <NavLink
+              to="/pricing"
+              className="btn btn--ghost btn--sm"
+              style={{ width: '100%', justifyContent: 'flex-start', fontSize: 12 }}
+              onClick={() => setOpen(false)}
+            >
+              <Icon name="tag" size={13} /> Public Pricing &amp; Plans
+            </NavLink>
+            <NavLink
+              to="/docs"
+              className="btn btn--ghost btn--sm"
+              style={{ width: '100%', justifyContent: 'flex-start', fontSize: 12 }}
+              onClick={() => setOpen(false)}
+            >
+              <Icon name="clipboard" size={13} /> Developer Docs
+            </NavLink>
+          </div>
+
           <hr style={{ border: 'none', borderTop: '1px solid var(--line, #e2e8f0)', margin: '4px 0' }} />
 
           <button
@@ -757,6 +793,12 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
     '/coupons': 'Coupons',
     '/custom-values': 'Custom Values',
     '/audit-log': 'Audit Log',
+    '/command-center': 'Command Center',
+    '/command': 'Command Center',
+    '/documents': 'Contracts & Legal OS',
+    '/home': 'Public Landing Page',
+    '/pricing': 'Public Pricing & Plans',
+    '/docs': 'Documentation & API Guides',
     '/settings': 'Settings',
     '/integrations': 'App Marketplace',
     '/ai-trainer': 'AI Copilot Training',
@@ -774,6 +816,25 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
       <SearchBox />
       <span className="topbar__spacer" />
       <div className="topbar__actions" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <NavLink
+          to="/home"
+          className="btn btn--sm btn--ghost"
+          style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--text-2)', padding: '5px 10px' }}
+          title="Visit Public Landing Page"
+        >
+          <Icon name="globe" size={14} />
+          <span>Landing Page</span>
+        </NavLink>
+        <NavLink
+          to="/pricing"
+          className="btn btn--sm btn--ghost"
+          style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--text-2)', padding: '5px 10px' }}
+          title="View Public Pricing & Plans"
+        >
+          <Icon name="tag" size={14} />
+          <span>Pricing</span>
+        </NavLink>
+
         <Tooltip label={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}>
           <button
             className="icon-btn"

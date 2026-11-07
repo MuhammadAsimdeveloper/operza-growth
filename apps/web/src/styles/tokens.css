@@ -68,35 +68,35 @@
 }
 
 [data-theme="dark"] {
-  /* Surfaces */
-  --bg: #090d16;
-  --surface: #111827;
-  --surface-2: #1e293b;
-  --surface-3: #283548;
-  --sidebar: #0d121f;
+  /* Surfaces — Deep Obsidian & High-Tech Slate */
+  --bg: #07090e;
+  --surface: #0d121d;
+  --surface-2: #141c2c;
+  --surface-3: #1c273c;
+  --sidebar: #0a0e17;
 
   /* Glassmorphism & Overlays */
-  --glass-bg: rgba(17, 24, 39, 0.86);
-  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-bg: rgba(13, 18, 29, 0.88);
+  --glass-border: rgba(255, 255, 255, 0.08);
   --glass-blur: blur(20px) saturate(190%);
 
-  /* Ink */
+  /* Ink — Pure White and Titanium Slate */
   --text: #f8fafc;
   --text-2: #94a3b8;
   --text-3: #64748b;
-  --text-inverse: #090d16;
+  --text-inverse: #07090e;
 
-  /* Lines */
-  --line: #1e293b;
-  --line-strong: #334155;
+  /* Lines — Crisp Sub-Pixel Borders */
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.14);
   --line-subtle: rgba(255, 255, 255, 0.04);
 
-  /* Brand */
+  /* Brand — Luminous Indigo Glow */
   --accent: #6366f1;
-  --accent-hover: #4f46e5;
+  --accent-hover: #7b7ef5;
   --accent-soft: rgba(99, 102, 241, 0.16);
   --accent-ink: #c7d2fe;
-  --accent-glow: 0 0 26px rgba(99, 102, 241, 0.42);
+  --accent-glow: 0 0 28px rgba(99, 102, 241, 0.45);
 
   /* Status */
   --green: #10b981;
@@ -105,16 +105,16 @@
   --amber-soft: rgba(245, 158, 11, 0.16);
   --red: #ef4444;
   --red-soft: rgba(239, 68, 68, 0.16);
-  --blue: #3b82f6;
-  --blue-soft: rgba(59, 130, 246, 0.16);
-  --violet: #8b5cf6;
-  --violet-soft: rgba(139, 92, 246, 0.16);
+  --blue: #38bdf8;
+  --blue-soft: rgba(56, 189, 248, 0.16);
+  --violet: #a855f7;
+  --violet-soft: rgba(168, 85, 247, 0.16);
 
   /* Elevation & Specular Highlights */
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.6), 0 2px 5px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 18px 44px rgba(0, 0, 0, 0.7);
-  --shadow-xl: 0 28px 64px rgba(0, 0, 0, 0.78);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.6), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.7), 0 2px 6px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.82);
+  --shadow-xl: 0 32px 72px rgba(0, 0, 0, 0.9);
   --shadow-specular: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }

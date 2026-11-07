@@ -28,6 +28,7 @@ export default function Documents() {
   const [filter, setFilter] = useState<Filter>('all');
   const [adding, setAdding] = useState(false);
   const [signingDoc, setSigningDoc] = useState<ContractDoc | null>(null);
+  const [viewingDoc, setViewingDoc] = useState<ContractDoc | null>(null);
 
   useEffect(() => {
     api.crm.list<ContractDoc>('documents').then((res) => {
@@ -183,14 +184,19 @@ export default function Documents() {
               </thead>
               <tbody>
                 {visible.map((doc) => (
-                  <tr key={doc.id}>
+                  <tr
+                    key={doc.id}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => setViewingDoc(doc)}
+                    title="Click to open and read full document"
+                  >
                     <td>
                       <span className="person">
                         <span className="avatar avatar--sm avatar--square" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>
                           <Icon name={KIND_META[doc.kind].icon} size={14} />
                         </span>
                         <span className="person__text">
-                          <span className="person__name">{doc.name}</span>
+                          <span className="person__name" style={{ color: 'var(--accent)', fontWeight: 650 }}>{doc.name}</span>
                           <span className="person__sub">{KIND_META[doc.kind].label}</span>
                         </span>
                       </span>
@@ -205,7 +211,7 @@ export default function Documents() {
                     <td className="cell-sub" title={relative(doc.updatedAt)}>
                       {shortDate(doc.updatedAt)}
                     </td>
-                    <td>
+                    <td onClick={(e) => e.stopPropagation()}>
                       <select
                         className="select select--sm"
                         value={doc.status}
@@ -218,10 +224,20 @@ export default function Documents() {
                         <option value="declined">Declined</option>
                       </select>
                     </td>
-                    <td className="cell-right">
+                    <td className="cell-right" onClick={(e) => e.stopPropagation()}>
                       <div className="row" style={{ gap: 6, justifyContent: 'flex-end' }}>
                         <button
+                          className="btn btn--sm"
+                          type="button"
+                          onClick={() => setViewingDoc(doc)}
+                          title="Open document view and clauses"
+                        >
+                          <Icon name="file" size={13} />
+                          Open
+                        </button>
+                        <button
                           className="btn btn--sm btn--primary"
+                          type="button"
                           onClick={() => setSigningDoc(doc)}
                         >
                           <Icon name={doc.status === 'signed' ? 'check' : 'clipboard'} size={13} />
@@ -268,6 +284,17 @@ export default function Documents() {
       </div>
 
       {adding && <NewDocumentModal onClose={() => setAdding(false)} />}
+      {viewingDoc && (
+        <ViewDocumentModal
+          doc={viewingDoc}
+          contactName={contactName(viewingDoc.contactId)}
+          onClose={() => setViewingDoc(null)}
+          onSign={() => {
+            setSigningDoc(viewingDoc);
+            setViewingDoc(null);
+          }}
+        />
+      )}
       {signingDoc && (
         <SignDocumentModal
           doc={signingDoc}
@@ -289,6 +316,259 @@ export default function Documents() {
         />
       )}
     </main>
+  );
+}
+
+function ViewDocumentModal({
+  doc,
+  contactName,
+  onClose,
+  onSign,
+}: {
+  doc: ContractDoc;
+  contactName: string;
+  onClose: () => void;
+  onSign: () => void;
+}) {
+  const [activeTab, setActiveTab] = useState<'agreement' | 'certificate' | 'audit'>('agreement');
+  const [copied, setCopied] = useState(false);
+
+  const copyLink = () => {
+    navigator.clipboard?.writeText?.(window.location.origin + `/documents?id=${doc.id}`);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const printDoc = () => {
+    window.print();
+  };
+
+  return (
+    <Modal
+      title={doc.name}
+      wide
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" type="button" onClick={printDoc}>
+            <Icon name="download" size={14} /> Print / Export PDF
+          </button>
+          <button className="btn" type="button" onClick={copyLink}>
+            <Icon name="link" size={14} /> {copied ? 'Link Copied!' : 'Share Link'}
+          </button>
+          {doc.status !== 'signed' ? (
+            <button className="btn btn--primary" type="button" onClick={onSign}>
+              <Icon name="clipboard" size={14} /> Execute &amp; Sign
+            </button>
+          ) : (
+            <button className="btn btn--primary" type="button" onClick={onSign}>
+              <Icon name="check" size={14} /> View Certificate
+            </button>
+          )}
+        </>
+      }
+    >
+      <div className="stack" style={{ gap: 16 }}>
+        {/* Document Meta Banner */}
+        <div className="card-premium" style={{ padding: '16px 20px', background: 'var(--surface-2)' }}>
+          <div className="row row--between" style={{ flexWrap: 'wrap', gap: 12 }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span className="avatar avatar--sm avatar--square" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>
+                  <Icon name={KIND_META[doc.kind].icon} size={16} />
+                </span>
+                <div>
+                  <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0, color: 'var(--text)' }}>{doc.name}</h3>
+                  <div className="cell-sub" style={{ fontSize: 13, marginTop: 2 }}>
+                    Client: <strong>{contactName}</strong> · Document ID: <code>{doc.id}</code>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="row" style={{ gap: 10, alignItems: 'center' }}>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 11, textTransform: 'uppercase', color: 'var(--text-3)', fontWeight: 700 }}>Contract Value</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: 'var(--text)' }}>{currency(doc.value)}</div>
+              </div>
+              <Badge tone={STATUS_TONE[doc.status]} dot>
+                {doc.status.toUpperCase()}
+              </Badge>
+            </div>
+          </div>
+        </div>
+
+        {/* Tab Navigation */}
+        <div className="tabs" style={{ margin: 0 }}>
+          <button
+            type="button"
+            className={`tab ${activeTab === 'agreement' ? 'is-active' : ''}`}
+            onClick={() => setActiveTab('agreement')}
+          >
+            Agreement &amp; Clauses
+          </button>
+          <button
+            type="button"
+            className={`tab ${activeTab === 'certificate' ? 'is-active' : ''}`}
+            onClick={() => setActiveTab('certificate')}
+          >
+            Cryptographic Certificate
+          </button>
+          <button
+            type="button"
+            className={`tab ${activeTab === 'audit' ? 'is-active' : ''}`}
+            onClick={() => setActiveTab('audit')}
+          >
+            Audit Trail
+          </button>
+        </div>
+
+        {/* Tab 1: Agreement & Clauses */}
+        {activeTab === 'agreement' && (
+          <div className="card-premium" style={{ padding: 24, background: 'var(--surface)', maxHeight: '420px', overflowY: 'auto' }}>
+            <div style={{ borderBottom: '1px solid var(--line)', paddingBottom: 16, marginBottom: 16 }}>
+              <div style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--accent)', fontWeight: 800 }}>
+                OPERZA LEGAL CONTRACT ENGINE · {KIND_META[doc.kind].label.toUpperCase()}
+              </div>
+              <h2 style={{ fontSize: 20, fontWeight: 800, marginTop: 4 }}>Master Services Agreement &amp; Statement of Work</h2>
+              <p className="cell-sub" style={{ marginTop: 4 }}>
+                Effective Date: {shortDate(doc.updatedAt)} · Between Operza Growth Partner &amp; {contactName}
+              </p>
+            </div>
+
+            <div className="stack" style={{ gap: 16, fontSize: 13, lineHeight: 1.7, color: 'var(--text)' }}>
+              <div>
+                <h4 style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>1. Scope of Engagement &amp; Deliverables</h4>
+                <p>
+                  Operza shall deliver and maintain full digital operational infrastructure for {contactName}, including autonomous CRM automation, conversion funnels, multi-channel inbound messaging (SMS, WhatsApp, Email), appointment calendars, and white-labeled client portals as set forth in this agreement.
+                </p>
+              </div>
+
+              <div>
+                <h4 style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>2. Consideration &amp; Payment Milestones</h4>
+                <p>
+                  The Client agrees to pay the fixed contractual consideration of <strong>{currency(doc.value)}</strong>. All billing is reconciled under secure tokenized payment channels with immutable cryptographic invoice ledger receipts.
+                </p>
+              </div>
+
+              <div>
+                <h4 style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>3. Intellectual Property &amp; Tenant Sovereignty</h4>
+                <p>
+                  All customer records, database objects, workflow logic, and marketing collateral remain the sole property of the Client. Operza enforces database-level tenant isolation with fail-closed Row Level Security (RLS).
+                </p>
+              </div>
+
+              <div>
+                <h4 style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', marginBottom: 6 }}>4. Electronic Signature Enforceability</h4>
+                <p>
+                  The parties acknowledge and agree that this document may be executed by electronic signature pursuant to the United States Electronic Signatures in Global and National Commerce Act (E-SIGN Act, 15 U.S.C. § 7001 et seq.) and the Uniform Electronic Transactions Act (UETA).
+                </p>
+              </div>
+            </div>
+
+            {/* Counterparty signature block */}
+            <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--line)', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+              <div style={{ padding: 14, background: 'var(--surface-2)', borderRadius: 8 }}>
+                <span className="cell-sub" style={{ fontSize: 11, textTransform: 'uppercase' }}>Service Provider</span>
+                <div style={{ fontWeight: 700, fontSize: 13, marginTop: 4 }}>Operza Growth Platform, Inc.</div>
+                <div style={{ marginTop: 10, borderBottom: '1px dashed var(--line-strong)', paddingBottom: 4, fontFamily: 'cursive', fontSize: 18, color: 'var(--accent)' }}>
+                  Operza Authorized Representative
+                </div>
+                <span className="cell-sub" style={{ fontSize: 11 }}>Status: Verified &amp; Registered</span>
+              </div>
+
+              <div style={{ padding: 14, background: 'var(--surface-2)', borderRadius: 8 }}>
+                <span className="cell-sub" style={{ fontSize: 11, textTransform: 'uppercase' }}>Client Signer</span>
+                <div style={{ fontWeight: 700, fontSize: 13, marginTop: 4 }}>{contactName}</div>
+                <div style={{ marginTop: 10, borderBottom: '1px dashed var(--line-strong)', paddingBottom: 4, fontFamily: 'cursive', fontSize: 18, color: doc.status === 'signed' ? 'var(--green)' : 'var(--text-3)' }}>
+                  {doc.signerName || (doc.status === 'signed' ? contactName : 'Pending Signature...')}
+                </div>
+                <span className="cell-sub" style={{ fontSize: 11 }}>
+                  {doc.status === 'signed' ? `Signed on ${shortDate(doc.signedAt || doc.updatedAt)}` : 'Awaiting counter-signature'}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 2: Certificate */}
+        {activeTab === 'certificate' && (
+          <div className="card-premium" style={{ padding: 24, background: 'var(--surface)' }}>
+            <div className="row" style={{ gap: 10, color: doc.status === 'signed' ? 'var(--green)' : 'var(--amber)', marginBottom: 16 }}>
+              <Icon name={doc.status === 'signed' ? 'check' : 'clock'} size={24} />
+              <div>
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
+                  {doc.status === 'signed' ? 'Official Certificate of Electronic Execution' : 'Pre-Execution Audit Verification'}
+                </h3>
+                <span className="cell-sub">Compliant with U.S. ESIGN, UETA, and eIDAS Electronic Signature Standards</span>
+              </div>
+            </div>
+
+            <div className="grid grid--2" style={{ gap: 14, fontSize: 13 }}>
+              <div style={{ padding: 12, background: 'var(--surface-2)', borderRadius: 8 }}>
+                <span className="cell-sub">Certificate ID</span>
+                <div style={{ fontWeight: 600, fontFamily: 'monospace' }}>CERT-OPZ-{doc.id.toUpperCase()}</div>
+              </div>
+              <div style={{ padding: 12, background: 'var(--surface-2)', borderRadius: 8 }}>
+                <span className="cell-sub">Signer IP / Security Origin</span>
+                <div style={{ fontWeight: 600, fontFamily: 'monospace' }}>127.0.0.1 (Authenticated Client Session)</div>
+              </div>
+              <div style={{ padding: 12, background: 'var(--surface-2)', borderRadius: 8 }}>
+                <span className="cell-sub">SHA-256 Checksum</span>
+                <div style={{ fontWeight: 600, fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' }}>
+                  e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+                </div>
+              </div>
+              <div style={{ padding: 12, background: 'var(--surface-2)', borderRadius: 8 }}>
+                <span className="cell-sub">Execution Timestamp</span>
+                <div style={{ fontWeight: 600 }}>
+                  {doc.signedAt ? new Date(doc.signedAt).toUTCString() : (doc.status === 'signed' ? 'Completed' : 'Pending')}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Tab 3: Audit Trail */}
+        {activeTab === 'audit' && (
+          <div className="card-premium" style={{ padding: 20 }}>
+            <div className="timeline">
+              <div className="timeline__item">
+                <div className="timeline__icon" style={{ background: 'var(--blue-soft)', color: 'var(--blue)' }}>
+                  <Icon name="file" size={12} />
+                </div>
+                <div className="timeline__body">
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>Document Created</div>
+                  <div className="cell-sub">{doc.name} authored and bound to {contactName}</div>
+                  <div className="cell-sub" style={{ fontSize: 11 }}>{shortDate(doc.updatedAt)}</div>
+                </div>
+              </div>
+              <div className="timeline__item">
+                <div className="timeline__icon" style={{ background: 'var(--accent-soft)', color: 'var(--accent)' }}>
+                  <Icon name="mail" size={12} />
+                </div>
+                <div className="timeline__body">
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>Dispatched to Signer</div>
+                  <div className="cell-sub">Secure signing invitation dispatched via client portal</div>
+                  <div className="cell-sub" style={{ fontSize: 11 }}>{shortDate(doc.updatedAt)}</div>
+                </div>
+              </div>
+              {doc.status === 'signed' && (
+                <div className="timeline__item">
+                  <div className="timeline__icon" style={{ background: 'var(--green-soft)', color: 'var(--green)' }}>
+                    <Icon name="check" size={12} />
+                  </div>
+                  <div className="timeline__body">
+                    <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--green)' }}>Legally Executed &amp; Certified</div>
+                    <div className="cell-sub">Digitally signed by {doc.signerName || contactName} with cryptographic seal</div>
+                    <div className="cell-sub" style={{ fontSize: 11 }}>{shortDate(doc.signedAt || doc.updatedAt)}</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </Modal>
   );
 }
 

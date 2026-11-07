@@ -30,7 +30,12 @@
       "name": "ASIM tech",
       "slug": "sanjarkhanabbasi786",
       "status": "active",
-      "createdAt": "2026-11-07T09:05:52.104Z"
+      "createdAt": "2026-11-07T09:05:52.104Z",
+      "email": "sanjarkhanabbasi786@gmail.com",
+      "phone": "+1 800-555-0100",
+      "website": "https://operza.io",
+      "timezone": "Asia/Karachi",
+      "currency": "PKR"
     }
   ],
   "locations": [
@@ -678,6 +683,20 @@
         "outcome": "completed"
       },
       "timestamp": "2026-11-07T09:18:23.446Z"
+    },
+    {
+      "id": "f0efd3ba-a05c-4656-b555-2341d4dcd7c7",
+      "action": "telephony.a2p.registered",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "userName": "Asim",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "details": {
+        "brandId": "BN-FED0E4BB",
+        "campaignSid": "CP-60320BBE42",
+        "legalBusinessName": "Operza Alpha Agency LLC"
+      },
+      "timestamp": "2026-11-07T09:18:57.708Z"
     }
   ],
   "mediaFiles": {},
