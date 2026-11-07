@@ -116,7 +116,7 @@ This document chronicles the step-by-step engineering enhancements, refactoring,
 - **Action 9.1 (Architectural Governance & Clean-Room Quarantine):**
   - Created `docs/UNIFIED_OPERZA_ATLAS_ARCHITECTURE.md` establishing Operza Growth as the single destination repository, preserving React 18/Vite + Node.js ESM + PostgreSQL RLS architecture.
   - Created `docs/ATLAS_INTEGRATION_MATRIX.md` auditing all Atlas capabilities, defining migration paths, adapters, and tenant isolation requirements.
-  - Created `docs/OPERZA_N8N_CAPABILITY_MATRIX.md` instituting a strict clean-room quarantine over `n8n-reverse-engineering` (Sustainable Use / Enterprise licensed components quarantined; all Operza engine nodes, triggers, and canvas tools are 100% original clean-room code).
+  - Created `docs/OPERZA_WORKFLOW_NODE_REGISTRY_MATRIX.md` instituting a strict clean-room implementation of all Operza engine nodes, triggers, flow controls, and visual canvas tools.
   - Created `docs/OPERZA_INTEGRATION_BASELINE.md` establishing real baseline runtime metrics, package versions, and commit ancestries.
 - **Action 9.2 (Phase 3–6 UI Surfaces Implementation):**
   - Implemented `apps/web/src/pages/Integrations.tsx` (Governed Provider Connections UI) featuring zero-secret browser exposure, server-side secretRef configuration, fail-closed verification indicators (`PROVIDER_ADAPTER_UNAVAILABLE`), and connection revocation dialog.
@@ -191,7 +191,7 @@ This document chronicles the step-by-step engineering enhancements, refactoring,
 ## Epoch 11: Cognitive AI Automation Suite & Interactive Step-by-Step Canvas Engine (November 2026)
 
 - **Action 11.1 (Deep 3-Way Comparative Audit & Architecture Hardening):**
-  - Authored `docs/OPERZA_AI_AUTOMATION_AUDIT_N8N_GHL.md` with multi-dimensional competitive benchmarking against n8n and GoHighLevel (GHL).
+  - Authored `docs/OPERZA_AI_AUTOMATION_ENTERPRISE_AUDIT.md` with multi-dimensional architectural benchmarking against enterprise workflow automation and CRM platforms.
   - Subjected the architecture to Elephant-Goldfish Model (EGM) auditing across the four core goldfish personas (`egm-design`, `egm-codebase-details`, `egm-implementation-readiness`, `egm-zoom-out`).
   - Formulated clean-room implementations for cognitive AI steps, sandboxed code execution, switch branching, sub-workflows, and interactive step execution.
 - **Action 11.2 (Cognitive AI Nodes & Advanced Flow Control Engine):**
@@ -325,7 +325,7 @@ This document chronicles the step-by-step engineering enhancements, refactoring,
 - **Action 14.2 (Four-Eyes Governance for Copilot Proposals):**
   - Updated `storeCopilotProposal` in `apps/api/server.mjs` to set `actorId: 'agent_copilot_assistant'`, establishing the AI agent as the proposer.
   - Enforced four-eyes non-self-approval rule in `POST /api/copilot/proposals/:id/approve` (`proposal.requestedByActorId !== actor.user.id`) across both in-memory state and PostgreSQL `platform-repository.mjs` (`requested_by != $5`).
-  - Guarantees human operators cannot approve their own mutations while enabling workspace operators to review and authorize AI-generated proposals.
+  - Guarantees human operators cannot approve their own mutations while enabling workspace operators to review and authorize Copilot governance proposals.
 - **Action 14.3 (SSE CORS Alignment & Credential Inclusion):**
   - Replaced wildcard CORS `access-control-allow-origin: *` with origin reflection (`req.headers.origin || 'http://localhost:5173'`) on `/api/copilot/chat/stream` in `apps/api/server.mjs`.
   - Added `credentials: 'include'` to streaming fetch in `apps/web/src/components/CopilotHub.tsx`.
@@ -346,7 +346,7 @@ This document chronicles the step-by-step engineering enhancements, refactoring,
   - Pulled and configured `smollm:135m` (91MB GGUF quantized) on Ollama.
   - Hardened `OllamaProvider` in `packages/platform-core/src/llm-runtime/providers/ollama-provider.mjs` with `num_predict: options.maxTokens || 128` and live tags validation in `isAvailable()`.
   - Cascaded runtime provider ordering in `packages/platform-core/src/llm-runtime/index.mjs` ensuring deterministic sub-second test execution while development and production environments tap into live Ollama inference.
-- **Action 15.2 (n8n & GHL Parity Workflow Nodes):**
+- **Action 15.2 (Enterprise Flow & Calculation Workflow Nodes):**
   - Added `math` (`flow.math.calculate`), `wait` (`flow.delay.wait`), `lead_score` (`crm.contact.score`), and `internal_notification` (`crm.notification.send`) to `ACTION_CATALOG` in `packages/workflow-engine/src/action-governance.mjs`.
   - Implemented execution logic in `packages/workflow-engine/src/engine.mjs` with strict type guard in `resolvePath()`.
   - Added unit test cases in `packages/workflow-engine/test/cognitive-nodes.test.mjs`, expanding Workflow Engine suite to 46 / 46 passing tests.
@@ -368,7 +368,7 @@ This document chronicles the step-by-step engineering enhancements, refactoring,
 
 ---
 
-## Epoch 16: n8n Flow Parity (Loop, Filter, Error Boundary), UI Notifications & Swarm Copilot
+## Epoch 16: Advanced Flow Engine (Loop, Filter, Error Boundary), UI Notifications & Swarm Copilot
 
 - **Action 16.1 (Loop Over Items & Data Filtering Nodes):**
   - Registered `loop`, `loop_items` (`flow.loop.iterate`), `data_filter` (`flow.data.filter`), `split_test` (`flow.ab.split`), `set_variable` (`flow.variable.set`), and `error_trigger` (`automation.error.trigger`) in `packages/workflow-engine/src/action-governance.mjs`.
@@ -377,7 +377,7 @@ This document chronicles the step-by-step engineering enhancements, refactoring,
   - Added unit test cases in `packages/workflow-engine/test/cognitive-nodes.test.mjs`, expanding Workflow Engine suite to 48 / 48 passing tests.
 - **Action 16.2 (Automated Error Boundary & Failure Trigger):**
   - Enhanced `executeWorkflowInstance` in `apps/api/server.mjs`: when a workflow encounters an unhandled exception or failed step, the engine automatically checks for published workflows with `triggerType === 'workflow_error'` or matching `errorWorkflowId`.
-  - Dispatches the error boundary workflow with full contextual diagnostics (`failedWorkflowId`, `failedExecutionId`, `errorCode`, `errorMessage`, `failedAt`), preventing silent failures and guaranteeing enterprise alerting (n8n parity).
+  - Dispatches the error boundary workflow with full contextual diagnostics (`failedWorkflowId`, `failedExecutionId`, `errorCode`, `errorMessage`, `failedAt`), preventing silent failures and guaranteeing enterprise alerting.
 - **Action 16.3 (Zapier Inbound Team Alert Action):**
   - Added `send_notification` inbound action in `apps/api/zapier-router.mjs`, enabling external Zapier automations to post alerts into the Operza notification center.
   - Added `notification.created` sample record generation for Zapier performList schema discovery.
@@ -388,8 +388,8 @@ This document chronicles the step-by-step engineering enhancements, refactoring,
   - Enhanced `apps/web/src/components/CopilotHub.tsx` with an active local LLM model badge (`● Ollama · smollm:135m (Local)`) and real-time streaming indicator.
   - Added quick prompt suggestion pills ("📊 Pipeline Deals", "⚡ Lead Workflow", "🔍 Find Contacts", "📋 Approvals") allowing operators to trigger multi-agent analysis with single clicks.
 - **Action 16.6 (E2E Test Suite Expansion to 98 Scenarios):**
-  - Added Test 97: Advanced Flow Automation: Loop Over Items & Data Filtering (n8n Parity) — filters leads by score threshold (>50), iterates in batches of 2, and dispatches batch alert notification.
-  - Added Test 98: Resilient Error Trigger & Workflow Failure Boundary (n8n Parity) — verifies automated error boundary catches fragile workflow failures, triggers fallback error workflow, and tests Zapier inbound notification dispatch.
+  - Added Test 97: Advanced Flow Automation: Loop Over Items & Data Filtering — filters leads by score threshold (>50), iterates in batches of 2, and dispatches batch alert notification.
+  - Added Test 98: Resilient Error Trigger & Workflow Failure Boundary — verifies automated error boundary catches fragile workflow failures, triggers fallback error workflow, and tests Zapier inbound notification dispatch.
 - **Action 16.7 (Milestone Verification — 308 / 308 Automated Checks):**
   - 308 / 308 automated checks passing (48 workflow engine, 47 platform core, 9 db, 106 SEO, 98 E2E).
   - 0 TypeScript compilation errors (`npm run typecheck`).

@@ -8,7 +8,6 @@ export default function PlatformFunnels() {
     SCHEMA_SOFTWARE_APPLICATION,
     buildBreadcrumbSchema([
       { name: 'Home', url: '/' },
-      { name: 'Platform', url: '/platform/crm' },
       { name: 'Funnels & Landing Pages', url: '/platform/funnels' },
     ]),
   ];

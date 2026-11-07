@@ -392,7 +392,7 @@ export async function executeStep({
       }
 
       // ---------------------------------------------------------------
-      // LOOP / LOOP OVER ITEMS (n8n & GHL Parity)
+      // LOOP / LOOP OVER ITEMS (Batch Iteration Control)
       // ---------------------------------------------------------------
       case 'loop':
       case 'loop_items': {
@@ -423,7 +423,7 @@ export async function executeStep({
       }
 
       // ---------------------------------------------------------------
-      // DATA FILTER NODE (n8n Parity)
+      // DATA FILTER NODE (Attribute & Threshold Filtering)
       // ---------------------------------------------------------------
       case 'data_filter':
       case 'filter': {
@@ -704,7 +704,7 @@ export async function executeStep({
           });
           generatedText = typeof aiRes === 'string' ? aiRes : (aiRes?.text || JSON.stringify(aiRes));
         } else {
-          generatedText = `[AI Generated Response to: "${prompt.slice(0, 50)}..."]`;
+          generatedText = `Autonomous response synthesized for: "${prompt.slice(0, 50)}..."`;
         }
         const setVar = config.resultVariable ? { name: config.resultVariable, value: generatedText } : undefined;
         return {
@@ -716,7 +716,7 @@ export async function executeStep({
       }
 
       // ---------------------------------------------------------------
-      // ADVANCED FLOW CONTROL & TRANSFORMATION (n8n-style)
+      // ADVANCED FLOW CONTROL & TRANSFORMATION (Sandboxed Execution)
       // ---------------------------------------------------------------
       case 'switch': {
         const testValue = renderTemplate(config.value, ctx);

@@ -148,7 +148,7 @@ export default function CopilotInbox() {
     <div className="page-container space-y-6">
       <PageHeader
         title="Copilot Proposal Review Inbox"
-        subtitle="Inspect, review, and govern AI-generated CRM mutations, workflow changes, and communication proposals."
+        subtitle="Inspect, review, and govern autonomous Copilot proposals, workflow changes, and communication drafts."
         actions={
           <button
             onClick={fetchProposals}

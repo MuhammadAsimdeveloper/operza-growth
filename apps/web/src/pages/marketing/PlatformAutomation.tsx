@@ -8,7 +8,6 @@ export default function PlatformAutomation() {
     SCHEMA_SOFTWARE_APPLICATION,
     buildBreadcrumbSchema([
       { name: 'Home', url: '/' },
-      { name: 'Platform', url: '/platform/crm' },
       { name: 'Workflow Automation', url: '/platform/automation' },
     ]),
   ];

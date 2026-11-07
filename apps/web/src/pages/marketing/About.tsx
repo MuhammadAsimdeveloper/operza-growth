@@ -54,7 +54,7 @@ export default function About() {
               <h2 style={styles.h2}>Why Software Fragmentation Costs Agencies Millions</h2>
               <p style={styles.paragraph}>
                 In modern client servicing, data lives in silos. Contacts live in one tool, emails in another,
-                contracts in a third, and marketing funnels in a fourth. Zapier and Make bridges constantly break,
+                contracts in a third, and marketing funnels in a fourth. Fragile third-party automation bridges and brittle iPaaS connectors constantly break,
                 generating silent failures and angry clients.
               </p>
               <p style={styles.paragraph}>

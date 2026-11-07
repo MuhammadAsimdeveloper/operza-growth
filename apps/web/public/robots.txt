@@ -11,11 +11,13 @@ Allow: /blog
 Allow: /login
 Allow: /signup
 Allow: /f/
-Allow: /book/
-Allow: /pay/
 Allow: /review/
 Allow: /funnel/
 Allow: /v/
+
+# Disallow transactional customer payment links and private bookings
+Disallow: /book/
+Disallow: /pay/
 
 # Disallow private authenticated workspace routes and client data
 Disallow: /dashboard

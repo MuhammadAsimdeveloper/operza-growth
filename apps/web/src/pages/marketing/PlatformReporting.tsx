@@ -8,7 +8,6 @@ export default function PlatformReporting() {
     SCHEMA_SOFTWARE_APPLICATION,
     buildBreadcrumbSchema([
       { name: 'Home', url: '/' },
-      { name: 'Platform', url: '/platform/crm' },
       { name: 'Agency Reporting', url: '/platform/reporting' },
     ]),
   ];

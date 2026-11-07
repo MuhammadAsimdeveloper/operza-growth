@@ -266,10 +266,29 @@ export function createPlatformRepository(pool) {
     async decideCopilotProposal({ tenantId, locationId, proposalId, actorId, decision, note = null }) {
       if (!['approved', 'rejected'].includes(decision)) throw new TypeError('Proposal decision is invalid');
       return withTenant(tenantId, locationId, async client => {
+        const existing = await client.query(
+          "SELECT id, status, requested_by FROM copilot_proposals WHERE agency_id=$1 AND location_id=$2 AND id=$3",
+          [tenantId, locationId, proposalId]
+        );
+        if (!existing.rows[0]) {
+          const err = new Error('Proposal not found');
+          err.code = 'NOT_FOUND';
+          throw err;
+        }
+        if (existing.rows[0].status !== 'pending_review') {
+          const err = new Error('Proposal is no longer pending review');
+          err.code = 'ALREADY_DECIDED';
+          throw err;
+        }
+        if (decision === 'approved' && existing.rows[0].requested_by && existing.rows[0].requested_by === actorId) {
+          const err = new Error('Four-eyes policy violation: Approver cannot be the same user who requested the proposal.');
+          err.code = 'SELF_APPROVAL';
+          throw err;
+        }
+
         const result = await client.query(
           "UPDATE copilot_proposals SET status=$4, decided_by=$5, decided_at=now(), review_note=$6 " +
-            "WHERE agency_id=$1 AND location_id=$2 AND id=$3 AND status='pending_review' " +
-            "AND ($4 = 'rejected' OR requested_by IS NULL OR requested_by != $5) RETURNING *",
+            "WHERE agency_id=$1 AND location_id=$2 AND id=$3 AND status='pending_review' RETURNING *",
           [tenantId, locationId, proposalId, decision, actorId, typeof note === 'string' ? note.slice(0, 500) : null]
         );
         return result.rows[0] ? proposalRow(result.rows[0]) : null;

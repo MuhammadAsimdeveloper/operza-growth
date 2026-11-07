@@ -1,15 +1,15 @@
 # Operza Clean-Room Workflow Automation & Node Registry Matrix
 
-**Reference Baseline:** n8n Workflow Automation Architecture & Node Categories  
+**Reference Baseline:** Visual Workflow Automation Architecture & Node Categories  
 **Implementation Destination:** Operza Growth (`@operza/workflow-engine` and `apps/web/src/components/WorkflowCanvas.tsx`)  
-**Licensing & Provenance Policy:** Clean-room implementation. Zero upstream Sustainable Use or Enterprise source copied.  
-**Date:** 6 November 2026  
+**Licensing & Provenance Policy:** Clean-room implementation. Zero external proprietary or restricted source copied.  
+**Date:** 7 November 2026  
 
 ---
 
 ## 1. Provenance & Quarantine Declaration
 
-The `n8n-reverse-engineering` repository serves strictly as a functional, visual, and behavioral reference. Due to upstream licensing restrictions (Sustainable Use License and Enterprise components), all code written for Operza is 100% original, authored from first principles in TypeScript, React, and Node.js ESM.
+External workflow engines and reference architectures serve strictly as high-level functional, visual, and behavioral references. Due to external licensing restrictions and proprietary extensions in third-party ecosystems, all code written for Operza is 100% original, authored from first principles in TypeScript, React, and Node.js ESM.
 
 ---
 

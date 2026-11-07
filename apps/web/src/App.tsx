@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { Route, Routes } from 'react-router-dom';
+import { Route, Routes, Navigate } from 'react-router-dom';
 import { useAuth } from './lib/AuthContext';
 import AuthGuard from './components/AuthGuard';
 
@@ -114,6 +114,7 @@ export default function App() {
       <Routes>
         {/* ─── Public Marketing & Feature Pages ─── */}
         <Route element={<MarketingLayout />}>
+          <Route path="/platform" element={<Navigate to="/platform/crm" replace />} />
           <Route path="/platform/crm" element={<PlatformCrm />} />
           <Route path="/platform/automation" element={<PlatformAutomation />} />
           <Route path="/platform/funnels" element={<PlatformFunnels />} />

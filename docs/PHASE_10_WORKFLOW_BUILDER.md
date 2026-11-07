@@ -1,8 +1,8 @@
-# Operza Phase 10: Advanced Visual Workflow Builder & n8n/Zapier Parity
+# Operza Phase 10: Advanced Visual Workflow Builder & Flow Control Engine
 
 ## 1. Executive Summary
 
-Phase 10 delivers complete visual workflow automation parity with dedicated workflow platforms such as n8n and Zapier, seamlessly integrated into Operza's CRM, omnichannel telephony, and commerce modules. Operators design, test, and orchestrate complex multi-branch business graphs using an intuitive **2D node-and-wire visual designer** (`apps/web/src/pages/Workflows.tsx`).
+Phase 10 delivers complete visual workflow automation with dedicated flow control nodes, seamlessly integrated into Operza's CRM, omnichannel telephony, and commerce modules. Operators design, test, and orchestrate complex multi-branch business graphs using an intuitive **2D node-and-wire visual designer** (`apps/web/src/pages/Workflows.tsx`).
 
 ```
 ┌───────────────────────────────────────────────────────────────────────────────────┐
@@ -32,7 +32,7 @@ Phase 10 delivers complete visual workflow automation parity with dedicated work
 
 ---
 
-## 2. Comprehensive Node Library (n8n & Zapier Parity)
+## 2. Comprehensive Node Library
 
 | Node Kind | Category | Functionality & Configuration Parameters |
 | :--- | :--- | :--- |
@@ -55,7 +55,7 @@ Phase 10 delivers complete visual workflow automation parity with dedicated work
 
 ## 3. Interactive Single-Node Step Testing
 
-Operza features n8n-style single-node testing:
+Operza features isolated single-node step testing:
 - **Endpoint:** `POST /api/workflows/:id/nodes/:nodeId/test`
 - **Capability:** Allows operators to test individual nodes in isolation with sample context before publishing the entire graph.
 - **Node-Specific Logic:**
@@ -83,6 +83,6 @@ Operza features n8n-style single-node testing:
   - `[TEST 90] Interactive Single-Node Step Testing` (PASSED)
   - `[TEST 91] Workflow Run Step Timeline` (PASSED)
   - `[TEST 96] Modular Sub-Workflow Invocation & Timed Delay Resumption` (PASSED)
-  - `[TEST 97] Advanced Flow Automation: Loop Over Items & Data Filtering (n8n Parity)` (PASSED)
-  - `[TEST 98] Resilient Error Trigger & Workflow Failure Boundary (n8n Parity)` (PASSED)
-  - `[TEST 103] Advanced Workflow Builder: n8n/Zapier Parity Nodes Definition & Integrity` (PASSED)
+  - `[TEST 97] Advanced Flow Automation: Loop Over Items & Data Filtering` (PASSED)
+  - `[TEST 98] Resilient Error Trigger & Workflow Failure Boundary` (PASSED)
+  - `[TEST 103] Advanced Workflow Builder: 2D Canvas Node Palette & Schema Integrity` (PASSED)

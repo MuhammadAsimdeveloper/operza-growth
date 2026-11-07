@@ -3262,7 +3262,7 @@ async function runTests() {
     console.log('✅ Outbox event claimed, processed by trusted handler, and marked completed');
 
     // ----------------------------------------------------
-    // TEST 90: Interactive Step-by-Step Node Testing API (n8n-style)
+    // TEST 90: Interactive Step-by-Step Node Testing API (Isolated Node Execution)
     // ----------------------------------------------------
     console.log('\n[TEST 90] Interactive Single-Node Step Testing (POST /api/workflows/:id/nodes/:nodeId/test)');
     const testWfRes = await request('/api/crm/workflows', {
@@ -3852,9 +3852,9 @@ async function runTests() {
     console.log('✅ Notification marked read successfully');
 
     // ─────────────────────────────────────────────────────────────────
-    // [TEST 97] Advanced Flow Automation: Loop Over Items & Data Filtering (n8n Parity)
+    // [TEST 97] Advanced Flow Automation: Loop Over Items & Data Filtering
     // ─────────────────────────────────────────────────────────────────
-    console.log('\n[TEST 97] Advanced Flow Automation: Loop Over Items & Data Filtering (n8n Parity)');
+    console.log('\n[TEST 97] Advanced Flow Automation: Loop Over Items & Data Filtering');
 
     const loopFilterWfRes = await request('/api/crm/workflows', {
       method: 'POST',
@@ -3946,9 +3946,9 @@ async function runTests() {
     console.log(`✅ Team alert dispatched with notification ID: ${notifStep.result.notificationId}`);
 
     // ─────────────────────────────────────────────────────────────────
-    // [TEST 98] Resilient Error Trigger & Workflow Failure Boundary (n8n Parity)
+    // [TEST 98] Resilient Error Trigger & Workflow Failure Boundary
     // ─────────────────────────────────────────────────────────────────
-    console.log('\n[TEST 98] Resilient Error Trigger & Workflow Failure Boundary (n8n Parity)');
+    console.log('\n[TEST 98] Resilient Error Trigger & Workflow Failure Boundary');
 
     // 1. Create an Error Handler workflow
     const errorWfRes = await request('/api/crm/workflows', {
@@ -4238,9 +4238,9 @@ async function runTests() {
     console.log(`✅ Durable outbox job correlated in timeline: Job ID ${outboxTimelineRes.data.outboxJobId}, Status: ${outboxTimelineRes.data.outboxStatus}, Attempts: ${outboxTimelineRes.data.attemptCount}`);
 
     // ─────────────────────────────────────────────────────────────────
-    // [TEST 103] Advanced Workflow Builder: n8n/Zapier Parity Nodes Definition & Integrity
+    // [TEST 103] Advanced Workflow Builder: 2D Canvas Node Palette & Schema Integrity
     // ─────────────────────────────────────────────────────────────────
-    console.log('\n[TEST 103] Advanced Workflow Builder: n8n/Zapier Parity Nodes Definition & Integrity');
+    console.log('\n[TEST 103] Advanced Workflow Builder: 2D Canvas Node Palette & Schema Integrity');
 
     const expectedNodes = [
       'loop_items',
@@ -4266,7 +4266,7 @@ async function runTests() {
         throw new Error(`Workflows.tsx is missing node kind registration for '${nodeKey}'`);
       }
     }
-    console.log(`✅ All ${expectedNodes.length} advanced n8n/Zapier parity node kinds verified registered in visual workflow builder palette`);
+    console.log(`✅ All ${expectedNodes.length} advanced workflow node kinds verified registered in visual workflow builder palette`);
 
     console.log('\n🎉 ALL 103 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {

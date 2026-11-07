@@ -15,7 +15,7 @@
 |---|---|---|---|---|
 | **operza-growth** | Primary Destination Product | `C:\Users\Muhammad Asim\.gemini\antigravity\scratch\operza` | `feat/operza-unified-atlas-automation` (derived from `feat/phase-3-6-platform-foundation`) | `b7f448adb06d7bd958a305c29c6f488d45e036e3` (180 commits ahead of main `6c00933`) |
 | **Atlas-** | Business Architecture & Domain Reference | `C:\Users\Muhammad Asim\Atlas-` and `C:\Users\Muhammad Asim\Atlas` | `main` / `feat/operza-crm-persistence-test-contract` | `b68b534fe4317421ce8428dfefc1c94291810305` |
-| **n8n-reverse-engineering** | Visual Automation Architecture Reference | `C:\Users\Muhammad Asim\.gemini\antigravity\scratch\n8n-reverse-engineering` | `main` | `ba56b6834c38a7ca0034f43a75f6af319ae3dcc7` |
+| **visual-automation-reference** | Visual Automation Architecture Reference | `C:\Users\Muhammad Asim\.gemini\antigravity\scratch\automation-reference` | `main` | `ba56b6834c38a7ca0034f43a75f6af319ae3dcc7` |
 
 ---
 

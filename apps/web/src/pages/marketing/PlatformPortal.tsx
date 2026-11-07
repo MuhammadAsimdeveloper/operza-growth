@@ -8,7 +8,6 @@ export default function PlatformPortal() {
     SCHEMA_SOFTWARE_APPLICATION,
     buildBreadcrumbSchema([
       { name: 'Home', url: '/' },
-      { name: 'Platform', url: '/platform/crm' },
       { name: 'Client Portal', url: '/platform/portal' },
     ]),
   ];

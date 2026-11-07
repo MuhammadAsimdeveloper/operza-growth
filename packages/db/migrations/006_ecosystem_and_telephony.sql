@@ -27,16 +27,20 @@ CREATE TABLE IF NOT EXISTS phone_numbers (
 CREATE INDEX IF NOT EXISTS phone_numbers_agency_idx ON phone_numbers(agency_id, status);
 
 ALTER TABLE phone_numbers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE phone_numbers FORCE ROW LEVEL SECURITY;
 
-DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE tablename = 'phone_numbers' AND policyname = 'phone_numbers_isolation_policy'
-  ) THEN
-    CREATE POLICY phone_numbers_isolation_policy ON phone_numbers
-      AS RESTRICTIVE
-      USING (agency_id = current_setting('app.current_agency_id', true)::uuid);
-  END IF;
-END $$;
+DROP POLICY IF EXISTS phone_numbers_isolation_policy ON phone_numbers;
+DROP POLICY IF EXISTS phone_numbers_tenant_scope ON phone_numbers;
+CREATE POLICY phone_numbers_tenant_scope ON phone_numbers
+  FOR ALL TO operza_app
+  USING (
+    agency_id = nullif(current_setting('app.agency_id', true), '')::uuid
+    AND (location_id IS NULL OR location_id = nullif(current_setting('app.location_id', true), '')::uuid)
+  )
+  WITH CHECK (
+    agency_id = nullif(current_setting('app.agency_id', true), '')::uuid
+    AND (location_id IS NULL OR location_id = nullif(current_setting('app.location_id', true), '')::uuid)
+  );
 
 -- 2. Developer Hub: Scoped API Keys
 CREATE TABLE IF NOT EXISTS developer_keys (
@@ -57,16 +61,20 @@ CREATE TABLE IF NOT EXISTS developer_keys (
 CREATE INDEX IF NOT EXISTS developer_keys_agency_idx ON developer_keys(agency_id, status);
 
 ALTER TABLE developer_keys ENABLE ROW LEVEL SECURITY;
+ALTER TABLE developer_keys FORCE ROW LEVEL SECURITY;
 
-DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE tablename = 'developer_keys' AND policyname = 'developer_keys_isolation_policy'
-  ) THEN
-    CREATE POLICY developer_keys_isolation_policy ON developer_keys
-      AS RESTRICTIVE
-      USING (agency_id = current_setting('app.current_agency_id', true)::uuid);
-  END IF;
-END $$;
+DROP POLICY IF EXISTS developer_keys_isolation_policy ON developer_keys;
+DROP POLICY IF EXISTS developer_keys_tenant_scope ON developer_keys;
+CREATE POLICY developer_keys_tenant_scope ON developer_keys
+  FOR ALL TO operza_app
+  USING (
+    agency_id = nullif(current_setting('app.agency_id', true), '')::uuid
+    AND (location_id IS NULL OR location_id = nullif(current_setting('app.location_id', true), '')::uuid)
+  )
+  WITH CHECK (
+    agency_id = nullif(current_setting('app.agency_id', true), '')::uuid
+    AND (location_id IS NULL OR location_id = nullif(current_setting('app.location_id', true), '')::uuid)
+  );
 
 -- 3. Developer Hub: Outbound Webhook Subscriptions
 CREATE TABLE IF NOT EXISTS developer_webhooks (
@@ -87,16 +95,20 @@ CREATE TABLE IF NOT EXISTS developer_webhooks (
 CREATE INDEX IF NOT EXISTS developer_webhooks_agency_idx ON developer_webhooks(agency_id, status);
 
 ALTER TABLE developer_webhooks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE developer_webhooks FORCE ROW LEVEL SECURITY;
 
-DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE tablename = 'developer_webhooks' AND policyname = 'developer_webhooks_isolation_policy'
-  ) THEN
-    CREATE POLICY developer_webhooks_isolation_policy ON developer_webhooks
-      AS RESTRICTIVE
-      USING (agency_id = current_setting('app.current_agency_id', true)::uuid);
-  END IF;
-END $$;
+DROP POLICY IF EXISTS developer_webhooks_isolation_policy ON developer_webhooks;
+DROP POLICY IF EXISTS developer_webhooks_tenant_scope ON developer_webhooks;
+CREATE POLICY developer_webhooks_tenant_scope ON developer_webhooks
+  FOR ALL TO operza_app
+  USING (
+    agency_id = nullif(current_setting('app.agency_id', true), '')::uuid
+    AND (location_id IS NULL OR location_id = nullif(current_setting('app.location_id', true), '')::uuid)
+  )
+  WITH CHECK (
+    agency_id = nullif(current_setting('app.agency_id', true), '')::uuid
+    AND (location_id IS NULL OR location_id = nullif(current_setting('app.location_id', true), '')::uuid)
+  );
 
 -- 4. Developer Hub: Webhook Delivery Audit Ledger
 CREATE TABLE IF NOT EXISTS developer_webhook_deliveries (
@@ -117,16 +129,14 @@ CREATE TABLE IF NOT EXISTS developer_webhook_deliveries (
 CREATE INDEX IF NOT EXISTS webhook_deliveries_recent_idx ON developer_webhook_deliveries(agency_id, delivered_at DESC);
 
 ALTER TABLE developer_webhook_deliveries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE developer_webhook_deliveries FORCE ROW LEVEL SECURITY;
 
-DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE tablename = 'developer_webhook_deliveries' AND policyname = 'webhook_deliveries_isolation_policy'
-  ) THEN
-    CREATE POLICY webhook_deliveries_isolation_policy ON developer_webhook_deliveries
-      AS RESTRICTIVE
-      USING (agency_id = current_setting('app.current_agency_id', true)::uuid);
-  END IF;
-END $$;
+DROP POLICY IF EXISTS webhook_deliveries_isolation_policy ON developer_webhook_deliveries;
+DROP POLICY IF EXISTS developer_webhook_deliveries_tenant_scope ON developer_webhook_deliveries;
+CREATE POLICY developer_webhook_deliveries_tenant_scope ON developer_webhook_deliveries
+  FOR ALL TO operza_app
+  USING (agency_id = nullif(current_setting('app.agency_id', true), '')::uuid)
+  WITH CHECK (agency_id = nullif(current_setting('app.agency_id', true), '')::uuid);
 
 -- 5. AI Copilot: Semantic Knowledge Base Ingestion
 CREATE TABLE IF NOT EXISTS ai_knowledge_base (
@@ -146,16 +156,20 @@ CREATE TABLE IF NOT EXISTS ai_knowledge_base (
 CREATE INDEX IF NOT EXISTS ai_knowledge_base_agency_idx ON ai_knowledge_base(agency_id);
 
 ALTER TABLE ai_knowledge_base ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ai_knowledge_base FORCE ROW LEVEL SECURITY;
 
-DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE tablename = 'ai_knowledge_base' AND policyname = 'ai_knowledge_isolation_policy'
-  ) THEN
-    CREATE POLICY ai_knowledge_isolation_policy ON ai_knowledge_base
-      AS RESTRICTIVE
-      USING (agency_id = current_setting('app.current_agency_id', true)::uuid);
-  END IF;
-END $$;
+DROP POLICY IF EXISTS ai_knowledge_isolation_policy ON ai_knowledge_base;
+DROP POLICY IF EXISTS ai_knowledge_base_tenant_scope ON ai_knowledge_base;
+CREATE POLICY ai_knowledge_base_tenant_scope ON ai_knowledge_base
+  FOR ALL TO operza_app
+  USING (
+    agency_id = nullif(current_setting('app.agency_id', true), '')::uuid
+    AND (location_id IS NULL OR location_id = nullif(current_setting('app.location_id', true), '')::uuid)
+  )
+  WITH CHECK (
+    agency_id = nullif(current_setting('app.agency_id', true), '')::uuid
+    AND (location_id IS NULL OR location_id = nullif(current_setting('app.location_id', true), '')::uuid)
+  );
 
 -- 6. AI Copilot: Bot Personality & Directive Configurations
 CREATE TABLE IF NOT EXISTS ai_bot_configs (
@@ -170,16 +184,14 @@ CREATE TABLE IF NOT EXISTS ai_bot_configs (
 );
 
 ALTER TABLE ai_bot_configs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ai_bot_configs FORCE ROW LEVEL SECURITY;
 
-DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE tablename = 'ai_bot_configs' AND policyname = 'ai_bot_configs_isolation_policy'
-  ) THEN
-    CREATE POLICY ai_bot_configs_isolation_policy ON ai_bot_configs
-      AS RESTRICTIVE
-      USING (agency_id = current_setting('app.current_agency_id', true)::uuid);
-  END IF;
-END $$;
+DROP POLICY IF EXISTS ai_bot_configs_isolation_policy ON ai_bot_configs;
+DROP POLICY IF EXISTS ai_bot_configs_tenant_scope ON ai_bot_configs;
+CREATE POLICY ai_bot_configs_tenant_scope ON ai_bot_configs
+  FOR ALL TO operza_app
+  USING (agency_id = nullif(current_setting('app.agency_id', true), '')::uuid)
+  WITH CHECK (agency_id = nullif(current_setting('app.agency_id', true), '')::uuid);
 
 -- 7. Agency White-Label & Custom Branding
 CREATE TABLE IF NOT EXISTS agency_branding (
@@ -201,16 +213,14 @@ CREATE TABLE IF NOT EXISTS agency_branding (
 );
 
 ALTER TABLE agency_branding ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agency_branding FORCE ROW LEVEL SECURITY;
 
-DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE tablename = 'agency_branding' AND policyname = 'agency_branding_isolation_policy'
-  ) THEN
-    CREATE POLICY agency_branding_isolation_policy ON agency_branding
-      AS RESTRICTIVE
-      USING (agency_id = current_setting('app.current_agency_id', true)::uuid);
-  END IF;
-END $$;
+DROP POLICY IF EXISTS agency_branding_isolation_policy ON agency_branding;
+DROP POLICY IF EXISTS agency_branding_tenant_scope ON agency_branding;
+CREATE POLICY agency_branding_tenant_scope ON agency_branding
+  FOR ALL TO operza_app
+  USING (agency_id = nullif(current_setting('app.agency_id', true), '')::uuid)
+  WITH CHECK (agency_id = nullif(current_setting('app.agency_id', true), '')::uuid);
 
 -- 8. Global State Persistent Replicator
 CREATE TABLE IF NOT EXISTS operza_app_state (

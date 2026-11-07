@@ -8,7 +8,6 @@ export default function PlatformCourses() {
     SCHEMA_SOFTWARE_APPLICATION,
     buildBreadcrumbSchema([
       { name: 'Home', url: '/' },
-      { name: 'Platform', url: '/platform/crm' },
       { name: 'LMS Courses', url: '/platform/courses' },
     ]),
   ];
@@ -66,7 +65,7 @@ export default function PlatformCourses() {
               <span style={styles.featureBadge}>NATIVE CURRICULUM</span>
               <h2 style={styles.h2}>Deliver Seamless Onboarding &amp; Training</h2>
               <p style={styles.paragraph}>
-                Stop paying extra for third-party course tools like Teachable or Kajabi.
+                Stop paying extra for fragmented third-party course tools and standalone LMS platforms.
                 Operza embeds video courses and client training curricula directly into your agency workspace and client portal.
               </p>
               <ul style={styles.list}>

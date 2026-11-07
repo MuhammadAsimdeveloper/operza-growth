@@ -8,7 +8,6 @@ export default function PlatformConversations() {
     SCHEMA_SOFTWARE_APPLICATION,
     buildBreadcrumbSchema([
       { name: 'Home', url: '/' },
-      { name: 'Platform', url: '/platform/crm' },
       { name: 'Omnichannel Inbox', url: '/platform/conversations' },
     ]),
   ];

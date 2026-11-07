@@ -31,7 +31,7 @@ A package contains configuration, not provider credentials. Import does not publ
 
 ## Template library
 
-The existing local template research was reviewed for concepts that fit Operza's current node and safety model. A native webhook lead-validation template was added using a webhook trigger, an email-field condition, local tags, and follow-up tasks. It does not copy upstream n8n implementation code, execute imported JavaScript, or send to an external provider.
+The existing local template research was reviewed for concepts that fit Operza's current node and safety model. A native webhook lead-validation template was added using a webhook trigger, an email-field condition, local tags, and follow-up tasks. It does not copy external implementation code, execute untrusted JavaScript, or send to an external provider.
 
 ## Not yet implemented
 
@@ -42,7 +42,7 @@ These capabilities are intentionally not represented as live features yet:
 - General-purpose HTTP Request, arbitrary outbound webhook dispatch, or social/chat provider nodes.
 - SQLite/database connector nodes and split-in-batches processors.
 - Durable wait/delay queues, worker retries, and provider-enforced idempotency. Action-bound approvals and resume from a persisted `resuming` execution are implemented; multi-worker transactional resume and provider-level deduplication are still open.
-- Direct import of arbitrary n8n exports. The current package format is Operza-native.
+- Direct import of third-party formats. The package format is Operza-native.
 
 These require separate connector, sandbox, credential vault, policy, queue, and execution work. The workflow engine's existing Atlas approval and external-action governance remains the control layer for future capabilities.
 

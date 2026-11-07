@@ -59,7 +59,7 @@ test('workflow packages reject embedded URL credentials and unsupported node typ
 });
 
 test('workflow imports reject unknown formats and malformed branch structures', () => {
-  assert.throws(() => importWorkflowPackage({ format: 'n8n.workflow', version: 1 }), { code: 'PACKAGE_FORMAT' });
+  assert.throws(() => importWorkflowPackage({ format: 'legacy.foreign.workflow', version: 1 }), { code: 'PACKAGE_FORMAT' });
   const exported = exportWorkflowPackage(sampleWorkflow());
   exported.workflow.actions[0].yes = { node: 'not-an-array' };
   assert.throws(() => importWorkflowPackage(exported), { code: 'INVALID_BRANCH' });

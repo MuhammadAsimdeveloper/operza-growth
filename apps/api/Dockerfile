@@ -13,6 +13,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/api/package.json ./apps/api/
 COPY packages/db/package.json ./packages/db/
+COPY packages/platform-core/package.json ./packages/platform-core/
 COPY packages/shared/package.json ./packages/shared/
 COPY packages/workflow-engine/package.json ./packages/workflow-engine/
 

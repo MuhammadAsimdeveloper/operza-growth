@@ -57,7 +57,7 @@ Atlas is materially more modular and has a broad Node test suite. However, its a
 - Do not combine Atlas and Operza as two deployable apps inside one runtime.
 - Do not import Atlas's entire migration history or duplicate CRM, UI, account, queue and workflow domains into Operza.
 - Do not add a Git dependency on a private Atlas repository.
-- Do not claim full n8n/GoHighLevel parity or production readiness from package presence or documentation alone.
+- Do not claim complete market feature parity or production readiness from package presence or documentation alone.
 
 ## 3. First integrated slice: governed workflow actions
 

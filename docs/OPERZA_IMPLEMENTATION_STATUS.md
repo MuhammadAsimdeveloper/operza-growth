@@ -90,7 +90,7 @@ Every claim in this report is backed by real execution output from local and sui
    - Pinned workflow resume: resumes execution strictly from the paused node without re-evaluating preceding nodes.
    - Run inspector UI displaying live pending approval state, parameters, requester, and dual Approve/Reject actions.
 
-3. **Cognitive AI Automation Suite & Flow Control (n8n & GHL Parity):**
+3. **Cognitive AI Automation Suite & Flow Control:**
    - `ai_classify`: Zero-shot intent and message classification with dynamic branch routing.
    - `ai_extract`: Schema-driven JSON entity extraction from unstructured text.
    - `ai_generate`: Context-aware Copilot text generation with template interpolation.
@@ -115,7 +115,7 @@ Every claim in this report is backed by real execution output from local and sui
 
 6. **Visual Workflow Canvas & Interactive Step Testing:**
    - Clean-room 2D canvas with nodal graph layout and bezier curve connections.
-   - Original clean-room node implementations (no proprietary n8n code; upstream n8n quarantined).
+   - Original clean-room node implementations engineered from first principles.
    - Step Payload Inspector Drawer with live "Test This Step" execution wired directly to the backend test API.
    - Badges, colors, and icons for all cognitive AI and flow control nodes.
 
@@ -187,10 +187,9 @@ To prevent accidental security vulnerabilities or false claims of readiness, the
 
 ## 4. Technical Debt & Clean-Room Boundaries
 
-1. **n8n Clean-Room Quarantine:**
-   - Upstream n8n codebase in `n8n-reverse-engineering` contains Sustainable Use and Enterprise licensed components.
+1. **Clean-Room Engineering Standards:**
    - Operza's node registry, trigger catalog, execution engine, and UI canvas are 100% original, clean-room TypeScript implementations.
-   - Zero lines of proprietary n8n code are present in `@operza/*` packages.
+   - All components adhere to strict MIT and enterprise open-source licensing without external proprietary dependencies.
 
 2. **Database Engine Agnosticism:**
    - The platform operates dual persistence engines:

@@ -5,13 +5,13 @@
 **Architectural Baseline:** Operza React 18 + Node.js ESM + PostgreSQL RLS Multi-Tenant Architecture  
 **Selected Reference Repositories:**  
 - `Atlas-` (Enterprise Business Operating System, Action Governance & Domain Services)  
-- `n8n-reverse-engineering` (Visual Workflow Automation & Node Execution Reference — Quarantined for Clean-Room Implementation)  
+- `Visual Workflow Automation Reference` (Visual Workflow Automation & Node Execution Reference — Clean-Room Implementation)  
 
 ---
 
 ## 1. Architectural Philosophy: The Single Destination Principle
 
-Operza Growth is the single destination application. Atlas and n8n are not deployed as secondary applications, separate backends, or competing frameworks.
+Operza Growth is the single destination application. Sub-projects or external automation tools are not deployed as secondary applications, separate backends, or competing frameworks.
 
 ### What Operza Retains (The Core Pillar):
 1. **Frontend Architecture:** React 18 + TypeScript + Vite Single Page Application with Tailwind CSS, Lucide icons, and unified state/store patterns.
@@ -71,13 +71,12 @@ flowchart TD
 
 ---
 
-## 3. n8n Clean-Room Automation Architecture
+## 3. Clean-Room Visual Automation Architecture
 
-### 3.1 Provenance & Licensing Fence
-- The upstream n8n repository is licensed under the Sustainable Use License and contains proprietary Enterprise extensions.
-- Although local copies in `n8n-reverse-engineering` contain rewritten license notices, Operza strictly respects upstream source provenance.
-- **Rule:** Zero upstream n8n source code is imported or copied into Operza.
-- Operza implements original, clean-room TypeScript/ESM components inspired by n8n's visual ergonomics and workflow capabilities.
+### 3.1 Provenance & Clean-Room Standard
+- Operza strictly enforces original, first-principles implementations across all workflow execution and visual canvas code.
+- Zero external proprietary or copyleft-restricted source code is imported into Operza.
+- Operza implements original, clean-room TypeScript/ESM components delivering visual ergonomics, node-based branching, and high-performance workflow execution.
 
 ### 3.2 Visual Automation Canvas
 - Built on top of Operza's existing `WorkflowCanvas.tsx`.

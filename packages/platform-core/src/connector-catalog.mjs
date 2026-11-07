@@ -217,15 +217,15 @@ export const CONNECTOR_CATALOG = Object.freeze([
     documentationUrl: 'https://docs.operza.io/integrations/intercom'
   },
   {
-    id: 'activecampaign',
-    name: 'ActiveCampaign',
+    id: 'sendgrid',
+    name: 'SendGrid Email Delivery',
     category: 'marketing',
     authType: 'api_key',
-    icon: 'target',
-    description: 'Manage email marketing lists, trigger automated journeys, and add deals.',
-    supportedTriggers: ['contact_added', 'deal_stage_changed'],
-    supportedActions: ['create_contact', 'add_tag', 'add_to_automation'],
-    documentationUrl: 'https://docs.operza.io/integrations/activecampaign'
+    icon: 'mail',
+    description: 'Deliver transactional emails, sync marketing subscriber lists, and track delivery events.',
+    supportedTriggers: ['email_delivered', 'link_clicked', 'unsubscribe'],
+    supportedActions: ['send_transactional_email', 'upsert_contact', 'add_to_list'],
+    documentationUrl: 'https://docs.operza.io/integrations/sendgrid'
   },
   {
     id: 'twilio',

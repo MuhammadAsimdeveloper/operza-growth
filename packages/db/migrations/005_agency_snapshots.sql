@@ -17,13 +17,11 @@ CREATE TABLE IF NOT EXISTS agency_snapshots (
 CREATE INDEX IF NOT EXISTS agency_snapshots_agency_idx ON agency_snapshots(agency_id, created_at DESC);
 
 ALTER TABLE agency_snapshots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE agency_snapshots FORCE ROW LEVEL SECURITY;
 
-DO $$ BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_policies WHERE tablename = 'agency_snapshots' AND policyname = 'agency_snapshots_isolation_policy'
-  ) THEN
-    CREATE POLICY agency_snapshots_isolation_policy ON agency_snapshots
-      AS RESTRICTIVE
-      USING (agency_id = current_setting('app.current_agency_id', true)::uuid);
-  END IF;
-END $$;
+DROP POLICY IF EXISTS agency_snapshots_isolation_policy ON agency_snapshots;
+DROP POLICY IF EXISTS agency_snapshots_tenant_scope ON agency_snapshots;
+CREATE POLICY agency_snapshots_tenant_scope ON agency_snapshots
+  FOR ALL TO operza_app
+  USING (agency_id = nullif(current_setting('app.agency_id', true), '')::uuid)
+  WITH CHECK (agency_id = nullif(current_setting('app.agency_id', true), '')::uuid);

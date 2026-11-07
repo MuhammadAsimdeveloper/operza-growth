@@ -34,6 +34,45 @@ services:
       timeout: 5s
       retries: 5
 
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: operza-migrate
+    restart: "no"
+    command: ["node", "packages/db/scripts/migrate.mjs"]
+    healthcheck:
+      disable: true
+    environment:
+      - DATABASE_URL=postgresql://operza_migrator:operza_migrator_secret@postgres:5432/operza_db
+      - MIGRATION_DATABASE_URL=postgresql://operza_migrator:operza_migrator_secret@postgres:5432/operza_db
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: operza-worker
+    restart: unless-stopped
+    command: ["node", "apps/api/worker.mjs"]
+    healthcheck:
+      disable: true
+    environment:
+      - NODE_ENV=production
+      - WORKER_DATABASE_URL=postgresql://operza_worker:operza_worker_secret@postgres:5432/operza_db
+      - WORKFLOW_JOB_MODULE=packages/platform-core/src/trusted-handlers.mjs
+      - WORKER_ID=operza-durable-worker-1
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
   api:
     build:
       context: .
@@ -52,6 +91,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 

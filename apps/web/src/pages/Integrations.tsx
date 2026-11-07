@@ -52,7 +52,7 @@ const UNIVERSAL_CONNECTORS = [
   { id: 'twilio', name: 'Twilio', category: 'Communications', auth: 'API Key', triggers: ['Incoming SMS', 'Incoming Call'], actions: ['Send SMS', 'Make Call'] },
   { id: 'zoom', name: 'Zoom', category: 'Communications', auth: 'OAuth 2.0', triggers: ['Meeting Created', 'Registrant Added'], actions: ['Create Meeting', 'Add Meeting Registrant'] },
   { id: 'mailchimp', name: 'Mailchimp', category: 'Marketing', auth: 'API Key', triggers: ['New Subscriber', 'Unsubscribe'], actions: ['Add/Update Subscriber', 'Add Tag', 'Send Campaign'] },
-  { id: 'activecampaign', name: 'ActiveCampaign', category: 'Marketing', auth: 'API Key', triggers: ['Contact Added', 'Tag Added'], actions: ['Create/Update Contact', 'Add Contact to List'] },
+  { id: 'sendgrid', name: 'SendGrid', category: 'Marketing', auth: 'API Key', triggers: ['Email Delivered', 'Email Opened', 'Link Clicked'], actions: ['Send Transactional Email', 'Add Contact to List', 'Send Marketing Campaign'] },
   { id: 'clickup', name: 'ClickUp', category: 'Productivity', auth: 'OAuth 2.0', triggers: ['Task Created', 'Task Status Updated'], actions: ['Create Task', 'Update Task Status'] },
   { id: 'asana', name: 'Asana', category: 'Productivity', auth: 'OAuth 2.0', triggers: ['Task Added to Project'], actions: ['Create Task', 'Update Task'] },
   { id: 'trello', name: 'Trello', category: 'Productivity', auth: 'API Key', triggers: ['New Card', 'Card Moved to List'], actions: ['Create Card', 'Move Card'] },

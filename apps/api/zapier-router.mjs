@@ -13,17 +13,84 @@
 
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 
-// SSRF Protection: Deny loopback, link-local, and private cloud metadata IPs
-const PRIVATE_IP_REGEX = /^(https?:\/\/)?(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|169\.254\.\d+\.\d+)(:\d+)?(\/|$)/i;
-
 /**
  * Validates whether a target webhook URL is safe for outbound dispatch.
+ * Enforces HTTPS, strips userinfo credentials, and blocks RFC 1918 private subnets,
+ * loopback, link-local, cloud metadata, and DNS rebinding wildcard domains.
  * @param {string} url
  * @returns {boolean}
  */
 export function isSafeWebhookUrl(url) {
   if (typeof url !== 'string' || !url.startsWith('https://')) return false;
-  return !PRIVATE_IP_REGEX.test(url);
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return false;
+    // Reject userinfo (e.g. credentials embedded in URL)
+    if (parsed.username || parsed.password) return false;
+
+    const hostname = parsed.hostname.toLowerCase().trim();
+    if (!hostname) return false;
+
+    // Reject loopback and unroutable / internal hostnames
+    if (
+      hostname === 'localhost' ||
+      hostname === '::1' ||
+      hostname === '[::1]' ||
+      hostname === '0.0.0.0' ||
+      hostname.endsWith('.local') ||
+      hostname.endsWith('.localhost') ||
+      hostname.endsWith('.internal') ||
+      hostname.endsWith('.nip.io') ||
+      hostname.endsWith('.localtest.me') ||
+      hostname === 'metadata.google.internal' ||
+      hostname === 'instance-data'
+    ) {
+      return false;
+    }
+
+    // Check for IPv4 addresses and private/loopback/link-local CIDR blocks
+    const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (ipv4Match) {
+      const o1 = Number(ipv4Match[1]);
+      const o2 = Number(ipv4Match[2]);
+      const o3 = Number(ipv4Match[3]);
+      const o4 = Number(ipv4Match[4]);
+      if (o1 > 255 || o2 > 255 || o3 > 255 || o4 > 255) return false;
+      // Loopback 127.0.0.0/8
+      if (o1 === 127) return false;
+      // Current network 0.0.0.0/8
+      if (o1 === 0) return false;
+      // Private 10.0.0.0/8
+      if (o1 === 10) return false;
+      // Private 172.16.0.0/12 (172.16 - 172.31)
+      if (o1 === 172 && o2 >= 16 && o2 <= 31) return false;
+      // Private 192.168.0.0/16
+      if (o1 === 192 && o2 === 168) return false;
+      // Link-local / Cloud metadata 169.254.0.0/16
+      if (o1 === 169 && o2 === 254) return false;
+      // Broadcast / Multicast
+      if (o1 >= 224) return false;
+    }
+
+    // Check for IPv6 addresses
+    if (hostname.startsWith('[') || hostname.includes(':')) {
+      const cleanIpv6 = hostname.replace(/^\[|\]$/g, '').toLowerCase();
+      if (
+        cleanIpv6 === '::1' ||
+        cleanIpv6 === '::' ||
+        cleanIpv6.startsWith('fe80:') ||
+        cleanIpv6.startsWith('fc') ||
+        cleanIpv6.startsWith('fd') ||
+        cleanIpv6.includes('::ffff:127.')
+      ) {
+        return false;
+      }
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

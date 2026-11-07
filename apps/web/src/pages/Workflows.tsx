@@ -133,11 +133,11 @@ function unitName(unit: WorkflowTrigger['unit']): string {
 function triggerText(trigger: WorkflowTrigger): string {
   switch (trigger.kind) {
     case 'form':
-      return `Form submitted Â· ${trigger.detail || 'any form'}`;
+      return `Form submitted · ${trigger.detail || 'any form'}`;
     case 'tag':
-      return `Tag added Â· ${trigger.detail || 'any tag'}`;
+      return `Tag added · ${trigger.detail || 'any tag'}`;
     case 'webhook':
-      return `Inbound webhook Â· /${(trigger.detail ?? '').replace(/^\/+/, '') || 'hook'}`;
+      return `Inbound webhook · /${(trigger.detail ?? '').replace(/^\/+/, '') || 'hook'}`;
     case 'schedule': {
       const every = trigger.every ?? 1;
       const unit = unitName(trigger.unit);

@@ -157,6 +157,20 @@ export function MarketingLayout() {
                       <div style={styles.dropdownDesc}>Video curriculum &amp; certificates</div>
                     </div>
                   </Link>
+
+                  <Link
+                    to="/platform/reporting"
+                    style={styles.dropdownItem}
+                    onClick={() => setPlatformDropdown(false)}
+                  >
+                    <div style={styles.dropdownIcon}>
+                      <Icon name="chart" size={16} />
+                    </div>
+                    <div>
+                      <div style={styles.dropdownTitle}>Agency Analytics</div>
+                      <div style={styles.dropdownDesc}>Attribution, deal velocity &amp; KPI audits</div>
+                    </div>
+                  </Link>
                 </div>
               )}
             </div>

@@ -121,7 +121,7 @@ export class MultiAgentOrchestrator {
       } else if (agent.id === AGENT_ROLES.AUTOMATION) {
         if (lower.includes('generate workflow') || lower.includes('build workflow') || lower.includes('create workflow') || lower.includes('build automation') || lower.includes('generate automation')) {
           const nameMatch = message.match(/(?:workflow|automation)(?:\s+(?:named|called|for))?\s+["']?([^"'\n]+?)["']?$/i);
-          const wfName = nameMatch ? nameMatch[1].trim() : 'AI Generated Growth Workflow';
+          const wfName = nameMatch ? nameMatch[1].trim() : 'Automated Multi-Touch Customer Journey';
 
           const generatedNodes = [
             {

@@ -77,7 +77,7 @@ Platform Architecture & Navigation Knowledge Base:
    - Custom Branding (/branding): Complete white-label agency portal with custom sub-domains, logos, color palettes, and login branding.
 
 9. INTEGRATIONS & DEVELOPERS (/integrations, /developers):
-   - App Marketplace: Zapier Platform (22+ pre-configured app categories: Slack, Gmail, Google Sheets, HubSpot, Stripe), Resend, Twilio, Stripe.
+   - App Marketplace: Zapier Platform (22+ pre-configured app categories: Slack, Gmail, Google Sheets, Enterprise CRM, Stripe), Resend, Twilio, Stripe.
    - Developer Hub: API keys, signed REST hooks, outbox event streaming, KMS encrypted secret vault.
    - Consent Ledger (/consent-ledger): GDPR/TCPA proof references and opt-in/opt-out audit trail.
    - Plan & Usage (/plan-usage): Usage-based metering for monthly workflow runs, AI tokens, and telephony.

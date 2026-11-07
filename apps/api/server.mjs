@@ -1351,7 +1351,7 @@ async function executeWorkflowInstance({
     execution.finishedAt = new Date().toISOString();
   } else if (execution.status === 'failed') {
     execution.finishedAt = new Date().toISOString();
-    // Dispatch Error Trigger Workflows (n8n Parity: Automated Error Boundary)
+    // Dispatch Error Trigger Workflows (Automated Resilient Error Boundary)
     if (triggerType !== 'workflow_error') {
       const errorFlows = (state.records.workflows || []).filter(
         w => w.agencyId === agencyId && w.status === 'published' &&
@@ -4551,13 +4551,26 @@ const server = createServer(async (req, res) => {
       const proposalId = pathname.split('/')[4];
       let proposal;
       if (platformRepository) {
-        proposal = await platformRepository.decideCopilotProposal({
-          tenantId: agency.id,
-          locationId: activeLocation.id,
-          proposalId,
-          actorId: actor.user.id,
-          decision: 'approved'
-        });
+        try {
+          proposal = await platformRepository.decideCopilotProposal({
+            tenantId: agency.id,
+            locationId: activeLocation.id,
+            proposalId,
+            actorId: actor.user.id,
+            decision: 'approved'
+          });
+        } catch (err) {
+          if (err.code === 'SELF_APPROVAL') {
+            return sendJson(res, 403, { error: err.message, code: 'SELF_APPROVAL' });
+          }
+          if (err.code === 'NOT_FOUND') {
+            return sendJson(res, 404, { error: 'Copilot proposal not found' });
+          }
+          if (err.code === 'ALREADY_DECIDED') {
+            return sendJson(res, 409, { error: 'Proposal is no longer pending review' });
+          }
+          throw err;
+        }
         if (!proposal) return sendJson(res, 409, { error: 'Proposal is missing or is no longer pending review' });
       } else {
         proposal = (state.copilotProposals || []).find(
@@ -4595,13 +4608,23 @@ const server = createServer(async (req, res) => {
       const proposalId = pathname.split('/')[4];
       let proposal;
       if (platformRepository) {
-        proposal = await platformRepository.decideCopilotProposal({
-          tenantId: agency.id,
-          locationId: activeLocation.id,
-          proposalId,
-          actorId: actor.user.id,
-          decision: 'rejected'
-        });
+        try {
+          proposal = await platformRepository.decideCopilotProposal({
+            tenantId: agency.id,
+            locationId: activeLocation.id,
+            proposalId,
+            actorId: actor.user.id,
+            decision: 'rejected'
+          });
+        } catch (err) {
+          if (err.code === 'NOT_FOUND') {
+            return sendJson(res, 404, { error: 'Copilot proposal not found' });
+          }
+          if (err.code === 'ALREADY_DECIDED') {
+            return sendJson(res, 409, { error: 'Proposal is no longer pending review' });
+          }
+          throw err;
+        }
         if (!proposal) return sendJson(res, 409, { error: 'Proposal is missing or is no longer pending review' });
       } else {
         proposal = (state.copilotProposals || []).find(
@@ -4689,7 +4712,7 @@ const server = createServer(async (req, res) => {
             id: randomUUID(),
             agencyId: agency.id,
             locationId: activeLocation.id,
-            name: params.name || 'AI Generated Growth Workflow',
+            name: params.name || 'Automated Growth Journey',
             status: params.status || 'draft',
             triggerType: params.triggerType || 'tag',
             triggerConfig: params.triggerConfig || { tag: 'inbound-prospect' },
@@ -4891,7 +4914,8 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, {
         success: true,
         proposal: result.proposal,
-        receipt: result.receipt
+        receipt: sanitizedReceipt,
+        ...(result.receipt?.result?.secretToken ? { credential: { secretToken: result.receipt.result.secretToken } } : {})
       });
     }
 
@@ -5612,7 +5636,9 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' && pathname.startsWith('/api/websites/') && pathname.endsWith('/publish')) {
       const siteId = pathname.replace('/api/websites/', '').replace('/publish', '').trim();
       state.records.websites = state.records.websites || [];
-      const site = state.records.websites.find(w => w.id === siteId && (w.agencyId === agency.id || !w.agencyId));
+      const site = state.records.websites.find(
+        w => w.id === siteId && w.agencyId === agency.id && (!w.locationId || !activeLocation || w.locationId === activeLocation.id)
+      );
       if (!site) return sendJson(res, 404, { error: 'Website not found' });
       site.published = !site.published;
       site.status = site.published ? 'published' : 'draft';
@@ -5628,7 +5654,9 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' && pathname.startsWith('/api/websites/') && pathname.endsWith('/pages')) {
       const siteId = pathname.replace('/api/websites/', '').replace('/pages', '').trim();
       state.records.websites = state.records.websites || [];
-      const site = state.records.websites.find(w => w.id === siteId && (w.agencyId === agency.id || !w.agencyId));
+      const site = state.records.websites.find(
+        w => w.id === siteId && w.agencyId === agency.id && (!w.locationId || !activeLocation || w.locationId === activeLocation.id)
+      );
       if (!site) return sendJson(res, 404, { error: 'Website not found' });
       const body = await readBody(req);
       const newPage = {
@@ -5655,7 +5683,9 @@ const server = createServer(async (req, res) => {
     if (method === 'PUT' && pathname.startsWith('/api/websites/') && pathname.endsWith('/pages/reorder')) {
       const siteId = pathname.replace('/api/websites/', '').replace('/pages/reorder', '').trim();
       state.records.websites = state.records.websites || [];
-      const site = state.records.websites.find(w => w.id === siteId && (w.agencyId === agency.id || !w.agencyId));
+      const site = state.records.websites.find(
+        w => w.id === siteId && w.agencyId === agency.id && (!w.locationId || !activeLocation || w.locationId === activeLocation.id)
+      );
       if (!site) return sendJson(res, 404, { error: 'Website not found' });
       const body = await readBody(req);
       if (Array.isArray(body.pages)) {
@@ -5677,7 +5707,9 @@ const server = createServer(async (req, res) => {
       if (match) {
         const [, siteId, pageId] = match;
         state.records.websites = state.records.websites || [];
-        const site = state.records.websites.find(w => w.id === siteId && (w.agencyId === agency.id || !w.agencyId));
+        const site = state.records.websites.find(
+        w => w.id === siteId && w.agencyId === agency.id && (!w.locationId || !activeLocation || w.locationId === activeLocation.id)
+      );
         if (!site) return sendJson(res, 404, { error: 'Website not found' });
         site.pages = (site.pages || []).filter(p => p.id !== pageId);
         site.updatedAt = new Date().toISOString();
@@ -7045,7 +7077,7 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 201, { success: true, execution: pubExec, run: pubExec });
     }
 
-    // POST /api/workflows/:id/nodes/:nodeId/test — interactive single-node step test (n8n-style)
+    // POST /api/workflows/:id/nodes/:nodeId/test — interactive single-node step test in sandboxed execution
     if (method === 'POST' && pathname.startsWith('/api/workflows/') && pathname.endsWith('/test') && pathname.includes('/nodes/')) {
       const parts = pathname.replace('/api/workflows/', '').split('/');
       const workflowId = parts[0];

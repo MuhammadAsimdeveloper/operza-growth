@@ -10,7 +10,7 @@ export function getPool() {
   if (!pool) {
     pool = new Pool({
       connectionString: process.env.DATABASE_URL,
-      max: Number(process.env.PG_POOL_MAX || 10),
+      max: Number(process.env.PG_POOL_MAX || process.env.PG_MAX_POOL || 10),
       connectionTimeoutMillis: 5000,
       idleTimeoutMillis: 30_000,
       ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: true } : undefined
