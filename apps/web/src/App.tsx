@@ -80,6 +80,7 @@ const Branding = lazy(() => import('./pages/Branding'));
 const ConsentLedger = lazy(() => import('./pages/ConsentLedger'));
 const CopilotInbox = lazy(() => import('./pages/CopilotInbox'));
 const NotificationCenter = lazy(() => import('./pages/NotificationCenter'));
+const AppsDirectory = lazy(() => import('./pages/AppsDirectory'));
 const PlanUsage = lazy(() => import('./pages/PlanUsage'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
@@ -109,7 +110,11 @@ function PageLoadingFallback() {
 }
 
 export default function App() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return <PageLoadingFallback />;
+  }
 
   return (
     <Suspense fallback={<PageLoadingFallback />}>
@@ -197,6 +202,8 @@ export default function App() {
           <Route path="command" element={<CommandCenter />} />
           <Route path="notifications" element={<NotificationCenter />} />
           <Route path="notification-center" element={<NotificationCenter />} />
+          <Route path="apps" element={<AppsDirectory />} />
+          <Route path="directory" element={<AppsDirectory />} />
           <Route path="settings" element={<Settings />} />
           <Route path="sub-accounts" element={<SubAccounts />} />
           <Route path="snapshots" element={<Snapshots />} />

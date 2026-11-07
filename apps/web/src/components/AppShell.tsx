@@ -6,6 +6,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from './Icon';
 import { Avatar } from './ui';
 import { Modal } from './Modal';
+import { AppLauncherModal } from './AppLauncherModal';
 import { useStore } from '../lib/store';
 import { relative } from '../lib/format';
 
@@ -14,130 +15,226 @@ interface NavEntry {
   label: string;
   icon: string;
   end?: boolean;
-  badge?: number;
+  badge?: number | string;
 }
 
-function Sidebar({ onNavigate }: { onNavigate: () => void }) {
+interface PillarGroup {
+  id: string;
+  label: string;
+  icon: string;
+  items: NavEntry[];
+}
+
+function Sidebar({
+  onNavigate,
+  onOpenAppsLauncher,
+}: {
+  onNavigate: () => void;
+  onOpenAppsLauncher: () => void;
+}) {
   const { state } = useStore();
+  const location = useLocation();
   const { user, agency, locations, activeLocation, switchLocation } = useAuth();
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
   const [menuFilter, setMenuFilter] = useState('');
   const unreadConversations = state.conversations.reduce((sum, c) => sum + c.unread, 0);
   const unreadNotifications = state.notifications.filter((n) => !n.read).length;
 
-  const groups: Array<{ label?: string; items: NavEntry[] }> = [
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (accountMenuRef.current && !accountMenuRef.current.contains(e.target as Node)) {
+        setAccountMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setAccountMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [accountMenuOpen]);
+
+  // ─── Pinned Primary Workhorses (Always 1-Click Visible at the Top) ───
+  const primaryItems: NavEntry[] = [
+    { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
+    { to: '/command-center', label: 'Command Center', icon: 'zap' },
+    { to: '/notifications', label: 'Notification Center', icon: 'bell', badge: unreadNotifications },
+    { to: '/conversations', label: 'Conversations & Inbox', icon: 'message', badge: unreadConversations },
+    { to: '/contacts', label: 'Contacts & CRM', icon: 'users' },
+    { to: '/workflows', label: 'Visual Workflows (n8n)', icon: 'zap' },
+    { to: '/apps', label: 'All Apps Directory', icon: 'grid', badge: '50+' },
+  ];
+
+  // ─── Functional Pillar Accordions (50+ Tools Cleanly Categorized) ───
+  const pillars: PillarGroup[] = [
     {
-      label: 'Main Workspace',
+      id: 'crm',
+      label: 'CRM & Pipelines',
+      icon: 'users',
       items: [
-        { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
-        { to: '/command-center', label: 'Command Center', icon: 'zap' },
-        { to: '/notifications', label: 'Notification Center', icon: 'bell', badge: unreadNotifications },
-        { to: '/conversations', label: 'Conversations', icon: 'message', badge: unreadConversations },
-        { to: '/phone', label: 'Phone System', icon: 'phone' },
-        { to: '/calendars', label: 'Calendars', icon: 'calendar' },
-        { to: '/contacts', label: 'Contacts', icon: 'users' },
-        { to: '/tasks', label: 'Tasks', icon: 'task' },
-        { to: '/opportunities', label: 'Opportunities', icon: 'kanban' },
-        { to: '/reputation', label: 'Reputation', icon: 'star' },
-        { to: '/smart-lists', label: 'Smart Lists', icon: 'sliders' },
+        { to: '/phone', label: 'Phone System & Softphone', icon: 'phone' },
+        { to: '/calendars', label: 'Calendars & Scheduling', icon: 'calendar' },
+        { to: '/tasks', label: 'Tasks & Follow-ups', icon: 'task' },
+        { to: '/opportunities', label: 'Opportunities & Kanban', icon: 'kanban' },
+        { to: '/reputation', label: 'Reputation & Reviews', icon: 'star' },
+        { to: '/smart-lists', label: 'Smart Lists & Segments', icon: 'sliders' },
       ],
     },
     {
+      id: 'marketing',
       label: 'Marketing & Outreach',
+      icon: 'megaphone',
       items: [
-        { to: '/campaigns', label: 'Campaigns', icon: 'megaphone' },
-        { to: '/social', label: 'Social Planner', icon: 'share' },
-        { to: '/prospecting', label: 'Prospecting', icon: 'target' },
+        { to: '/campaigns', label: 'Marketing Campaigns', icon: 'megaphone' },
+        { to: '/social', label: 'Social Media Planner', icon: 'share' },
+        { to: '/prospecting', label: 'B2B Prospecting & Scoring', icon: 'target' },
         { to: '/templates', label: 'Email Templates', icon: 'mail' },
         { to: '/links', label: 'Trigger Links', icon: 'link' },
-        { to: '/affiliates', label: 'Affiliates', icon: 'users' },
-        { to: '/media', label: 'Media Library', icon: 'image' },
+        { to: '/affiliates', label: 'Affiliates & Referrals', icon: 'users' },
+        { to: '/media', label: 'Media Asset Library', icon: 'image' },
         { to: '/reporting', label: 'Reporting & Analytics', icon: 'chart' },
       ],
     },
     {
-      label: 'Sites & Funnels',
+      id: 'sites',
+      label: 'Sites, Funnels & Portals',
+      icon: 'globe',
       items: [
-        { to: '/funnels', label: 'Funnels', icon: 'funnel' },
-        { to: '/websites', label: 'Websites', icon: 'globe' },
+        { to: '/funnels', label: 'Sales Funnels', icon: 'funnel' },
+        { to: '/websites', label: 'Websites Builder', icon: 'globe' },
         { to: '/forms', label: 'Forms & Surveys', icon: 'clipboard' },
         { to: '/blogs', label: 'Blogs & Articles', icon: 'file' },
         { to: '/qr-codes', label: 'QR Code Engine', icon: 'qr' },
-        { to: '/portal', label: 'Client Portal', icon: 'globe' },
+        { to: '/portal', label: 'Client Portal Hub', icon: 'globe' },
       ],
     },
     {
+      id: 'automation',
       label: 'Automation & AI',
+      icon: 'zap',
       items: [
-        { to: '/workflows', label: 'Visual Workflows (n8n)', icon: 'zap' },
         { to: '/copilot-inbox', label: 'Copilot Proposals', icon: 'check-circle' },
-        { to: '/ai-trainer', label: 'AI Bot Training', icon: 'sparkles' },
+        { to: '/ai-trainer', label: 'AI Bot Training & RAG', icon: 'sparkles' },
       ],
     },
     {
-      label: 'Commerce & Billing',
+      id: 'commerce',
+      label: 'Commerce, Billing & Legal',
+      icon: 'wallet',
       items: [
         { to: '/store', label: 'Digital Store', icon: 'store' },
-        { to: '/payments', label: 'Payments', icon: 'wallet' },
+        { to: '/payments', label: 'Payments & Transactions', icon: 'wallet' },
         { to: '/products', label: 'Products & Pricing', icon: 'tag' },
         { to: '/payment-links', label: 'Payment Links', icon: 'link' },
         { to: '/coupons', label: 'Coupons & Promos', icon: 'tag' },
         { to: '/orders', label: 'Customer Orders', icon: 'clipboard' },
-        { to: '/subscriptions', label: 'Subscriptions', icon: 'repeat' },
+        { to: '/subscriptions', label: 'Subscriptions & MRR', icon: 'repeat' },
         { to: '/documents', label: 'Contracts & Agreements', icon: 'file' },
       ],
     },
     {
-      label: 'Client Experience',
+      id: 'experience',
+      label: 'Client Experience & LMS',
+      icon: 'book',
       items: [
         { to: '/memberships', label: 'Memberships & Courses', icon: 'book' },
-        { to: '/snippets', label: 'Quick Snippets', icon: 'message' },
+        { to: '/snippets', label: 'Quick Message Snippets', icon: 'message' },
       ],
     },
     {
+      id: 'agency',
       label: 'Agency & White-Label',
+      icon: 'building',
       items: [
-        { to: '/sub-accounts', label: 'Sub-accounts', icon: 'building' },
+        { to: '/sub-accounts', label: 'Sub-accounts & Locations', icon: 'building' },
         { to: '/snapshots', label: 'Account Snapshots', icon: 'refresh' },
-        { to: '/branding', label: 'Custom Branding', icon: 'sliders' },
+        { to: '/branding', label: 'Custom White-Label Branding', icon: 'sliders' },
       ],
     },
     {
+      id: 'governance',
       label: 'Platform & Governance',
+      icon: 'shield',
       items: [
         { to: '/integrations', label: 'App Marketplace', icon: 'plug' },
-        { to: '/consent-ledger', label: 'Consent Ledger', icon: 'shield' },
-        { to: '/plan-usage', label: 'Plan & Usage', icon: 'chart' },
-        { to: '/developers', label: 'Developer Hub', icon: 'webhook' },
+        { to: '/consent-ledger', label: 'Consent Ledger (TCPA)', icon: 'shield' },
+        { to: '/plan-usage', label: 'Plan & Usage Meters', icon: 'chart' },
+        { to: '/developers', label: 'Developer Hub & Webhooks', icon: 'webhook' },
         { to: '/custom-values', label: 'Custom Values', icon: 'sliders' },
         { to: '/audit-log', label: 'Security & Audit Log', icon: 'clipboard' },
         { to: '/settings', label: 'Workspace Settings', icon: 'settings' },
       ],
     },
     {
+      id: 'public',
       label: 'Public & Showcase',
+      icon: 'tag',
       items: [
-        { to: '/home', label: 'Landing Page', icon: 'globe' },
-        { to: '/pricing', label: 'Pricing & Plans', icon: 'tag' },
-        { to: '/docs', label: 'Documentation', icon: 'clipboard' },
-        { to: '/platform/crm', label: 'Platform Architecture', icon: 'zap' },
+        { to: '/home', label: 'Landing Page & 3D Showcase', icon: 'globe' },
+        { to: '/pricing', label: 'Pricing & Plans Matrix', icon: 'tag' },
+        { to: '/docs', label: 'Documentation & Guides', icon: 'clipboard' },
+        { to: '/platform/crm', label: 'Platform Architecture Tour', icon: 'zap' },
       ],
     },
   ];
 
-  const filteredGroups = useMemo(() => {
-    if (!menuFilter.trim()) return groups;
-    const q = menuFilter.toLowerCase().trim();
+  // Collapsible Accordion State
+  const [expandedPillars, setExpandedPillars] = useState<Record<string, boolean>>(() => {
+    const init: Record<string, boolean> = {};
+    for (const p of pillars) {
+      if (p.items.some((i) => i.to === location.pathname || location.pathname.startsWith(i.to + '/'))) {
+        init[p.id] = true;
+      }
+    }
+    return init;
+  });
 
-    return groups
-      .map((group) => ({
-        ...group,
-        items: group.items.filter(
-          (item) => item.label.toLowerCase().includes(q) || item.to.toLowerCase().includes(q)
-        ),
+  // Auto-expand the pillar matching active location
+  useEffect(() => {
+    for (const p of pillars) {
+      if (p.items.some((i) => i.to === location.pathname || location.pathname.startsWith(i.to + '/'))) {
+        setExpandedPillars((prev) => ({ ...prev, [p.id]: true }));
+      }
+    }
+  }, [location.pathname]);
+
+  const togglePillar = (id: string) => {
+    setExpandedPillars((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const toggleAllPillars = () => {
+    const anyCollapsed = pillars.some((p) => !expandedPillars[p.id]);
+    const next: Record<string, boolean> = {};
+    for (const p of pillars) {
+      next[p.id] = anyCollapsed;
+    }
+    setExpandedPillars(next);
+  };
+
+  const allExpanded = useMemo(() => pillars.every((p) => expandedPillars[p.id]), [pillars, expandedPillars]);
+
+  // Search Filter matching across both primary and pillar items
+  const filteredPrimary = useMemo(() => {
+    if (!menuFilter.trim()) return primaryItems;
+    const q = menuFilter.toLowerCase().trim();
+    return primaryItems.filter((i) => i.label.toLowerCase().includes(q) || i.to.toLowerCase().includes(q));
+  }, [primaryItems, menuFilter]);
+
+  const filteredPillars = useMemo(() => {
+    if (!menuFilter.trim()) return pillars;
+    const q = menuFilter.toLowerCase().trim();
+    return pillars
+      .map((pillar) => ({
+        ...pillar,
+        items: pillar.items.filter((item) => item.label.toLowerCase().includes(q) || item.to.toLowerCase().includes(q)),
       }))
-      .filter((group) => group.items.length > 0);
-  }, [groups, menuFilter]);
+      .filter((pillar) => pillar.items.length > 0);
+  }, [pillars, menuFilter]);
 
   return (
     <aside className="sidebar">
@@ -152,10 +249,12 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
         </button>
       </div>
 
-      <div style={{ position: 'relative' }}>
+      <div style={{ position: 'relative' }} ref={accountMenuRef}>
         <button
           className="sidebar__account"
           type="button"
+          aria-expanded={accountMenuOpen}
+          aria-haspopup="menu"
           onClick={() => setAccountMenuOpen((v) => !v)}
           title="Switch active sub-account / location"
         >
@@ -252,32 +351,194 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
       </div>
 
       <nav className="sidebar__nav">
-        {filteredGroups.length === 0 ? (
-          <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 12, color: 'var(--text-3)' }}>
-            No pages match "{menuFilter}"
-          </div>
-        ) : (
-          filteredGroups.map((group, gi) => (
-            <div key={group.label ?? `g${gi}`}>
-              {group.label && <div className="nav__group-label">{group.label}</div>}
-              {group.items.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  end={item.end}
-                  className={({ isActive }) => `nav__item${isActive ? ' is-active' : ''}`}
-                  onClick={onNavigate}
-                >
-                  <span className="nav__icon">
-                    <Icon name={item.icon} size={16} />
-                  </span>
-                  <span className="nav__label">{item.label}</span>
-                  {!!item.badge && <span className="nav__count">{item.badge}</span>}
-                </NavLink>
-              ))}
+        {/* Pinned Primary Workhorses Section */}
+        {!menuFilter && (
+          <div style={{ marginBottom: 12 }}>
+            <div className="nav__group-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 8px 4px' }}>
+              <span>Primary Tools</span>
+              <span style={{ fontSize: 10, color: 'var(--text-3)', fontWeight: 600 }}>Quick Access</span>
             </div>
-          ))
+            {primaryItems.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                className={({ isActive }) => `nav__item${isActive ? ' is-active' : ''}`}
+                onClick={onNavigate}
+              >
+                <span className="nav__icon">
+                  <Icon name={item.icon} size={16} />
+                </span>
+                <span className="nav__label">{item.label}</span>
+                {item.badge !== undefined && <span className="nav__count">{item.badge}</span>}
+              </NavLink>
+            ))}
+
+            {/* Visual 50+ Apps Launcher Banner */}
+            <div style={{ padding: '8px 2px 4px' }}>
+              <button
+                type="button"
+                className="btn btn--subtle"
+                style={{
+                  width: '100%',
+                  justifyContent: 'space-between',
+                  padding: '8px 10px',
+                  background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.16) 0%, rgba(14, 165, 233, 0.08) 100%)',
+                  border: '1px solid rgba(99, 102, 241, 0.32)',
+                  borderRadius: 8,
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: 'var(--text, #f8fafc)',
+                  boxShadow: '0 2px 6px rgba(0,0,0,0.1)',
+                }}
+                onClick={onOpenAppsLauncher}
+                title="Explore Complete Operza 50+ Operating Tools Directory"
+              >
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                  <Icon name="grid" size={14} style={{ color: '#818cf8' }} />
+                  <span>All Apps (50+)</span>
+                </span>
+                <span style={{ fontSize: 10.5, color: '#38bdf8', fontWeight: 650 }}>Catalog →</span>
+              </button>
+            </div>
+          </div>
         )}
+
+        {/* Filtered Primary Items (when searching) */}
+        {menuFilter && filteredPrimary.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <div className="nav__group-label" style={{ padding: '6px 8px 4px' }}>
+              Primary Matches ({filteredPrimary.length})
+            </div>
+            {filteredPrimary.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                className={({ isActive }) => `nav__item${isActive ? ' is-active' : ''}`}
+                onClick={onNavigate}
+              >
+                <span className="nav__icon">
+                  <Icon name={item.icon} size={16} />
+                </span>
+                <span className="nav__label">{item.label}</span>
+                {item.badge !== undefined && <span className="nav__count">{item.badge}</span>}
+              </NavLink>
+            ))}
+          </div>
+        )}
+
+        {/* Functional Pillars Section (Collapsible Accordions) */}
+        <div>
+          {!menuFilter && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 8px 4px' }}>
+              <span style={{ fontSize: 10.5, fontWeight: 750, color: 'var(--text-3)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                Operating Pillars
+              </span>
+              <button
+                type="button"
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--accent, #6366f1)',
+                  fontSize: 10.5,
+                  fontWeight: 650,
+                  cursor: 'pointer',
+                  padding: 0,
+                }}
+                onClick={toggleAllPillars}
+              >
+                {allExpanded ? 'Collapse All' : 'Expand All'}
+              </button>
+            </div>
+          )}
+
+          {filteredPillars.length === 0 && filteredPrimary.length === 0 ? (
+            <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 12, color: 'var(--text-3)' }}>
+              No pages match "{menuFilter}"
+            </div>
+          ) : (
+            filteredPillars.map((pillar) => {
+              const isExpanded = menuFilter ? true : Boolean(expandedPillars[pillar.id]);
+              return (
+                <div key={pillar.id} style={{ marginBottom: 4 }}>
+                  {/* Accordion Header Button */}
+                  <button
+                    type="button"
+                    style={{
+                      width: '100%',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '7px 8px',
+                      background: isExpanded ? 'var(--surface-2, rgba(255,255,255,0.03))' : 'transparent',
+                      border: 'none',
+                      color: isExpanded ? 'var(--text, #f8fafc)' : 'var(--text-3, #94a3b8)',
+                      cursor: 'pointer',
+                      borderRadius: 6,
+                      fontSize: 11,
+                      fontWeight: 700,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                      transition: 'background 0.12s ease, color 0.12s ease',
+                    }}
+                    onClick={() => togglePillar(pillar.id)}
+                    aria-expanded={isExpanded}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                      <Icon name={pillar.icon} size={13} style={{ opacity: isExpanded ? 1 : 0.7, color: isExpanded ? 'var(--accent)' : 'inherit' }} />
+                      <span>{pillar.label}</span>
+                    </span>
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      <span
+                        style={{
+                          fontSize: 9.5,
+                          background: 'var(--line, rgba(255,255,255,0.08))',
+                          padding: '1px 5px',
+                          borderRadius: 4,
+                          fontWeight: 700,
+                          color: 'var(--text-3)',
+                        }}
+                      >
+                        {pillar.items.length}
+                      </span>
+                      <Icon
+                        name="chevron-right"
+                        size={11}
+                        style={{
+                          transform: isExpanded ? 'rotate(90deg)' : 'none',
+                          transition: 'transform 0.15s ease',
+                          opacity: 0.7,
+                        }}
+                      />
+                    </span>
+                  </button>
+
+                  {/* Accordion Child Items */}
+                  {isExpanded && (
+                    <div style={{ paddingLeft: 6, marginTop: 2 }}>
+                      {pillar.items.map((item) => (
+                        <NavLink
+                          key={item.to}
+                          to={item.to}
+                          end={item.end}
+                          className={({ isActive }) => `nav__item${isActive ? ' is-active' : ''}`}
+                          onClick={onNavigate}
+                        >
+                          <span className="nav__icon">
+                            <Icon name={item.icon} size={15} />
+                          </span>
+                          <span className="nav__label">{item.label}</span>
+                          {item.badge !== undefined && <span className="nav__count">{item.badge}</span>}
+                        </NavLink>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
       </nav>
 
       <div className="sidebar__footer">
@@ -759,7 +1020,7 @@ function UserMenu() {
                 gap: 6
               }}
             >
-              <Icon name="building" size={13} /> {agency?.name || 'Asim Tech'}
+              <Icon name="building" size={13} /> {agency?.name || 'Agency Workspace'}
             </div>
           </div>
 
@@ -833,8 +1094,9 @@ function UserMenu() {
   );
 }
 
-function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
+function TopBar({ onOpenNav, onOpenAppsLauncher }: { onOpenNav: () => void; onOpenAppsLauncher: () => void }) {
   const location = useLocation();
+  const navigate = useNavigate();
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('operza-theme');
     if (saved === 'dark' || saved === 'light') return saved;
@@ -854,6 +1116,9 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
 
   const titles: Record<string, string> = {
     '/': 'Dashboard',
+    '/apps': 'All Apps Directory',
+    '/directory': 'All Apps Directory',
+    '/notifications': 'Notification Center',
     '/conversations': 'Conversations',
     '/phone': 'Phone System',
     '/snippets': 'Snippets',
@@ -865,27 +1130,41 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
     '/opportunities': 'Opportunities',
     '/campaigns': 'Campaigns',
     '/social': 'Social Planner',
+    '/prospecting': 'B2B Prospecting & Scoring',
+    '/templates': 'Email Templates',
+    '/links': 'Trigger Links',
+    '/affiliates': 'Affiliates & Referrals',
+    '/media': 'Media Library',
     '/reporting': 'Reporting',
     '/funnels': 'Funnels',
     '/websites': 'Websites',
     '/forms': 'Forms & Surveys',
+    '/blogs': 'Blogs & Articles',
+    '/qr-codes': 'QR Code Engine',
+    '/portal': 'Client Portal Hub',
     '/workflows': 'Workflows',
+    '/copilot-inbox': 'Copilot Proposals',
+    '/ai-trainer': 'AI Bot Training',
     '/payments': 'Payments',
-    '/store': 'Store',
+    '/store': 'Digital Store',
     '/products': 'Products',
     '/payment-links': 'Payment Links',
     '/coupons': 'Coupons',
+    '/orders': 'Customer Orders',
+    '/subscriptions': 'Subscriptions & MRR',
+    '/documents': 'Contracts & Legal OS',
+    '/memberships': 'Memberships & Courses',
     '/custom-values': 'Custom Values',
-    '/audit-log': 'Audit Log',
+    '/consent-ledger': 'Consent Ledger (TCPA)',
+    '/plan-usage': 'Plan & Usage Meters',
+    '/audit-log': 'Security & Audit Log',
     '/command-center': 'Command Center',
     '/command': 'Command Center',
-    '/documents': 'Contracts & Legal OS',
     '/home': 'Public Landing Page',
     '/pricing': 'Public Pricing & Plans',
     '/docs': 'Documentation & API Guides',
     '/settings': 'Settings',
     '/integrations': 'App Marketplace',
-    '/ai-trainer': 'AI Copilot Training',
     '/developers': 'Developer Hub',
     '/branding': 'White-Label Branding',
   };
@@ -896,10 +1175,43 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
       <button className="icon-btn sidebar__toggle" onClick={onOpenNav} aria-label="Open navigation">
         <Icon name="menu" size={18} />
       </button>
-      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', minWidth: 90 }}>{title}</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', minWidth: 90 }}>{title}</span>
+        <button
+          type="button"
+          className="btn btn--ghost btn--sm"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            fontSize: 11.5,
+            fontWeight: 650,
+            color: 'var(--accent, #6366f1)',
+            padding: '4px 9px',
+            borderRadius: 6,
+            background: 'var(--accent-soft, rgba(99, 102, 241, 0.08))',
+            border: '1px solid rgba(99, 102, 241, 0.22)',
+            cursor: 'pointer',
+          }}
+          onClick={onOpenAppsLauncher}
+          title="Open Operza 50+ Apps Quick Launcher (9-Dots)"
+        >
+          <Icon name="grid" size={13} />
+          <span>All Apps (50) ▾</span>
+        </button>
+      </div>
       <SearchBox />
       <span className="topbar__spacer" />
       <div className="topbar__actions" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <NavLink
+          to="/apps"
+          className="btn btn--sm btn--ghost"
+          style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--text-2)', padding: '5px 10px' }}
+          title="Browse All 50+ Operza Applications Directory"
+        >
+          <Icon name="grid" size={14} />
+          <span>Directory</span>
+        </NavLink>
         <NavLink
           to="/home"
           className="btn btn--sm btn--ghost"
@@ -930,8 +1242,8 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
         </Tooltip>
 
         <Tooltip label="Help & Documentation">
-          <button className="icon-btn" aria-label="Help">
-            <Icon name="globe" size={18} />
+          <button className="icon-btn" aria-label="Help & Documentation" onClick={() => navigate('/docs')}>
+            <Icon name="clipboard" size={18} />
           </button>
         </Tooltip>
 
@@ -944,6 +1256,7 @@ function TopBar({ onOpenNav }: { onOpenNav: () => void }) {
 
 export function AppShell({ children }: { children?: ReactNode }) {
   const [navOpen, setNavOpen] = useState(false);
+  const [appsLauncherOpen, setAppsLauncherOpen] = useState(false);
   const location = useLocation();
 
   useEffect(() => {
@@ -952,13 +1265,14 @@ export function AppShell({ children }: { children?: ReactNode }) {
 
   return (
     <div className={["shell", "shell--overview", navOpen && "is-nav-open"].filter(Boolean).join(" ")}>
-      <Sidebar onNavigate={() => setNavOpen(false)} />
+      <Sidebar onNavigate={() => setNavOpen(false)} onOpenAppsLauncher={() => setAppsLauncherOpen(true)} />
       <div className="scrim" onClick={() => setNavOpen(false)} />
       <div className="main">
-        <TopBar onOpenNav={() => setNavOpen(true)} />
+        <TopBar onOpenNav={() => setNavOpen(true)} onOpenAppsLauncher={() => setAppsLauncherOpen(true)} />
         {children ?? <Outlet />}
-      <CopilotHub />
+        <CopilotHub />
       </div>
+      <AppLauncherModal isOpen={appsLauncherOpen} onClose={() => setAppsLauncherOpen(false)} />
     </div>
   );
 }
