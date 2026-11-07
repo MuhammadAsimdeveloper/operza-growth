@@ -3213,9 +3213,9 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // Public Funnel Opt-in Lead & Order Bump Ingress
-    if (method === 'POST' && pathname.startsWith('/api/funnels/optin/')) {
-      const slugOrId = pathname.replace('/api/funnels/optin/', '').trim();
+    // Public Funnel & Hosted Website Opt-in Lead Ingress
+    if (method === 'POST' && (pathname.startsWith('/api/funnels/optin/') || pathname.startsWith('/api/websites/optin/'))) {
+      const slugOrId = pathname.replace(/^\/api\/(funnels|websites)\/optin\//, '').trim();
       state.records.websites = state.records.websites || [];
       const site = state.records.websites.find(w =>
         w.id === slugOrId ||
@@ -3243,6 +3243,10 @@ const server = createServer(async (req, res) => {
       const agencyId = site.agencyId || state.agencies[0]?.id;
       const locationId = site.locationId || state.locations[0]?.id;
 
+      const isWebsite = site.kind === 'website';
+      const defaultTag = isWebsite ? 'website-lead' : 'funnel-lead';
+      const defaultSource = isWebsite ? `Hosted Website (${site.name})` : `Funnel: ${site.name}`;
+
       // Upsert contact
       state.records.contacts = state.records.contacts || [];
       let contact = email
@@ -3258,10 +3262,11 @@ const server = createServer(async (req, res) => {
           lastName: lastName || '',
           email: (email || '').toLowerCase().trim(),
           phone: phone || '',
-          company: company || '',
-          source: `Funnel: ${site.name}`,
-          tags: ['funnel-lead', site.name],
+          company: company || (isWebsite ? site.name : ''),
+          source: defaultSource,
+          tags: [defaultTag, site.name],
           status: 'lead',
+          notes: body.message ? [{ id: randomUUID(), body: body.message, at: new Date().toISOString(), author: 'Web Lead' }] : [],
           createdAt: new Date().toISOString()
         };
         state.records.contacts.push(contact);
@@ -3269,7 +3274,11 @@ const server = createServer(async (req, res) => {
         if (firstName) contact.firstName = firstName;
         if (lastName) contact.lastName = lastName;
         if (phone) contact.phone = phone;
-        contact.tags = Array.from(new Set([...(contact.tags || []), 'funnel-lead', site.name]));
+        if (body.message) {
+          contact.notes = contact.notes || [];
+          contact.notes.push({ id: randomUUID(), body: body.message, at: new Date().toISOString(), author: 'Web Lead' });
+        }
+        contact.tags = Array.from(new Set([...(contact.tags || []), defaultTag, site.name]));
       }
 
       // Provision Deal Opportunity

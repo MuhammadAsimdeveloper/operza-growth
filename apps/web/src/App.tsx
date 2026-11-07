@@ -30,6 +30,7 @@ const PublicCheckout = lazy(() => import('./pages/PublicCheckout'));
 const PublicReview = lazy(() => import('./pages/PublicReview'));
 const PublicPortal = lazy(() => import('./pages/PublicPortal'));
 const PublicFunnel = lazy(() => import('./pages/PublicFunnel'));
+const PublicWebsite = lazy(() => import('./pages/PublicWebsite'));
 
 // Protected Agency Workspace Pages
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -151,6 +152,10 @@ export default function App() {
         <Route path="/client-portal/:contactId" element={<PublicPortal />} />
         <Route path="/funnel/:slug" element={<PublicFunnel />} />
         <Route path="/v/:slug" element={<PublicFunnel />} />
+        <Route path="/site/:slug" element={<PublicWebsite />} />
+        <Route path="/site/:slug/:pageSlug" element={<PublicWebsite />} />
+        <Route path="/w/:slug" element={<PublicWebsite />} />
+        <Route path="/w/:slug/:pageSlug" element={<PublicWebsite />} />
 
         {/* ─── Protected Agency Workspace Routes ─── */}
         <Route

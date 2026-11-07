@@ -227,7 +227,24 @@ export const api = {
         method: 'PUT',
         body: JSON.stringify(symbols),
       }),
-    getPublic: (slugOrId: string, pageSlug?: string) => request(`/api/websites/public/${slugOrId}${pageSlug ? `?pageSlug=${encodeURIComponent(pageSlug)}` : ''}`),
+    getPublic: (slugOrId: string, pageSlug?: string) =>
+      request(`/api/websites/public/${encodeURIComponent(slugOrId)}${pageSlug ? `?pageSlug=${encodeURIComponent(pageSlug)}` : ''}`),
+    submitInquiry: (
+      slugOrId: string,
+      data: {
+        firstName: string;
+        lastName?: string;
+        email: string;
+        phone?: string;
+        company?: string;
+        message?: string;
+        pageSlug?: string;
+      }
+    ) =>
+      request<{ success: boolean; contactId: string }>(`/api/websites/optin/${encodeURIComponent(slugOrId)}`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
   campaigns: {
     send: (id: string) => request(`/api/campaigns/${id}/send`, { method: 'POST' }),

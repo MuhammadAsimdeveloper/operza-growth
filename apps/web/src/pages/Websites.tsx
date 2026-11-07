@@ -355,12 +355,43 @@ export default function Websites() {
                     <Badge tone="violet">Global Symbols Active</Badge>
                   )}
                 </div>
-                <div className="cell-sub">
-                  agency.test/{siteSlug(site)}
-                  {site.domain ? ` · https://${site.domain}` : ''}
+                <div className="cell-sub" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginTop: 3 }}>
+                  <span>Edge Host:</span>
+                  <a
+                    href={`/site/${siteSlug(site)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: 'var(--accent)', fontWeight: 600, textDecoration: 'none', fontFamily: 'var(--font-mono)', fontSize: 11.5 }}
+                  >
+                    /site/{siteSlug(site)} ↗
+                  </a>
+                  {site.domain && site.domain.includes('.') && (
+                    <span style={{ color: 'var(--text-3)', fontSize: 11.5 }}>
+                      · https://{site.domain}
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="card__actions">
+                <a
+                  href={`/site/${siteSlug(site)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn--sm"
+                  style={{
+                    background: 'var(--surface-2)',
+                    border: '1px solid var(--line)',
+                    gap: 5,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    textDecoration: 'none',
+                    fontWeight: 650,
+                    color: 'var(--text)'
+                  }}
+                  title="Open live hosted website in new browser tab"
+                >
+                  <Icon name="eye" size={13} /> View Live Site ↗
+                </a>
                 <Switch on={site.published} label={`Toggle ${site.name}`} onChange={() => handleTogglePublished(site)} />
                 <button
                   className="btn btn--sm"
@@ -434,6 +465,16 @@ export default function Websites() {
                       <td className="cell-right cell-num">{num(page.visits)}</td>
                       <td>
                         <div className="row" style={{ gap: 4, justifyContent: 'flex-end', alignItems: 'center' }}>
+                          <a
+                            href={`/site/${siteSlug(site)}${page.path === '/' ? '' : page.path}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="btn btn--sm btn--secondary"
+                            style={{ fontSize: 11.5, padding: '3px 8px', gap: 4, textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+                            title={`Open ${page.name} live in new tab`}
+                          >
+                            <Icon name="eye" size={12} /> Live Page ↗
+                          </a>
                           <button
                             type="button"
                             className="btn btn--sm btn--primary"
@@ -827,26 +868,49 @@ function AddPageModal({ site, onClose }: { site: Site; onClose: () => void }) {
 
 function NewWebsiteModal({ onClose }: { onClose: () => void }) {
   const { dispatch } = useStore();
-  const [name, setName] = useState('');
-  const [domain, setDomain] = useState('');
-  const [theme, setTheme] = useState<PageTheme>('plain');
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('agency-growth');
-  const [loading, setLoading] = useState(false);
-
-  const canCreate = name.trim().length > 0;
   const activeTemplate = WEBSITE_TEMPLATES.find((t) => t.id === selectedTemplateId) || WEBSITE_TEMPLATES[0];
 
+  const [name, setName] = useState('Apex Growth Studio');
+  const [domain, setDomain] = useState('apex-growth');
+  const [hasManuallyEditedName, setHasManuallyEditedName] = useState(false);
+  const [theme, setTheme] = useState<PageTheme>('gradient');
+  const [loading, setLoading] = useState(false);
+
+  // Template auto-naming map so selecting any template automatically fills the business name and domain
+  const TEMPLATE_PRESETS: Record<string, { name: string; slug: string }> = {
+    'agency-growth': { name: 'Apex Growth Studio', slug: 'apex-growth' },
+    'healthcare-clinic': { name: 'VitalCare Health & Wellness Clinic', slug: 'vitalcare-clinic' },
+    'real-estate-luxury': { name: 'Prestige Real Estate & Estates', slug: 'prestige-estates' },
+    'saas-tech': { name: 'CloudScale B2B SaaS Platform', slug: 'cloudscale-platform' },
+    'fitness-coaching': { name: 'IronPeak Performance Fitness', slug: 'ironpeak-fitness' },
+    'ecommerce-dtc': { name: 'Solstice Artisan Craft Store', slug: 'solstice-store' },
+  };
+
+  const handleSelectTemplate = (tmpl: typeof activeTemplate) => {
+    setSelectedTemplateId(tmpl.id);
+    if (!hasManuallyEditedName) {
+      const preset = TEMPLATE_PRESETS[tmpl.id] || { name: tmpl.name, slug: tmpl.id };
+      setName(preset.name);
+      setDomain(preset.slug);
+    }
+    if (tmpl.theme) {
+      setTheme(tmpl.theme);
+    }
+  };
+
   const handleCreate = async () => {
-    if (!canCreate || loading) return;
+    if (loading) return;
     setLoading(true);
     const siteId = uid('ws');
-    const slug = (domain.trim() || name.trim()).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const effectiveName = name.trim() || activeTemplate.name || 'Operza Web Property';
+    const slug = (domain.trim() || effectiveName).toLowerCase().replace(/[^a-z0-9]+/g, '-');
 
     const pages: SitePage[] = activeTemplate.pages.map((p) => ({
       id: uid('wp'),
       name: p.name,
       path: p.path,
-      headline: p.headline.replace(/Your Agency|Our Team/gi, name.trim()),
+      headline: p.headline.replace(/Your Agency|Our Team/gi, effectiveName),
       subhead: p.subhead,
       cta: p.cta,
       theme: p.theme || theme,
@@ -857,23 +921,23 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
 
     const newSite: Site = {
       id: siteId,
-      name: name.trim(),
+      name: effectiveName,
       kind: 'website',
       domain: slug,
-      published: false,
+      published: true, // Default to true so it is instantly live and viewable!
       visits: 0,
       optins: 0,
       pages,
       globalHeader: {
         enabled: true,
-        brandText: name.trim(),
+        brandText: effectiveName,
         navLinks: activeTemplate.headerNav.map((l) => ({ id: uid(), label: l.label, url: l.url })),
         ctaLabel: activeTemplate.ctaLabel,
         ctaUrl: activeTemplate.ctaUrl,
       },
       globalFooter: {
         enabled: true,
-        copyrightText: `© ${new Date().getFullYear()} ${name.trim()}. All rights reserved.`,
+        copyrightText: `© ${new Date().getFullYear()} ${effectiveName}. All rights reserved.`,
         footerLinks: activeTemplate.footerNav.map((l) => ({ id: uid(), label: l.label, url: l.url })),
       },
     };
@@ -899,8 +963,31 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
           <button className="btn" type="button" onClick={onClose} disabled={loading}>
             Cancel
           </button>
-          <button className="btn btn--primary" type="button" disabled={!canCreate || loading} onClick={handleCreate}>
-            {loading ? 'Provisioning Site...' : `Provision Website (${activeTemplate.pages.length} Pages) →`}
+          <button
+            className="btn btn--primary"
+            type="button"
+            disabled={loading}
+            onClick={handleCreate}
+            style={{
+              cursor: loading ? 'not-allowed' : 'pointer',
+              background: '#4f46e5',
+              borderColor: '#4f46e5',
+              color: '#ffffff',
+              fontWeight: 700,
+              padding: '9px 20px',
+              boxShadow: '0 4px 14px rgba(79, 70, 229, 0.35)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+            }}
+          >
+            {loading ? (
+              <>Provisioning Site ({activeTemplate.pages.length} Pages)...</>
+            ) : (
+              <>
+                <Icon name="zap" size={14} /> Provision Website ({activeTemplate.pages.length} Pages) →
+              </>
+            )}
           </button>
         </>
       }
@@ -916,10 +1003,9 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
               placeholder="e.g. Apex Growth Studio"
               value={name}
               onChange={(e) => {
+                setHasManuallyEditedName(true);
                 setName(e.target.value);
-                if (!domain) {
-                  setDomain(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
-                }
+                setDomain(e.target.value.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
               }}
             />
           </div>
@@ -932,7 +1018,10 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
                 style={{ fontFamily: 'var(--font-mono)' }}
                 placeholder="e.g. apex-growth"
                 value={domain}
-                onChange={(e) => setDomain(e.target.value)}
+                onChange={(e) => {
+                  setHasManuallyEditedName(true);
+                  setDomain(e.target.value);
+                }}
               />
               <span className="hint" style={{ fontSize: 12 }}>.operza.site</span>
             </div>
@@ -969,10 +1058,10 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
-                      setSelectedTemplateId(tmpl.id);
+                      handleSelectTemplate(tmpl);
                     }
                   }}
-                  onClick={() => setSelectedTemplateId(tmpl.id)}
+                  onClick={() => handleSelectTemplate(tmpl)}
                   style={{
                     border: isSelected ? '2px solid var(--accent)' : '1px solid var(--line)',
                     background: isSelected ? 'rgba(99, 102, 241, 0.08)' : 'var(--surface-2)',
@@ -981,6 +1070,7 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
                     cursor: 'pointer',
                     transition: 'all 0.18s ease',
                     position: 'relative',
+                    boxShadow: isSelected ? '0 0 0 2px rgba(99, 102, 241, 0.25)' : undefined,
                   }}
                 >
                   <div className="row row--between" style={{ marginBottom: 6 }}>
@@ -993,12 +1083,13 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
                         textTransform: 'uppercase',
                       }}
                     >
-                      {tmpl.badge}
+                      {tmpl.badge} {isSelected && '✓ ACTIVE'}
                     </span>
                     <span
                       style={{
                         fontSize: 11,
-                        background: 'rgba(0,0,0,0.06)',
+                        background: isSelected ? 'rgba(79, 70, 229, 0.15)' : 'rgba(0,0,0,0.06)',
+                        color: isSelected ? 'var(--accent)' : undefined,
                         padding: '2px 6px',
                         borderRadius: 4,
                         fontWeight: 650,
@@ -1085,8 +1176,9 @@ function PublishDeploymentModal({
   const [exportNotice, setExportNotice] = useState(false);
 
   const slug = siteSlug(site);
+  const localHostedUrl = typeof window !== 'undefined' ? `${window.location.origin}/site/${slug}` : `/site/${slug}`;
   const liveSubdomainUrl = `https://${slug}.operza.site`;
-  const isPublished = Boolean(site.published);
+  const [isPublished, setIsPublished] = useState(Boolean(site.published));
 
   const handlePublishToCdn = async () => {
     setPublishing(true);
@@ -1098,6 +1190,7 @@ function PublishDeploymentModal({
     await new Promise((r) => setTimeout(r, 700));
 
     dispatch({ type: 'site/update', id: site.id, patch: { published: true } });
+    setIsPublished(true);
     try {
       await api.websites.publish(site.id);
     } catch {
@@ -1205,6 +1298,82 @@ function PublishDeploymentModal({
               '🚀 Publish to Global Edge CDN'
             )}
           </button>
+        </div>
+
+        {/* Real Live Hosted Operza Edge URL */}
+        <div className="card" style={{ padding: 18, background: 'rgba(99, 102, 241, 0.05)', border: '1px solid rgba(99, 102, 241, 0.25)' }}>
+          <div className="row row--between" style={{ marginBottom: 6 }}>
+            <strong style={{ fontSize: 13.5, color: 'var(--text)' }}>
+              🌐 Real Operza Edge Hosted URL (Active &amp; Ready)
+            </strong>
+            <Badge tone="green" dot>Active Host Route</Badge>
+          </div>
+          <p style={{ margin: '0 0 10px', fontSize: 12, color: 'var(--text-2)' }}>
+            This website is hosted directly on Operza's live edge routing engine with multi-page support and live CRM lead capture.
+          </p>
+          <div className="row" style={{ gap: 8 }}>
+            <input
+              className="input"
+              readOnly
+              value={localHostedUrl}
+              style={{ fontFamily: 'var(--font-mono)', background: 'var(--surface)', fontWeight: 600, color: 'var(--accent)' }}
+            />
+            <button
+              type="button"
+              className="btn btn--secondary"
+              onClick={() => handleCopyUrl(localHostedUrl)}
+            >
+              <Icon name="copy" size={13} /> {copied ? 'Copied!' : 'Copy URL'}
+            </button>
+            <a
+              href={localHostedUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn--primary"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none', fontWeight: 650, background: '#4f46e5' }}
+            >
+              <Icon name="eye" size={13} /> Open Live Hosted Website ↗
+            </a>
+          </div>
+        </div>
+
+        {/* Multi-Page Published Routes */}
+        <div className="card" style={{ padding: 18, background: 'var(--surface-2)' }}>
+          <strong style={{ fontSize: 13.5, marginBottom: 8, display: 'block' }}>
+            Multi-Page Live Hosted Routes ({site.pages.length} Pages)
+          </strong>
+          <div className="stack" style={{ gap: 6 }}>
+            {site.pages.map((p) => {
+              const pageUrl = `${localHostedUrl}${p.path === '/' ? '' : p.path}`;
+              return (
+                <div key={p.id} className="row row--between" style={{ padding: '6px 12px', background: 'var(--surface)', borderRadius: 6, border: '1px solid var(--line)', alignItems: 'center' }}>
+                  <div className="row" style={{ gap: 8, alignItems: 'center' }}>
+                    <strong style={{ fontSize: 12.5 }}>{p.name}</strong>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-3)' }}>{p.path}</span>
+                  </div>
+                  <div className="row" style={{ gap: 6 }}>
+                    <button
+                      type="button"
+                      className="btn btn--sm"
+                      onClick={() => handleCopyUrl(pageUrl)}
+                      title="Copy page link"
+                    >
+                      <Icon name="copy" size={11} /> Copy
+                    </button>
+                    <a
+                      href={pageUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn btn--sm btn--primary"
+                      style={{ fontSize: 11, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                    >
+                      <Icon name="eye" size={11} /> Open Page ↗
+                    </a>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
 
         {/* Live Subdomain Access */}
