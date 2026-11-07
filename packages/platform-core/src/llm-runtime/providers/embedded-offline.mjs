@@ -149,7 +149,7 @@ export class EmbeddedOfflineProvider {
       } else if (lower.includes('zapier') || lower.includes('webhook') || lower.includes('integration') || lower.includes('marketplace')) {
         responseText = `Operza provides full Zapier integration with REST hooks and 22+ app categories in **App Marketplace** (\`/integrations\`). You can subscribe to trigger webhooks or execute inbound actions.`;
       } else if (lower.includes('pricing') || lower.includes('plan') || lower.includes('cost')) {
-        responseText = `Operza offers transparent tiered pricing: Starter ($97/mo), Growth ($297/mo), and Enterprise ($497/mo). View your active limits in **Plan & Usage** (\`/plan-usage\`).`;
+        responseText = `Operza offers transparent tiered pricing: Starter ($35/mo), Growth ($79/mo), and Enterprise ($149/mo). View your active limits in **Plan & Usage** (\`/plan-usage\`).`;
       } else if (lower.includes('hello') || lower.includes('hi') || lower.includes('hey')) {
         responseText = `Hello! I am your Operza Copilot assistant. I can help manage your CRM contacts (/contacts), inspect deal pipelines (/opportunities), trigger visual workflows (/workflows), or navigate any module in Operza. How can I assist you today?`;
       } else {

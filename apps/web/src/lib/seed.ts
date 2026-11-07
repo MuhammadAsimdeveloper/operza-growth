@@ -901,9 +901,9 @@ export const seed: WorkspaceState = {
     },
   ],
   saasPlans: [
-    { id: 'plan1', name: 'Starter', price: 97, seats: 1, contactLimit: 1000, smsCredits: 500 },
-    { id: 'plan2', name: 'Growth', price: 297, seats: 3, contactLimit: 5000, smsCredits: 2500 },
-    { id: 'plan3', name: 'Scale', price: 597, seats: 10, contactLimit: 25000, smsCredits: 12000 },
+    { id: 'plan1', name: 'Starter', price: 35, seats: 1, contactLimit: 2500, smsCredits: 1000 },
+    { id: 'plan2', name: 'Growth', price: 79, seats: 5, contactLimit: 15000, smsCredits: 5000 },
+    { id: 'plan3', name: 'Scale', price: 149, seats: 25, contactLimit: 100000, smsCredits: 25000 },
   ],
 
   enrollments: [

@@ -294,7 +294,45 @@
       }
     ],
     "formSubmissions": [],
-    "websites": [],
+    "websites": [
+      {
+        "name": "Abbasi store",
+        "kind": "website",
+        "domain": "abbasi-store",
+        "published": false,
+        "visits": 0,
+        "optins": 0,
+        "pages": [
+          {
+            "id": "wp_o5hlyf6",
+            "name": "Home",
+            "path": "/",
+            "visits": 0,
+            "optins": 0,
+            "headline": "Welcome to Abbasi store",
+            "subhead": "Grow your business with our tailored solutions.",
+            "cta": "Get started",
+            "theme": "gradient"
+          },
+          {
+            "id": "wp_at1kf4b",
+            "name": "About",
+            "path": "/about",
+            "visits": 0,
+            "optins": 0,
+            "headline": "About Abbasi store",
+            "subhead": "Learn more about our team and mission.",
+            "cta": "Contact us",
+            "theme": "gradient"
+          }
+        ],
+        "id": "3efde494-fdee-404f-a2c3-88ca49707070",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+        "createdAt": "2026-11-07T12:24:42.067Z",
+        "updatedAt": "2026-11-07T12:24:42.067Z"
+      }
+    ],
     "campaigns": [],
     "products": [],
     "invoices": [],
@@ -586,9 +624,21 @@
         "updatedAt": "2026-11-07T09:05:52.104Z"
       }
     ],
-    "team": [],
+    "team": [
+      {
+        "id": "8ca66319-6088-4e08-b950-f7a9e431dea1",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "name": "Asim",
+        "email": "sanjarkhanabbasi786@gmail.com",
+        "role": "admin",
+        "online": true,
+        "status": "active",
+        "createdAt": "2026-11-07T12:13:46.061Z"
+      }
+    ],
     "phoneNumbers": [],
-    "prospects": []
+    "prospects": [],
+    "apiKeys": []
   },
   "workflowExecutions": [],
   "workflowApprovals": [],
@@ -697,6 +747,19 @@
         "legalBusinessName": "Operza Alpha Agency LLC"
       },
       "timestamp": "2026-11-07T09:18:57.708Z"
+    },
+    {
+      "id": "f322f8f7-2f51-438e-b3a9-ecc8eef5ff28",
+      "action": "agency.profile.updated",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "userName": "Asim",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "details": {
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "name": "ASIM tech"
+      },
+      "timestamp": "2026-11-07T10:39:33.578Z"
     }
   ],
   "mediaFiles": {},

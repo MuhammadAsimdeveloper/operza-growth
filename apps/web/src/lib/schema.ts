@@ -45,8 +45,8 @@ export const SCHEMA_SOFTWARE_APPLICATION = {
   offers: {
     '@type': 'AggregateOffer',
     priceCurrency: 'USD',
-    lowPrice: '97.00',
-    highPrice: '497.00',
+    lowPrice: '35.00',
+    highPrice: '149.00',
     offerCount: '3',
   },
   featureList: [

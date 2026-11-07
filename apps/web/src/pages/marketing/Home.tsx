@@ -104,7 +104,8 @@ export default function Home() {
           </div>
 
           <div style={styles.trustRow}>
-            <span>✓ Zero per-seat lock-in</span>
+            <span>✓ Plans start at $35/mo</span>
+            <span>✓ Zero per-seat user tax</span>
             <span>✓ Strict PostgreSQL RLS multi-tenancy</span>
             <span>✓ Durable BullMQ queue</span>
             <span>✓ White-label CNAME ready</span>
@@ -552,7 +553,7 @@ export default function Home() {
           </div>
 
           <div style={styles.grid3}>
-            <div style={styles.techCard}>
+            <div style={styles.techCard} className="card-3d-interactive">
               <div style={styles.techIcon}><Icon name="database" size={20} /></div>
               <h3 style={styles.techTitle}>PostgreSQL Row-Level Security</h3>
               <p style={styles.techDesc}>
@@ -561,7 +562,7 @@ export default function Home() {
               </p>
             </div>
 
-            <div style={styles.techCard}>
+            <div style={styles.techCard} className="card-3d-interactive">
               <div style={styles.techIcon}><Icon name="zap" size={20} /></div>
               <h3 style={styles.techTitle}>Durable BullMQ Queueing</h3>
               <p style={styles.techDesc}>
@@ -570,13 +571,95 @@ export default function Home() {
               </p>
             </div>
 
-            <div style={styles.techCard}>
+            <div style={styles.techCard} className="card-3d-interactive">
               <div style={styles.techIcon}><Icon name="lock" size={20} /></div>
               <h3 style={styles.techTitle}>Full Data Sovereignty</h3>
               <p style={styles.techDesc}>
                 Deploy on your cloud or on-premise infrastructure with Docker. Maintain 100% control
                 over your proprietary client data.
               </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* ─── Stack Sprawl vs Operza Pricing Breakdown ─── */}
+      <section style={{ ...styles.section, background: 'linear-gradient(180deg, #ffffff 0%, #f8fafc 100%)' }}>
+        <div style={styles.container}>
+          <div style={styles.sectionHead}>
+            <span style={styles.sectionTag}>RADICAL SAVINGS</span>
+            <h2 style={styles.sectionH2}>Stop Paying the $1,200/Month Fragmented Tool Tax</h2>
+            <p style={styles.sectionSub}>
+              Why pay 6 separate vendors with brittle webhook glue when Operza provides an integrated, unified system for just $35 to $79/month?
+            </p>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 0.9fr', gap: 32, alignItems: 'center', margin: '40px 0 20px' }}>
+            <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: 16, padding: '28px', boxShadow: '0 4px 16px rgba(15,23,42,0.05)' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#dc2626', textTransform: 'uppercase', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#dc2626' }} />
+                The Fragmented Agency Software Tax ($1,216+/mo)
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: '#fef2f2', borderRadius: 8, fontSize: 13.5 }}>
+                  <span>Separate CRM &amp; Pipeline Seats (5 users)</span>
+                  <strong style={{ color: '#991b1b' }}>$250/mo</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: '#fef2f2', borderRadius: 8, fontSize: 13.5 }}>
+                  <span>iPaaS Visual Automation (Zapier Pro)</span>
+                  <strong style={{ color: '#991b1b' }}>$129/mo</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: '#fef2f2', borderRadius: 8, fontSize: 13.5 }}>
+                  <span>Funnel &amp; Landing Page Builder</span>
+                  <strong style={{ color: '#991b1b' }}>$197/mo</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: '#fef2f2', borderRadius: 8, fontSize: 13.5 }}>
+                  <span>Omnichannel Inbox &amp; SMS Platform</span>
+                  <strong style={{ color: '#991b1b' }}>$150/mo</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: '#fef2f2', borderRadius: 8, fontSize: 13.5 }}>
+                  <span>Contract E-Signatures &amp; Client Portal</span>
+                  <strong style={{ color: '#991b1b' }}>$90/mo</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 14px', background: '#fef2f2', borderRadius: 8, fontSize: 13.5 }}>
+                  <span>Legacy Agency Sub-Account Fees</span>
+                  <strong style={{ color: '#991b1b' }}>$400/mo</strong>
+                </div>
+              </div>
+              <div style={{ marginTop: 16, paddingTop: 14, borderTop: '1px solid #fee2e2', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontWeight: 700, color: '#475569' }}>Total Monthly Bleed:</span>
+                <span style={{ fontSize: 20, fontWeight: 800, color: '#dc2626' }}>$1,216 / mo ($14,592/yr)</span>
+              </div>
+            </div>
+
+            <div style={{ background: 'linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%)', borderRadius: 16, padding: '32px 28px', color: '#ffffff', boxShadow: '0 12px 36px rgba(15,23,42,0.2)' }} className="card-3d-interactive">
+              <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.08em', color: '#38bdf8', textTransform: 'uppercase', marginBottom: 8 }}>
+                THE OPERZA DIFFERENCE
+              </div>
+              <h3 style={{ fontSize: 26, fontWeight: 850, color: '#ffffff', margin: '0 0 10px' }}>
+                All Included from $35/Month
+              </h3>
+              <p style={{ fontSize: 14, color: '#94a3b8', lineHeight: 1.5, margin: '0 0 20px' }}>
+                Unlimited seats, visual workflows, multi-tenant database RLS, and client portals in one transactional engine.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24, fontSize: 13.5 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#e2e8f0' }}>
+                  <span style={{ color: '#34d399', fontWeight: 800 }}>✓</span> Starter: <strong>$35/mo</strong> (3 sub-accounts, unlimited seats)
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#e2e8f0' }}>
+                  <span style={{ color: '#34d399', fontWeight: 800 }}>✓</span> Growth: <strong>$79/mo</strong> (15 sub-accounts, white-label portal)
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#e2e8f0' }}>
+                  <span style={{ color: '#34d399', fontWeight: 800 }}>✓</span> Scale: <strong>$149/mo</strong> (unlimited sub-accounts, full API)
+                </div>
+              </div>
+              <div style={{ background: 'rgba(16, 185, 129, 0.15)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: 10, padding: '14px', textAlign: 'center', marginBottom: 20 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: '#34d399', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Annual Net Savings</span>
+                <div style={{ fontSize: 28, fontWeight: 900, color: '#34d399', margin: '2px 0' }}>Over $13,600 / year</div>
+              </div>
+              <Link to="/pricing" style={{ display: 'block', textAlign: 'center', padding: '12px', background: '#4f46e5', color: '#ffffff', borderRadius: 8, fontWeight: 700, fontSize: 14, textDecoration: 'none' }}>
+                Compare All Plans &amp; Calculate Savings →
+              </Link>
             </div>
           </div>
         </div>

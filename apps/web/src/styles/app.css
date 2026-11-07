@@ -3632,3 +3632,193 @@ a {
   -webkit-backdrop-filter: blur(14px);
 }
 
+/* ============================================================================
+ * 3D Perspectives, Floating Keyframes & Luminous Visual Micro-Interactions
+ * ============================================================================ */
+
+@keyframes floatSlow {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(0.5deg);
+  }
+}
+
+@keyframes floatReverse {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(8px) rotate(-0.5deg);
+  }
+}
+
+@keyframes glowPulseSlow {
+  0%, 100% {
+    opacity: 0.55;
+    transform: scale(1);
+    filter: blur(48px);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.08);
+    filter: blur(56px);
+  }
+}
+
+@keyframes radarSweep {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes shimmerGlow {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+@keyframes beamScan {
+  0% {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  50% {
+    opacity: 0.7;
+  }
+  100% {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+}
+
+/* 3D Stage & Card Physics */
+.stage-perspective {
+  perspective: 1200px;
+  perspective-origin: center top;
+}
+
+.card-3d-interactive {
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.25s ease;
+  transform-style: preserve-3d;
+  will-change: transform, box-shadow;
+}
+
+.card-3d-interactive:hover {
+  transform: translateY(-6px) perspective(1000px) rotateX(2deg) rotateY(-1deg);
+  box-shadow: 0 20px 40px -15px rgba(15, 23, 42, 0.15),
+              0 0 24px rgba(99, 102, 241, 0.2);
+  border-color: rgba(99, 102, 241, 0.45);
+}
+
+[data-theme="dark"] .card-3d-interactive:hover {
+  box-shadow: 0 24px 50px -12px rgba(0, 0, 0, 0.7),
+              0 0 30px rgba(99, 102, 241, 0.35);
+  border-color: rgba(129, 140, 248, 0.5);
+}
+
+.float-slow {
+  animation: floatSlow 6s ease-in-out infinite;
+}
+
+.float-reverse {
+  animation: floatReverse 7s ease-in-out infinite;
+}
+
+.pulse-glow {
+  animation: glowPulseSlow 5s ease-in-out infinite;
+}
+
+/* Glassmorphism & High-End Visual Mesh */
+.glass-panel-luminous {
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(226, 232, 240, 0.8);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06),
+              inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+[data-theme="dark"] .glass-panel-luminous {
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6),
+              inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+/* Animated Shimmer Text */
+.text-shimmer {
+  background: linear-gradient(
+    90deg,
+    #4f46e5 0%,
+    #818cf8 25%,
+    #c084fc 50%,
+    #818cf8 75%,
+    #4f46e5 100%
+  );
+  background-size: 200% auto;
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: shimmerGlow 6s linear infinite;
+}
+
+/* Animated Radar Sweep Disc */
+.telemetry-radar {
+  position: relative;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  background: radial-gradient(circle, rgba(14, 165, 233, 0.08) 0%, transparent 70%);
+  overflow: hidden;
+}
+
+.telemetry-radar::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 50%;
+  border: 1px dashed rgba(56, 189, 248, 0.2);
+}
+
+.telemetry-radar-beam {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 70px;
+  height: 70px;
+  transform-origin: 0 0;
+  background: conic-gradient(from 0deg, rgba(56, 189, 248, 0.4) 0deg, transparent 60deg);
+  animation: radarSweep 3s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .float-slow,
+  .float-reverse,
+  .pulse-glow,
+  .text-shimmer,
+  .telemetry-radar-beam,
+  .card-3d-interactive {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+}
+
+
+
