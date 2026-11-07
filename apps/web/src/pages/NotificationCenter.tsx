@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore, uid } from '../lib/store';
 import { api } from '../lib/api';
@@ -27,6 +27,19 @@ export default function NotificationCenter() {
   const [searchQuery, setSearchQuery] = useState('');
   const [inspectingItem, setInspectingItem] = useState<NotificationItem | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showFeedback = (msg: string) => {
+    if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    setFeedback(msg);
+    feedbackTimerRef.current = setTimeout(() => setFeedback(null), 3000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    };
+  }, []);
 
   // Sync with backend notification endpoints on load
   useEffect(() => {
@@ -112,14 +125,12 @@ export default function NotificationCenter() {
 
   const handleMarkAllRead = () => {
     dispatch({ type: 'notifications/readAll' });
-    setFeedback('All notifications marked as read.');
-    setTimeout(() => setFeedback(null), 3000);
+    showFeedback('All notifications marked as read.');
   };
 
   const handleClearRead = () => {
     dispatch({ type: 'notifications/clearRead' });
-    setFeedback('All read notifications cleared.');
-    setTimeout(() => setFeedback(null), 3000);
+    showFeedback('All read notifications cleared.');
   };
 
   const handleSimulateAlert = () => {
@@ -162,8 +173,7 @@ export default function NotificationCenter() {
         at: new Date().toISOString(),
       },
     });
-    setFeedback(`Simulated new ${chosen.category} alert.`);
-    setTimeout(() => setFeedback(null), 3000);
+    showFeedback(`Simulated new ${chosen.category} alert.`);
   };
 
   const getCategoryIcon = (category?: string) => {
@@ -357,6 +367,7 @@ export default function NotificationCenter() {
             className="input"
             style={{ width: '100%', paddingLeft: 30, fontSize: 12.5 }}
             placeholder="Search alerts..."
+            aria-label="Search alerts"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
@@ -368,6 +379,7 @@ export default function NotificationCenter() {
               type="button"
               className="icon-btn"
               style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', padding: 2 }}
+              aria-label="Clear search"
               onClick={() => setSearchQuery('')}
             >
               <Icon name="x" size={11} />
@@ -510,6 +522,7 @@ export default function NotificationCenter() {
                       type="button"
                       className="icon-btn"
                       title="Dismiss notification"
+                      aria-label="Dismiss notification"
                       onClick={() => dispatch({ type: 'notifications/delete', id: item.id })}
                     >
                       <Icon name="x" size={14} />

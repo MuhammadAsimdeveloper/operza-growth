@@ -16,11 +16,11 @@
  *    context, output payloads, and offers on-the-fly dry run testing.
  */
 
-import { useState, useRef, useEffect, type MouseEvent, type WheelEvent } from 'react';
+import { useState, useRef, useEffect, type MouseEvent } from 'react';
 import { api } from '../lib/api';
 import { Icon } from './Icon';
 import { Badge } from './ui';
-import type { Workflow, WorkflowAction, WorkflowTrigger } from '../lib/types';
+import type { Workflow, WorkflowAction, WorkflowTrigger, WorkflowRun } from '../lib/types';
 
 interface Point {
   x: number;
@@ -110,7 +110,7 @@ export function WorkflowCanvas({
   onEditStep: (step: WorkflowAction, parentId?: string, branch?: 'yes' | 'no') => void;
   onAddStep: (parentId?: string, branch?: 'yes' | 'no') => void;
   onEditTrigger?: (trigger: WorkflowTrigger) => void;
-  activeRun?: any;
+  activeRun?: WorkflowRun | null;
   height?: string | number;
   onExecuteWorkflow?: () => void;
 }) {
@@ -126,7 +126,7 @@ export function WorkflowCanvas({
 
   // Node inspection drawer
   const [inspectedNode, setInspectedNode] = useState<NodeLayout | null>(null);
-  const [testResult, setTestResult] = useState<any>(null);
+  const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null);
   const [testingNode, setTestingNode] = useState(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -166,24 +166,31 @@ export function WorkflowCanvas({
     };
   }, [isPanning, draggingNodeId, panStart, pan.x, pan.y, zoom, dragOffset]);
 
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const onWheelNonPassive = (e: globalThis.WheelEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) {
+        e.preventDefault();
+        const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
+        setZoom((z) => Math.min(2.5, Math.max(0.35, Number((z * zoomFactor).toFixed(2)))));
+      } else {
+        setPan((p) => ({
+          x: p.x - e.deltaX * 0.8,
+          y: p.y - e.deltaY * 0.8,
+        }));
+      }
+    };
+
+    container.addEventListener('wheel', onWheelNonPassive, { passive: false });
+    return () => container.removeEventListener('wheel', onWheelNonPassive);
+  }, []);
+
   const handleMouseDownCanvas = (e: MouseEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest('.canvas-node')) return;
     setIsPanning(true);
     setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
-  };
-
-  const handleWheel = (e: WheelEvent<HTMLDivElement>) => {
-    // When holding ctrl or meta or scrolling, provide smooth zoom or pan
-    if (e.ctrlKey || e.metaKey || e.altKey) {
-      e.preventDefault();
-      const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
-      setZoom((z) => Math.min(2.5, Math.max(0.35, Number((z * zoomFactor).toFixed(2)))));
-    } else {
-      setPan((p) => ({
-        x: p.x - e.deltaX * 0.8,
-        y: p.y - e.deltaY * 0.8,
-      }));
-    }
   };
 
   const handleNodeDragStart = (e: MouseEvent, nodeId: string, currentX: number, currentY: number) => {
@@ -225,7 +232,6 @@ export function WorkflowCanvas({
         boxShadow: 'inset 0 0 40px rgba(0, 0, 0, 0.35)',
       }}
       onMouseDown={handleMouseDownCanvas}
-      onWheel={handleWheel}
     >
       {/* Top Floating Controls Bar */}
       <div

@@ -298,7 +298,7 @@ export default function Workflows() {
       document.body.appendChild(anchor);
       anchor.click();
       anchor.remove();
-      URL.revokeObjectURL(url);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
       setImportFeedback('Exported ' + selected.name + ' as an Operza workflow package.');
     } catch (error) {
       setImportFeedback(error instanceof Error ? error.message : 'Workflow export failed.');

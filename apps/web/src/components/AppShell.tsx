@@ -358,6 +358,7 @@ export function SearchBox() {
       <input
         ref={inputRef}
         placeholder="Search Operza..."
+        aria-label="Search workspace"
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
@@ -742,10 +743,10 @@ function UserMenu() {
         >
           <div>
             <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text, #0f172a)' }}>
-              {user?.name || 'Muhammad Asim'}
+              {user?.name || 'Workspace User'}
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-3, #64748b)', marginTop: 2 }}>
-              {user?.email || 'sanjarkhanabbasi786@gmail.com'}
+              {user?.email || 'user@workspace.local'}
             </div>
             <div
               style={{
