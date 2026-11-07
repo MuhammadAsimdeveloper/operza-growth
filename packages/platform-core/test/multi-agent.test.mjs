@@ -109,3 +109,56 @@ test('MultiAgentOrchestrator routes workflow generation requests to automation a
   assert.ok(proposalCreated.params.nodes.length >= 3);
   assert.ok(proposalCreated.params.nodes.some(n => n.type === 'zapier'));
 });
+
+test('MultiAgentOrchestrator domain agents contain omniscient Operza knowledge base and multilingual guidelines', () => {
+  const supervisor = getAgent('supervisor');
+  const crm = getAgent('crm');
+  const automation = getAgent('automation');
+  const support = getAgent('support');
+
+  for (const agent of [supervisor, crm, automation, support]) {
+    assert.ok(agent.systemPrompt.includes('OPERZA — THE UNIFIED BUSINESS OPERATING SYSTEM'));
+    assert.ok(agent.systemPrompt.includes('/workflows'));
+    assert.ok(agent.systemPrompt.includes('/contacts'));
+    assert.ok(agent.systemPrompt.includes('/conversations'));
+    assert.ok(agent.systemPrompt.includes('MULTILINGUAL & NAVIGATION RULES'));
+  }
+});
+
+test('LLM Runtime Embedded Provider answers multilingual questions about Operza with route navigation', async () => {
+  const runtime = createDefaultLLMRuntime();
+
+  // Spanish query
+  const resEs = await runtime.completeWithFallback([
+    { role: 'user', content: '¿Cómo puedo agregar un contacto en el CRM de Operza?' }
+  ], { preferredProvider: 'embedded' });
+  assert.ok(resEs.text.includes('/contacts'));
+  assert.ok(resEs.text.toLowerCase().includes('contacto') || resEs.text.toLowerCase().includes('operza'));
+
+  // French query
+  const resFr = await runtime.completeWithFallback([
+    { role: 'user', content: 'Comment créer une automatisation visuelle dans Operza?' }
+  ], { preferredProvider: 'embedded' });
+  assert.ok(resFr.text.includes('/workflows'));
+  assert.ok(resFr.text.toLowerCase().includes('flux') || resFr.text.toLowerCase().includes('operza'));
+
+  // German query
+  const resDe = await runtime.completeWithFallback([
+    { role: 'user', content: 'Wie erstelle ich einen Workflow in Operza?' }
+  ], { preferredProvider: 'embedded' });
+  assert.ok(resDe.text.includes('/workflows'));
+
+  // Urdu query
+  const resUr = await runtime.completeWithFallback([
+    { role: 'user', content: 'اوپرزا میں ورک فلو اور میسجز کہاں ہیں؟' }
+  ], { preferredProvider: 'embedded' });
+  assert.ok(resUr.text.includes('اوپر زا') || resUr.text.includes('Operza'));
+  assert.ok(resUr.text.includes('/contacts') || resUr.text.includes('/workflows'));
+
+  // Arabic query
+  const resAr = await runtime.completeWithFallback([
+    { role: 'user', content: 'كيف يمكنني استخدام نظام الهاتف ومسارات العمل في أوبيرزا؟' }
+  ], { preferredProvider: 'embedded' });
+  assert.ok(resAr.text.includes('Operza') || resAr.text.includes('أوبيرزا'));
+  assert.ok(resAr.text.includes('/phone') || resAr.text.includes('/workflows') || resAr.text.includes('/contacts'));
+});

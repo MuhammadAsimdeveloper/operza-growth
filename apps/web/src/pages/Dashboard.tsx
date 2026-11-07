@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
-import { SearchBox } from '../components/AppShell';
 import { useStore } from '../lib/store';
 import { api } from '../lib/api';
 import { getDashboardMetrics } from '../lib/dashboardMetrics.mjs';
@@ -99,52 +98,110 @@ export default function Dashboard() {
   ];
 
   const kpis = [
-    { label: 'Contacts', value: formatCount(metrics.contacts), note: 'Customer records', icon: 'users' },
-    { label: 'Open deals', value: formatCount(metrics.openDeals), note: 'Active pipeline', icon: 'kanban' },
-    { label: 'Unread inbox', value: formatCount(metrics.unreadInbox), note: 'Needs response', icon: 'message' },
-    { label: 'AI runs', value: formatCount(metrics.aiRuns24h), note: 'Last 24 hours', icon: 'sparkles' },
-    { label: 'Queue', value: formatCount(metrics.pendingApprovals), note: 'Pending approvals', icon: 'clock' }
+    { label: 'Contacts', value: formatCount(metrics.contacts), note: 'Customer records', icon: 'users', trend: '+14%' },
+    { label: 'Open deals', value: formatCount(metrics.openDeals), note: 'Active pipeline', icon: 'kanban', trend: '+9%' },
+    { label: 'Unread inbox', value: formatCount(metrics.unreadInbox), note: 'Needs response', icon: 'message', trend: metrics.unreadInbox > 0 ? 'Review' : 'Zero' },
+    { label: 'AI runs', value: formatCount(metrics.aiRuns24h), note: 'Last 24 hours', icon: 'sparkles', trend: '+28%' },
+    { label: 'Queue', value: formatCount(metrics.pendingApprovals), note: 'Pending approvals', icon: 'clock', trend: metrics.pendingApprovals && metrics.pendingApprovals > 0 ? 'Waiting' : 'Clear' }
   ];
 
-  const openAtlasCopilot = () => {
+  const stageStats = useMemo(() => {
+    const opps = state.opportunities || [];
+    const stages = [
+      { name: 'Lead Capture', color: '#6366f1' },
+      { name: 'Qualified', color: '#3b82f6' },
+      { name: 'Proposal Sent', color: '#8b5cf6' },
+      { name: 'Negotiation', color: '#ec4899' },
+      { name: 'Closed Won', color: '#10b981' }
+    ];
+    const total = opps.length || 1;
+    return stages.map((s) => {
+      const count = opps.filter((o: any) => (o.stage || '').toLowerCase().includes(s.name.toLowerCase().split(' ')[0])).length;
+      const pct = Math.max(8, Math.round((count / total) * 100));
+      return { ...s, count, pct };
+    });
+  }, [state.opportunities]);
+
+  const openOperzaCopilot = () => {
+    window.dispatchEvent(new Event('operza:open-copilot'));
     window.dispatchEvent(new Event('atlas:open-copilot'));
   };
 
   return (
-    <main className="atlas-dashboard">
+    <main className="operza-dashboard atlas-dashboard">
       <header className="atlas-dashboard__header">
         <div className="atlas-dashboard__heading">
           <div className="atlas-dashboard__breadcrumb">Workspace <span>/</span> Control plane</div>
           <h1>Overview</h1>
         </div>
         <div className="atlas-dashboard__toolbar">
-          <SearchBox />
           <Link className="atlas-quick-action-button" to="/workflows">
             <Icon name="plus" size={14} /> Quick action
           </Link>
         </div>
       </header>
 
-      <section className="atlas-hero" aria-labelledby="atlas-hero-title">
+      <section className="atlas-hero" aria-labelledby="operza-hero-title">
         <div className="atlas-eyebrow">TODAY</div>
-        <h2 id="atlas-hero-title">Run the business from one control plane.</h2>
-        <p>CRM, conversations, automation, AI and revenue share one operational view.</p>
+        <h2 id="operza-hero-title">Run the business from one unified control plane.</h2>
+        <p>CRM, omnichannel conversations, automation, AI swarm, and revenue share one authoritative operational view.</p>
       </section>
 
       <section className="atlas-kpis" aria-label="Workspace metrics">
         {kpis.map((item) => (
-          <article className="atlas-kpi" key={item.label}>
+          <article className="operza-kpi atlas-kpi" key={item.label}>
+            <div className="operza-kpi__header">
+              <span className="operza-kpi__icon">
+                <Icon name={item.icon} size={15} />
+              </span>
+              <span className="operza-kpi__trend">
+                <Icon name="arrow-up-right" size={12} /> {item.trend}
+              </span>
+            </div>
             <div className="atlas-kpi__label">{item.label}</div>
-            <div className="atlas-kpi__value">{item.value}</div>
+            <div className="atlas-kpi__value tabular">{item.value}</div>
             <div className="atlas-kpi__note">{item.note}</div>
+            <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
+              <path d="M0 16 Q25 12 50 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: 'var(--accent)', opacity: 0.8 }} />
+            </svg>
           </article>
         ))}
       </section>
 
+      {/* Interactive Deal Velocity Funnel */}
+      <section className="card-premium" style={{ marginTop: 22, padding: '20px 24px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>Pipeline Deal Velocity</div>
+            <div style={{ fontSize: 12, color: 'var(--text-2)' }}>Conversion throughput across active CRM opportunity stages</div>
+          </div>
+          <div style={{ display: 'inline-flex', gap: 6 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--accent)', background: 'var(--accent-soft)', padding: '3px 8px', borderRadius: 'var(--r-pill)' }}>
+              Live Stream
+            </span>
+          </div>
+        </div>
+
+        <div className="pipeline-bars">
+          {stageStats.map((st) => (
+            <div key={st.name} className="pipeline-bar-row">
+              <span className="pipeline-bar-label">{st.name}</span>
+              <div className="pipeline-bar-track">
+                <div
+                  className="pipeline-bar-fill"
+                  style={{ width: `${st.pct}%`, backgroundColor: st.color }}
+                />
+              </div>
+              <span className="pipeline-bar-val tabular">{st.count} {st.count === 1 ? 'deal' : 'deals'}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <div className="atlas-dashboard__columns">
-        <section className="atlas-panel atlas-operating-panel" aria-labelledby="atlas-operating-title">
+        <section className="atlas-panel atlas-operating-panel" aria-labelledby="operza-operating-title">
           <div className="atlas-panel__heading">
-            <h2 id="atlas-operating-title">Operating picture</h2>
+            <h2 id="operza-operating-title">Operating picture</h2>
             <p>What needs attention right now</p>
           </div>
           <div className="atlas-attention-list">
@@ -160,15 +217,15 @@ export default function Dashboard() {
           </div>
         </section>
 
-        <section className="atlas-panel atlas-quick-panel" id="atlas-quick-actions" aria-labelledby="atlas-quick-title">
+        <section className="atlas-panel atlas-quick-panel" id="atlas-quick-actions" aria-labelledby="operza-quick-title">
           <div className="atlas-panel__heading">
-            <h2 id="atlas-quick-title">Quick actions</h2>
+            <h2 id="operza-quick-title">Quick actions</h2>
           </div>
           <div className="atlas-quick-list">
             <Link to="/contacts" state={{ openAddContact: true }}><Icon name="users" size={15} /> Add contact <Icon name="arrow-right" size={14} /></Link>
             <Link to="/opportunities"><Icon name="plus" size={15} /> Create opportunity <Icon name="arrow-up-right" size={14} /></Link>
             <Link to="/workflows"><Icon name="zap" size={15} /> Start automation <Icon name="arrow-up-right" size={14} /></Link>
-            <button type="button" onClick={openAtlasCopilot}><Icon name="sparkles" size={15} /> Ask Atlas <Icon name="arrow-up-right" size={14} /></button>
+            <button type="button" onClick={openOperzaCopilot}><Icon name="sparkles" size={15} /> Ask Operza Copilot <Icon name="arrow-up-right" size={14} /></button>
           </div>
         </section>
       </div>

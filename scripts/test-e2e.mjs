@@ -4050,7 +4050,108 @@ async function runTests() {
     }
     console.log(`✅ Zapier alert verified in Operza notification center: "${zapNotifRecord.title}"`);
 
-    console.log('\n🎉 ALL 98 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 99] Omniscient Copilot Polyglot & Multilingual Assistance (POST /api/copilot/chat)
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 99] Omniscient Copilot Polyglot & Multilingual Assistance (POST /api/copilot/chat)');
+
+    // 1. Spanish navigation inquiry
+    const copilotEsRes = await request('/api/copilot/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: '¿Cómo puedo agregar un contacto en el CRM de Operza?' })
+    });
+    if (copilotEsRes.status !== 200 || !copilotEsRes.data.message?.content) {
+      throw new Error(`Copilot Spanish inquiry failed: ${JSON.stringify(copilotEsRes.data)}`);
+    }
+    const esText = copilotEsRes.data.message.content;
+    if (!esText.includes('/contacts')) {
+      throw new Error(`Copilot Spanish response missing /contacts route: ${esText}`);
+    }
+    console.log(`✅ Copilot polyglot Spanish response verified: "${esText.slice(0, 75)}..."`);
+
+    // 2. French navigation inquiry
+    const copilotFrRes = await request('/api/copilot/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'Comment créer une automatisation visuelle dans Operza?' })
+    });
+    if (copilotFrRes.status !== 200 || !copilotFrRes.data.message?.content) {
+      throw new Error(`Copilot French inquiry failed: ${JSON.stringify(copilotFrRes.data)}`);
+    }
+    const frText = copilotFrRes.data.message.content;
+    if (!frText.includes('/workflows')) {
+      throw new Error(`Copilot French response missing /workflows route: ${frText}`);
+    }
+    console.log(`✅ Copilot polyglot French response verified: "${frText.slice(0, 75)}..."`);
+
+    // 3. German navigation inquiry
+    const copilotDeRes = await request('/api/copilot/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'Wie erstelle ich einen Workflow in Operza?' })
+    });
+    if (copilotDeRes.status !== 200 || !copilotDeRes.data.message?.content) {
+      throw new Error(`Copilot German inquiry failed: ${JSON.stringify(copilotDeRes.data)}`);
+    }
+    const deText = copilotDeRes.data.message.content;
+    if (!deText.includes('/workflows')) {
+      throw new Error(`Copilot German response missing /workflows route: ${deText}`);
+    }
+    console.log(`✅ Copilot polyglot German response verified: "${deText.slice(0, 75)}..."`);
+
+    // 4. Urdu / Arabic inquiry
+    const copilotUrRes = await request('/api/copilot/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'اوپرزا میں ورک فلو اور میسجز کہاں ہیں؟' })
+    });
+    if (copilotUrRes.status !== 200 || !copilotUrRes.data.message?.content) {
+      throw new Error(`Copilot Urdu inquiry failed: ${JSON.stringify(copilotUrRes.data)}`);
+    }
+    const urText = copilotUrRes.data.message.content;
+    console.log(`✅ Copilot polyglot Urdu response verified: "${urText.slice(0, 75)}..."`);
+
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 100] Real-time Copilot SSE Multi-Agent Streaming with Autonomous Knowledge Swarm
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 100] Real-time Copilot SSE Multi-Agent Streaming (GET /api/copilot/chat/stream)');
+
+    const sseResponse = await fetch(`http://localhost:4005/api/copilot/chat/stream?message=${encodeURIComponent('How do I build funnels and manage CRM contacts in Operza?')}`, {
+      headers: {
+        'Accept': 'text/event-stream',
+        'Cookie': sessionCookie
+      }
+    });
+
+    if (sseResponse.status !== 200) {
+      throw new Error(`Copilot SSE stream returned HTTP ${sseResponse.status}`);
+    }
+
+    const sseBodyText = await sseResponse.text();
+    const sseLines = sseBodyText.split('\n').filter(l => l.startsWith('data: '));
+    if (sseLines.length === 0) {
+      throw new Error(`No SSE data lines received in stream: ${sseBodyText.slice(0, 200)}`);
+    }
+
+    let streamedTokens = '';
+    let seenDone = false;
+    for (const line of sseLines) {
+      try {
+        const payload = JSON.parse(line.slice(6));
+        if (payload.type === 'token') {
+          streamedTokens += payload.token;
+        } else if (payload.done) {
+          seenDone = true;
+        }
+      } catch {
+        // Non-JSON comment
+      }
+    }
+
+    if (!seenDone) {
+      throw new Error(`SSE stream did not emit done: true`);
+    }
+    console.log(`✅ Real-time Copilot SSE stream received (${streamedTokens.length} chars streamed, done: true)`);
+    console.log(`Stream preview: "${streamedTokens.slice(0, 90)}..."`);
+
+    console.log('\n🎉 ALL 100 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

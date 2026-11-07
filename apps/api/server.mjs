@@ -40,7 +40,7 @@ import { createPlatformRepository } from '../../packages/db/lib/platform-reposit
 import { workflowQueue } from './queue.mjs';
 import { handleZapierRoute, dispatchZapierEvent } from './zapier-router.mjs';
 import { createDefaultLLMRuntime } from '../../packages/platform-core/src/llm-runtime/index.mjs';
-import { MultiAgentOrchestrator, AGENT_ROLES } from '../../packages/platform-core/src/multi-agent/index.mjs';
+import { MultiAgentOrchestrator, AGENT_ROLES, OPERZA_KNOWLEDGE_BASE, MULTILINGUAL_GUIDELINES } from '../../packages/platform-core/src/multi-agent/index.mjs';
 
 const secretResolver = createSecretResolver();
 const providerAdapterRegistry = createProviderAdapterRegistry();
@@ -4888,7 +4888,17 @@ const server = createServer(async (req, res) => {
         }
         responseText = summaries.join('\n\n');
       } else {
-        responseText = `Hello ${actor.user.name}! You have ${contactCount} contacts and ${taskCount} pending tasks. You can ask me to search contacts, draft leads, propose deal-stage changes or workflow runs, prepare messages for human review, or check calendar schedules.`;
+        // Query defaultLLMRuntime for intelligent platform knowledge & multilingual answers
+        try {
+          const completion = await defaultLLMRuntime.completeWithFallback([
+            { role: 'system', content: `You are the Copilot AI for Operza — The Unified Business Operating System.\n${OPERZA_KNOWLEDGE_BASE}\n${MULTILINGUAL_GUIDELINES}` },
+            { role: 'user', content: message }
+          ]);
+          responseText = completion.text || `Hello ${actor.user.name}! In Operza, you can navigate across CRM (/contacts), Visual Workflows (/workflows), Phone (/phone), or Funnels (/funnels). How can I assist you?`;
+        } catch (llmErr) {
+          console.warn('[Copilot API] LLM completion fallback error:', llmErr.message);
+          responseText = `Hello ${actor.user.name}! In Operza, you can navigate across CRM (/contacts), Visual Workflows (/workflows), Phone (/phone), or Funnels (/funnels). How can I assist you?`;
+        }
       }
 
       const assistantMsg = {

@@ -109,6 +109,11 @@ const paths: Record<string, ReactNode> = {
   'arrow-up': <path d="M12 19V5M6 11l6-6 6 6" />,
   'arrow-down': <path d="M12 5v14M6 13l6 6 6-6" />,
   'arrow-right': <path d="M5 12h14M13 6l6 6-6 6" />,
+  'arrow-up-right': <path d="M7 17 17 7M7 7h10v10" />,
+  'arrow-down-right': <path d="M7 7l10 10M17 7v10H7" />,
+  maximize: <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />,
+  minimize: <path d="M4 14h6v6m10-10h-6V4m0 6 7-7M3 21l7-7" />,
+  shield: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />,
   star: <path d="m12 3.5 2.6 5.6 6 .8-4.4 4.2 1.1 6-5.3-3-5.3 3 1.1-6L3.4 9.9l6-.8Z" />,
   dots: (
     <>

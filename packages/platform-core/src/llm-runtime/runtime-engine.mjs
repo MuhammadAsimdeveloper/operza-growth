@@ -49,6 +49,24 @@ export class LLMRuntimeEngine {
    * @param {import('./interfaces.mjs').LLMMessage[]} messages
    * @param {import('./interfaces.mjs').LLMCompletionOptions} [options]
    */
+  async complete(messages, options = {}) {
+    return this.completeWithFallback(messages, options);
+  }
+
+  /**
+   * Streams chat tokens with automatic fallback cascading.
+   * @param {import('./interfaces.mjs').LLMMessage[]} messages
+   * @param {import('./interfaces.mjs').LLMCompletionOptions} [options]
+   */
+  async *stream(messages, options = {}) {
+    yield* this.streamWithFallback(messages, options);
+  }
+
+  /**
+   * Completes a chat prompt with automatic fallback cascading.
+   * @param {import('./interfaces.mjs').LLMMessage[]} messages
+   * @param {import('./interfaces.mjs').LLMCompletionOptions} [options]
+   */
   async completeWithFallback(messages, options = {}) {
     const preferred = options.preferredProvider || this.fallbackSequence[0];
     const candidateKeys = Array.from(new Set([preferred, ...this.fallbackSequence]));

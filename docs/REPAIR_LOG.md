@@ -393,4 +393,50 @@ This document chronicles the step-by-step engineering enhancements, refactoring,
 - **Action 16.7 (Milestone Verification — 308 / 308 Automated Checks):**
   - 308 / 308 automated checks passing (48 workflow engine, 47 platform core, 9 db, 106 SEO, 98 E2E).
   - 0 TypeScript compilation errors (`npm run typecheck`).
-  - Production build verified in 3.81s (`npm run build`). 
+  - Production build verified in 3.81s (`npm run build`).
+
+---
+
+## Epoch 17: Senior UI/UX Design System, Omniscient Knowledge Base & Polyglot Copilot Swarm
+
+- **Action 17.1 (Senior UI/UX Audit & Design System Tokens):**
+  - Defined and spawned subagent `senior-ui-ux-designer` to conduct an exhaustive visual and interaction audit across `tokens.css`, `app.css`, `AppShell.tsx`, `CopilotHub.tsx`, and `Dashboard.tsx`.
+  - Added Linear/Stripe-caliber design tokens in `apps/web/src/styles/tokens.css`:
+    - Specular highlights (`--shadow-specular: inset 0 1px 0 rgba(255, 255, 255, 0.85)` / `0.08` for dark).
+    - Glassmorphism tokens (`--glass-bg`, `--glass-border`, `--glass-blur`).
+    - Concentric radius scale (`--r-xs`, `--r-sm`, `--r-md`, `--r-lg`, `--r-xl`, `--r-2xl`, `--r-pill`).
+    - Ambient glow tokens (`--accent-glow`).
+  - Added global typography balancing (`text-wrap: balance`, `letter-spacing: -0.025em`) and universal `.tabular` numeric formatting in `apps/web/src/styles/app.css`.
+  - Removed desktop layout thrashing rule (`.shell--overview .topbar { display: none; }` -> `display: flex;`), preserving continuous 58px navigation chrome across all routes.
+- **Action 17.2 (Shell Navigation & Global ⌘K Command Palette):**
+  - Added global `⌘K` / `Ctrl+K` keyboard shortcut listener in `SearchBox` (`apps/web/src/components/AppShell.tsx`) with styled visual `<kbd>` badge.
+  - Added new SVG icons to `apps/web/src/components/Icon.tsx`: `arrow-up-right`, `arrow-down-right`, `maximize`, `minimize`, and `shield`.
+- **Action 17.3 (Control Plane Dashboard Visual Polish):**
+  - Upgraded KPI metric cards in `apps/web/src/pages/Dashboard.tsx` with concentric radii, specular top highlight, rendered module icons, positive trend indicators (`+14%`), and SVG micro-sparklines.
+  - Implemented interactive **Pipeline Deal Velocity** section showing conversion throughput across CRM stages (`Lead Capture`, `Qualified`, `Proposal Sent`, `Negotiation`, `Closed Won`) with dynamic stage progress tracks.
+  - Replaced lingering "Atlas" branding (`openAtlasCopilot` -> `openOperzaCopilot`, `Ask Atlas` -> `Ask Operza Copilot`, `atlas-dashboard` -> `operza-dashboard`).
+- **Action 17.4 (Copilot Hub Glassmorphic Architecture & Inline Proposals):**
+  - Modernized `apps/web/src/components/CopilotHub.tsx` with a dual-mode floating/docked layout state (`isExpanded`: 420px -> 680px) and minimize/maximize toggle controls.
+  - Integrated inline **Human-in-the-Loop Proposal Cards** allowing operators to preview payload parameters and directly execute `handleInlineApprove()` or `handleInlineReject()` without navigating away from the workspace.
+  - Added typing shimmers, active multi-agent swarm tag, and polyglot quick-action suggestion pills.
+- **Action 17.5 (Omniscient Operza Knowledge Base Injection):**
+  - Created `OPERZA_KNOWLEDGE_BASE` in `packages/platform-core/src/multi-agent/agents.mjs` exhaustively documenting all 10 architectural modules (Dashboard, CRM, Conversations, Marketing/Funnels, Visual Workflows, Commerce, Client Experience, Sub-accounts, Integrations, and Copilot Swarm).
+  - Injected knowledge base into all specialized domain agent system prompts (`SUPERVISOR`, `CRM`, `AUTOMATION`, `SUPPORT`).
+- **Action 17.6 (Polyglot Intelligence & Multilingual Navigation):**
+  - Added `MULTILINGUAL_GUIDELINES` instructing the swarm to automatically detect any natural language and respond fluently with direct route paths (`/workflows`, `/contacts`, `/phone`, etc.).
+  - Upgraded `EmbeddedOfflineProvider.complete()` in `packages/platform-core/src/llm-runtime/providers/embedded-offline.mjs` with native language synthesis across Spanish, French, German, Urdu, Arabic, Chinese, and Japanese.
+  - Added `complete()` and `stream()` aliases to `LLMRuntimeEngine`.
+  - Wired `/api/copilot/chat` fallback to `defaultLLMRuntime.completeWithFallback()` with full platform knowledge.
+- **Action 17.7 (E2E Test Suite Expansion to 100 Scenarios):**
+  - Added unit tests in `packages/platform-core/test/multi-agent.test.mjs` verifying domain agent prompt knowledge and multilingual route navigation.
+  - Added Test 99 in `scripts/test-e2e.mjs`: Omniscient Copilot Polyglot & Multilingual Assistance (Spanish, French, German, Urdu inquiries).
+  - Added Test 100 in `scripts/test-e2e.mjs`: Real-time Copilot SSE Multi-Agent Streaming with Autonomous Knowledge Swarm.
+- **Action 17.8 (Milestone Verification — 312 / 312 Automated Checks):**
+  - **312 / 312 automated checks passing** across the entire monorepo:
+    - 48 / 48 in `@operza/workflow-engine`
+    - 49 / 49 in `@operza/platform-core`
+    - 9 / 9 in `@operza/db`
+    - 106 / 106 in SEO & Metadata Audit suite
+    - 100 / 100 in System Integration E2E suite
+  - 0 TypeScript compilation errors (`tsc -b --noEmit`).
+  - Production build verified in 3.64s (`vite build`). 

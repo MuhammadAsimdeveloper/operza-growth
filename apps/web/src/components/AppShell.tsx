@@ -255,6 +255,7 @@ export function SearchBox() {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -277,6 +278,21 @@ export function SearchBox() {
     return () => document.removeEventListener('mousedown', onDown);
   }, []);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        inputRef.current?.focus();
+        setOpen(true);
+      }
+      if (e.key === 'Escape') {
+        setOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const go = (path: string) => {
     setOpen(false);
     setQuery('');
@@ -286,9 +302,10 @@ export function SearchBox() {
   const hasResults = results.contacts.length > 0 || results.deals.length > 0;
 
   return (
-    <div className="topbar__search" ref={boxRef}>
+    <div className="topbar__search" ref={boxRef} style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
       <Icon name="search" size={16} />
       <input
+        ref={inputRef}
         placeholder="Search Operza..."
         value={query}
         onChange={(e) => {
@@ -297,6 +314,22 @@ export function SearchBox() {
         }}
         onFocus={() => setOpen(true)}
       />
+      <kbd
+        style={{
+          marginLeft: 'auto',
+          fontSize: '10px',
+          fontWeight: 650,
+          color: 'var(--text-3)',
+          background: 'var(--surface-2, rgba(0,0,0,0.06))',
+          border: '1px solid var(--line)',
+          borderRadius: '4px',
+          padding: '2px 5px',
+          pointerEvents: 'none',
+          marginRight: '6px'
+        }}
+      >
+        ⌘K
+      </kbd>
       {open && query.trim() && (
         <div
           className="card"

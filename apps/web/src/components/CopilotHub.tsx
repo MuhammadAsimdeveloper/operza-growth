@@ -14,6 +14,7 @@ interface Message {
 
 export function CopilotHub() {
   const [isOpen, setIsOpen] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
 
   useEffect(() => {
     const openOperzaCopilot = () => setIsOpen(true);
@@ -29,7 +30,7 @@ export function CopilotHub() {
     {
       id: 'welcome',
       sender: 'assistant',
-      text: 'Welcome to Operza Copilot Swarm. Our autonomous agents (Supervisor, CRM, Automation & Support) can query contacts, qualify leads, generate visual workflows, and manage operations.',
+      text: 'Welcome to Operza Copilot Swarm. Our autonomous agents (Supervisor, CRM, Automation & Support) can query contacts, qualify leads, generate visual workflows, and manage operations in any language.',
       agent: 'supervisor',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
@@ -43,7 +44,7 @@ export function CopilotHub() {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages, isOpen]);
+  }, [messages, isOpen, isExpanded]);
 
   useEffect(() => {
     // Poll for pending workflow approvals every 10 seconds
@@ -61,6 +62,45 @@ export function CopilotHub() {
     return () => clearInterval(interval);
   }, []);
 
+  const handleInlineApprove = async (proposalId: string) => {
+    try {
+      await api.copilot.approveProposal(proposalId);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.proposal?.id === proposalId
+            ? { ...m, proposal: { ...m.proposal, status: 'approved' } }
+            : m
+        )
+      );
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `sys-${Date.now()}`,
+          sender: 'assistant',
+          text: `✅ Action proposal ${proposalId.slice(0, 8)} approved. Execution logged.`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }
+      ]);
+    } catch (err: any) {
+      alert(`Approval error: ${err.message}`);
+    }
+  };
+
+  const handleInlineReject = async (proposalId: string) => {
+    try {
+      await api.copilot.rejectProposal(proposalId);
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.proposal?.id === proposalId
+            ? { ...m, proposal: { ...m.proposal, status: 'rejected' } }
+            : m
+        )
+      );
+    } catch (err: any) {
+      alert(`Dismiss error: ${err.message}`);
+    }
+  };
+
   const handleSend = async () => {
     if (!input.trim() || isStreaming) return;
     const userMsg = input.trim();
@@ -77,7 +117,7 @@ export function CopilotHub() {
     const assistantMessageObj: Message = {
       id: assistantMessageId,
       sender: 'assistant',
-      text: 'Analyzing intent...',
+      text: '',
       agent: activeAgentName,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
@@ -149,7 +189,7 @@ export function CopilotHub() {
                           proposal: {
                             id: event.proposalId,
                             toolName: event.toolName,
-                            status: event.status,
+                            status: event.status || 'pending',
                             params: event.params
                           }
                         }
@@ -201,28 +241,21 @@ export function CopilotHub() {
   };
 
   return (
-    <div style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 9999 }}>
+    <div className={`copilot-container ${isExpanded ? 'copilot-container--expanded' : ''}`}>
       {/* Floating Toggle Button */}
       {!isOpen && (
         <button
           onClick={() => setIsOpen(true)}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            backgroundColor: '#4f46e5',
-            color: '#ffffff',
-            padding: '12px 18px',
-            borderRadius: '9999px',
-            boxShadow: '0 10px 25px -5px rgba(79, 70, 229, 0.4)',
-            border: 'none',
-            cursor: 'pointer',
-            fontWeight: 600,
-            fontSize: '14px'
-          }}
+          className="copilot-launcher"
+          aria-label="Open Operza Copilot"
         >
-          <Icon name="sparkles" size={18} />
-          <span>Operza Copilot</span>
+          <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 26, height: 26, borderRadius: '50%', background: 'var(--accent)', color: '#fff' }}>
+            <Icon name="sparkles" size={16} />
+          </div>
+          <span style={{ fontWeight: 650, fontSize: 13.5 }}>Operza Copilot</span>
+          <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', background: 'var(--accent-soft)', color: 'var(--accent-ink)', borderRadius: 'var(--r-pill)' }}>
+            Swarm
+          </span>
           {pendingApprovals.length > 0 && (
             <span
               style={{
@@ -243,72 +276,100 @@ export function CopilotHub() {
       {/* Floating Chat Modal */}
       {isOpen && (
         <div
+          className="copilot-panel"
           style={{
-            width: '380px',
-            height: '520px',
-            backgroundColor: '#1e293b',
-            color: '#f8fafc',
-            borderRadius: '16px',
-            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+            width: isExpanded ? '680px' : '420px',
+            height: isExpanded ? '720px' : '580px',
+            backgroundColor: 'var(--glass-bg)',
+            color: 'var(--text)',
+            borderRadius: 'var(--r-2xl, 20px)',
+            boxShadow: 'var(--shadow-xl)',
             display: 'flex',
             flexDirection: 'column',
             overflow: 'hidden',
-            border: '1px solid rgba(255, 255, 255, 0.1)'
+            border: '1px solid var(--glass-border)',
+            backdropFilter: 'var(--glass-blur)',
+            WebkitBackdropFilter: 'var(--glass-blur)'
           }}
         >
           {/* Header */}
           <div
             style={{
-              padding: '14px 18px',
-              backgroundColor: '#0f172a',
+              padding: '12px 18px',
+              backgroundColor: 'var(--surface-2, #0f172a)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              borderBottom: '1px solid rgba(255, 255, 255, 0.08)'
+              borderBottom: '1px solid var(--line, rgba(255, 255, 255, 0.08))'
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ color: '#818cf8' }}>
-                <Icon name="sparkles" size={18} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{ color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 'var(--r-md)', background: 'var(--accent-soft)' }}>
+                <Icon name="sparkles" size={17} />
               </span>
               <div>
-                <div style={{ fontWeight: 600, fontSize: '14px' }}>Operza Copilot Swarm</div>
+                <div style={{ fontWeight: 700, fontSize: '13.5px', color: 'var(--text)' }}>Operza Copilot Swarm</div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', borderRadius: '4px', padding: '1px 6px', fontSize: '10px', fontWeight: 600 }}>
-                    <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: '#10b981' }} />
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', background: 'var(--green-soft)', color: 'var(--green)', borderRadius: '4px', padding: '1px 6px', fontSize: '10px', fontWeight: 650 }}>
+                    <span style={{ width: '5px', height: '5px', borderRadius: '50%', background: 'var(--green)' }} />
                     Ollama · smollm:135m (Local)
                   </span>
-                  <span style={{ fontSize: '10px', color: '#94a3b8' }}>
+                  <span style={{ fontSize: '10px', color: 'var(--text-3)' }}>
                     {isStreaming ? `Streaming (${activeAgentName})...` : `Agent: ${activeAgentName.toUpperCase()}`}
                   </span>
                 </div>
               </div>
             </div>
-            <button
-              onClick={() => setIsOpen(false)}
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#94a3b8',
-                cursor: 'pointer',
-                fontSize: '18px'
-              }}
-            >
-              ✕
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <button
+                type="button"
+                onClick={() => setIsExpanded(!isExpanded)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-2)',
+                  cursor: 'pointer',
+                  padding: '5px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  borderRadius: 'var(--r-sm)'
+                }}
+                title={isExpanded ? 'Standard view' : 'Expand panel'}
+              >
+                <Icon name={isExpanded ? 'minimize' : 'maximize'} size={15} />
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsOpen(false)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-2)',
+                  cursor: 'pointer',
+                  padding: '5px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  borderRadius: 'var(--r-sm)'
+                }}
+                title="Close Copilot"
+              >
+                <Icon name="x" size={16} />
+              </button>
+            </div>
           </div>
 
           {/* Pending Approval Banner */}
           {pendingApprovals.length > 0 && (
             <div
               style={{
-                backgroundColor: '#7f1d1d',
+                backgroundColor: 'rgba(239, 68, 68, 0.12)',
+                color: 'var(--red)',
                 padding: '10px 14px',
-                borderBottom: '1px solid #b91c1c',
+                borderBottom: '1px solid var(--red-soft)',
                 fontSize: '12px'
               }}
             >
-              <div style={{ fontWeight: 600, marginBottom: '4px' }}>
+              <div style={{ fontWeight: 650, marginBottom: '4px' }}>
                 ⚠️ {pendingApprovals.length} Pending Human Approval(s)
               </div>
               {pendingApprovals.map((p) => (
@@ -321,16 +382,17 @@ export function CopilotHub() {
                     marginTop: '6px'
                   }}
                 >
-                  <span>{p.workflowName}</span>
+                  <span style={{ fontWeight: 500 }}>{p.workflowName}</span>
                   <button
                     onClick={() => handleApprove(p.id)}
                     style={{
-                      backgroundColor: '#22c55e',
+                      backgroundColor: 'var(--green)',
                       color: 'white',
                       border: 'none',
-                      borderRadius: '4px',
+                      borderRadius: 'var(--r-xs)',
                       padding: '3px 8px',
                       fontSize: '11px',
+                      fontWeight: 600,
                       cursor: 'pointer'
                     }}
                   >
@@ -358,19 +420,19 @@ export function CopilotHub() {
                 key={m.id}
                 style={{
                   alignSelf: m.sender === 'user' ? 'flex-end' : 'flex-start',
-                  maxWidth: '85%'
+                  maxWidth: isExpanded ? '75%' : '88%'
                 }}
               >
                 {m.handoff && (
                   <div
                     style={{
                       fontSize: '11px',
-                      color: '#a5b4fc',
-                      backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                      color: 'var(--accent-ink)',
+                      backgroundColor: 'var(--accent-soft)',
                       padding: '4px 8px',
                       borderRadius: '6px',
                       marginBottom: '4px',
-                      borderLeft: '3px solid #6366f1'
+                      borderLeft: '3px solid var(--accent)'
                     }}
                   >
                     ⚡ Switched to {m.handoff.to} ({m.handoff.reason})
@@ -380,34 +442,47 @@ export function CopilotHub() {
                   <div
                     style={{
                       fontSize: '10px',
-                      color: '#818cf8',
-                      fontWeight: 600,
-                      marginBottom: '2px',
-                      textTransform: 'uppercase'
+                      color: 'var(--accent)',
+                      fontWeight: 650,
+                      marginBottom: '3px',
+                      textTransform: 'uppercase',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4
                     }}
                   >
-                    {m.agent.replace('_', ' ')}
+                    <Icon name="sparkles" size={11} /> {m.agent.replace('_', ' ')}
                   </div>
                 )}
                 <div
                   style={{
-                    backgroundColor: m.sender === 'user' ? '#4f46e5' : '#334155',
-                    color: '#ffffff',
+                    backgroundColor: m.sender === 'user' ? 'var(--accent)' : 'var(--surface-2, #1e293b)',
+                    color: m.sender === 'user' ? '#ffffff' : 'var(--text)',
                     padding: '10px 14px',
-                    borderRadius: '12px',
+                    borderRadius: 'var(--r-lg, 12px)',
                     fontSize: '13px',
-                    lineHeight: '1.4'
+                    lineHeight: '1.5',
+                    border: '1px solid var(--line, rgba(255, 255, 255, 0.08))',
+                    boxShadow: 'var(--shadow-xs)'
                   }}
                 >
-                  {m.text || (isStreaming ? 'Thinking...' : '')}
+                  {m.text ? (
+                    <span style={{ whiteSpace: 'pre-wrap' }}>{m.text}</span>
+                  ) : isStreaming ? (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: 'var(--text-3)' }}>
+                      <span style={{ animation: 'pulse 1.2s infinite' }}>Analyzing intent & routing swarm...</span>
+                    </span>
+                  ) : null}
+
+                  {/* Inline Human-in-the-Loop Proposal Card */}
                   {m.proposal && (
                     <div
                       style={{
                         marginTop: '8px',
-                        padding: '8px 10px',
-                        backgroundColor: '#0f172a',
-                        borderRadius: '8px',
-                        border: '1px solid #4f46e5'
+                        padding: '10px 12px',
+                        backgroundColor: 'var(--surface, #0f172a)',
+                        borderRadius: 'var(--r-md, 8px)',
+                        border: '1px solid var(--accent, #4f46e5)'
                       }}
                     >
                       <div
@@ -415,44 +490,90 @@ export function CopilotHub() {
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'space-between',
-                          marginBottom: '2px'
+                          marginBottom: '4px'
                         }}
                       >
-                        <span style={{ fontSize: '11px', color: '#a5b4fc', fontWeight: 600 }}>
-                          Proposal: {m.proposal.toolName}
+                        <span style={{ fontSize: '11px', color: 'var(--accent)', fontWeight: 650, display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <Icon name="shield" size={12} /> Proposal: {m.proposal.toolName}
                         </span>
                         <span
                           style={{
                             fontSize: '10px',
-                            backgroundColor: '#334155',
-                            padding: '2px 5px',
-                            borderRadius: '4px',
-                            color: '#cbd5e1'
+                            backgroundColor: m.proposal.status === 'approved' ? 'var(--green-soft)' : 'var(--surface-3)',
+                            color: m.proposal.status === 'approved' ? 'var(--green)' : 'var(--text-2)',
+                            padding: '2px 6px',
+                            borderRadius: 'var(--r-pill)',
+                            fontWeight: 650
                           }}
                         >
-                          Pending Review
+                          {m.proposal.status === 'approved' ? 'Approved' : m.proposal.status === 'rejected' ? 'Rejected' : 'Pending Approval'}
                         </span>
                       </div>
-                      <a
-                        href="/copilot-inbox"
-                        style={{
-                          display: 'inline-block',
-                          fontSize: '11px',
-                          color: '#38bdf8',
-                          textDecoration: 'none',
-                          fontWeight: 500,
-                          marginTop: '2px'
-                        }}
-                      >
-                        Review in Copilot Inbox →
-                      </a>
+
+                      {m.proposal.params && (
+                        <pre
+                          style={{
+                            margin: '6px 0',
+                            padding: '6px 8px',
+                            background: 'var(--bg)',
+                            borderRadius: '4px',
+                            fontSize: '11px',
+                            maxHeight: '110px',
+                            overflowY: 'auto',
+                            color: 'var(--text)',
+                            whiteSpace: 'pre-wrap',
+                            fontFamily: 'var(--font-mono)'
+                          }}
+                        >
+                          {JSON.stringify(m.proposal.params, null, 2)}
+                        </pre>
+                      )}
+
+                      {(!m.proposal.status || m.proposal.status === 'pending') && (
+                        <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+                          <button
+                            type="button"
+                            onClick={() => handleInlineApprove(m.proposal!.id)}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              backgroundColor: 'var(--green)',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: 'var(--r-xs)',
+                              padding: '4px 10px',
+                              fontSize: '11px',
+                              fontWeight: 650,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            <Icon name="check" size={12} /> Approve Action
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleInlineReject(m.proposal!.id)}
+                            style={{
+                              backgroundColor: 'transparent',
+                              color: 'var(--text-3)',
+                              border: '1px solid var(--line)',
+                              borderRadius: 'var(--r-xs)',
+                              padding: '4px 8px',
+                              fontSize: '11px',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
                 <div
                   style={{
                     fontSize: '10px',
-                    color: '#64748b',
+                    color: 'var(--text-3)',
                     marginTop: '2px',
                     textAlign: m.sender === 'user' ? 'right' : 'left'
                   }}
@@ -463,12 +584,12 @@ export function CopilotHub() {
             ))}
           </div>
 
-          {/* Prompt Suggestions */}
+          {/* Polyglot & Quick Action Suggestion Pills */}
           <div
             style={{
-              padding: '6px 12px',
-              backgroundColor: '#0f172a',
-              borderTop: '1px solid rgba(255, 255, 255, 0.05)',
+              padding: '7px 12px',
+              backgroundColor: 'var(--surface-2, #0f172a)',
+              borderTop: '1px solid var(--line, rgba(255, 255, 255, 0.05))',
               display: 'flex',
               gap: '6px',
               overflowX: 'auto',
@@ -476,24 +597,27 @@ export function CopilotHub() {
             }}
           >
             {[
-              { label: '📊 Pipeline Deals', query: 'Summarize CRM pipeline opportunities and stages' },
+              { label: '📊 Deal Velocity', query: 'Summarize CRM pipeline opportunities and stages' },
               { label: '⚡ Lead Workflow', query: 'Generate workflow for qualifying high-scoring leads' },
               { label: '🔍 Find Contacts', query: 'Search contacts with active enterprise tags' },
-              { label: '📋 Approvals', query: 'List all workflow runs awaiting human approval' }
-            ].map(pill => (
+              { label: '🇪🇸 ¿Cómo creo contacto?', query: '¿Cómo puedo agregar un contacto en Operza?' },
+              { label: '🇫🇷 Créer automatisation', query: 'Comment créer une automatisation dans Operza?' },
+              { label: '🇩🇪 Telefonsystem Hilfe', query: 'Wie konfiguriere ich das Telefonsystem in Operza?' }
+            ].map((pill) => (
               <button
                 key={pill.label}
                 type="button"
                 onClick={() => setInput(pill.query)}
                 style={{
-                  background: 'rgba(255, 255, 255, 0.06)',
-                  border: '1px solid rgba(255, 255, 255, 0.12)',
-                  borderRadius: '6px',
-                  color: '#cbd5e1',
+                  background: 'var(--surface)',
+                  border: '1px solid var(--line)',
+                  borderRadius: 'var(--r-pill)',
+                  color: 'var(--text-2)',
                   fontSize: '11px',
-                  padding: '3px 8px',
+                  padding: '3px 9px',
                   cursor: 'pointer',
-                  whiteSpace: 'nowrap'
+                  whiteSpace: 'nowrap',
+                  fontWeight: 550
                 }}
               >
                 {pill.label}
@@ -505,8 +629,8 @@ export function CopilotHub() {
           <div
             style={{
               padding: '12px',
-              backgroundColor: '#0f172a',
-              borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+              backgroundColor: 'var(--surface-2, #0f172a)',
+              borderTop: '1px solid var(--line, rgba(255, 255, 255, 0.08))',
               display: 'flex',
               gap: '8px'
             }}
@@ -516,13 +640,13 @@ export function CopilotHub() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-              placeholder="Ask Copilot or type a command..."
+              placeholder="Ask Copilot in any language or type a command..."
               style={{
                 flex: 1,
-                backgroundColor: '#1e293b',
-                color: '#f8fafc',
-                border: '1px solid #475569',
-                borderRadius: '8px',
+                backgroundColor: 'var(--surface)',
+                color: 'var(--text)',
+                border: '1px solid var(--line-strong)',
+                borderRadius: 'var(--r-md, 8px)',
                 padding: '8px 12px',
                 fontSize: '13px',
                 outline: 'none'
@@ -532,13 +656,14 @@ export function CopilotHub() {
               onClick={handleSend}
               disabled={isStreaming || !input.trim()}
               style={{
-                backgroundColor: '#4f46e5',
+                backgroundColor: 'var(--accent)',
                 color: '#ffffff',
                 border: 'none',
-                borderRadius: '8px',
-                padding: '8px 14px',
+                borderRadius: 'var(--r-md, 8px)',
+                padding: '8px 16px',
                 cursor: isStreaming || !input.trim() ? 'not-allowed' : 'pointer',
-                fontWeight: 600
+                fontWeight: 650,
+                opacity: isStreaming || !input.trim() ? 0.6 : 1
               }}
             >
               Send
