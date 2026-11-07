@@ -4749,13 +4749,19 @@ const server = createServer(async (req, res) => {
         },
         create_payment_link: async (params, ctx) => {
           state.records.paymentLinks = state.records.paymentLinks || [];
+          const sanitizedSlug = params.slug
+            ? String(params.slug).toLowerCase().replace(/[^a-z0-9-]+/g, '-')
+            : (params.name ? String(params.name).toLowerCase().replace(/[^a-z0-9-]+/g, '-') : `pay-${Date.now()}`);
+          const validAmount = typeof params.amount === 'number' && Number.isFinite(params.amount) && params.amount > 0
+            ? params.amount
+            : 99;
           const newLink = {
             id: randomUUID(),
             agencyId: agency.id,
             locationId: activeLocation.id,
-            name: params.name || 'Product Checkout Link',
-            slug: params.slug || (params.name ? params.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') : `pay-${Date.now()}`),
-            amount: typeof params.amount === 'number' ? params.amount : 99,
+            name: (params.name || 'Product Checkout Link').trim(),
+            slug: sanitizedSlug,
+            amount: validAmount,
             currency: params.currency || 'USD',
             productIds: Array.isArray(params.productIds) ? params.productIds : [],
             visits: 0,
@@ -4774,13 +4780,18 @@ const server = createServer(async (req, res) => {
         },
         create_website_page: async (params, ctx) => {
           state.records.websites = state.records.websites || [];
-          let site = state.records.websites.find(w => w.agencyId === agency.id && (params.websiteId ? w.id === params.websiteId : true));
+          const targetLocationId = ctx?.locationId || activeLocation.id;
+          let site = state.records.websites.find(w =>
+            w.agencyId === agency.id &&
+            w.locationId === targetLocationId &&
+            (params.websiteId ? w.id === params.websiteId : true)
+          );
           if (!site) {
             site = {
               id: randomUUID(),
               agencyId: agency.id,
-              locationId: activeLocation.id,
-              name: params.websiteName || 'Main Website',
+              locationId: targetLocationId,
+              name: (params.websiteName || 'Main Website').trim(),
               domain: params.domain || 'growth.operza.com',
               published: false,
               status: 'draft',
@@ -4790,10 +4801,13 @@ const server = createServer(async (req, res) => {
             };
             state.records.websites.push(site);
           }
+          const sanitizedPath = params.path
+            ? `/${String(params.path).replace(/^\/+/, '').replace(/[^a-z0-9/_-]+/gi, '-')}`
+            : `/${(params.name || 'page').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
           const newPage = {
             id: randomUUID(),
-            name: params.name || 'New Landing Page',
-            path: params.path || `/${(params.name || 'page').toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+            name: (params.name || 'New Landing Page').trim(),
+            path: sanitizedPath,
             headline: params.headline || params.name || 'Welcome',
             subhead: params.subhead || '',
             cta: params.cta || 'Get started',
@@ -4802,8 +4816,13 @@ const server = createServer(async (req, res) => {
             optins: 0,
             createdAt: new Date().toISOString()
           };
-          site.pages = Array.isArray(site.pages) ? [...site.pages, newPage] : [newPage];
-          site.updatedAt = new Date().toISOString();
+          const updatedSite = {
+            ...site,
+            pages: Array.isArray(site.pages) ? [...site.pages, newPage] : [newPage],
+            updatedAt: new Date().toISOString()
+          };
+          const siteIdx = state.records.websites.findIndex(w => w.id === site.id);
+          if (siteIdx >= 0) state.records.websites[siteIdx] = updatedSite;
           await saveState();
           broadcast('crm.website.page_created', { siteId: site.id, page: newPage });
           return { siteId: site.id, pageId: newPage.id, name: newPage.name, path: newPage.path };
@@ -4846,8 +4865,17 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 400, { error: result.message, code: result.code });
       }
 
+      // Sanitize receipt to ensure raw credentials/secret tokens are never persisted in audit receipts or broadcast over WebSockets
+      const sanitizedReceipt = {
+        ...result.receipt,
+        result: result.receipt.result ? { ...result.receipt.result, secretToken: undefined } : result.receipt.result,
+        diff: result.receipt.diff ? {
+          ...result.receipt.diff,
+          outcome: result.receipt.diff.outcome ? { ...result.receipt.diff.outcome, secretToken: undefined } : result.receipt.diff.outcome
+        } : result.receipt.diff
+      };
       state.actionReceipts = state.actionReceipts || [];
-      state.actionReceipts.push(result.receipt);
+      state.actionReceipts.push(sanitizedReceipt);
       await saveState();
 
       auditLog('copilot.proposal.executed', actor, {
@@ -4857,7 +4885,7 @@ const server = createServer(async (req, res) => {
       });
       broadcast('copilot.proposal.executed', {
         proposal: result.proposal,
-        receipt: result.receipt
+        receipt: sanitizedReceipt
       });
 
       return sendJson(res, 200, {

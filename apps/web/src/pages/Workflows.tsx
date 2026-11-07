@@ -999,6 +999,8 @@ function StepModal({
   const hours = Number(delay);
   const trimmedUrl = url.trim();
   const urlValid = trimmedUrl === '' || /^https?:\/\/\S+$/i.test(trimmedUrl);
+  const trimmedZapierUrl = zapierHookUrl.trim();
+  const zapierUrlValid = trimmedZapierUrl.length > 0 && /^https?:\/\/\S+$/i.test(trimmedZapierUrl);
   const canSave =
     label.trim().length > 1 &&
     (kind !== 'wait' || (Number.isFinite(hours) && hours > 0)) &&
@@ -1006,7 +1008,7 @@ function StepModal({
     (kind !== 'tag' || tagName.trim().length > 0) &&
     (kind !== 'task' || taskTitle.trim().length > 0) &&
     (kind !== 'condition' || value.trim().length > 0) &&
-    (kind !== 'zapier' || zapierHookUrl.trim().length > 0) &&
+    (kind !== 'zapier' || zapierUrlValid) &&
     (kind !== 'data_filter' || filterField.trim().length > 0);
 
   const changeKind = (next: WorkflowAction['kind']) => {
