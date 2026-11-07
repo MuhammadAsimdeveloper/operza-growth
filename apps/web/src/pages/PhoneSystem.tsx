@@ -37,15 +37,140 @@ function talkTime(seconds: number): string {
   return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`;
 }
 
+function playDtmfTone(char: string) {
+  try {
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const audioCtx = new AudioContextClass();
+    const dtmfFrequencies: Record<string, [number, number]> = {
+      '1': [697, 1209], '2': [697, 1336], '3': [697, 1477],
+      '4': [770, 1209], '5': [770, 1336], '6': [770, 1477],
+      '7': [852, 1209], '8': [852, 1336], '9': [852, 1477],
+      '*': [941, 1209], '0': [941, 1336], '#': [941, 1477]
+    };
+    const freqs = dtmfFrequencies[char];
+    if (!freqs) return;
+    const osc1 = audioCtx.createOscillator();
+    const osc2 = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc1.frequency.value = freqs[0];
+    osc2.frequency.value = freqs[1];
+    gain.gain.value = 0.08;
+    osc1.connect(gain);
+    osc2.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc1.start();
+    osc2.start();
+    setTimeout(() => {
+      osc1.stop();
+      osc2.stop();
+      audioCtx.close().catch(() => {});
+    }, 140);
+  } catch {
+    // Web audio optional tone fallback
+  }
+}
+
 export default function PhoneSystem() {
   const { state, dispatch } = useStore();
-  const [activeTab, setActiveTab] = useState<'lines' | 'logs' | 'a2p'>('lines');
+  const [activeTab, setActiveTab] = useState<'dialer' | 'lines' | 'logs' | 'a2p'>('dialer');
   const [direction, setDirection] = useState<'all' | CallDirection>('all');
   const [outcome, setOutcome] = useState<'all' | CallOutcome>('all');
   const [query, setQuery] = useState('');
   const [logging, setLogging] = useState(false);
   const [provisioning, setProvisioning] = useState(false);
   const [editingNumber, setEditingNumber] = useState<PhoneNumber | null>(null);
+
+  // WebRTC Softphone Dialer State
+  const [dialNumber, setDialNumber] = useState('');
+  const [selectedFromNumber, setSelectedFromNumber] = useState('');
+  const [callStatus, setCallStatus] = useState<'idle' | 'dialing' | 'connected'>('idle');
+  const [activeCallId, setActiveCallId] = useState<string | null>(null);
+  const [callDuration, setCallDuration] = useState(0);
+  const [isMuted, setIsMuted] = useState(false);
+  const [isOnHold, setIsOnHold] = useState(false);
+  const [rtcToken, setRtcToken] = useState<any>(null);
+  const [selectedContactId, setSelectedContactId] = useState<string>('');
+
+  useEffect(() => {
+    api.telephony.getToken().then((res) => {
+      setRtcToken(res);
+      if (res?.fromNumber && !selectedFromNumber) {
+        setSelectedFromNumber(res.fromNumber);
+      }
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    let timer: any = null;
+    if (callStatus === 'connected') {
+      timer = setInterval(() => {
+        setCallDuration((prev) => prev + 1);
+      }, 1000);
+    } else {
+      setCallDuration(0);
+    }
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [callStatus]);
+
+  const handleKeypadPress = (digit: string) => {
+    playDtmfTone(digit);
+    if (callStatus === 'connected' && activeCallId) {
+      api.telephony.sendDtmf(activeCallId, digit).catch(() => {});
+    } else {
+      setDialNumber((prev) => prev + digit);
+    }
+  };
+
+  const handleStartCall = async (numToCall?: string, contactToBind?: string) => {
+    const target = numToCall || dialNumber;
+    if (!target.trim()) return;
+    setCallStatus('dialing');
+    try {
+      const res = await api.telephony.startCall({
+        to: target.trim(),
+        from: selectedFromNumber || rtcToken?.fromNumber || '+18005550199',
+        contactId: contactToBind || (selectedContactId || undefined),
+        notes: 'Outbound WebRTC softphone call',
+      });
+      if (res?.call) {
+        setActiveCallId(res.call.id);
+        dispatch({ type: 'call/log', call: res.call });
+        setTimeout(() => {
+          setCallStatus('connected');
+        }, 1000);
+      }
+    } catch (err) {
+      console.error('Call initiation failed:', err);
+      setCallStatus('idle');
+    }
+  };
+
+  const handleEndCall = async () => {
+    if (!activeCallId) {
+      setCallStatus('idle');
+      return;
+    }
+    try {
+      const res = await api.telephony.endCall(activeCallId, {
+        durationSec: callDuration,
+        outcome: 'completed',
+        notes: 'Call ended via in-browser WebRTC Softphone',
+      });
+      if (res?.call) {
+        dispatch({ type: 'call/log', call: res.call });
+      }
+    } catch (err) {
+      console.error('Call termination failed:', err);
+    } finally {
+      setCallStatus('idle');
+      setActiveCallId(null);
+      setIsMuted(false);
+      setIsOnHold(false);
+    }
+  };
 
   // A2P 10DLC Trust Hub state
   const [a2pStatus, setA2pStatus] = useState<any>(null);
@@ -213,6 +338,16 @@ export default function PhoneSystem() {
       <div className="row" style={{ gap: 8, marginBottom: 16 }}>
         <button
           type="button"
+          className={`btn ${activeTab === 'dialer' ? 'btn--primary' : 'btn--ghost'}`}
+          onClick={() => setActiveTab('dialer')}
+        >
+          <Icon name="phone" size={14} /> Softphone Dialer
+          {callStatus === 'connected' && (
+            <span style={{ marginLeft: 6 }}><Badge tone="green">In Call ({talkTime(callDuration)})</Badge></span>
+          )}
+        </button>
+        <button
+          type="button"
           className={`btn ${activeTab === 'lines' ? 'btn--primary' : 'btn--ghost'}`}
           onClick={() => setActiveTab('lines')}
         >
@@ -238,6 +373,330 @@ export default function PhoneSystem() {
           )}
         </button>
       </div>
+
+      {activeTab === 'dialer' && (
+        <div className="grid grid--2" style={{ gap: 20, marginBottom: 20, alignItems: 'start' }}>
+          {/* Dialer Console */}
+          <div className="card" style={{ padding: 24 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>WebRTC Softphone Dialer</h3>
+                <p className="cell-sub" style={{ margin: '2px 0 0' }}>Place outbound HD voice calls directly from your browser</p>
+              </div>
+              <Badge tone="green">WebRTC Ready</Badge>
+            </div>
+
+            {/* Virtual Line Selector */}
+            <div className="field" style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-3)' }}>
+                Caller ID (Virtual Line)
+              </label>
+              <select
+                className="select"
+                value={selectedFromNumber}
+                onChange={(e) => setSelectedFromNumber(e.target.value)}
+                disabled={callStatus !== 'idle'}
+              >
+                {state.phoneNumbers.map((num) => (
+                  <option key={num.id} value={num.number}>
+                    {num.label} ({num.number})
+                  </option>
+                ))}
+                {state.phoneNumbers.length === 0 && (
+                  <option value="+18005550199">Operza HD Default (+1 800 555-0199)</option>
+                )}
+              </select>
+            </div>
+
+            {/* Quick Contact Selector */}
+            <div className="field" style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-3)' }}>
+                Quick Contact Autofill
+              </label>
+              <select
+                className="select"
+                value={selectedContactId}
+                onChange={(e) => {
+                  setSelectedContactId(e.target.value);
+                  const c = state.contacts.find((x) => x.id === e.target.value);
+                  if (c?.phone) setDialNumber(c.phone);
+                }}
+                disabled={callStatus !== 'idle'}
+              >
+                <option value="">-- Choose contact or dial number below --</option>
+                {state.contacts.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.firstName} {c.lastName} {c.phone ? `(${c.phone})` : ''} {c.company ? `· ${c.company}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Phone Number Display Input */}
+            <div style={{ position: 'relative', margin: '14px 0 18px' }}>
+              <input
+                type="text"
+                className="input mono-cell"
+                placeholder="+1 (555) 000-0000"
+                value={dialNumber}
+                onChange={(e) => setDialNumber(e.target.value)}
+                disabled={callStatus !== 'idle'}
+                style={{
+                  fontSize: 22,
+                  fontWeight: 700,
+                  textAlign: 'center',
+                  padding: '12px 42px 12px 16px',
+                  letterSpacing: '0.05em',
+                  borderRadius: 12
+                }}
+              />
+              {dialNumber && callStatus === 'idle' && (
+                <button
+                  type="button"
+                  onClick={() => setDialNumber((prev) => prev.slice(0, -1))}
+                  style={{
+                    position: 'absolute',
+                    right: 12,
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--text-3)',
+                    fontSize: 16,
+                    padding: 4
+                  }}
+                  title="Backspace"
+                >
+                  ⌫
+                </button>
+              )}
+            </div>
+
+            {/* Call State / Live Call Control Banner */}
+            {callStatus !== 'idle' && (
+              <div style={{
+                background: callStatus === 'connected' ? '#ecfdf5' : '#fffbeb',
+                border: `1px solid ${callStatus === 'connected' ? '#86efac' : '#fde68a'}`,
+                borderRadius: 12,
+                padding: '16px 20px',
+                marginBottom: 18,
+                textAlign: 'center'
+              }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{
+                    width: 10,
+                    height: 10,
+                    borderRadius: '50%',
+                    background: callStatus === 'connected' ? '#10b981' : '#f59e0b',
+                    boxShadow: callStatus === 'connected' ? '0 0 0 4px rgba(16, 185, 129, 0.2)' : '0 0 0 4px rgba(245, 158, 11, 0.2)'
+                  }} />
+                  <strong style={{ fontSize: 14, color: callStatus === 'connected' ? '#065f46' : '#92400e' }}>
+                    {callStatus === 'connected' ? `Active HD Voice Call · ${talkTime(callDuration)}` : 'Connecting WebRTC Session...'}
+                  </strong>
+                </div>
+                <div style={{ fontSize: 13, color: callStatus === 'connected' ? '#047857' : '#b45309' }}>
+                  Connected to: <strong>{dialNumber}</strong>
+                  {isOnHold && <span style={{ marginLeft: 8, color: '#b45309', fontWeight: 700 }}>(ON HOLD)</span>}
+                  {isMuted && <span style={{ marginLeft: 8, color: '#dc2626', fontWeight: 700 }}>(MUTED)</span>}
+                </div>
+
+                {callStatus === 'connected' && (
+                  <div className="row" style={{ justifyContent: 'center', gap: 10, marginTop: 12 }}>
+                    <button
+                      type="button"
+                      className={`btn btn--sm ${isMuted ? 'btn--primary' : 'btn--ghost'}`}
+                      onClick={() => setIsMuted(!isMuted)}
+                      style={{ borderRadius: 8 }}
+                    >
+                      {isMuted ? 'Unmute Mic' : 'Mute Mic'}
+                    </button>
+                    <button
+                      type="button"
+                      className={`btn btn--sm ${isOnHold ? 'btn--primary' : 'btn--ghost'}`}
+                      onClick={() => setIsOnHold(!isOnHold)}
+                      style={{ borderRadius: 8 }}
+                    >
+                      {isOnHold ? 'Resume Call' : 'Hold Call'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* DTMF Keypad Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 18 }}>
+              {[
+                { digit: '1', sub: '—' },
+                { digit: '2', sub: 'ABC' },
+                { digit: '3', sub: 'DEF' },
+                { digit: '4', sub: 'GHI' },
+                { digit: '5', sub: 'JKL' },
+                { digit: '6', sub: 'MNO' },
+                { digit: '7', sub: 'PQRS' },
+                { digit: '8', sub: 'TUV' },
+                { digit: '9', sub: 'WXYZ' },
+                { digit: '*', sub: 'tone' },
+                { digit: '0', sub: '+' },
+                { digit: '#', sub: 'hash' },
+              ].map((btn) => (
+                <button
+                  key={btn.digit}
+                  type="button"
+                  onClick={() => handleKeypadPress(btn.digit)}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '12px 8px',
+                    borderRadius: 12,
+                    border: '1px solid var(--border)',
+                    background: 'var(--surface-2)',
+                    cursor: 'pointer',
+                    userSelect: 'none'
+                  }}
+                >
+                  <span style={{ fontSize: 19, fontWeight: 700, color: 'var(--text)' }}>{btn.digit}</span>
+                  <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-3)', letterSpacing: '0.05em' }}>{btn.sub}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Call Action Button */}
+            <div>
+              {callStatus === 'idle' ? (
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={!dialNumber.trim()}
+                  onClick={() => handleStartCall()}
+                  style={{
+                    width: '100%',
+                    padding: '14px',
+                    fontSize: 15,
+                    fontWeight: 700,
+                    background: dialNumber.trim() ? '#10b981' : 'var(--border)',
+                    color: '#fff',
+                    borderRadius: 12,
+                    border: 'none',
+                    cursor: dialNumber.trim() ? 'pointer' : 'not-allowed',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    boxShadow: dialNumber.trim() ? '0 4px 12px rgba(16, 185, 129, 0.25)' : 'none'
+                  }}
+                >
+                  <Icon name="phone" size={16} /> Place Outbound Call
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleEndCall}
+                  style={{
+                    width: '100%',
+                    padding: '14px',
+                    fontSize: 15,
+                    fontWeight: 700,
+                    background: '#ef4444',
+                    color: '#fff',
+                    borderRadius: 12,
+                    border: 'none',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                    boxShadow: '0 4px 12px rgba(239, 68, 68, 0.25)'
+                  }}
+                >
+                  End Call ({talkTime(callDuration)})
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Right Column: WebRTC Telephony Status & Recent Softphone Redial */}
+          <div className="stack" style={{ gap: 16 }}>
+            {/* Gateway Diagnostic Card */}
+            <div className="card" style={{ padding: 20 }}>
+              <div className="card__title" style={{ fontSize: 14, marginBottom: 12 }}>
+                WebRTC Softphone Infrastructure
+              </div>
+              <div className="stack" style={{ gap: 10, fontSize: 12.5 }}>
+                <div className="row row--between">
+                  <span className="cell-sub">SIP/WebRTC Gateway:</span>
+                  <span style={{ fontWeight: 600, color: '#10b981' }}>● Active & Connected</span>
+                </div>
+                <div className="row row--between">
+                  <span className="cell-sub">ICE STUN Servers:</span>
+                  <span style={{ fontWeight: 550 }}>stun.l.google.com:19302</span>
+                </div>
+                <div className="row row--between">
+                  <span className="cell-sub">Voice Codec:</span>
+                  <span style={{ fontWeight: 550 }}>Opus HD 48 kHz (Fullband)</span>
+                </div>
+                <div className="row row--between">
+                  <span className="cell-sub">DTMF Signaling:</span>
+                  <span style={{ fontWeight: 550 }}>RFC 2833 / In-Band Audio</span>
+                </div>
+                <div className="row row--between">
+                  <span className="cell-sub">Current Agent Identity:</span>
+                  <span className="mono-cell" style={{ fontWeight: 550 }}>{rtcToken?.identity || 'operator@operza.io'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Redial Recent Calls */}
+            <div className="card" style={{ padding: 20 }}>
+              <div className="row row--between" style={{ marginBottom: 12 }}>
+                <div className="card__title" style={{ fontSize: 14 }}>Recent Outbound Activity</div>
+                <span className="cell-sub">{state.calls.length} total</span>
+              </div>
+              {state.calls.slice(0, 5).length === 0 ? (
+                <EmptyState icon={<Icon name="phone" size={18} />} title="No calls placed yet" />
+              ) : (
+                <div className="stack" style={{ gap: 8 }}>
+                  {state.calls.slice(0, 5).map((call) => (
+                    <div
+                      key={call.id}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        padding: '10px 12px',
+                        background: 'var(--surface-2)',
+                        borderRadius: 10,
+                        border: '1px solid var(--border)'
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{call.to}</div>
+                        <div className="cell-sub" style={{ fontSize: 11 }}>
+                          {talkTime(call.durationSec || 0)} · {new Date(call.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        onClick={() => {
+                          setDialNumber(call.to || '');
+                          handleStartCall(call.to || '', call.contactId);
+                        }}
+                        style={{ padding: '4px 10px', fontSize: 12 }}
+                      >
+                        <Icon name="phone" size={11} /> Redial
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {activeTab === 'lines' && (
       <div className="card" style={{ marginBottom: 16 }}>

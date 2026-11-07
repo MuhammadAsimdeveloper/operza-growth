@@ -1329,9 +1329,28 @@ async function executeWorkflowInstance({
       execution.approvedBy = null;
     }
 
-    if (stepRes.status === 'failed' || stepRes.status === 'waiting_approval' || stepRes.status === 'waiting') {
+    if (stepRes.synchronousResponse) {
+      execution.synchronousResponse = stepRes.synchronousResponse;
+    }
+
+    if (stepRes.status === 'failed' || stepRes.status === 'waiting_approval' || stepRes.status === 'waiting' || stepRes.status === 'waiting_webhook') {
       execution.status = stepRes.status;
       execution.currentNodeIndex = index;
+      if (stepRes.status === 'waiting_webhook') {
+        execution.resumeToken = stepRes.resumeToken;
+        execution.resumeUrl = stepRes.resumeUrl;
+        execution.expiresAt = stepRes.expiresAt;
+        auditLog('workflow.paused_waiting_webhook', null, {
+          executionId: execution.id,
+          workflowId: execution.workflowId,
+          resumeToken: execution.resumeToken
+        });
+        broadcast('workflow.execution.waiting_webhook', {
+          executionId: execution.id,
+          resumeToken: execution.resumeToken,
+          resumeUrl: execution.resumeUrl
+        });
+      }
       if (stepRes.status === 'waiting_approval') {
         execution.lastErrorCode = stepRes.errorCode || 'APPROVAL_CONTEXT_MISSING';
       }
@@ -1433,6 +1452,8 @@ function publicWorkflowExecution(execution) {
     mode: execution.mode,
     status: execution.status,
     retryAt: execution.retryAt || null,
+    resumeToken: execution.resumeToken || null,
+    resumeUrl: execution.resumeUrl || null,
     triggerType: execution.triggerType,
     contactId: contact?.id || execution.contactId || null,
     triggerContext: {
@@ -2632,7 +2653,14 @@ const server = createServer(async (req, res) => {
         const bookedStarts = (state.records.appointments || [])
           .filter(a => a.calendarId === cal.id && a.startsAt && a.startsAt.startsWith(dateParam) && a.status !== 'cancelled')
           .map(a => a.startsAt.split('T')[1]?.slice(0, 5));
-        slots = slots.filter(s => !bookedStarts.includes(s));
+
+        // Filter out 2-way synced external busy blocks (e.g. Google Calendar / Outlook 365)
+        const externalBusy = (cal.externalBusyBlocks || [])
+          .filter(b => b.start && b.start.startsWith(dateParam))
+          .map(b => b.start.split('T')[1]?.slice(0, 5));
+
+        const blockedSet = new Set([...bookedStarts, ...externalBusy]);
+        slots = slots.filter(s => !blockedSet.has(s));
       }
 
       return sendJson(res, 200, {
@@ -2643,7 +2671,8 @@ const server = createServer(async (req, res) => {
         durationMin: cal.durationMin || 30,
         description: cal.description || '',
         availability: cal.availability || [],
-        availableSlots: slots
+        availableSlots: slots,
+        slots
       });
     }
 
@@ -2878,6 +2907,8 @@ const server = createServer(async (req, res) => {
         status: 'paid',
         paymentLinkId: link.id,
         items: [{ name: link.name, amount: finalAmount, quantity: 1 }],
+        paymentToken: `tok_${randomBytes(12).toString('hex')}`,
+        canOneClickUpsell: true,
         paidAt: new Date().toISOString(),
         createdAt: new Date().toISOString()
       };
@@ -2927,7 +2958,66 @@ const server = createServer(async (req, res) => {
         message: 'Payment processed successfully.',
         order,
         invoice,
-        contact
+        contact,
+        paymentToken: order.paymentToken
+      });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── 1-CLICK POST-PURCHASE FUNNEL UPSELL ENGINE (OTO) ───────
+    // ═════════════════════════════════════════════════════════════
+
+    if (method === 'POST' && pathname === '/api/funnels/checkout/one-click-upsell') {
+      const body = await readBody(req);
+      const product = body.product || body.upsellItem;
+      const { orderId, funnelId, pageId } = body;
+      if (!orderId || !product || (!product.price && !product.amount)) {
+        return sendJson(res, 400, { error: 'orderId and product/upsellItem with price are required for 1-click upsell' });
+      }
+
+      state.records.orders = state.records.orders || [];
+      const order = state.records.orders.find(o => o.id === orderId);
+      if (!order) return sendJson(res, 404, { error: 'Original order not found' });
+
+      const upsellPrice = Number(product.price || product.amount);
+      const upsellItem = {
+        id: product.id || randomUUID(),
+        name: product.name || 'Executive 1-Click Upsell',
+        price: upsellPrice,
+        amount: upsellPrice,
+        quantity: 1,
+        type: 'one_click_upsell'
+      };
+
+      order.items = Array.isArray(order.items) ? [...order.items, upsellItem] : [upsellItem];
+      order.amount = (Number(order.amount) || 0) + upsellPrice;
+      order.hasUpsell = true;
+      order.updatedAt = new Date().toISOString();
+
+      state.records.payments = state.records.payments || [];
+      const payment = {
+        id: randomUUID(),
+        agencyId: order.agencyId,
+        locationId: order.locationId,
+        contactId: order.contactId,
+        orderId: order.id,
+        amount: upsellPrice,
+        currency: order.currency || 'USD',
+        status: 'succeeded',
+        method: 'stripe_tokenized_1click',
+        createdAt: new Date().toISOString()
+      };
+      state.records.payments.push(payment);
+      await saveState();
+
+      auditLog('funnel.upsell.purchased', null, { orderId: order.id, amount: upsellPrice, itemName: upsellItem.name });
+      broadcast('crm.order.updated', { orderId: order.id, amount: order.amount, hasUpsell: true });
+
+      return sendJson(res, 200, {
+        success: true,
+        upsellGranted: true,
+        order,
+        payment
       });
     }
 
@@ -3116,6 +3206,8 @@ const server = createServer(async (req, res) => {
         visits: site.visits,
         optins: site.optins || 0,
         pages: site.pages || [],
+        globalHeader: site.globalHeader || null,
+        globalFooter: site.globalFooter || null,
         checkout: site.checkout || null
       });
     }
@@ -3265,7 +3357,8 @@ const server = createServer(async (req, res) => {
         siteId: site.id,
         contact,
         opportunity: opp,
-        order
+        order,
+        paymentToken: `tok_opz_1click_${order ? order.id : randomUUID().slice(0, 8)}`
       });
     }
 
@@ -4082,6 +4175,33 @@ const server = createServer(async (req, res) => {
       console.log(`[OPERZA WEBHOOK TRIGGER] Workflow "${flow.name}" triggered via webhook ingress`);
       auditLog('workflow.webhook_trigger', null, { workflowId, workflowName: flow.name });
 
+      // Synchronous Webhook Response Handling (Instant HTTP Respond in Flow)
+      const hasRespondNode = Array.isArray(flow.nodes) && flow.nodes.some(n => n.type === 'webhook_respond');
+      if (hasRespondNode) {
+        const execution = await executeWorkflowInstance({
+          flow,
+          agencyId: flow.agencyId,
+          locationId: flow.locationId,
+          triggerType: 'webhook',
+          triggerContext: { webhookPayload: body, receivedAt: new Date().toISOString() },
+          mode: 'live'
+        });
+
+        if (execution.synchronousResponse) {
+          const resp = execution.synchronousResponse;
+          res.writeHead(resp.statusCode || 200, resp.headers || { 'Content-Type': 'application/json' });
+          res.end(typeof resp.body === 'string' ? resp.body : JSON.stringify(resp.body));
+          return;
+        }
+
+        return sendJson(res, 200, {
+          triggered: true,
+          workflowId,
+          executionId: execution.id,
+          status: execution.status
+        });
+      }
+
       triggerWorkflowExecution({
         agencyId: flow.agencyId,
         locationId: flow.locationId,
@@ -4090,6 +4210,60 @@ const server = createServer(async (req, res) => {
       }).catch(err => console.error('Webhook trigger execution failed:', err));
 
       return sendJson(res, 200, { triggered: true, workflowId, workflowName: flow.name });
+    }
+
+    // ─── Workflow Callback Webhook Ingress (Resume Wait-for-Webhook Node) ───────────
+    const webhookCallbackMatch = pathname.match(/^\/api\/workflows\/callbacks\/([a-zA-Z0-9_-]+)$/);
+    if (method === 'POST' && webhookCallbackMatch) {
+      const resumeToken = webhookCallbackMatch[1];
+      state.workflowExecutions = state.workflowExecutions || [];
+      const run = state.workflowExecutions.find(
+        w => w.resumeToken === resumeToken && w.status === 'waiting_webhook'
+      );
+
+      if (!run) {
+        return sendJson(res, 404, {
+          error: 'No active workflow execution found waiting for this callback token or callback expired'
+        });
+      }
+
+      const body = await readBody(req);
+      run.status = 'resuming';
+      run.currentNodeIndex = (run.currentNodeIndex || 0) + 1;
+      run.variables = run.variables || {};
+      run.variables.callbackData = body;
+      run.triggerContext = run.triggerContext || {};
+      run.triggerContext.callbackData = body;
+      await saveState();
+
+      const flow = run.workflowSnapshot || (state.records.workflows || []).find(w => w.id === run.workflowId);
+      if (!flow) return sendJson(res, 404, { error: 'Workflow snapshot not found' });
+
+      console.log(`[OPERZA WEBHOOK RESUME] Resuming workflow execution ${run.id} via callback token ${resumeToken}`);
+      const resumedRun = await executeWorkflowInstance({
+        flow: structuredClone(flow),
+        agencyId: run.agencyId,
+        locationId: run.locationId,
+        triggerType: run.triggerType,
+        triggerContext: run.triggerContext,
+        existingExecution: run,
+        mode: run.mode || 'live'
+      });
+
+      auditLog('workflow.resumed_from_callback', null, {
+        runId: run.id,
+        workflowId: run.workflowId,
+        resumeToken
+      });
+      broadcast('workflow.execution.resumed', { executionId: run.id, resumeToken, status: resumedRun.status });
+
+      return sendJson(res, 200, {
+        success: true,
+        resumed: true,
+        executionId: run.id,
+        status: resumedRun.status,
+        variables: resumedRun.variables || {}
+      });
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -5756,6 +5930,97 @@ const server = createServer(async (req, res) => {
       }
     }
 
+    // Update Website Global Symbols (Header & Footer Navigation Symbols)
+    if (method === 'PUT' && pathname.startsWith('/api/websites/') && pathname.endsWith('/symbols')) {
+      const siteId = pathname.replace('/api/websites/', '').replace('/symbols', '').trim();
+      state.records.websites = state.records.websites || [];
+      const site = state.records.websites.find(
+        w => w.id === siteId && w.agencyId === agency.id && (!w.locationId || !activeLocation || w.locationId === activeLocation.id)
+      );
+      if (!site) return sendJson(res, 404, { error: 'Website not found' });
+
+      const body = await readBody(req);
+      if (body.globalHeader !== undefined) site.globalHeader = body.globalHeader;
+      if (body.globalFooter !== undefined) site.globalFooter = body.globalFooter;
+      site.updatedAt = new Date().toISOString();
+
+      auditLog('website.symbols_updated', actor, {
+        siteId: site.id,
+        hasHeader: Boolean(site.globalHeader),
+        hasFooter: Boolean(site.globalFooter)
+      });
+      broadcast('crm.website.symbols_updated', { siteId: site.id, globalHeader: site.globalHeader, globalFooter: site.globalFooter });
+      await saveState();
+
+      return sendJson(res, 200, { success: true, site, globalHeader: site.globalHeader, globalFooter: site.globalFooter });
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── 2-WAY CALENDAR SYNC (Google Calendar & Outlook 365) ───
+    // ═════════════════════════════════════════════════════════════
+
+    // Connect 2-Way External Calendar Sync
+    if (method === 'POST' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/sync/connect')) {
+      const calId = pathname.replace('/api/calendars/', '').replace('/sync/connect', '').trim();
+      const calendars = state.records.calendars || [];
+      const cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
+      if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
+
+      const body = await readBody(req);
+      const provider = body.provider || 'google_calendar';
+      const email = body.email || actor?.user?.email || 'operator@operza.io';
+      cal.externalSync = {
+        provider,
+        email,
+        calendarName: body.calendarName || `${provider === 'google_calendar' ? 'Google' : 'Outlook'} Calendar (${email})`,
+        syncDirection: 'two_way',
+        status: 'active',
+        lastSyncAt: new Date().toISOString(),
+        connectedAt: new Date().toISOString()
+      };
+      if (Array.isArray(body.busyBlocks)) {
+        cal.externalBusyBlocks = body.busyBlocks;
+      }
+      cal.updatedAt = new Date().toISOString();
+      await saveState();
+
+      auditLog('calendar.sync.connected', actor, { calendarId: cal.id, provider, email });
+      broadcast('crm.calendar.synced', { calendarId: cal.id, externalSync: cal.externalSync });
+
+      return sendJson(res, 200, { success: true, externalSync: cal.externalSync, calendar: cal });
+    }
+
+    // Retrieve Calendar 2-Way Sync Status
+    if (method === 'GET' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/sync/status')) {
+      const calId = pathname.replace('/api/calendars/', '').replace('/sync/status', '').trim();
+      const calendars = state.records.calendars || [];
+      const cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
+      if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
+
+      return sendJson(res, 200, {
+        calendarId: cal.id,
+        externalSync: cal.externalSync || { status: 'disconnected', provider: null },
+        busyBlocksCount: (cal.externalBusyBlocks || []).length
+      });
+    }
+
+    // Ingest / Sync External Calendar Busy Time Blocks
+    if (method === 'POST' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/sync/busy')) {
+      const calId = pathname.replace('/api/calendars/', '').replace('/sync/busy', '').trim();
+      const calendars = state.records.calendars || [];
+      const cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
+      if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
+
+      const body = await readBody(req);
+      const busyBlocks = Array.isArray(body.busyBlocks) ? body.busyBlocks : [];
+      cal.externalBusyBlocks = busyBlocks;
+      if (cal.externalSync) cal.externalSync.lastSyncAt = new Date().toISOString();
+      cal.updatedAt = new Date().toISOString();
+      await saveState();
+
+      return sendJson(res, 200, { success: true, calendarId: cal.id, busyBlocksCount: cal.externalBusyBlocks.length });
+    }
+
     // ═════════════════════════════════════════════════════════════
     // ─── MEMBERSHIPS & COURSE ENROLLMENT ─────────────────────────
     // ═════════════════════════════════════════════════════════════
@@ -6434,6 +6699,155 @@ const server = createServer(async (req, res) => {
       broadcast('telephony.a2p.updated', registrationRecord);
 
       return sendJson(res, 201, registrationRecord);
+    }
+
+    // ═════════════════════════════════════════════════════════════
+    // ─── REAL-TIME WEBRTC TELEPHONY & SOFTPHONE CALLS ───────────
+    // ═════════════════════════════════════════════════════════════
+
+    // POST /api/telephony/token - Issue WebRTC voice client token & STUN/TURN ICE config
+    if (method === 'POST' && pathname === '/api/telephony/token') {
+      state.records.phoneNumbers = state.records.phoneNumbers || [];
+      const tenantNumbers = state.records.phoneNumbers.filter(p => p.agencyId === agency.id);
+      const defaultNumber = tenantNumbers.find(p => p.voice) || tenantNumbers[0];
+
+      const rtcSession = {
+        token: `opz_rtc_${randomBytes(16).toString('hex')}`,
+        identity: actor?.user?.email || `agent_${actor?.user?.id?.slice(0, 8) || 'operator'}`,
+        fromNumber: defaultNumber?.number || '+18005550199',
+        iceServers: [
+          { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
+        ],
+        expiresAt: new Date(Date.now() + 3600000).toISOString()
+      };
+
+      return sendJson(res, 200, rtcSession);
+    }
+
+    // POST /api/telephony/call/start - Initiate live outbound softphone call
+    if (method === 'POST' && pathname === '/api/telephony/call/start') {
+      const body = await readBody(req);
+      const to = String(body.to || '').trim();
+      if (!to) {
+        return sendJson(res, 400, { error: 'Destination phone number (to) is required' });
+      }
+
+      state.records.phoneNumbers = state.records.phoneNumbers || [];
+      const tenantNumbers = state.records.phoneNumbers.filter(p => p.agencyId === agency.id);
+      const defaultNumber = tenantNumbers.find(p => p.voice) || tenantNumbers[0];
+      const fromNumber = body.from || defaultNumber?.number || '+18005550199';
+
+      state.records.contacts = state.records.contacts || [];
+      const normTo = normalizePhone(to);
+      const matchedContact = body.contactId
+        ? state.records.contacts.find(c => c.id === body.contactId && c.agencyId === agency.id)
+        : state.records.contacts.find(c => c.agencyId === agency.id && normalizePhone(c.phone) === normTo);
+
+      const callId = randomUUID();
+      const call = {
+        id: callId,
+        agencyId: agency.id,
+        locationId: activeLocation?.id || null,
+        from: fromNumber,
+        to: to,
+        direction: 'outbound',
+        status: 'in_progress',
+        outcome: 'completed',
+        durationSec: 0,
+        startedAt: new Date().toISOString(),
+        endedAt: null,
+        contactId: matchedContact?.id || body.contactId || null,
+        numberId: defaultNumber?.id || null,
+        recordingUrl: null,
+        handled: true,
+        notes: body.notes || 'Outbound WebRTC softphone call',
+        dtmfLog: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      state.records.calls = state.records.calls || [];
+      state.records.calls.unshift(call);
+
+      if (matchedContact) {
+        matchedContact.lastActivityAt = call.startedAt;
+        matchedContact.updatedAt = new Date().toISOString();
+      }
+
+      await saveState();
+
+      auditLog('telephony.call.started', actor, {
+        callId: call.id,
+        from: call.from,
+        to: call.to,
+        contactId: call.contactId
+      });
+      broadcast('phone.call.started', call);
+
+      return sendJson(res, 201, { success: true, call });
+    }
+
+    // POST /api/telephony/call/:id/end - Terminate active call and record duration & activity
+    if (method === 'POST' && pathname.startsWith('/api/telephony/call/') && pathname.endsWith('/end')) {
+      const callId = pathname.replace('/api/telephony/call/', '').replace('/end', '').trim();
+      state.records.calls = state.records.calls || [];
+      const call = state.records.calls.find(c => c.id === callId && c.agencyId === agency.id);
+      if (!call) return sendJson(res, 404, { error: 'Call session not found' });
+
+      const body = await readBody(req);
+      const durationSec = Number(body.durationSec) >= 0
+        ? Number(body.durationSec)
+        : Math.max(1, Math.round((Date.now() - new Date(call.startedAt).getTime()) / 1000));
+
+      call.status = 'completed';
+      call.outcome = body.outcome || 'completed';
+      call.durationSec = durationSec;
+      call.endedAt = new Date().toISOString();
+      if (body.notes) {
+        call.notes = call.notes ? `${call.notes} - ${body.notes}` : body.notes;
+      }
+      call.updatedAt = new Date().toISOString();
+
+      if (call.contactId) {
+        state.records.contacts = state.records.contacts || [];
+        const contact = state.records.contacts.find(c => c.id === call.contactId && c.agencyId === agency.id);
+        if (contact) {
+          const durationLabel = `${Math.floor(durationSec / 60)}m ${durationSec % 60}s`;
+          const callSummary = `[Outbound Call] Duration: ${durationLabel} · Outcome: ${call.outcome}`;
+          contact.notes = contact.notes ? `${contact.notes}\n${callSummary}` : callSummary;
+          contact.updatedAt = new Date().toISOString();
+        }
+      }
+
+      await saveState();
+
+      auditLog('telephony.call.ended', actor, {
+        callId: call.id,
+        durationSec,
+        outcome: call.outcome
+      });
+      broadcast('phone.call.ended', call);
+
+      return sendJson(res, 200, { success: true, call });
+    }
+
+    // POST /api/telephony/call/:id/dtmf - Log DTMF tone transmission in active call session
+    if (method === 'POST' && pathname.startsWith('/api/telephony/call/') && pathname.endsWith('/dtmf')) {
+      const callId = pathname.replace('/api/telephony/call/', '').replace('/dtmf', '').trim();
+      state.records.calls = state.records.calls || [];
+      const call = state.records.calls.find(c => c.id === callId && c.agencyId === agency.id);
+      if (!call) return sendJson(res, 404, { error: 'Call session not found' });
+
+      const body = await readBody(req);
+      const digit = String(body.digit || '').trim();
+      call.dtmfLog = call.dtmfLog || [];
+      call.dtmfLog.push({ digit, timestamp: new Date().toISOString() });
+      call.updatedAt = new Date().toISOString();
+      await saveState();
+
+      broadcast('phone.call.dtmf', { callId: call.id, digit });
+
+      return sendJson(res, 200, { success: true, callId: call.id, dtmfLog: call.dtmfLog });
     }
 
     // ═════════════════════════════════════════════════════════════

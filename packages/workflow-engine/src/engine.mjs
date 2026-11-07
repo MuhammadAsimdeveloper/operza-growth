@@ -326,6 +326,44 @@ export async function executeStep({
         return { status: 'waiting', nodeId, retryAt, result: { retryAt } };
       }
 
+      case 'wait_webhook': {
+        if (execution?.mode === 'dry_run') {
+          return {
+            status: 'simulated',
+            nodeId,
+            result: { mode: 'dry_run', sideEffectsDisabled: true, wouldWaitForWebhook: true }
+          };
+        }
+        const timeoutHours = Number(config.timeoutHours) || 24;
+        const expiresAt = new Date(now + timeoutHours * 3600 * 1000).toISOString();
+        const resumeToken = config.resumeToken || randomUUID();
+        const resumeUrl = `/api/workflows/callbacks/${resumeToken}`;
+        return {
+          status: 'waiting_webhook',
+          nodeId,
+          resumeToken,
+          resumeUrl,
+          expiresAt,
+          result: { resumeToken, resumeUrl, expiresAt }
+        };
+      }
+
+      case 'webhook_respond': {
+        const statusCode = Number(config.statusCode) || 200;
+        const responseBody = config.responseBody ? renderTemplate(config.responseBody, ctx) : JSON.stringify({ success: true, processedAt: new Date().toISOString() });
+        const headers = config.headers || { 'Content-Type': 'application/json' };
+        return {
+          status: 'completed',
+          nodeId,
+          synchronousResponse: {
+            statusCode,
+            body: responseBody,
+            headers
+          },
+          result: { statusCode, sentResponse: true }
+        };
+      }
+
       // ---------------------------------------------------------------
       // NEW — http_request
       // ---------------------------------------------------------------

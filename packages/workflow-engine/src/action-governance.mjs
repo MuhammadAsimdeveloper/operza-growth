@@ -46,7 +46,9 @@ const DEFINITIONS = [
   ['data_filter', 'flow.data.filter', 'read', 'none', null],
   ['split_test', 'flow.ab.split', 'read', 'none', null],
   ['set_variable', 'flow.variable.set', 'read', 'none', null],
-  ['error_trigger', 'automation.error.trigger', 'read', 'none', null]
+  ['error_trigger', 'automation.error.trigger', 'read', 'none', null],
+  ['wait_webhook', 'flow.wait.webhook', 'read', 'none', null],
+  ['webhook_respond', 'automation.webhook.respond', 'read', 'none', null]
 ].map(([nodeType, id, risk, approval, providerKey]) => Object.freeze({
   nodeType, id, risk, approval, providerKey, surface: 'workflow'
 }));

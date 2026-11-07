@@ -325,3 +325,47 @@ test('data_filter node filters array by condition rules', async () => {
   assert.equal(res.setVariable?.name, 'qualifiedLeads');
   assert.equal(res.setVariable?.value?.length, 2);
 });
+
+test('wait_webhook node generates resume token and pauses execution in waiting_webhook state', async () => {
+  const node = {
+    id: 'node-wait-webhook-1',
+    type: 'wait_webhook',
+    config: {
+      timeoutHours: 12
+    }
+  };
+
+  const res = await executeStep({
+    node,
+    triggerContext: {},
+    crmActions: {}
+  });
+
+  assert.equal(res.status, 'waiting_webhook');
+  assert.ok(res.resumeToken);
+  assert.equal(res.resumeUrl, `/api/workflows/callbacks/${res.resumeToken}`);
+  assert.ok(res.expiresAt);
+});
+
+test('webhook_respond node generates immediate synchronous HTTP response payload', async () => {
+  const node = {
+    id: 'node-respond-1',
+    type: 'webhook_respond',
+    config: {
+      statusCode: 201,
+      responseBody: '{"received":true,"lead":"{{contact.firstName}}"}',
+      headers: { 'Content-Type': 'application/json', 'X-Custom-Header': 'operza-hook' }
+    }
+  };
+
+  const res = await executeStep({
+    node,
+    triggerContext: { contact: { firstName: 'Diana' } },
+    crmActions: {}
+  });
+
+  assert.equal(res.status, 'completed');
+  assert.equal(res.synchronousResponse?.statusCode, 201);
+  assert.equal(res.synchronousResponse?.body, '{"received":true,"lead":"Diana"}');
+  assert.equal(res.synchronousResponse?.headers?.['X-Custom-Header'], 'operza-hook');
+});

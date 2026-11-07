@@ -57,22 +57,41 @@ function PagePreview({ site, page }: { site: Site; page: SitePage }) {
           padding: '12px 18px',
           borderBottom: '1px solid var(--line)',
           flexWrap: 'wrap',
+          alignItems: 'center'
         }}
       >
-        <span className="row" style={{ gap: 7 }}>
-          <span className="brand__mark">AG</span>
-          <strong style={{ fontSize: 13 }}>{site.name}</strong>
+        <span className="row" style={{ gap: 7, alignItems: 'center' }}>
+          <span className="brand__mark">OPZ</span>
+          <strong style={{ fontSize: 13 }}>{site.globalHeader?.brandText || site.name}</strong>
         </span>
         <span className="spacer" />
-        {site.pages.map((p) => (
+        {(site.globalHeader?.navLinks && site.globalHeader.navLinks.length > 0
+          ? site.globalHeader.navLinks
+          : site.pages.map((p) => ({ id: p.id, label: p.name, url: p.path }))
+        ).map((link) => (
           <span
-            key={p.id}
+            key={link.id || link.label}
             className="hint"
-            style={{ fontSize: 12, fontWeight: p.id === page.id ? 650 : 450, color: p.id === page.id ? 'var(--text)' : undefined }}
+            style={{ fontSize: 12, fontWeight: link.label === page.name ? 650 : 450, color: link.label === page.name ? 'var(--text)' : undefined }}
           >
-            {p.name}
+            {link.label}
           </span>
         ))}
+        {site.globalHeader?.ctaLabel && (
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              background: 'var(--accent)',
+              color: '#fff',
+              padding: '4px 10px',
+              borderRadius: 6,
+              marginLeft: 8
+            }}
+          >
+            {site.globalHeader.ctaLabel}
+          </span>
+        )}
       </div>
       <div
         style={{
@@ -106,15 +125,26 @@ function PagePreview({ site, page }: { site: Site; page: SitePage }) {
       <div
         className="row row--between"
         style={{
-          padding: '10px 18px',
+          padding: '12px 18px',
           borderTop: '1px solid var(--line)',
           fontSize: 11.5,
           color: 'var(--text-3)',
+          flexWrap: 'wrap',
+          gap: 12
         }}
       >
         <span>
-          © 2026 {site.name}
+          {site.globalFooter?.copyrightText || `© ${new Date().getFullYear()} ${site.name}. All rights reserved.`}
         </span>
+        {site.globalFooter?.footerLinks && site.globalFooter.footerLinks.length > 0 && (
+          <div className="row" style={{ gap: 12 }}>
+            {site.globalFooter.footerLinks.map((l) => (
+              <span key={l.id || l.label} className="hint" style={{ fontSize: 11 }}>
+                {l.label}
+              </span>
+            ))}
+          </div>
+        )}
         <span style={{ fontFamily: 'var(--font-mono)' }}>{page.path}</span>
       </div>
     </div>
@@ -130,6 +160,7 @@ export default function Websites() {
   const [confirmDeleteSite, setConfirmDeleteSite] = useState<Site | null>(null);
   const [builderTarget, setBuilderTarget] = useState<{ site: Site; page: SitePage } | null>(null);
   const [maintenanceSite, setMaintenanceSite] = useState<Site | null>(null);
+  const [symbolsSite, setSymbolsSite] = useState<Site | null>(null);
 
   useEffect(() => {
     api.websites.list().then((res) => {
@@ -263,6 +294,9 @@ export default function Websites() {
                   {site.domain && (
                     <Badge tone="blue">{site.domain}</Badge>
                   )}
+                  {(site.globalHeader?.enabled || site.globalFooter?.enabled) && (
+                    <Badge tone="violet">Global Symbols Active</Badge>
+                  )}
                 </div>
                 <div className="cell-sub">
                   agency.test/{siteSlug(site)}
@@ -277,6 +311,13 @@ export default function Websites() {
                   onClick={() => setMaintenanceSite(site)}
                 >
                   <Icon name="sliders" size={14} /> Maintenance & DNS
+                </button>
+                <button
+                  className="btn btn--sm"
+                  title="Manage shared Global Header & Footer symbols across all pages"
+                  onClick={() => setSymbolsSite(site)}
+                >
+                  <Icon name="copy" size={14} /> Global Symbols
                 </button>
                 <button className="btn btn--sm" onClick={() => setAddingSiteId(site.id)}>
                   <Icon name="plus" size={14} /> Add page
@@ -442,6 +483,14 @@ export default function Websites() {
         <SiteMaintenanceModal
           site={maintenanceSite}
           onClose={() => setMaintenanceSite(null)}
+        />
+      )}
+
+      {symbolsSite && (
+        <GlobalSymbolsModal
+          site={symbolsSite}
+          onClose={() => setSymbolsSite(null)}
+          dispatch={dispatch}
         />
       )}
 
@@ -1166,6 +1215,285 @@ function SiteMaintenanceModal({ site, onClose }: { site: Site; onClose: () => vo
           </div>
         </div>
       )}
+    </Modal>
+  );
+}
+
+function GlobalSymbolsModal({
+  site,
+  onClose,
+  dispatch,
+}: {
+  site: Site;
+  onClose: () => void;
+  dispatch: ReturnType<typeof useStore>['dispatch'];
+}) {
+  const [headerEnabled, setHeaderEnabled] = useState(site.globalHeader?.enabled ?? true);
+  const [brandText, setBrandText] = useState(site.globalHeader?.brandText || site.name);
+  const [navLinks, setNavLinks] = useState<Array<{ id: string; label: string; url: string }>>(
+    site.globalHeader?.navLinks && site.globalHeader.navLinks.length > 0
+      ? site.globalHeader.navLinks
+      : site.pages.map((p) => ({ id: p.id, label: p.name, url: p.path }))
+  );
+  const [ctaLabel, setCtaLabel] = useState(site.globalHeader?.ctaLabel || 'Get Started');
+  const [ctaUrl, setCtaUrl] = useState(site.globalHeader?.ctaUrl || '/contact');
+
+  const [footerEnabled, setFooterEnabled] = useState(site.globalFooter?.enabled ?? true);
+  const [copyrightText, setCopyrightText] = useState(
+    site.globalFooter?.copyrightText || `© ${new Date().getFullYear()} ${site.name}. All rights reserved.`
+  );
+  const [footerLinks, setFooterLinks] = useState<Array<{ id: string; label: string; url: string }>>(
+    site.globalFooter?.footerLinks || [
+      { id: '1', label: 'Privacy Policy', url: '/privacy' },
+      { id: '2', label: 'Terms of Service', url: '/terms' },
+      { id: '3', label: 'Contact', url: '/contact' },
+    ]
+  );
+  const [twitter, setTwitter] = useState(site.globalFooter?.socialLinks?.twitter || 'https://x.com/operza');
+  const [linkedin, setLinkedin] = useState(site.globalFooter?.socialLinks?.linkedin || 'https://linkedin.com/company/operza');
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    setSaving(true);
+    const globalHeader = {
+      enabled: headerEnabled,
+      brandText: brandText.trim(),
+      navLinks,
+      ctaLabel: ctaLabel.trim(),
+      ctaUrl: ctaUrl.trim(),
+    };
+    const globalFooter = {
+      enabled: footerEnabled,
+      copyrightText: copyrightText.trim(),
+      footerLinks,
+      socialLinks: {
+        twitter: twitter.trim(),
+        linkedin: linkedin.trim(),
+      },
+    };
+
+    try {
+      await api.websites.updateSymbols(site.id, { globalHeader, globalFooter });
+      dispatch({
+        type: 'site/update',
+        id: site.id,
+        patch: { globalHeader, globalFooter },
+      });
+      onClose();
+    } catch (err) {
+      console.error('Failed to save global symbols:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Global Symbols (Header & Footer) · ${site.name}`}
+      wide
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" type="button" onClick={onClose} disabled={saving}>
+            Cancel
+          </button>
+          <button className="btn btn--primary" type="button" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving...' : 'Save Global Symbols'}
+          </button>
+        </>
+      }
+    >
+      <div className="stack" style={{ gap: 20 }}>
+        <p className="hint">
+          Global symbols are reusable layout components synchronized across every page on this website.
+          Edits to your global navigation header or footer instantly propagate across all pages.
+        </p>
+
+        {/* Global Header Symbol */}
+        <div className="card" style={{ padding: 18, background: 'var(--surface-2)' }}>
+          <div className="row row--between" style={{ marginBottom: 12 }}>
+            <div>
+              <strong style={{ fontSize: 14 }}>Global Header Navigation Symbol</strong>
+              <div className="cell-sub">Synchronized top navigation bar on all pages</div>
+            </div>
+            <Switch on={headerEnabled} label="Enable Global Header" onChange={() => setHeaderEnabled(!headerEnabled)} />
+          </div>
+
+          {headerEnabled && (
+            <div className="stack" style={{ gap: 12, marginTop: 12 }}>
+              <div className="grid grid--3">
+                <div className="field">
+                  <label>Brand Logo / Name</label>
+                  <input
+                    className="input"
+                    value={brandText}
+                    onChange={(e) => setBrandText(e.target.value)}
+                    placeholder="e.g. Acme Corp"
+                  />
+                </div>
+                <div className="field">
+                  <label>CTA Button Label</label>
+                  <input
+                    className="input"
+                    value={ctaLabel}
+                    onChange={(e) => setCtaLabel(e.target.value)}
+                    placeholder="e.g. Book Consultation"
+                  />
+                </div>
+                <div className="field">
+                  <label>CTA Target URL</label>
+                  <input
+                    className="input"
+                    value={ctaUrl}
+                    onChange={(e) => setCtaUrl(e.target.value)}
+                    placeholder="e.g. /contact"
+                  />
+                </div>
+              </div>
+
+              <div className="field">
+                <label>Header Navigation Links</label>
+                <div className="stack" style={{ gap: 6 }}>
+                  {navLinks.map((link, idx) => (
+                    <div key={link.id || idx} className="row" style={{ gap: 8 }}>
+                      <input
+                        className="input"
+                        placeholder="Label (e.g. Solutions)"
+                        value={link.label}
+                        onChange={(e) => {
+                          const next = [...navLinks];
+                          next[idx].label = e.target.value;
+                          setNavLinks(next);
+                        }}
+                        style={{ flex: 1 }}
+                      />
+                      <input
+                        className="input"
+                        placeholder="URL (e.g. /solutions)"
+                        value={link.url}
+                        onChange={(e) => {
+                          const next = [...navLinks];
+                          next[idx].url = e.target.value;
+                          setNavLinks(next);
+                        }}
+                        style={{ flex: 1 }}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        onClick={() => setNavLinks(navLinks.filter((_, i) => i !== idx))}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    className="btn btn--sm"
+                    style={{ alignSelf: 'flex-start' }}
+                    onClick={() => setNavLinks([...navLinks, { id: uid(), label: 'New Link', url: '/page' }])}
+                  >
+                    + Add Link
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Global Footer Symbol */}
+        <div className="card" style={{ padding: 18, background: 'var(--surface-2)' }}>
+          <div className="row row--between" style={{ marginBottom: 12 }}>
+            <div>
+              <strong style={{ fontSize: 14 }}>Global Footer Symbol</strong>
+              <div className="cell-sub">Synchronized bottom footer and legal links on all pages</div>
+            </div>
+            <Switch on={footerEnabled} label="Enable Global Footer" onChange={() => setFooterEnabled(!footerEnabled)} />
+          </div>
+
+          {footerEnabled && (
+            <div className="stack" style={{ gap: 12, marginTop: 12 }}>
+              <div className="field">
+                <label>Copyright Statement</label>
+                <input
+                  className="input"
+                  value={copyrightText}
+                  onChange={(e) => setCopyrightText(e.target.value)}
+                  placeholder="e.g. © 2026 Acme Corp. All rights reserved."
+                />
+              </div>
+
+              <div className="grid grid--2">
+                <div className="field">
+                  <label>X / Twitter URL</label>
+                  <input
+                    className="input"
+                    value={twitter}
+                    onChange={(e) => setTwitter(e.target.value)}
+                    placeholder="https://x.com/yourhandle"
+                  />
+                </div>
+                <div className="field">
+                  <label>LinkedIn URL</label>
+                  <input
+                    className="input"
+                    value={linkedin}
+                    onChange={(e) => setLinkedin(e.target.value)}
+                    placeholder="https://linkedin.com/company/yourhandle"
+                  />
+                </div>
+              </div>
+
+              <div className="field">
+                <label>Footer Legal & Navigation Links</label>
+                <div className="stack" style={{ gap: 6 }}>
+                  {footerLinks.map((link, idx) => (
+                    <div key={link.id || idx} className="row" style={{ gap: 8 }}>
+                      <input
+                        className="input"
+                        placeholder="Label (e.g. Privacy Policy)"
+                        value={link.label}
+                        onChange={(e) => {
+                          const next = [...footerLinks];
+                          next[idx].label = e.target.value;
+                          setFooterLinks(next);
+                        }}
+                        style={{ flex: 1 }}
+                      />
+                      <input
+                        className="input"
+                        placeholder="URL (e.g. /privacy)"
+                        value={link.url}
+                        onChange={(e) => {
+                          const next = [...footerLinks];
+                          next[idx].url = e.target.value;
+                          setFooterLinks(next);
+                        }}
+                        style={{ flex: 1 }}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn--sm"
+                        onClick={() => setFooterLinks(footerLinks.filter((_, i) => i !== idx))}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    className="btn btn--sm"
+                    style={{ alignSelf: 'flex-start' }}
+                    onClick={() => setFooterLinks([...footerLinks, { id: uid(), label: 'New Link', url: '/terms' }])}
+                  >
+                    + Add Footer Link
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </Modal>
   );
 }

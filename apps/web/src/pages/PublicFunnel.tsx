@@ -36,6 +36,34 @@ export default function PublicFunnel() {
   const [bumpAccepted, setBumpAccepted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState<any>(null);
+  const [upsellLoading, setUpsellLoading] = useState(false);
+  const [upsellClaimed, setUpsellClaimed] = useState(false);
+  const [upsellDismissed, setUpsellDismissed] = useState(false);
+  const [updatedOrder, setUpdatedOrder] = useState<any>(null);
+
+  const handleOneClickUpsell = async () => {
+    if (!submitted?.order?.id || !submitted?.paymentToken) return;
+    setUpsellLoading(true);
+    try {
+      const res = await api.funnels.oneClickUpsell({
+        orderId: submitted.order.id,
+        paymentToken: submitted.paymentToken,
+        upsellItem: {
+          id: 'oto-launchpad-97',
+          name: 'Done-With-You Automation Launchpad',
+          price: 97
+        }
+      });
+      if (res?.success) {
+        setUpsellClaimed(true);
+        if (res.order) setUpdatedOrder(res.order);
+      }
+    } catch (err: any) {
+      alert(`Upsell error: ${err.message || 'Payment token expired'}`);
+    } finally {
+      setUpsellLoading(false);
+    }
+  };
 
   // Live countdown state
   const [timeLeft, setTimeLeft] = useState({ hours: 1, minutes: 42, seconds: 18 });
@@ -174,19 +202,58 @@ export default function PublicFunnel() {
               Thank you, <strong>{submitted.contact?.name || firstName || 'Partner'}</strong>! We've received your registration and assigned you to our priority onboarding queue.
             </p>
             {submitted.order && (
-              <div style={{ background: '#f8fafc', padding: 20, borderRadius: 12, border: '1px solid #e2e8f0', maxWidth: 440, margin: '0 auto 24px', textAlign: 'left' }}>
+              <div style={{ background: '#f8fafc', padding: 20, borderRadius: 12, border: '1px solid #e2e8f0', maxWidth: 460, margin: '0 auto 24px', textAlign: 'left' }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: '#64748b', marginBottom: 6 }}>ORDER CONFIRMATION</div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: 16 }}>
                   <span>{submitted.order.orderNumber}</span>
-                  <span style={{ color: '#059669' }}>${submitted.order.amount} USD</span>
+                  <span style={{ color: '#059669' }}>${updatedOrder?.amount || submitted.order.amount} USD</span>
                 </div>
                 {bumpAccepted && (
                   <div style={{ fontSize: 13, color: '#0284c7', marginTop: 6 }}>
                     ✓ VIP Implementation Blueprint Included
                   </div>
                 )}
+                {upsellClaimed && (
+                  <div style={{ fontSize: 13, color: '#16a34a', fontWeight: 600, marginTop: 6 }}>
+                    ✓ 1-Click Upgrade: Done-With-You Automation Launchpad (+$97)
+                  </div>
+                )}
               </div>
             )}
+
+            {/* 1-Click Post-Purchase Upsell (OTO) */}
+            {submitted.order && submitted.paymentToken && !upsellClaimed && !upsellDismissed && (
+              <div style={{ background: 'linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%)', border: '2px solid #86efac', borderRadius: 16, padding: 24, maxWidth: 520, margin: '0 auto 24px', textAlign: 'left' }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: '#16a34a', color: '#fff', fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 999, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+                  ★ Exclusive 1-Click Post-Purchase Upgrade
+                </div>
+                <h3 style={{ fontSize: 18, fontWeight: 700, color: '#065f46', margin: '0 0 6px' }}>
+                  Add "Done-With-You Automation Launchpad" for Just $97
+                </h3>
+                <p style={{ fontSize: 13.5, color: '#047857', margin: '0 0 16px', lineHeight: 1.5 }}>
+                  Fast-track your revenue engine. Get full pre-configured CRM workflows, client intake pipelines, and omnichannel messaging sequences installed directly into your Operza account by our principal engineers.
+                </p>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={handleOneClickUpsell}
+                    disabled={upsellLoading}
+                    className="btn"
+                    style={{ background: '#059669', color: '#fff', fontWeight: 700, padding: '10px 20px', borderRadius: 8, border: 'none', cursor: 'pointer', fontSize: 14 }}
+                  >
+                    {upsellLoading ? 'Processing 1-Click Charge...' : '✓ Yes! Add to My Order for $97'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUpsellDismissed(true)}
+                    style={{ background: 'transparent', border: 'none', color: '#64748b', fontSize: 13, cursor: 'pointer', textDecoration: 'underline' }}
+                  >
+                    No thanks, skip upgrade
+                  </button>
+                </div>
+              </div>
+            )}
+
             <Link to="/" className="btn btn--primary" style={{ display: 'inline-flex', padding: '12px 28px', fontSize: 15, textDecoration: 'none' }}>
               Access Operza Client Portal
             </Link>

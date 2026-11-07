@@ -1,5 +1,6 @@
 // Operza End-to-End System Smoke Test
 
+import assert from 'node:assert';
 import { spawn } from 'node:child_process';
 import { rmSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -4268,7 +4269,318 @@ async function runTests() {
     }
     console.log(`✅ All ${expectedNodes.length} advanced workflow node kinds verified registered in visual workflow builder palette`);
 
-    console.log('\n🎉 ALL 103 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 104] Real-Time WebRTC Telephony & Active Softphone Call Session Lifecycle
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 104] Real-Time WebRTC Telephony & Active Softphone Call Session Lifecycle');
+
+    // 1. Issue WebRTC voice token & ICE config
+    const tokenRes = await request('/api/telephony/token', { method: 'POST' });
+    const tokenData = tokenRes.data;
+    assert.equal(tokenRes.status, 200, 'WebRTC token endpoint should return 200');
+    assert.ok(tokenData.token && tokenData.token.startsWith('opz_rtc_'), 'Should issue valid opz_rtc token');
+    assert.ok(Array.isArray(tokenData.iceServers) && tokenData.iceServers.length > 0, 'Should provide STUN ICE servers');
+    console.log(`✅ WebRTC Softphone Voice Token issued: ${tokenData.token.slice(0, 16)}...`);
+
+    // 2. Start outbound softphone call session
+    const callStartRes = await request('/api/telephony/call/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        to: '+15553219876',
+        from: tokenData.fromNumber || '+18005550199',
+        notes: 'Outbound sales inquiry follow-up'
+      })
+    });
+    const callStartData = callStartRes.data;
+    assert.equal(callStartRes.status, 201, 'Call initiation should return 201');
+    assert.ok(callStartData.call && callStartData.call.id, 'Should create call record');
+    assert.equal(callStartData.call.status, 'in_progress', 'Call should start in in_progress state');
+    assert.equal(callStartData.call.to, '+15553219876', 'Call destination should match');
+    const liveCallId = callStartData.call.id;
+    console.log(`✅ Active WebRTC call initiated: ID=${liveCallId}, status=${callStartData.call.status}`);
+
+    // 3. Transmit DTMF tones during active call
+    const dtmfRes = await request(`/api/telephony/call/${liveCallId}/dtmf`, {
+      method: 'POST',
+      body: JSON.stringify({ digit: '9' })
+    });
+    const dtmfData = dtmfRes.data;
+    assert.equal(dtmfRes.status, 200, 'DTMF transmission should return 200');
+    assert.ok(Array.isArray(dtmfData.dtmfLog) && dtmfData.dtmfLog.length > 0, 'DTMF tone should be logged');
+    assert.equal(dtmfData.dtmfLog[0].digit, '9', 'Digit should match');
+    console.log(`✅ WebRTC DTMF tone transmission recorded: digit=${dtmfData.dtmfLog[0].digit}`);
+
+    // 4. Terminate call session and calculate duration
+    const callEndRes = await request(`/api/telephony/call/${liveCallId}/end`, {
+      method: 'POST',
+      body: JSON.stringify({
+        durationSec: 54,
+        outcome: 'completed',
+        notes: 'Customer agreed to product demo next Tuesday'
+      })
+    });
+    const callEndData = callEndRes.data;
+    assert.equal(callEndRes.status, 200, 'Call termination should return 200');
+    assert.equal(callEndData.call.status, 'completed', 'Call status should be completed');
+    assert.equal(callEndData.call.durationSec, 54, 'Call duration should be 54 seconds');
+    console.log(`✅ WebRTC softphone call terminated cleanly: duration=${callEndData.call.durationSec}s, outcome=${callEndData.call.outcome}`);
+
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 105] 2-Way Calendar OAuth Sync & Dynamic Double-Booking Slot Filtering
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 105] 2-Way Calendar OAuth Sync & Dynamic Double-Booking Slot Filtering');
+
+    // Retrieve active calendars
+    const calsRes = await request('/api/crm/calendars');
+    const calsData = calsRes.data;
+    const testCal = (calsData.data || [])[0];
+    assert.ok(testCal && testCal.id, 'At least one calendar must exist for sync test');
+
+    const tomorrowStr = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+    const externalBusySlots = [
+      { start: `${tomorrowStr}T10:00:00.000Z`, end: `${tomorrowStr}T11:00:00.000Z`, summary: 'Executive Board Sync (Google)' }
+    ];
+
+    // Connect 2-Way External Calendar Sync
+    const syncConnectRes = await request(`/api/calendars/${testCal.id}/sync/connect`, {
+      method: 'POST',
+      body: JSON.stringify({
+        provider: 'google_calendar',
+        email: 'founder@operza.io',
+        calendarName: 'Primary Google Calendar',
+        busyBlocks: externalBusySlots
+      })
+    });
+    const syncConnectData = syncConnectRes.data;
+    assert.equal(syncConnectRes.status, 200, 'Sync connect should return 200');
+    assert.equal(syncConnectData.externalSync?.status, 'active');
+    assert.equal(syncConnectData.externalSync?.provider, 'google_calendar');
+    console.log(`✅ 2-Way External Calendar Sync connected: provider=${syncConnectData.externalSync.provider}`);
+
+    // Check Sync Status
+    const syncStatusRes = await request(`/api/calendars/${testCal.id}/sync/status`);
+    const syncStatusData = syncStatusRes.data;
+    assert.equal(syncStatusRes.status, 200);
+    assert.equal(syncStatusData.busyBlocksCount, 1);
+    console.log(`✅ Calendar sync health verified: ${syncStatusData.busyBlocksCount} external busy blocks active`);
+
+    // Verify Public Booking Slot Filtering Excludes the External Busy Time
+    const publicSlotsRes = await request(`/api/calendars/public/${testCal.id}?date=${tomorrowStr}`);
+    const publicSlotsData = publicSlotsRes.data;
+    assert.equal(publicSlotsRes.status, 200);
+    assert.ok(Array.isArray(publicSlotsData.slots), 'Slots should be returned as array');
+    assert.ok(!publicSlotsData.slots.includes('10:00'), '10:00 slot must be dynamically blocked by external calendar sync to prevent double-booking');
+    console.log(`✅ Double-booking prevention verified: slot 10:00 excluded from public booking availability`);
+
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 106] Funnel 1-Click Post-Purchase Upsell (OTO) & Tokenized Charge
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 106] Funnel 1-Click Post-Purchase Upsell (OTO) & Tokenized Charge');
+
+    // Submit public funnel checkout
+    const funnelCheckoutRes = await request('/api/funnels/optin/scale-masterclass', {
+      method: 'POST',
+      body: JSON.stringify({
+        firstName: 'Elena',
+        lastName: 'Rostova',
+        email: 'elena.rostova@techventures.io',
+        phone: '+15557891234',
+        company: 'TechVentures',
+        bumpAccepted: true
+      })
+    });
+    const funnelCheckoutData = funnelCheckoutRes.data;
+    assert.ok(funnelCheckoutRes.status === 200 || funnelCheckoutRes.status === 201, 'Public funnel optin should succeed');
+    assert.ok(funnelCheckoutData.order && funnelCheckoutData.order.id, 'Should generate order record');
+    assert.ok(funnelCheckoutData.paymentToken, 'Should provision one-click upsell paymentToken');
+    const initialOrderTotal = funnelCheckoutData.order.amount;
+    console.log(`✅ Public funnel checkout completed: Order ID=${funnelCheckoutData.order.id}, Initial Total=$${initialOrderTotal}`);
+
+    // Execute 1-Click Post-Purchase Upsell (OTO)
+    const upsellRes = await request('/api/funnels/checkout/one-click-upsell', {
+      method: 'POST',
+      body: JSON.stringify({
+        orderId: funnelCheckoutData.order.id,
+        paymentToken: funnelCheckoutData.paymentToken,
+        upsellItem: {
+          id: 'oto-launchpad-97',
+          name: 'Done-With-You Automation Launchpad',
+          price: 97
+        }
+      })
+    });
+    const upsellData = upsellRes.data;
+    assert.equal(upsellRes.status, 200, 'One-click upsell should return 200');
+    assert.equal(upsellData.upsellGranted, true, 'Upsell should be granted');
+    assert.equal(upsellData.order.amount, initialOrderTotal + 97, 'Order amount should increase by $97');
+    assert.ok(upsellData.order.items.some(i => i.name === 'Done-With-You Automation Launchpad'), 'Upsell item should be in order');
+    console.log(`✅ 1-Click Upsell charged successfully: New Total=$${upsellData.order.amount}, Payment ID=${upsellData.payment?.id}`);
+
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 107] Multi-Page Website Global Header & Footer Symbols Propagation
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 107] Multi-Page Website Global Header & Footer Symbols Propagation');
+
+    // Retrieve active website
+    const sitesRes = await request('/api/crm/websites');
+    const sitesData = sitesRes.data;
+    const testSite = (sitesData.data || []).find(s => s.kind === 'website') || sitesData.data[0];
+    assert.ok(testSite && testSite.id, 'Website must exist for symbols test');
+
+    const updateSymbolsRes = await request(`/api/websites/${testSite.id}/symbols`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        globalHeader: {
+          enabled: true,
+          brandText: 'Apex Strategic Growth',
+          navLinks: [
+            { id: 'l1', label: 'Services', url: '/services' },
+            { id: 'l2', label: 'Case Studies', url: '/cases' }
+          ],
+          ctaLabel: 'Schedule Audit'
+        },
+        globalFooter: {
+          enabled: true,
+          copyrightText: '© 2026 Apex Strategic Growth. All rights reserved.',
+          footerLinks: [
+            { id: 'f1', label: 'Privacy', url: '/privacy' }
+          ]
+        }
+      })
+    });
+    const updateSymbolsData = updateSymbolsRes.data;
+    assert.equal(updateSymbolsRes.status, 200);
+    assert.equal(updateSymbolsData.globalHeader?.brandText, 'Apex Strategic Growth');
+    assert.equal(updateSymbolsData.globalFooter?.footerLinks?.length, 1);
+    console.log(`✅ Website global navigation symbols saved: brand="${updateSymbolsData.globalHeader.brandText}"`);
+
+    // Verify public website ingress delivers global symbols
+    const publicSymbolsSiteRes = await request(`/api/websites/public/${testSite.id}`);
+    const publicSymbolsSiteData = publicSymbolsSiteRes.data;
+    assert.equal(publicSymbolsSiteRes.status, 200);
+    assert.equal(publicSymbolsSiteData.globalHeader?.brandText, 'Apex Strategic Growth');
+    assert.equal(publicSymbolsSiteData.globalFooter?.copyrightText, '© 2026 Apex Strategic Growth. All rights reserved.');
+    console.log(`✅ Global header & footer symbols propagated across public website pages`);
+
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 108] Advanced Flow Automation: Wait-for-Webhook Pause & Resume Callback
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 108] Advanced Flow Automation: Wait-for-Webhook Pause & Resume Callback');
+
+    // Create workflow with wait_webhook node
+    const waitWebhookFlow = {
+      name: 'Contract Signature Waiter Workflow',
+      triggerType: 'manual',
+      status: 'published',
+      nodes: [
+        {
+          id: 'step-wait-hook-1',
+          name: 'Wait for Contract Webhook',
+          type: 'wait_webhook',
+          config: {
+            timeoutHours: 48
+          }
+        },
+        {
+          id: 'step-tag-2',
+          name: 'Tag Contact Completed',
+          type: 'tag',
+          config: {
+            tags: ['contract_signed_resumed']
+          }
+        }
+      ]
+    };
+
+    const createWaitFlowRes = await request('/api/crm/workflows', {
+      method: 'POST',
+      body: JSON.stringify(waitWebhookFlow)
+    });
+    const createdWaitFlow = createWaitFlowRes.data?.data || createWaitFlowRes.data;
+    assert.ok(createdWaitFlow && createdWaitFlow.id);
+
+    // Trigger workflow run
+    const runWaitFlowRes = await request(`/api/workflows/${createdWaitFlow.id}/run`, {
+      method: 'POST',
+      body: JSON.stringify({
+        mode: 'live',
+        contactId: 'c-1',
+        payload: { documentId: 'doc-999' }
+      })
+    });
+    const runWaitData = runWaitFlowRes.data;
+    assert.ok(runWaitFlowRes.status === 200 || runWaitFlowRes.status === 201, 'Workflow run initiation should succeed');
+    assert.equal(runWaitData.execution?.status, 'waiting_webhook', 'Execution should pause in waiting_webhook state');
+    assert.ok(runWaitData.execution?.resumeToken, 'Execution must have resumeToken');
+    const resumeToken = runWaitData.execution.resumeToken;
+    console.log(`✅ Workflow paused cleanly at wait_webhook node: Resume Token=${resumeToken}`);
+
+    // External system calls webhook callback URL: POST /api/workflows/callbacks/:token
+    const callbackRes = await request(`/api/workflows/callbacks/${resumeToken}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        event: 'envelope.completed',
+        signerEmail: 'client@enterprise.com',
+        envelopeId: 'env_83742981'
+      })
+    });
+    const callbackData = callbackRes.data;
+    assert.equal(callbackRes.status, 200, 'Callback webhook should return 200');
+    assert.equal(callbackData.resumed, true, 'Workflow run should be resumed');
+    assert.equal(callbackData.status, 'completed', 'Workflow run should complete remaining nodes');
+    assert.equal(callbackData.variables?.callbackData?.event, 'envelope.completed', 'Callback data should be stored in workflow variables');
+    console.log(`✅ Workflow resumed from webhook callback and advanced to completion!`);
+
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 109] Synchronous Webhook Response Node (HTTP Respond in Workflow)
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 109] Synchronous Webhook Response Node (HTTP Respond in Workflow)');
+
+    // Create workflow with webhook trigger and webhook_respond node
+    const respondFlow = {
+      name: 'Synchronous API Gateway Flow',
+      triggerType: 'webhook',
+      status: 'published',
+      nodes: [
+        {
+          id: 'step-respond-1',
+          name: 'Send Instant HTTP 202 Response',
+          type: 'webhook_respond',
+          config: {
+            statusCode: 202,
+            responseBody: '{"gateway":"Operza","status":"ACCEPTED_FOR_PROCESSING"}',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Operza-Engine': 'synchronous'
+            }
+          }
+        }
+      ]
+    };
+
+    const createRespondFlowRes = await request('/api/crm/workflows', {
+      method: 'POST',
+      body: JSON.stringify(respondFlow)
+    });
+    const createdRespondFlow = createRespondFlowRes.data?.data || createRespondFlowRes.data;
+    assert.ok(createdRespondFlow && createdRespondFlow.id);
+
+    // Call public webhook trigger endpoint: POST /api/workflows/webhook/:workflowId
+    const webhookCallRes = await request(`/api/workflows/webhook/${createdRespondFlow.id}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        event: 'order.inbound',
+        customerId: 'cust_8492'
+      })
+    });
+    assert.equal(webhookCallRes.status, 202, 'Webhook should return custom status code 202 synchronously');
+    assert.equal(webhookCallRes.res.headers.get('x-operza-engine'), 'synchronous', 'Should include custom response headers');
+    const webhookResponseBody = webhookCallRes.data;
+    assert.equal(webhookResponseBody.gateway, 'Operza');
+    assert.equal(webhookResponseBody.status, 'ACCEPTED_FOR_PROCESSING');
+    console.log(`✅ Synchronous Webhook Response delivered: status=202, gateway="${webhookResponseBody.gateway}"`);
+
+    console.log('\n🎉 ALL 109 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

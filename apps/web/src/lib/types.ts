@@ -89,6 +89,16 @@ export interface CalendarDef {
   availability: AvailabilityWindow[];
   /** New bookings rotate to the team member with the fewest upcoming appointments. */
   roundRobin: boolean;
+  externalSync?: {
+    provider: 'google_calendar' | 'outlook' | string;
+    email: string;
+    calendarName?: string;
+    syncDirection?: 'two_way' | 'one_way';
+    status: 'active' | 'disconnected' | 'error';
+    lastSyncAt?: string;
+    connectedAt?: string;
+  };
+  externalBusyBlocks?: Array<{ start: string; end: string; summary?: string }>;
 }
 
 export type AppointmentStatus = 'confirmed' | 'pending' | 'cancelled';
@@ -303,6 +313,24 @@ export interface Site {
   seoTitle?: string;
   seoDescription?: string;
   faviconUrl?: string;
+  globalHeader?: {
+    enabled?: boolean;
+    brandText?: string;
+    logoUrl?: string;
+    navLinks?: Array<{ id: string; label: string; url: string }>;
+    ctaLabel?: string;
+    ctaUrl?: string;
+  };
+  globalFooter?: {
+    enabled?: boolean;
+    copyrightText?: string;
+    footerLinks?: Array<{ id: string; label: string; url: string }>;
+    socialLinks?: {
+      twitter?: string;
+      linkedin?: string;
+      github?: string;
+    };
+  };
 }
 
 export type FormKind = 'form' | 'survey';
@@ -796,6 +824,8 @@ export interface CallRecord {
   numberId: ID;
   direction: CallDirection;
   outcome: CallOutcome;
+  from?: string;
+  to?: string;
   startedAt: string;
   /** Talk time in seconds; 0 for missed calls that never connected. */
   durationSec: number;

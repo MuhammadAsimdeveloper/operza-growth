@@ -95,6 +95,12 @@ export const api = {
       request(`/api/calendars/public/${idOrSlug}${date ? `?date=${encodeURIComponent(date)}` : ''}`),
     bookPublic: (idOrSlug: string, data: { name: string; email: string; phone?: string; date: string; timeSlot: string; notes?: string }) =>
       request(`/api/calendars/book/${idOrSlug}`, { method: 'POST', body: JSON.stringify(data) }),
+    connectSync: (id: string, data: { provider: string; email: string; calendarName?: string; busyBlocks?: any[] }) =>
+      request<{ success: boolean; externalSync: any; calendar: any }>(`/api/calendars/${id}/sync/connect`, { method: 'POST', body: JSON.stringify(data) }),
+    getSyncStatus: (id: string) =>
+      request<{ calendarId: string; externalSync: any; busyBlocksCount: number }>(`/api/calendars/${id}/sync/status`),
+    syncBusy: (id: string, busyBlocks: Array<{ start: string; end: string; summary?: string }>) =>
+      request<{ success: boolean; calendarId: string; busyBlocksCount: number }>(`/api/calendars/${id}/sync/busy`, { method: 'POST', body: JSON.stringify({ busyBlocks }) }),
   },
   payments: {
     getPublic: (slugOrId: string) => request(`/api/payments/public/${slugOrId}`),
@@ -130,6 +136,11 @@ export const api = {
       request(`/api/workflows/runs/${runId}/nodes`),
     tick: (runId: string) =>
       request<{ success: boolean; execution: any }>(`/api/workflows/runs/${runId}/tick`, { method: 'POST' }),
+    resumeCallback: (token: string, data: any) =>
+      request<{ success: boolean; resumed: boolean; executionId: string; status: string; variables?: any }>(
+        `/api/workflows/callbacks/${token}`,
+        { method: 'POST', body: JSON.stringify(data) }
+      ),
   },
   notifications: {
     list: () => request<{ data: any[] }>('/api/notifications'),
@@ -211,6 +222,11 @@ export const api = {
     publish: (id: string) => request<{ success: boolean; published: boolean; status: string; site: any }>(`/api/websites/${id}/publish`, { method: 'POST' }),
     addPage: (id: string, page: any) => request<{ success: boolean; page: any; site: any }>(`/api/websites/${id}/pages`, { method: 'POST', body: JSON.stringify(page) }),
     deletePage: (siteId: string, pageId: string) => request(`/api/websites/${siteId}/pages/${pageId}`, { method: 'DELETE' }),
+    updateSymbols: (id: string, symbols: { globalHeader?: any; globalFooter?: any }) =>
+      request<{ success: boolean; site: any; globalHeader?: any; globalFooter?: any }>(`/api/websites/${id}/symbols`, {
+        method: 'PUT',
+        body: JSON.stringify(symbols),
+      }),
     getPublic: (slugOrId: string, pageSlug?: string) => request(`/api/websites/public/${slugOrId}${pageSlug ? `?pageSlug=${encodeURIComponent(pageSlug)}` : ''}`),
   },
   campaigns: {
@@ -271,6 +287,11 @@ export const api = {
       ),
     optin: (slugOrId: string, data: { firstName?: string; lastName?: string; email?: string; phone?: string; company?: string; pageSlug?: string; bumpAccepted?: boolean }) =>
       request(`/api/funnels/optin/${slugOrId}`, { method: 'POST', body: JSON.stringify(data) }),
+    oneClickUpsell: (data: { orderId: string; paymentToken: string; upsellItem?: { id?: string; name: string; price: number } }) =>
+      request<{ success: boolean; upsellGranted: boolean; order: any; payment: any }>('/api/funnels/checkout/one-click-upsell', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
   },
   customValues: {
     resolve: (text: string, contactId?: string) =>
@@ -286,6 +307,26 @@ export const api = {
   telephony: {
     getA2PStatus: () => request<any>('/api/telephony/a2p/status'),
     registerA2P: (data: any) => request('/api/telephony/a2p/register', { method: 'POST', body: JSON.stringify(data) }),
+    getToken: () =>
+      request<{ token: string; identity: string; fromNumber: string; iceServers: any[]; expiresAt: string }>(
+        '/api/telephony/token',
+        { method: 'POST' }
+      ),
+    startCall: (data: { to: string; from?: string; contactId?: string; notes?: string }) =>
+      request<{ success: boolean; call: any }>('/api/telephony/call/start', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    endCall: (id: string, data?: { outcome?: 'completed' | 'missed' | 'voicemail'; durationSec?: number; notes?: string }) =>
+      request<{ success: boolean; call: any }>(`/api/telephony/call/${id}/end`, {
+        method: 'POST',
+        body: JSON.stringify(data || {}),
+      }),
+    sendDtmf: (id: string, digit: string) =>
+      request<{ success: boolean; dtmfLog: any[] }>(`/api/telephony/call/${id}/dtmf`, {
+        method: 'POST',
+        body: JSON.stringify({ digit }),
+      }),
   },
   coupons: {
     validate: (code: string, subtotal?: number, agencyId?: string) =>
