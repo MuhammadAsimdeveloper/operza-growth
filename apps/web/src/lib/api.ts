@@ -469,8 +469,15 @@ export const api = {
   zapier: {
     getAuth: () => request<{ valid: boolean; scopes: string[]; tenantId: string; agencyName: string }>('/api/v1/zapier/auth/me'),
     getSamples: (event: string) => request<any[]>(`/api/v1/zapier/samples/${encodeURIComponent(event)}`),
+    getAppDefinition: () => request<any>('/api/v1/zapier/app-definition'),
+    getSubscriptions: () => request<{ success: boolean; subscriptions: any[] }>('/api/v1/zapier/hooks'),
     subscribeHook: (data: { target_url: string; event: string }) => request<any>('/api/v1/zapier/hooks/subscribe', { method: 'POST', body: JSON.stringify(data) }),
-    unsubscribeHook: (subscription_id: string) => request<any>('/api/v1/zapier/hooks/unsubscribe', { method: 'DELETE', body: JSON.stringify({ subscription_id }) })
+    unsubscribeHook: (subscription_id: string) => request<any>('/api/v1/zapier/hooks/unsubscribe', { method: 'DELETE', body: JSON.stringify({ subscription_id }) }),
+    testHook: (targetUrl: string, event: string) => request<any>('/api/v1/zapier/hooks/test', { method: 'POST', body: JSON.stringify({ targetUrl, event }) }),
+    getDeliveries: () => request<{ success: boolean; deliveries: any[] }>('/api/v1/zapier/deliveries'),
+    executeAction: (actionKey: string, data: any) => request<any>(`/api/v1/zapier/actions/${actionKey}`, { method: 'POST', body: JSON.stringify(data) }),
+    executeSearch: (searchKey: string, query: any) => request<any>(`/api/v1/zapier/searches/${searchKey}`, { method: 'POST', body: JSON.stringify({ query }) }),
+    pollEvents: (event: string) => request<any[]>(`/api/v1/zapier/polls/${encodeURIComponent(event)}`)
   },
   aiTrainer: {
     getConfig: () => request<{ config: any }>('/api/ai/config'),

@@ -4580,7 +4580,179 @@ async function runTests() {
     assert.equal(webhookResponseBody.status, 'ACCEPTED_FOR_PROCESSING');
     console.log(`✅ Synchronous Webhook Response delivered: status=202, gateway="${webhookResponseBody.gateway}"`);
 
-    console.log('\n🎉 ALL 109 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 110] Zapier Platform App Introspection & CLI Manifest Discovery
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 110] Zapier Platform App Introspection & CLI Manifest Discovery: GET /api/v1/zapier/app-definition');
+    const zapAppDefRes = await request('/api/v1/zapier/app-definition');
+    const zapAppDef = zapAppDefRes.data;
+    assert.equal(zapAppDefRes.status, 200, 'App definition endpoint should return 200');
+    assert.equal(zapAppDef.title, 'Operza', 'App title should be Operza');
+    assert.equal(zapAppDef.authentication?.type, 'custom', 'Auth type should be custom');
+    assert.ok(Array.isArray(zapAppDef.triggers) && zapAppDef.triggers.length >= 14, 'Should register at least 14 triggers');
+    assert.ok(Array.isArray(zapAppDef.searches) && zapAppDef.searches.length >= 4, 'Should register 4 searches');
+    assert.ok(Array.isArray(zapAppDef.creates) && zapAppDef.creates.length >= 12, 'Should register 12 inbound actions');
+    
+    // Sub-catalogs check
+    const zapTriggersRes = await request('/api/v1/zapier/triggers');
+    assert.equal(zapTriggersRes.status, 200);
+    assert.equal(zapTriggersRes.data.length, zapAppDef.triggers.length);
+
+    const zapActionsRes = await request('/api/v1/zapier/actions');
+    assert.equal(zapActionsRes.status, 200);
+    assert.equal(zapActionsRes.data.length, zapAppDef.creates.length);
+
+    const zapSearchesRes = await request('/api/v1/zapier/searches');
+    assert.equal(zapSearchesRes.status, 200);
+    assert.equal(zapSearchesRes.data.length, zapAppDef.searches.length);
+    console.log(`✅ Zapier platform app manifest discovered: ${zapAppDef.triggers.length} Triggers, ${zapAppDef.creates.length} Actions, ${zapAppDef.searches.length} Searches`);
+
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 111] Zapier Search Lookups: POST /api/v1/zapier/searches/*
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 111] Zapier Search Lookups: POST /api/v1/zapier/searches/find_contact & find_opportunity');
+    
+    // 1. Search contact by name
+    const findContactRes = await request('/api/v1/zapier/searches/find_contact', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Marcus' })
+    });
+    const findContactData = findContactRes.data;
+    assert.equal(findContactRes.status, 200);
+    assert.equal(findContactData.found, true);
+    assert.ok(findContactData.contact && findContactData.contact.firstName === 'Marcus');
+    console.log(`✅ Zapier find_contact search verified: Contact ID=${findContactData.contact.id}`);
+
+    // 2. Search opportunity by name
+    const findOppRes = await request('/api/v1/zapier/searches/find_opportunity', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'Enterprise' })
+    });
+    assert.equal(findOppRes.status, 200);
+    console.log(`✅ Zapier find_opportunity search verified: found=${findOppRes.data.found}`);
+
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 112] Zapier Inbound Actions Expanded Suite: POST /api/v1/zapier/actions/*
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 112] Zapier Inbound Actions Expanded Suite: Tasks, Appointments, Notes, and Tags');
+
+    // 1. Action: create_task
+    const zapTaskRes = await request('/api/v1/zapier/actions/create_task', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: 'Follow up with VIP Partner via Zapier',
+        priority: 'high',
+        assignedTo: 'Automated Tester',
+        dueDate: new Date(Date.now() + 86400000 * 3).toISOString()
+      })
+    });
+    const zapTaskData = zapTaskRes.data;
+    assert.equal(zapTaskRes.status, 201);
+    assert.ok(zapTaskData.task && zapTaskData.task.id);
+    assert.equal(zapTaskData.task.priority, 'high');
+    console.log(`✅ Zapier create_task action verified: Task ID=${zapTaskData.task.id}, title="${zapTaskData.task.title}"`);
+
+    // 2. Action: create_appointment
+    const zapAptRes = await request('/api/v1/zapier/actions/create_appointment', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: 'Zapier Strategy Session',
+        contactName: 'Marcus',
+        contactEmail: 'marcus@example.com',
+        startsAt: new Date(Date.now() + 86400000 * 2).toISOString(),
+        durationMin: 45
+      })
+    });
+    const zapAptData = zapAptRes.data;
+    assert.equal(zapAptRes.status, 201);
+    assert.ok(zapAptData.appointment && zapAptData.appointment.id);
+    console.log(`✅ Zapier create_appointment action verified: Appointment ID=${zapAptData.appointment.id}`);
+
+    // 3. Action: update_contact
+    const zapUpdateContactRes = await request('/api/v1/zapier/actions/update_contact', {
+      method: 'POST',
+      body: JSON.stringify({
+        id: findContactData.contact.id,
+        company: 'Nexus Autonomous Systems',
+        tags: ['zapier-synced', 'temp-tag']
+      })
+    });
+    const zapUpdateContactData = zapUpdateContactRes.data;
+    assert.equal(zapUpdateContactRes.status, 200);
+    assert.equal(zapUpdateContactData.contact?.company, 'Nexus Autonomous Systems');
+    assert.ok(zapUpdateContactData.contact?.tags?.includes('zapier-synced'));
+    console.log(`✅ Zapier update_contact action verified: company="${zapUpdateContactData.contact.company}"`);
+
+    // 4. Action: remove_tag
+    const zapRemoveTagRes = await request('/api/v1/zapier/actions/remove_tag', {
+      method: 'POST',
+      body: JSON.stringify({
+        contactId: findContactData.contact.id,
+        tag: 'temp-tag'
+      })
+    });
+    const zapRemoveTagData = zapRemoveTagRes.data;
+    assert.equal(zapRemoveTagRes.status, 200);
+    assert.equal(zapRemoveTagData.removed, 'temp-tag');
+    assert.ok(!zapRemoveTagData.contact.tags.includes('temp-tag'));
+    console.log(`✅ Zapier remove_tag action verified: removed="temp-tag"`);
+
+    // 5. Action: create_note
+    const zapNoteRes = await request('/api/v1/zapier/actions/create_note', {
+      method: 'POST',
+      body: JSON.stringify({
+        contactId: findContactData.contact.id,
+        note: 'Customer requested multi-region high availability demonstration via Zapier.'
+      })
+    });
+    const zapNoteData = zapNoteRes.data;
+    assert.equal(zapNoteRes.status, 201);
+    assert.ok(zapNoteData.note && zapNoteData.note.id);
+    console.log(`✅ Zapier create_note action verified: Note ID=${zapNoteData.note.id}`);
+
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 113] Zapier REST Hook Live Test Ping & Outbound Delivery Observability
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 113] Zapier REST Hook Live Test Ping & Outbound Delivery Observability');
+
+    const testPingRes = await request('/api/v1/zapier/hooks/test', {
+      method: 'POST',
+      body: JSON.stringify({
+        targetUrl: 'https://hooks.zapier.com/hooks/catch/sample/live-test',
+        event: 'contact.created'
+      })
+    });
+    const testPingData = testPingRes.data;
+    assert.equal(testPingRes.status, 200);
+    assert.equal(testPingData.success, true);
+    assert.ok(testPingData.deliveryId && testPingData.signatureHeader.startsWith('t='));
+    console.log(`✅ Zapier test ping dispatched: Delivery ID=${testPingData.deliveryId}, HMAC=${testPingData.signatureHeader.slice(0, 24)}...`);
+
+    // Verify delivery logs
+    const zapDeliveriesRes = await request('/api/v1/zapier/deliveries');
+    const zapDeliveriesData = zapDeliveriesRes.data;
+    assert.equal(zapDeliveriesRes.status, 200);
+    assert.ok(Array.isArray(zapDeliveriesData.deliveries) && zapDeliveriesData.deliveries.length > 0);
+    assert.equal(zapDeliveriesData.deliveries[0].id, testPingData.deliveryId);
+    console.log(`✅ Zapier delivery logs verified: ${zapDeliveriesData.deliveries.length} outbound event deliveries tracked`);
+
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 114] Zapier Polling Triggers Fallback: GET /api/v1/zapier/polls/:event
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 114] Zapier Polling Triggers Fallback: GET /api/v1/zapier/polls/contact.created & task.created');
+
+    const pollContactsRes = await request('/api/v1/zapier/polls/contact.created');
+    assert.equal(pollContactsRes.status, 200);
+    assert.ok(Array.isArray(pollContactsRes.data) && pollContactsRes.data.length > 0);
+    assert.ok(pollContactsRes.data[0].id && pollContactsRes.data[0].firstName);
+    console.log(`✅ Zapier polling trigger (contact.created) verified: ${pollContactsRes.data.length} records returned`);
+
+    const pollTasksRes = await request('/api/v1/zapier/polls/task.created');
+    assert.equal(pollTasksRes.status, 200);
+    assert.ok(Array.isArray(pollTasksRes.data) && pollTasksRes.data.length > 0);
+    console.log(`✅ Zapier polling trigger (task.created) verified: ${pollTasksRes.data.length} tasks returned`);
+
+    console.log('\n🎉 ALL 114 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;
