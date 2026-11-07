@@ -109,6 +109,198 @@ export default function Home() {
             <span>✓ Durable BullMQ queue</span>
             <span>✓ White-label CNAME ready</span>
           </div>
+
+          {/* ─── 3D Perspective Isometric Showcase & Holographic Telemetry ─── */}
+          <div className="atlas-hero-3d-stage" style={styles.hero3dStage}>
+            {/* Ambient Radial Lighting Glows */}
+            <div style={styles.hero3dGlow1} />
+            <div style={styles.hero3dGlow2} />
+
+            {/* Isometric 3D Viewport */}
+            <div className="atlas-3d-tilt-container" style={styles.tiltContainer}>
+              {/* Central Main Console Mockup */}
+              <div style={styles.consoleFrame}>
+                {/* Top OS Window Header */}
+                <div style={styles.consoleHeader}>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#ef4444' }} />
+                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#f59e0b' }} />
+                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#10b981' }} />
+                  </div>
+                  <div style={styles.consoleTitleBar}>
+                    <span style={styles.consoleDotLive} />
+                    <span>operza-atlas-command · cluster: us-east · rls: isolated · latency: 18ms</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: '#94a3b8', fontFamily: 'monospace' }}>
+                    v2.4.0-PROD
+                  </div>
+                </div>
+
+                {/* Simulated 2D Visual Nodal Workflow & Live Telemetry Grid */}
+                <div style={styles.consoleBody}>
+                  {/* Left Mini Sidebar */}
+                  <div style={styles.consoleSidebar}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 12 }}>
+                      <div style={{ width: 18, height: 18, borderRadius: 4, background: '#4f46e5', color: '#fff', fontSize: 10, fontWeight: 800, display: 'grid', placeItems: 'center' }}>OP</div>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: '#f8fafc' }}>Atlas Command</span>
+                    </div>
+                    <div style={styles.consoleNavItemActive}>⚡ Visual Nodal Graph</div>
+                    <div style={styles.consoleNavItem}>🤖 Copilot AI Swarm</div>
+                    <div style={styles.consoleNavItem}>📞 WebRTC Softphone</div>
+                    <div style={styles.consoleNavItem}>🔒 RLS Security Guard</div>
+                    <div style={styles.consoleNavItem}>📊 MRR Velocity</div>
+                  </div>
+
+                  {/* Main Canvas Simulation */}
+                  <div style={styles.consoleCanvas}>
+                    {/* SVG Bezier Wires */}
+                    <svg style={styles.consoleSvg}>
+                      <defs>
+                        <linearGradient id="neonWireGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                          <stop offset="0%" stopColor="#6366f1" />
+                          <stop offset="100%" stopColor="#06b6d4" />
+                        </linearGradient>
+                      </defs>
+                      <path
+                        d="M 120 65 C 120 115, 230 95, 230 145"
+                        fill="none"
+                        stroke="url(#neonWireGrad)"
+                        strokeWidth="2.5"
+                        strokeDasharray="6 4"
+                        className="pulse-wire"
+                      />
+                      <path
+                        d="M 230 205 C 230 250, 130 240, 130 285"
+                        fill="none"
+                        stroke="#10b981"
+                        strokeWidth="2"
+                        strokeDasharray="4 4"
+                      />
+                      <path
+                        d="M 230 205 C 230 250, 330 240, 330 285"
+                        fill="none"
+                        stroke="#ef4444"
+                        strokeWidth="2"
+                        strokeDasharray="4 4"
+                      />
+                    </svg>
+
+                    {/* Nodes in 3D canvas */}
+                    <div style={{ ...styles.mockNode, top: 20, left: 35, borderColor: '#6366f1' }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: '#818cf8', textTransform: 'uppercase' }}>
+                        ⚡ Inbound Webhook
+                      </div>
+                      <div style={{ fontSize: 12, fontWeight: 650, color: '#f8fafc' }}>
+                        Stripe VIP Checkout $2,400
+                      </div>
+                    </div>
+
+                    <div style={{ ...styles.mockNode, top: 130, left: 150, borderColor: '#06b6d4' }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: '#22d3ee', textTransform: 'uppercase' }}>
+                        🤖 Condition Evaluation
+                      </div>
+                      <div style={{ fontSize: 12, fontWeight: 650, color: '#f8fafc' }}>
+                        High-Ticket Client &gt; $1k?
+                      </div>
+                    </div>
+
+                    <div style={{ ...styles.mockNodeSmall, top: 275, left: 50, borderColor: '#10b981' }}>
+                      <span style={{ color: '#34d399', fontWeight: 700, fontSize: 10 }}>YES · 99.8%</span>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: '#f8fafc' }}>Dispatch Softphone Call</div>
+                    </div>
+
+                    <div style={{ ...styles.mockNodeSmall, top: 275, left: 250, borderColor: '#f43f5e' }}>
+                      <span style={{ color: '#fb7185', fontWeight: 700, fontSize: 10 }}>NO · 0.2%</span>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: '#f8fafc' }}>Email Follow-up Sequence</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Floating Holographic Telemetry Card 1: Autonomous AI Swarm (Top Right) */}
+              <div className="holo-float holo-card-1" style={styles.holoCard1}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <div style={{ width: 22, height: 22, borderRadius: 6, background: 'rgba(99, 102, 241, 0.2)', color: '#818cf8', display: 'grid', placeItems: 'center' }}>
+                    <Icon name="sparkles" size={13} />
+                  </div>
+                  <strong style={{ fontSize: 12, color: '#f8fafc' }}>Autonomous AI Swarm</strong>
+                  <span style={{ marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%', background: '#10b981', boxShadow: '0 0 6px #10b981' }} />
+                </div>
+                <div style={{ fontSize: 11, color: '#94a3b8' }}>10 specialized sub-agents online</div>
+                <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: '#a5b4fc' }}>
+                  99.4% Task Precision
+                </div>
+              </div>
+
+              {/* Floating Holographic Telemetry Card 2: WebRTC Softphone (Bottom Left) */}
+              <div className="holo-float holo-card-2" style={styles.holoCard2}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <div style={{ width: 22, height: 22, borderRadius: 6, background: 'rgba(16, 185, 129, 0.2)', color: '#34d399', display: 'grid', placeItems: 'center' }}>
+                    <Icon name="phone" size={13} />
+                  </div>
+                  <strong style={{ fontSize: 12, color: '#f8fafc' }}>WebRTC Softphone</strong>
+                </div>
+                <div style={{ fontSize: 11, color: '#94a3b8' }}>SIP Trunking · 0.00% Packet Drop</div>
+                <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: '#34d399' }}>
+                  Audio Jitter 1.2ms
+                </div>
+              </div>
+
+              {/* Floating Holographic Telemetry Card 3: PostgreSQL RLS Shield (Top Left) */}
+              <div className="holo-float holo-card-3" style={styles.holoCard3}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <div style={{ width: 22, height: 22, borderRadius: 6, background: 'rgba(6, 182, 212, 0.2)', color: '#22d3ee', display: 'grid', placeItems: 'center' }}>
+                    <Icon name="shield" size={13} />
+                  </div>
+                  <strong style={{ fontSize: 12, color: '#f8fafc' }}>PostgreSQL RLS Shield</strong>
+                </div>
+                <div style={{ fontSize: 11, color: '#94a3b8' }}>Strict Tenant Boundaries Active</div>
+                <div style={{ marginTop: 6, fontSize: 13, fontWeight: 700, color: '#38bdf8' }}>
+                  100% Fail-Closed Isolation
+                </div>
+              </div>
+
+              {/* Floating Holographic Telemetry Card 4: MRR Velocity (Bottom Right) */}
+              <div className="holo-float holo-card-4" style={styles.holoCard4}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <div style={{ width: 22, height: 22, borderRadius: 6, background: 'rgba(236, 72, 153, 0.2)', color: '#f472b6', display: 'grid', placeItems: 'center' }}>
+                    <Icon name="wallet" size={13} />
+                  </div>
+                  <strong style={{ fontSize: 12, color: '#f8fafc' }}>Agency MRR Velocity</strong>
+                </div>
+                <div style={{ fontSize: 11, color: '#94a3b8' }}>Real-time subscription billing</div>
+                <div style={{ marginTop: 6, fontSize: 14, fontWeight: 800, color: '#f43f5e' }}>
+                  $184,200 <span style={{ fontSize: 11, color: '#34d399', fontWeight: 600 }}>+38.4% WoW</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Injected 3D Animations CSS */}
+            <style>{`
+              @keyframes floatSlow {
+                0%, 100% { transform: translateY(0px) rotate(0deg); }
+                50% { transform: translateY(-10px) rotate(1deg); }
+              }
+              @keyframes floatReverse {
+                0%, 100% { transform: translateY(0px) rotate(0deg); }
+                50% { transform: translateY(10px) rotate(-1deg); }
+              }
+              @keyframes pulseWire {
+                to { stroke-dashoffset: -20; }
+              }
+              .holo-card-1 { animation: floatSlow 5s ease-in-out infinite; }
+              .holo-card-2 { animation: floatReverse 6s ease-in-out infinite 0.5s; }
+              .holo-card-3 { animation: floatReverse 5.5s ease-in-out infinite 1s; }
+              .holo-card-4 { animation: floatSlow 6.5s ease-in-out infinite 1.5s; }
+              .pulse-wire { animation: pulseWire 1.2s linear infinite; }
+              .atlas-3d-tilt-container {
+                transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s ease;
+              }
+              .atlas-3d-tilt-container:hover {
+                transform: rotateX(8deg) rotateY(-4deg) rotateZ(1deg) scale(1.02) !important;
+              }
+            `}</style>
+          </div>
         </div>
       </section>
 
@@ -543,6 +735,190 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     color: '#64748b',
     flexWrap: 'wrap',
+  },
+  hero3dStage: {
+    position: 'relative' as const,
+    marginTop: 48,
+    perspective: 1200,
+    width: '100%',
+    maxWidth: 960,
+    margin: '48px auto 0',
+  },
+  hero3dGlow1: {
+    position: 'absolute' as const,
+    width: 480,
+    height: 300,
+    top: '10%',
+    left: '15%',
+    background: 'radial-gradient(circle, rgba(99, 102, 241, 0.25) 0%, transparent 70%)',
+    filter: 'blur(50px)',
+    pointerEvents: 'none' as const,
+    zIndex: 1,
+  },
+  hero3dGlow2: {
+    position: 'absolute' as const,
+    width: 440,
+    height: 280,
+    top: '30%',
+    right: '15%',
+    background: 'radial-gradient(circle, rgba(6, 182, 212, 0.2) 0%, transparent 70%)',
+    filter: 'blur(50px)',
+    pointerEvents: 'none' as const,
+    zIndex: 1,
+  },
+  tiltContainer: {
+    position: 'relative' as const,
+    transform: 'rotateX(13deg) rotateY(-8deg) rotateZ(2deg)',
+    transformStyle: 'preserve-3d' as const,
+    zIndex: 2,
+  },
+  consoleFrame: {
+    background: '#07090e',
+    borderRadius: 14,
+    border: '1px solid rgba(99, 102, 241, 0.35)',
+    boxShadow: '0 25px 60px -12px rgba(0, 0, 0, 0.5), 0 0 40px rgba(99, 102, 241, 0.2)',
+    overflow: 'hidden',
+    height: 420,
+    display: 'flex',
+    flexDirection: 'column' as const,
+  },
+  consoleHeader: {
+    padding: '10px 16px',
+    background: '#0d111a',
+    borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  consoleTitleBar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    fontSize: 12,
+    color: '#94a3b8',
+    fontFamily: 'monospace',
+  },
+  consoleDotLive: {
+    width: 7,
+    height: 7,
+    borderRadius: '50%',
+    background: '#10b981',
+    boxShadow: '0 0 6px #10b981',
+  },
+  consoleBody: {
+    display: 'flex',
+    flex: 1,
+    overflow: 'hidden',
+  },
+  consoleSidebar: {
+    width: 170,
+    background: '#0b0e15',
+    borderRight: '1px solid rgba(255, 255, 255, 0.06)',
+    padding: '14px 12px',
+    display: 'flex',
+    flexDirection: 'column' as const,
+    gap: 6,
+  },
+  consoleNavItem: {
+    fontSize: 11,
+    color: '#64748b',
+    padding: '5px 8px',
+    borderRadius: 6,
+    cursor: 'pointer',
+  },
+  consoleNavItemActive: {
+    fontSize: 11,
+    color: '#f8fafc',
+    background: 'rgba(99, 102, 241, 0.15)',
+    padding: '5px 8px',
+    borderRadius: 6,
+    fontWeight: 700,
+  },
+  consoleCanvas: {
+    flex: 1,
+    position: 'relative' as const,
+    background: '#07090e',
+    backgroundImage: 'radial-gradient(circle, rgba(255, 255, 255, 0.1) 1px, transparent 1px)',
+    backgroundSize: '20px 20px',
+    overflow: 'hidden',
+  },
+  consoleSvg: {
+    position: 'absolute' as const,
+    left: 0,
+    top: 0,
+    width: '100%',
+    height: '100%',
+    pointerEvents: 'none' as const,
+  },
+  mockNode: {
+    position: 'absolute' as const,
+    background: '#0f1422',
+    border: '1.5px solid',
+    borderRadius: 8,
+    padding: '8px 12px',
+    width: 190,
+    boxShadow: '0 8px 18px rgba(0, 0, 0, 0.4)',
+  },
+  mockNodeSmall: {
+    position: 'absolute' as const,
+    background: '#0f1422',
+    border: '1.5px solid',
+    borderRadius: 8,
+    padding: '6px 10px',
+    width: 155,
+    boxShadow: '0 6px 14px rgba(0, 0, 0, 0.4)',
+  },
+  holoCard1: {
+    position: 'absolute' as const,
+    top: -24,
+    right: -24,
+    width: 220,
+    background: 'rgba(15, 20, 34, 0.88)',
+    border: '1px solid rgba(99, 102, 241, 0.5)',
+    boxShadow: '0 16px 32px rgba(0, 0, 0, 0.4), 0 0 20px rgba(99, 102, 241, 0.25)',
+    borderRadius: 12,
+    padding: '12px 14px',
+    backdropFilter: 'blur(12px)',
+    zIndex: 10,
+  },
+  holoCard2: {
+    position: 'absolute' as const,
+    bottom: -24,
+    left: -24,
+    width: 210,
+    background: 'rgba(15, 20, 34, 0.88)',
+    border: '1px solid rgba(16, 185, 129, 0.5)',
+    boxShadow: '0 16px 32px rgba(0, 0, 0, 0.4), 0 0 20px rgba(16, 185, 129, 0.25)',
+    borderRadius: 12,
+    padding: '12px 14px',
+    backdropFilter: 'blur(12px)',
+    zIndex: 10,
+  },
+  holoCard3: {
+    position: 'absolute' as const,
+    top: 60,
+    left: -32,
+    width: 215,
+    background: 'rgba(15, 20, 34, 0.88)',
+    border: '1px solid rgba(6, 182, 212, 0.5)',
+    boxShadow: '0 16px 32px rgba(0, 0, 0, 0.4), 0 0 20px rgba(6, 182, 212, 0.25)',
+    borderRadius: 12,
+    padding: '12px 14px',
+    backdropFilter: 'blur(12px)',
+    zIndex: 10,
+  },
+  holoCard4: {
+    position: 'absolute' as const,
+    bottom: 30,
+    right: -28,
+    width: 220,
+    background: 'rgba(15, 20, 34, 0.88)',
+    border: '1px solid rgba(236, 72, 153, 0.5)',
+    boxShadow: '0 16px 32px rgba(0, 0, 0, 0.4), 0 0 20px rgba(236, 72, 153, 0.25)',
+    borderRadius: 12,
+    padding: '12px 14px',
+    backdropFilter: 'blur(12px)',
+    zIndex: 10,
   },
   section: {
     padding: '70px 20px',

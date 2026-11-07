@@ -226,8 +226,28 @@ export default function Workflows() {
   const [viewingRun, setViewingRun] = useState<any | null>(null);
   const [realRuns, setRealRuns] = useState<any[]>([]);
   const [viewMode, setViewMode] = useState<'graph' | 'tree'>('graph');
+  const [showWorkflowLibrary, setShowWorkflowLibrary] = useState(false);
+  const [selectorDropdownOpen, setSelectorDropdownOpen] = useState(false);
+  const [wfSearchQuery, setWfSearchQuery] = useState('');
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importFeedback, setImportFeedback] = useState('');
+
+  useEffect(() => {
+    const onDown = (e: globalThis.MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setSelectorDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId && state.workflows.length > 0) {
+      setSelectedId(state.workflows[0].id);
+    }
+  }, [selectedId, state.workflows]);
 
   const fetchRuns = () => {
     api.workflows
@@ -481,137 +501,294 @@ export default function Workflows() {
         </article>
       </section>
 
-      <div className="grid grid--sidebar" style={{ marginTop: 22 }}>
-        <div className="stack">
-          {state.workflows.map((w) => (
-            <div
-              key={w.id}
-              className="card"
-              style={{
-                borderColor: w.id === selectedId ? 'var(--accent)' : undefined,
-                boxShadow: w.id === selectedId ? '0 0 0 3px var(--accent-soft)' : undefined,
-              }}
-            >
-              <div className="card__head" style={{ borderBottom: 'none' }}>
-                <span
-                  className="avatar avatar--md avatar--square"
-                  style={{
-                    background: w.status === 'published' ? 'var(--green-soft)' : 'var(--surface-3)',
-                    color: w.status === 'published' ? 'var(--green)' : 'var(--text-3)',
-                  }}
-                >
-                  <Icon name="zap" size={17} />
-                </span>
-                <button type="button" className="wf-head" onClick={() => setSelectedId(w.id)}>
-                  <span className="row" style={{ gap: 8 }}>
-                    <strong style={{ fontSize: 13.5 }}>{w.name}</strong>
-                    <StatusBadge status={w.status} />
-                  </span>
-                  <span className="cell-sub" style={{ display: 'block' }}>
-                    Trigger: {triggerText(w.trigger)} Â· {countSteps(w.actions)} steps
-                  </span>
-                </button>
-                <div className="card__actions">
-                  <div style={{ textAlign: 'right', marginRight: 6 }}>
-                    <div style={{ fontSize: 13, fontWeight: 650 }}>{num(w.enrolled)}</div>
-                    <div className="cell-sub">enrolled</div>
-                  </div>
-                  <Switch on={w.status === 'published'} label={`Toggle ${w.name}`} onChange={() => dispatch({ type: 'workflow/toggle', id: w.id })} />
-                </div>
-              </div>
-              <button type="button" className="wf-steps" onClick={() => setSelectedId(w.id)}>
-                {w.actions.length === 0 ? (
-                  <span className="cell-sub">No steps yet â€” open the flow to add one</span>
-                ) : (
-                  <span className="row" style={{ gap: 6 }}>
-                    {w.actions.slice(0, 6).map((a, i) => (
-                      <span key={a.id} className="row" style={{ gap: 6 }}>
-                        {i > 0 && <Icon name="chevron-right" size={12} style={{ color: 'var(--text-3)' }} />}
-                        <span className="tag" style={{ background: 'var(--surface-3)' }} title={a.label}>
-                          <Icon name={ACTION_ICON[a.kind]} size={11} /> {a.kind}
-                        </span>
-                      </span>
-                    ))}
-                  </span>
-                )}
+      {/* ─── N8N-Style Full-Width Canvas Toolbar & Visual Graph ─── */}
+      <section style={{ marginTop: 22 }} className="atlas-workflow-workspace">
+        {!selected ? (
+          <div className="card" style={{ padding: 40, textAlign: 'center' }}>
+            <EmptyState
+              icon={<Icon name="zap" size={28} />}
+              title="No workflow selected"
+              text="Select an existing workflow or create a new automation graph to open the visual canvas."
+            />
+            <div style={{ marginTop: 16 }}>
+              <button className="btn btn--primary" onClick={() => setCreating(true)}>
+                <Icon name="plus" size={14} /> Create New Workflow
               </button>
             </div>
-          ))}
-        </div>
-
-        <div className="card" style={{ position: 'sticky', top: 0 }}>
-          {!selected ? (
-            <EmptyState icon={<Icon name="zap" size={20} />} title="Select a workflow" />
-          ) : (
-            <>
-              <div className="card__head">
-                <div style={{ minWidth: 0 }}>
-                  <div className="card__title">{selected.name}</div>
-                  <div className="card__sub">
-                    {num(selected.enrolled)} enrolled Â· {num(selected.completed)} completed Â· {runsFor.length} runs
-                  </div>
-                </div>
-                <div className="card__actions">
-                  <div style={{ display: 'inline-flex', background: 'var(--surface-3)', borderRadius: 6, padding: 2, marginRight: 4 }}>
-                    <button
-                      type="button"
-                      className={`btn btn--xs ${viewMode === 'graph' ? 'btn--primary' : 'btn--subtle'}`}
-                      style={{ padding: '4px 8px', fontSize: 11, border: 'none' }}
-                      onClick={() => setViewMode('graph')}
-                      title="Visual Nodal Canvas (Graph Mode)"
-                    >
-                      <Icon name="share" size={11} /> Visual Graph
-                    </button>
-                    <button
-                      type="button"
-                      className={`btn btn--xs ${viewMode === 'tree' ? 'btn--primary' : 'btn--subtle'}`}
-                      style={{ padding: '4px 8px', fontSize: 11, border: 'none' }}
-                      onClick={() => setViewMode('tree')}
-                      title="Linear Steps (List Mode)"
-                    >
-                      <Icon name="sliders" size={11} /> Step List
-                    </button>
-                  </div>
-                  <Badge tone={selected.status === 'published' ? 'green' : 'default'} dot>
-                    {selected.status}
-                  </Badge>
-                  <button type="button" className="btn btn--sm" onClick={() => setRunFor(selected)}>
-                    <Icon name="play" size={13} /> Run now
+          </div>
+        ) : (
+          <div className="card" style={{ padding: 0, overflow: 'visible', border: '1px solid var(--border)' }}>
+            {/* Top Command Bar (n8n Workspace Header) */}
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                padding: '12px 18px',
+                background: 'var(--surface-2, #0d111a)',
+                borderBottom: '1px solid var(--border)',
+                borderTopLeftRadius: 12,
+                borderTopRightRadius: 12,
+              }}
+            >
+              {/* Left Side: Workflow Switcher Dropdown, Status & Trigger */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                {/* Workflow Selector Popover */}
+                <div style={{ position: 'relative' }} ref={dropdownRef}>
+                  <button
+                    type="button"
+                    className="btn btn--secondary"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      fontWeight: 700,
+                      fontSize: 14,
+                      background: 'var(--surface)',
+                      borderColor: 'var(--border)',
+                    }}
+                    onClick={() => setSelectorDropdownOpen((v) => !v)}
+                  >
+                    <Icon name="zap" size={15} style={{ color: 'var(--accent)' }} />
+                    <span>{selected.name}</span>
+                    <Icon name="chevron-down" size={13} style={{ opacity: 0.7 }} />
                   </button>
+
+                  {selectorDropdownOpen && (
+                    <div
+                      className="card"
+                      style={{
+                        position: 'absolute',
+                        top: 'calc(100% + 6px)',
+                        left: 0,
+                        width: 320,
+                        zIndex: 100,
+                        boxShadow: '0 12px 32px rgba(0,0,0,0.3)',
+                        borderRadius: 10,
+                        overflow: 'hidden',
+                        padding: 0,
+                      }}
+                    >
+                      <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>
+                        <input
+                          type="text"
+                          placeholder="Search workflows..."
+                          className="input"
+                          style={{ width: '100%', fontSize: 12 }}
+                          value={wfSearchQuery}
+                          onChange={(e) => setWfSearchQuery(e.target.value)}
+                          autoFocus
+                        />
+                      </div>
+                      <div style={{ maxHeight: 280, overflowY: 'auto' }}>
+                        {state.workflows
+                          .filter((w) => w.name.toLowerCase().includes(wfSearchQuery.toLowerCase()))
+                          .map((w) => (
+                            <button
+                              key={w.id}
+                              type="button"
+                              className="list-row"
+                              style={{
+                                width: '100%',
+                                textAlign: 'left',
+                                padding: '10px 14px',
+                                border: 'none',
+                                background: w.id === selectedId ? 'var(--accent-soft)' : 'transparent',
+                                cursor: 'pointer',
+                                borderBottom: '1px solid var(--line)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                              }}
+                              onClick={() => {
+                                setSelectedId(w.id);
+                                setSelectorDropdownOpen(false);
+                              }}
+                            >
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontSize: 13, fontWeight: w.id === selectedId ? 700 : 500 }}>
+                                  {w.name}
+                                </div>
+                                <div className="cell-sub" style={{ fontSize: 11 }}>
+                                  {countSteps(w.actions)} steps · {triggerText(w.trigger)}
+                                </div>
+                              </div>
+                              <StatusBadge status={w.status} />
+                            </button>
+                          ))}
+                      </div>
+                      <div
+                        style={{
+                          padding: '8px 10px',
+                          background: 'var(--surface-2)',
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="btn btn--subtle btn--sm"
+                          style={{ fontSize: 11 }}
+                          onClick={() => {
+                            setSelectorDropdownOpen(false);
+                            setCreating(true);
+                          }}
+                        >
+                          <Icon name="plus" size={12} /> New Workflow
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn--subtle btn--sm"
+                          style={{ fontSize: 11 }}
+                          onClick={() => {
+                            setSelectorDropdownOpen(false);
+                            setShowWorkflowLibrary(true);
+                          }}
+                        >
+                          <Icon name="share" size={12} /> All Workflows
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Workflow Status Switch */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Switch
+                    on={selected.status === 'published'}
+                    label={`Toggle status for ${selected.name}`}
+                    onChange={() => dispatch({ type: 'workflow/toggle', id: selected.id })}
+                  />
+                  <Badge tone={selected.status === 'published' ? 'green' : 'default'} dot>
+                    {selected.status === 'published' ? 'Active' : 'Draft'}
+                  </Badge>
+                </div>
+
+                {/* Trigger Chip */}
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '4px 10px',
+                    borderRadius: 6,
+                    background: 'var(--surface)',
+                    border: '1px solid var(--border)',
+                    fontSize: 12,
+                    color: 'var(--text-2)',
+                  }}
+                  title="Trigger event that enrolls contacts into this flow"
+                >
+                  <Icon name={TRIGGER_ICON[selected.trigger.kind]} size={13} style={{ color: 'var(--accent)' }} />
+                  <span>{triggerText(selected.trigger)}</span>
+                  <span className="cell-sub" style={{ fontSize: 11 }}>· {runsFor.length} runs</span>
                   <button
                     type="button"
                     className="icon-btn"
-                    aria-label={`Edit ${selected.name} details`}
+                    style={{ padding: 2, marginLeft: 4 }}
+                    title="Edit Trigger Parameters"
                     onClick={() => setEditingDetails(selected)}
                   >
-                    <Icon name="edit" size={15} />
+                    <Icon name="edit" size={11} />
                   </button>
                 </div>
               </div>
-              <div className="card__body" style={{ padding: viewMode === 'graph' ? 0 : undefined }}>
-                {viewMode === 'graph' ? (
-                  <WorkflowCanvas
-                    workflow={selected}
-                    onEditStep={(step) => editStep(step)}
-                    onAddStep={() => addStep()}
-                  />
-                ) : (
-                  <div className="flow">
-                    <span className="flow__trigger">
-                      <Icon name={TRIGGER_ICON[selected.trigger.kind]} size={13} /> {triggerText(selected.trigger)}
+
+              {/* Right Side: View Mode, Test Run, Add Node, Library & Settings */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                {/* View Switcher: Graph vs Tree */}
+                <div style={{ display: 'inline-flex', background: 'var(--surface)', borderRadius: 6, padding: 2, border: '1px solid var(--border)' }}>
+                  <button
+                    type="button"
+                    className={`btn btn--xs ${viewMode === 'graph' ? 'btn--primary' : 'btn--subtle'}`}
+                    style={{ padding: '5px 10px', fontSize: 11, border: 'none' }}
+                    onClick={() => setViewMode('graph')}
+                    title="Visual 2D Nodal Canvas (n8n Graph Mode)"
+                  >
+                    <Icon name="share" size={12} /> Visual Graph
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn btn--xs ${viewMode === 'tree' ? 'btn--primary' : 'btn--subtle'}`}
+                    style={{ padding: '5px 10px', fontSize: 11, border: 'none' }}
+                    onClick={() => setViewMode('tree')}
+                    title="Linear Steps Sequence"
+                  >
+                    <Icon name="sliders" size={12} /> Step List
+                  </button>
+                </div>
+
+                {/* Test Run Button */}
+                <button
+                  type="button"
+                  className="btn btn--sm btn--primary"
+                  style={{ background: '#059669', borderColor: '#10b981' }}
+                  onClick={() => setRunFor(selected)}
+                  title="Execute dry run or test dispatch against a contact"
+                >
+                  <Icon name="play" size={13} /> Test Run
+                </button>
+
+                {/* Add Step Button */}
+                <button
+                  type="button"
+                  className="btn btn--sm btn--primary"
+                  onClick={() => addStep()}
+                >
+                  <Icon name="plus" size={13} /> Add Step
+                </button>
+
+                {/* Workflow Library Button */}
+                <button
+                  type="button"
+                  className="btn btn--sm btn--secondary"
+                  onClick={() => setShowWorkflowLibrary(true)}
+                  title="Open Workflows Library (all workflows, import/export, duplicates)"
+                >
+                  <Icon name="share" size={13} /> Workflows ({state.workflows.length})
+                </button>
+
+                {/* Settings / Edit Details Button */}
+                <button
+                  type="button"
+                  className="icon-btn"
+                  title="Workflow Settings & Triggers"
+                  onClick={() => setEditingDetails(selected)}
+                >
+                  <Icon name="edit" size={15} />
+                </button>
+              </div>
+            </div>
+
+            {/* Main Stage: Full-Width Visual Canvas or Linear Tree */}
+            {viewMode === 'graph' ? (
+              <WorkflowCanvas
+                workflow={selected}
+                onEditStep={(step) => editStep(step)}
+                onAddStep={() => addStep()}
+                onEditTrigger={() => setEditingDetails(selected)}
+                onExecuteWorkflow={() => setRunFor(selected)}
+                height="760px"
+              />
+            ) : (
+              <div className="card__body" style={{ padding: 24 }}>
+                <div className="flow">
+                  <span className="flow__trigger">
+                    <Icon name={TRIGGER_ICON[selected.trigger.kind]} size={13} /> {triggerText(selected.trigger)}
+                  </span>
+                  {renderSteps(selected.actions)}
+                  <button type="button" className="flow__add" onClick={() => addStep()}>
+                    <Icon name="plus" size={14} /> Add step
+                  </button>
+                  <div className="flow__node" style={{ borderStyle: 'dashed', color: 'var(--text-3)' }}>
+                    <span className="flow__node-icon" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
+                      <Icon name="check" size={13} />
                     </span>
-                    {renderSteps(selected.actions)}
-                    <button type="button" className="flow__add" onClick={() => addStep()}>
-                      <Icon name="plus" size={14} /> Add step
-                    </button>
-                    <div className="flow__node" style={{ borderStyle: 'dashed', color: 'var(--text-3)' }}>
-                      <span className="flow__node-icon" style={{ background: 'var(--surface-3)', color: 'var(--text-3)' }}>
-                        <Icon name="check" size={13} />
-                      </span>
-                      <div>Goal reached — exit workflow</div>
-                    </div>
+                    <div>Goal reached — exit workflow</div>
                   </div>
-                )}
+                </div>
                 <div className="divider" style={{ margin: '14px 0' }} />
                 <div className="row row--between">
                   <span className="hint">Completion rate</span>
@@ -621,10 +798,10 @@ export default function Workflows() {
                   <div style={{ width: pct(selected.completed, selected.enrolled || 1), height: '100%', background: 'var(--green)' }} />
                 </div>
               </div>
-            </>
-          )}
-        </div>
-      </div>
+            )}
+          </div>
+        )}
+      </section>
 
       <div className="card" style={{ marginTop: 16 }}>
         <div className="card__head">
@@ -805,6 +982,92 @@ export default function Workflows() {
             setViewingRun((prev: any) => prev ? { ...prev, ...updatedRun } : null);
           }}
         />
+      )}
+
+      {showWorkflowLibrary && (
+        <Modal
+          title={`All Automation Workflows (${state.workflows.length})`}
+          onClose={() => setShowWorkflowLibrary(false)}
+        >
+          <div className="stack" style={{ gap: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+              <input
+                type="text"
+                placeholder="Filter workflows by title..."
+                className="input"
+                style={{ flex: 1, fontSize: 13 }}
+                value={wfSearchQuery}
+                onChange={(e) => setWfSearchQuery(e.target.value)}
+              />
+              <button
+                type="button"
+                className="btn btn--primary btn--sm"
+                onClick={() => {
+                  setShowWorkflowLibrary(false);
+                  setCreating(true);
+                }}
+              >
+                <Icon name="plus" size={13} /> New Workflow
+              </button>
+              <button
+                type="button"
+                className="btn btn--secondary btn--sm"
+                onClick={() => {
+                  setShowWorkflowLibrary(false);
+                  setShowTemplates(true);
+                }}
+              >
+                <Icon name="sparkles" size={13} /> Templates
+              </button>
+            </div>
+
+            <div style={{ maxHeight: 420, overflowY: 'auto' }} className="stack">
+              {state.workflows
+                .filter((w) => w.name.toLowerCase().includes(wfSearchQuery.toLowerCase()))
+                .map((w) => (
+                  <div
+                    key={w.id}
+                    className="card"
+                    style={{
+                      padding: '12px 16px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      borderColor: w.id === selectedId ? 'var(--accent)' : undefined,
+                      background: w.id === selectedId ? 'var(--accent-soft)' : undefined,
+                    }}
+                  >
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{ fontWeight: 700, fontSize: 13.5 }}>{w.name}</span>
+                        <StatusBadge status={w.status} />
+                      </div>
+                      <div className="cell-sub" style={{ fontSize: 11.5, marginTop: 2 }}>
+                        Trigger: {triggerText(w.trigger)} · {countSteps(w.actions)} steps · {num(w.enrolled)} enrolled
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <Switch
+                        on={w.status === 'published'}
+                        label={`Toggle ${w.name}`}
+                        onChange={() => dispatch({ type: 'workflow/toggle', id: w.id })}
+                      />
+                      <button
+                        type="button"
+                        className="btn btn--secondary btn--sm"
+                        onClick={() => {
+                          setSelectedId(w.id);
+                          setShowWorkflowLibrary(false);
+                        }}
+                      >
+                        Open in Canvas
+                      </button>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
+        </Modal>
       )}
     </main>
   );

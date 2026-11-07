@@ -221,6 +221,10 @@ export type Action =
   | { type: 'snapshot/restore'; id: string }
   | { type: 'snapshot/delete'; id: string }
   | { type: 'notification/add'; notification: { id: string; title: string; body: string; read: boolean; at: string } }
+  | { type: 'notification/unread'; id: string }
+  | { type: 'notification/delete'; id: string }
+  | { type: 'notifications/delete'; id: string }
+  | { type: 'notifications/clearRead' }
   | { type: 'notifications/read'; id: string }
   | { type: 'notifications/readAll' }
   | { type: 'workspace/reset' };
@@ -1200,6 +1204,25 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
       return {
         ...state,
         notifications: state.notifications.map((n) => (n.id === action.id ? { ...n, read: true } : n)),
+      };
+
+    case 'notification/unread':
+      return {
+        ...state,
+        notifications: state.notifications.map((n) => (n.id === action.id ? { ...n, read: false } : n)),
+      };
+
+    case 'notification/delete':
+    case 'notifications/delete':
+      return {
+        ...state,
+        notifications: state.notifications.filter((n) => n.id !== action.id),
+      };
+
+    case 'notifications/clearRead':
+      return {
+        ...state,
+        notifications: state.notifications.filter((n) => !n.read),
       };
 
     case 'notifications/readAll':

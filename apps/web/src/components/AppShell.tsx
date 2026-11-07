@@ -21,14 +21,18 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
   const { state } = useStore();
   const { user, agency, locations, activeLocation, switchLocation } = useAuth();
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
-  const unread = state.conversations.reduce((sum, c) => sum + c.unread, 0);
+  const [menuFilter, setMenuFilter] = useState('');
+  const unreadConversations = state.conversations.reduce((sum, c) => sum + c.unread, 0);
+  const unreadNotifications = state.notifications.filter((n) => !n.read).length;
 
   const groups: Array<{ label?: string; items: NavEntry[] }> = [
     {
+      label: 'Main Workspace',
       items: [
         { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
         { to: '/command-center', label: 'Command Center', icon: 'zap' },
-        { to: '/conversations', label: 'Conversations', icon: 'message', badge: unread },
+        { to: '/notifications', label: 'Notification Center', icon: 'bell', badge: unreadNotifications },
+        { to: '/conversations', label: 'Conversations', icon: 'message', badge: unreadConversations },
         { to: '/phone', label: 'Phone System', icon: 'phone' },
         { to: '/calendars', label: 'Calendars', icon: 'calendar' },
         { to: '/contacts', label: 'Contacts', icon: 'users' },
@@ -39,7 +43,7 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
       ],
     },
     {
-      label: 'Marketing',
+      label: 'Marketing & Outreach',
       items: [
         { to: '/campaigns', label: 'Campaigns', icon: 'megaphone' },
         { to: '/social', label: 'Social Planner', icon: 'share' },
@@ -48,46 +52,46 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
         { to: '/links', label: 'Trigger Links', icon: 'link' },
         { to: '/affiliates', label: 'Affiliates', icon: 'users' },
         { to: '/media', label: 'Media Library', icon: 'image' },
-        { to: '/reporting', label: 'Reporting', icon: 'chart' },
+        { to: '/reporting', label: 'Reporting & Analytics', icon: 'chart' },
       ],
     },
     {
-      label: 'Sites',
+      label: 'Sites & Funnels',
       items: [
         { to: '/funnels', label: 'Funnels', icon: 'funnel' },
         { to: '/websites', label: 'Websites', icon: 'globe' },
         { to: '/forms', label: 'Forms & Surveys', icon: 'clipboard' },
-        { to: '/blogs', label: 'Blogs', icon: 'file' },
-        { to: '/qr-codes', label: 'QR Codes', icon: 'qr' },
+        { to: '/blogs', label: 'Blogs & Articles', icon: 'file' },
+        { to: '/qr-codes', label: 'QR Code Engine', icon: 'qr' },
         { to: '/portal', label: 'Client Portal', icon: 'globe' },
       ],
     },
     {
       label: 'Automation & AI',
       items: [
-        { to: '/workflows', label: 'Workflows', icon: 'zap' },
+        { to: '/workflows', label: 'Visual Workflows (n8n)', icon: 'zap' },
         { to: '/copilot-inbox', label: 'Copilot Proposals', icon: 'check-circle' },
         { to: '/ai-trainer', label: 'AI Bot Training', icon: 'sparkles' },
       ],
     },
     {
-      label: 'Commerce',
+      label: 'Commerce & Billing',
       items: [
-        { to: '/store', label: 'Store', icon: 'store' },
+        { to: '/store', label: 'Digital Store', icon: 'store' },
         { to: '/payments', label: 'Payments', icon: 'wallet' },
-        { to: '/products', label: 'Products', icon: 'tag' },
+        { to: '/products', label: 'Products & Pricing', icon: 'tag' },
         { to: '/payment-links', label: 'Payment Links', icon: 'link' },
-        { to: '/coupons', label: 'Coupons', icon: 'tag' },
-        { to: '/orders', label: 'Orders', icon: 'clipboard' },
+        { to: '/coupons', label: 'Coupons & Promos', icon: 'tag' },
+        { to: '/orders', label: 'Customer Orders', icon: 'clipboard' },
         { to: '/subscriptions', label: 'Subscriptions', icon: 'repeat' },
-        { to: '/documents', label: 'Contracts', icon: 'file' },
+        { to: '/documents', label: 'Contracts & Agreements', icon: 'file' },
       ],
     },
     {
       label: 'Client Experience',
       items: [
-        { to: '/memberships', label: 'Memberships', icon: 'book' },
-        { to: '/snippets', label: 'Snippets', icon: 'message' },
+        { to: '/memberships', label: 'Memberships & Courses', icon: 'book' },
+        { to: '/snippets', label: 'Quick Snippets', icon: 'message' },
       ],
     },
     {
@@ -99,14 +103,15 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
       ],
     },
     {
-      label: 'Platform & Ecosystem',
+      label: 'Platform & Governance',
       items: [
         { to: '/integrations', label: 'App Marketplace', icon: 'plug' },
         { to: '/consent-ledger', label: 'Consent Ledger', icon: 'shield' },
         { to: '/plan-usage', label: 'Plan & Usage', icon: 'chart' },
         { to: '/developers', label: 'Developer Hub', icon: 'webhook' },
         { to: '/custom-values', label: 'Custom Values', icon: 'sliders' },
-        { to: '/audit-log', label: 'Audit Log', icon: 'clipboard' },
+        { to: '/audit-log', label: 'Security & Audit Log', icon: 'clipboard' },
+        { to: '/settings', label: 'Workspace Settings', icon: 'settings' },
       ],
     },
     {
@@ -115,9 +120,24 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
         { to: '/home', label: 'Landing Page', icon: 'globe' },
         { to: '/pricing', label: 'Pricing & Plans', icon: 'tag' },
         { to: '/docs', label: 'Documentation', icon: 'clipboard' },
+        { to: '/platform/crm', label: 'Platform Architecture', icon: 'zap' },
       ],
     },
   ];
+
+  const filteredGroups = useMemo(() => {
+    if (!menuFilter.trim()) return groups;
+    const q = menuFilter.toLowerCase().trim();
+
+    return groups
+      .map((group) => ({
+        ...group,
+        items: group.items.filter(
+          (item) => item.label.toLowerCase().includes(q) || item.to.toLowerCase().includes(q)
+        ),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [groups, menuFilter]);
 
   return (
     <aside className="sidebar">
@@ -195,27 +215,69 @@ function Sidebar({ onNavigate }: { onNavigate: () => void }) {
         )}
       </div>
 
+      {/* Quick Menu Filter Input */}
+      <div style={{ padding: '8px 12px 2px' }}>
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+          <span style={{ position: 'absolute', left: 8, opacity: 0.5, pointerEvents: 'none' }}>
+            <Icon name="search" size={12} />
+          </span>
+          <input
+            type="text"
+            placeholder="Filter 50+ pages..."
+            value={menuFilter}
+            onChange={(e) => setMenuFilter(e.target.value)}
+            style={{
+              width: '100%',
+              fontSize: 11.5,
+              padding: '6px 24px 6px 26px',
+              borderRadius: 6,
+              background: 'var(--surface-2, rgba(255,255,255,0.04))',
+              border: '1px solid var(--line, rgba(255,255,255,0.08))',
+              color: 'var(--text, #f8fafc)',
+              outline: 'none',
+            }}
+          />
+          {menuFilter && (
+            <button
+              type="button"
+              className="icon-btn"
+              style={{ position: 'absolute', right: 4, padding: 2 }}
+              onClick={() => setMenuFilter('')}
+              title="Clear filter"
+            >
+              <Icon name="x" size={11} />
+            </button>
+          )}
+        </div>
+      </div>
+
       <nav className="sidebar__nav">
-        {groups.map((group, gi) => (
-          <div key={group.label ?? `g${gi}`}>
-            {group.label && <div className="nav__group-label">{group.label}</div>}
-            {group.items.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.end}
-                className={({ isActive }) => `nav__item${isActive ? ' is-active' : ''}`}
-                onClick={onNavigate}
-              >
-                <span className="nav__icon">
-                  <Icon name={item.icon} size={16} />
-                </span>
-                <span className="nav__label">{item.label}</span>
-                {!!item.badge && <span className="nav__count">{item.badge}</span>}
-              </NavLink>
-            ))}
+        {filteredGroups.length === 0 ? (
+          <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 12, color: 'var(--text-3)' }}>
+            No pages match "{menuFilter}"
           </div>
-        ))}
+        ) : (
+          filteredGroups.map((group, gi) => (
+            <div key={group.label ?? `g${gi}`}>
+              {group.label && <div className="nav__group-label">{group.label}</div>}
+              {group.items.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  end={item.end}
+                  className={({ isActive }) => `nav__item${isActive ? ' is-active' : ''}`}
+                  onClick={onNavigate}
+                >
+                  <span className="nav__icon">
+                    <Icon name={item.icon} size={16} />
+                  </span>
+                  <span className="nav__label">{item.label}</span>
+                  {!!item.badge && <span className="nav__count">{item.badge}</span>}
+                </NavLink>
+              ))}
+            </div>
+          ))
+        )}
       </nav>
 
       <div className="sidebar__footer">
@@ -407,6 +469,7 @@ function Tooltip({ label, children }: { label: string; children: ReactNode }) {
 
 function NotificationsButton() {
   const { state, dispatch } = useStore();
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [selectedNotification, setSelectedNotification] = useState<any | null>(null);
   const ref = useRef<HTMLDivElement>(null);
@@ -528,6 +591,26 @@ function NotificationsButton() {
                   </div>
                 ))
               )}
+            </div>
+            <div
+              style={{
+                padding: '8px 12px',
+                background: 'var(--surface-2, #0d111a)',
+                borderTop: '1px solid var(--line)',
+                textAlign: 'center',
+              }}
+            >
+              <button
+                type="button"
+                className="btn btn--ghost btn--sm"
+                style={{ width: '100%', fontSize: 12, fontWeight: 650, color: 'var(--accent)' }}
+                onClick={() => {
+                  setOpen(false);
+                  navigate('/notifications');
+                }}
+              >
+                Open Notification Center →
+              </button>
             </div>
           </div>
         )}

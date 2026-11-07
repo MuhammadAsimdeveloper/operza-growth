@@ -79,6 +79,7 @@ const Developers = lazy(() => import('./pages/Developers'));
 const Branding = lazy(() => import('./pages/Branding'));
 const ConsentLedger = lazy(() => import('./pages/ConsentLedger'));
 const CopilotInbox = lazy(() => import('./pages/CopilotInbox'));
+const NotificationCenter = lazy(() => import('./pages/NotificationCenter'));
 const PlanUsage = lazy(() => import('./pages/PlanUsage'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
@@ -194,6 +195,8 @@ export default function App() {
           <Route path="reporting" element={<Reporting />} />
           <Route path="command-center" element={<CommandCenter />} />
           <Route path="command" element={<CommandCenter />} />
+          <Route path="notifications" element={<NotificationCenter />} />
+          <Route path="notification-center" element={<NotificationCenter />} />
           <Route path="settings" element={<Settings />} />
           <Route path="sub-accounts" element={<SubAccounts />} />
           <Route path="snapshots" element={<Snapshots />} />

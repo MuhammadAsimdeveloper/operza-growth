@@ -16,7 +16,7 @@
  *    context, output payloads, and offers on-the-fly dry run testing.
  */
 
-import { useState, useRef, type MouseEvent } from 'react';
+import { useState, useRef, useEffect, type MouseEvent, type WheelEvent } from 'react';
 import { api } from '../lib/api';
 import { Icon } from './Icon';
 import { Badge } from './ui';
@@ -103,19 +103,23 @@ export function WorkflowCanvas({
   onAddStep,
   onEditTrigger,
   activeRun: _activeRun,
+  height = '740px',
+  onExecuteWorkflow,
 }: {
   workflow: Workflow;
   onEditStep: (step: WorkflowAction, parentId?: string, branch?: 'yes' | 'no') => void;
   onAddStep: (parentId?: string, branch?: 'yes' | 'no') => void;
   onEditTrigger?: (trigger: WorkflowTrigger) => void;
   activeRun?: any;
+  height?: string | number;
+  onExecuteWorkflow?: () => void;
 }) {
   const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState<Point>({ x: 40, y: 20 });
+  const [pan, setPan] = useState<Point>({ x: 60, y: 30 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState<Point>({ x: 0, y: 0 });
 
-  // Dragging nodes
+  // Dragging nodes with rock-solid window listeners
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState<Point>({ x: 0, y: 0 });
   const [customPositions, setCustomPositions] = useState<Record<string, Point>>({});
@@ -130,29 +134,56 @@ export function WorkflowCanvas({
   // Auto-calculate node positions and connections
   const { nodes, connections } = calculateLayout(workflow, customPositions);
 
+  // Window-level mouse listeners eliminate jitter and dropped drags when pointer leaves container
+  useEffect(() => {
+    if (!isPanning && !draggingNodeId) return;
+
+    const onWindowMouseMove = (e: globalThis.MouseEvent) => {
+      if (isPanning) {
+        setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
+      } else if (draggingNodeId) {
+        const containerRect = containerRef.current?.getBoundingClientRect() || { left: 0, top: 0 };
+        const newX = Math.round((e.clientX - containerRect.left - pan.x) / zoom - dragOffset.x);
+        const newY = Math.round((e.clientY - containerRect.top - pan.y) / zoom - dragOffset.y);
+        setCustomPositions((prev) => ({
+          ...prev,
+          [draggingNodeId]: { x: newX, y: newY },
+        }));
+      }
+    };
+
+    const onWindowMouseUp = () => {
+      setIsPanning(false);
+      setDraggingNodeId(null);
+    };
+
+    window.addEventListener('mousemove', onWindowMouseMove);
+    window.addEventListener('mouseup', onWindowMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', onWindowMouseMove);
+      window.removeEventListener('mouseup', onWindowMouseUp);
+    };
+  }, [isPanning, draggingNodeId, panStart, pan.x, pan.y, zoom, dragOffset]);
+
   const handleMouseDownCanvas = (e: MouseEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest('.canvas-node')) return;
     setIsPanning(true);
     setPanStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
   };
 
-  const handleMouseMove = (e: MouseEvent<HTMLDivElement>) => {
-    if (isPanning) {
-      setPan({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
-    } else if (draggingNodeId) {
-      const containerRect = containerRef.current?.getBoundingClientRect() || { left: 0, top: 0 };
-      const newX = Math.round((e.clientX - containerRect.left - pan.x) / zoom - dragOffset.x);
-      const newY = Math.round((e.clientY - containerRect.top - pan.y) / zoom - dragOffset.y);
-      setCustomPositions((prev) => ({
-        ...prev,
-        [draggingNodeId]: { x: newX, y: newY },
+  const handleWheel = (e: WheelEvent<HTMLDivElement>) => {
+    // When holding ctrl or meta or scrolling, provide smooth zoom or pan
+    if (e.ctrlKey || e.metaKey || e.altKey) {
+      e.preventDefault();
+      const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
+      setZoom((z) => Math.min(2.5, Math.max(0.35, Number((z * zoomFactor).toFixed(2)))));
+    } else {
+      setPan((p) => ({
+        x: p.x - e.deltaX * 0.8,
+        y: p.y - e.deltaY * 0.8,
       }));
     }
-  };
-
-  const handleMouseUp = () => {
-    setIsPanning(false);
-    setDraggingNodeId(null);
   };
 
   const handleNodeDragStart = (e: MouseEvent, nodeId: string, currentX: number, currentY: number) => {
@@ -167,7 +198,13 @@ export function WorkflowCanvas({
 
   const resetView = () => {
     setZoom(1);
-    setPan({ x: 40, y: 20 });
+    setPan({ x: 60, y: 30 });
+  };
+
+  const clearCustomPositions = () => {
+    setCustomPositions({});
+    setZoom(1);
+    setPan({ x: 60, y: 30 });
   };
 
   return (
@@ -176,20 +213,19 @@ export function WorkflowCanvas({
       style={{
         position: 'relative',
         width: '100%',
-        height: '620px',
-        background: 'var(--bg)',
-        backgroundImage: 'radial-gradient(circle, var(--border) 1px, transparent 1px)',
+        height,
+        background: 'var(--bg, #07090e)',
+        backgroundImage: 'radial-gradient(circle, var(--line-strong, rgba(99, 102, 241, 0.22)) 1.25px, transparent 1.25px)',
         backgroundSize: '24px 24px',
         overflow: 'hidden',
         userSelect: 'none',
-        borderRadius: 12,
+        borderRadius: 14,
         border: '1px solid var(--border)',
-        cursor: isPanning ? 'grabbing' : 'grab',
+        cursor: isPanning ? 'grabbing' : draggingNodeId ? 'move' : 'grab',
+        boxShadow: 'inset 0 0 40px rgba(0, 0, 0, 0.35)',
       }}
       onMouseDown={handleMouseDownCanvas}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
-      onMouseLeave={handleMouseUp}
+      onWheel={handleWheel}
     >
       {/* Top Floating Controls Bar */}
       <div
@@ -200,30 +236,42 @@ export function WorkflowCanvas({
           zIndex: 30,
           display: 'flex',
           gap: 8,
-          background: 'var(--surface)',
+          background: 'var(--surface, #0f131c)',
           padding: '6px 12px',
           borderRadius: 8,
           border: '1px solid var(--border)',
-          boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
+          boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
           alignItems: 'center',
+          backdropFilter: 'blur(12px)',
         }}
       >
-        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>
-          Zoom: {Math.round(zoom * 100)}%
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 4 }}>
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: '50%',
+              background: '#10b981',
+              boxShadow: '0 0 8px #10b981',
+            }}
+          />
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text, #f8fafc)' }}>
+            Zoom: {Math.round(zoom * 100)}%
+          </span>
+        </div>
         <button
           className="btn btn--subtle btn--sm"
           type="button"
-          onClick={() => setZoom((z) => Math.min(2, z + 0.15))}
-          title="Zoom In"
+          onClick={() => setZoom((z) => Math.min(2.5, Number((z + 0.15).toFixed(2))))}
+          title="Zoom In (or Ctrl + Scroll)"
         >
           <Icon name="plus" size={13} />
         </button>
         <button
           className="btn btn--subtle btn--sm"
           type="button"
-          onClick={() => setZoom((z) => Math.max(0.4, z - 0.15))}
-          title="Zoom Out"
+          onClick={() => setZoom((z) => Math.max(0.35, Number((z - 0.15).toFixed(2))))}
+          title="Zoom Out (or Ctrl + Scroll)"
         >
           <Icon name="minus" size={13} />
         </button>
@@ -231,9 +279,17 @@ export function WorkflowCanvas({
           className="btn btn--subtle btn--sm"
           type="button"
           onClick={resetView}
-          title="Reset View"
+          title="Center Canvas"
         >
-          Fit
+          Center
+        </button>
+        <button
+          className="btn btn--subtle btn--sm"
+          type="button"
+          onClick={clearCustomPositions}
+          title="Reset Node Auto-Layout"
+        >
+          Auto-Layout
         </button>
         <div style={{ width: 1, height: 16, background: 'var(--border)', margin: '0 4px' }} />
         <button
@@ -243,6 +299,17 @@ export function WorkflowCanvas({
         >
           <Icon name="plus" size={13} /> Add Node
         </button>
+        {onExecuteWorkflow && (
+          <button
+            className="btn btn--primary btn--sm"
+            type="button"
+            style={{ background: '#059669', borderColor: '#10b981' }}
+            onClick={onExecuteWorkflow}
+            title="Execute Workflow Live / Simulation"
+          >
+            <Icon name="play" size={13} /> Test Run
+          </button>
+        )}
       </div>
 
       {/* Mode Badge & Help info */}
@@ -253,20 +320,22 @@ export function WorkflowCanvas({
           left: 16,
           zIndex: 30,
           display: 'flex',
+          alignItems: 'center',
           gap: 12,
           fontSize: 11,
-          color: 'var(--text-muted)',
-          background: 'var(--surface)',
-          padding: '6px 10px',
-          borderRadius: 6,
+          color: 'var(--text-muted, #94a3b8)',
+          background: 'var(--surface, #0f131c)',
+          padding: '6px 12px',
+          borderRadius: 8,
           border: '1px solid var(--border)',
+          boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
         }}
       >
-        <span>💡 Drag nodes freely</span>
+        <span>💡 Drag canvas to pan · Ctrl+Scroll to zoom</span>
         <span>·</span>
-        <span>Click node to configure</span>
+        <span>Drag nodes freely</span>
         <span>·</span>
-        <Badge tone="green">Visual Graph Canvas Active</Badge>
+        <Badge tone="green">Visual Nodal Engine Active</Badge>
       </div>
 
       {/* SVG Canvas for Curving Bezier Wires */}
