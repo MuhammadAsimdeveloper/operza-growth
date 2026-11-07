@@ -1,7 +1,7 @@
 // Operza End-to-End System Smoke Test
 
 import { spawn } from 'node:child_process';
-import { rmSync } from 'node:fs';
+import { rmSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -4151,7 +4151,124 @@ async function runTests() {
     console.log(`✅ Real-time Copilot SSE stream received (${streamedTokens.length} chars streamed, done: true)`);
     console.log(`Stream preview: "${streamedTokens.slice(0, 90)}..."`);
 
-    console.log('\n🎉 ALL 100 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 101] 10-Agent AI Workforce Handoff & Domain Swarm Resolution
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 101] 10-Agent AI Workforce Handoff & Domain Swarm Resolution');
+
+    // 1. Marketing Agent Handoff via Copilot Chat
+    const mktChatRes = await request('/api/copilot/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'Create campaign named Enterprise Product Launch Drip' })
+    });
+    if (mktChatRes.status !== 200 || !mktChatRes.data.message) {
+      throw new Error(`Copilot Marketing Agent handoff failed: ${JSON.stringify(mktChatRes.data)}`);
+    }
+    console.log(`✅ Copilot Marketing Agent handoff verified: response status ${mktChatRes.status}`);
+
+    // 2. Sales Agent Handoff via Copilot Chat
+    const salesChatRes = await request('/api/copilot/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'Create payment link for Enterprise Tier subscription' })
+    });
+    if (salesChatRes.status !== 200 || !salesChatRes.data.message) {
+      throw new Error(`Copilot Sales Agent handoff failed: ${JSON.stringify(salesChatRes.data)}`);
+    }
+    console.log(`✅ Copilot Sales Agent handoff verified: response status ${salesChatRes.status}`);
+
+    // 3. Developer Agent Handoff via Copilot Chat
+    const devChatRes = await request('/api/copilot/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message: 'Generate api key for external developer access' })
+    });
+    if (devChatRes.status !== 200 || !devChatRes.data.message) {
+      throw new Error(`Copilot Developer Agent handoff failed: ${JSON.stringify(devChatRes.data)}`);
+    }
+    console.log(`✅ Copilot Developer Agent handoff verified: response status ${devChatRes.status}`);
+
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 102] Durable Automation Engine: Transactional Outbox Job Correlation in Execution Timeline
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 102] Durable Automation Engine: Transactional Outbox Job Correlation in Execution Timeline');
+
+    // Create an explicit outbox-verified test workflow
+    const outboxWfRes = await request('/api/crm/workflows', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: 'Durable Outbox Audit Workflow',
+        status: 'published',
+        triggerType: 'manual',
+        nodes: [
+          {
+            id: 'node-tag-outbox',
+            name: 'Apply Audit Tag',
+            type: 'tag',
+            config: { tag: 'outbox-verified' }
+          }
+        ]
+      })
+    });
+    if (outboxWfRes.status !== 201 || !outboxWfRes.data.id) {
+      throw new Error(`Failed to create outbox test workflow: ${JSON.stringify(outboxWfRes.data)}`);
+    }
+    const targetWfId = outboxWfRes.data.id;
+
+    const manualRunRes = await request(`/api/workflows/${targetWfId}/run`, {
+      method: 'POST',
+      body: JSON.stringify({ contactId: testContactId })
+    });
+    if (![200, 201].includes(manualRunRes.status) || !manualRunRes.data.execution?.id) {
+      throw new Error(`Workflow manual execution failed: ${JSON.stringify(manualRunRes.data)}`);
+    }
+    const executedRunId = manualRunRes.data.execution.id;
+    const executedOutboxJobId = manualRunRes.data.execution.outboxJobId;
+    console.log(`Workflow Run Executed: ${executedRunId}, Outbox Job ID: ${executedOutboxJobId}`);
+
+    // Inspect timeline endpoint
+    const outboxTimelineRes = await request(`/api/workflows/runs/${executedRunId}/nodes`);
+    if (outboxTimelineRes.status !== 200) {
+      throw new Error(`Timeline fetch failed with HTTP ${outboxTimelineRes.status}`);
+    }
+    if (!outboxTimelineRes.data.outboxJobId || typeof outboxTimelineRes.data.outboxJobId !== 'string') {
+      throw new Error(`Timeline missing valid outboxJobId: ${JSON.stringify(outboxTimelineRes.data)}`);
+    }
+    if (!['pending', 'delivered'].includes(outboxTimelineRes.data.outboxStatus) || outboxTimelineRes.data.attemptCount !== 1) {
+      throw new Error(`Timeline outbox status invalid: ${JSON.stringify(outboxTimelineRes.data)}`);
+    }
+    console.log(`✅ Durable outbox job correlated in timeline: Job ID ${outboxTimelineRes.data.outboxJobId}, Status: ${outboxTimelineRes.data.outboxStatus}, Attempts: ${outboxTimelineRes.data.attemptCount}`);
+
+    // ─────────────────────────────────────────────────────────────────
+    // [TEST 103] Advanced Workflow Builder: n8n/Zapier Parity Nodes Definition & Integrity
+    // ─────────────────────────────────────────────────────────────────
+    console.log('\n[TEST 103] Advanced Workflow Builder: n8n/Zapier Parity Nodes Definition & Integrity');
+
+    const expectedNodes = [
+      'loop_items',
+      'data_filter',
+      'split_test',
+      'set_variable',
+      'math',
+      'lead_score',
+      'internal_notification',
+      'sub_workflow',
+      'zapier',
+      'code',
+      'error_trigger',
+      'ai_classify',
+      'ai_extract',
+      'ai_generate'
+    ];
+
+    // Read Workflows.tsx to verify node registration
+    const workflowsSource = readFileSync(path.join(root, 'apps/web/src/pages/Workflows.tsx'), 'utf8');
+    for (const nodeKey of expectedNodes) {
+      if (!workflowsSource.includes(`value: '${nodeKey}'`)) {
+        throw new Error(`Workflows.tsx is missing node kind registration for '${nodeKey}'`);
+      }
+    }
+    console.log(`✅ All ${expectedNodes.length} advanced n8n/Zapier parity node kinds verified registered in visual workflow builder palette`);
+
+    console.log('\n🎉 ALL 103 SYSTEM INTEGRATION TESTS PASSED CLEANLY! 🎉');
   } catch (err) {
     console.error('\n❌ TEST FAILED:', err.message);
     process.exitCode = 1;

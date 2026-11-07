@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * Operza Multi-Agent Orchestration Engine
+ * Operza Multi-Agent Orchestration Engine (10-Agent Team)
  * ============================================================================
  * 
  * Coordinates specialized AI agents, manages autonomous handoffs, tracks
@@ -55,11 +55,23 @@ export class MultiAgentOrchestrator {
       const lower = message.toLowerCase();
 
       if (agent.id === AGENT_ROLES.SUPERVISOR) {
-        if (lower.includes('workflow') || lower.includes('zapier') || lower.includes('automation') || lower.includes('webhook') || lower.includes('trigger')) {
+        if (lower.includes('workflow') || lower.includes('zapier') || lower.includes('automation') || lower.includes('webhook') || lower.includes('trigger') || lower.includes('loop')) {
           targetHandoff = { targetAgent: AGENT_ROLES.AUTOMATION, reason: 'Automation, workflow, or Zapier inquiry detected' };
+        } else if (lower.includes('campaign') || lower.includes('email template') || lower.includes('social') || lower.includes('blog') || lower.includes('prospect') || lower.includes('drip')) {
+          targetHandoff = { targetAgent: AGENT_ROLES.MARKETING, reason: 'Marketing, campaigns, or social planning inquiry detected' };
+        } else if (lower.includes('payment link') || lower.includes('invoice') || lower.includes('quote') || lower.includes('subscription') || lower.includes('contract') || lower.includes('coupon') || lower.includes('close deal')) {
+          targetHandoff = { targetAgent: AGENT_ROLES.SALES, reason: 'Sales, payment links, proposals, or invoicing inquiry detected' };
+        } else if (lower.includes('analytic') || lower.includes('kpi') || lower.includes('metric') || lower.includes('velocity') || lower.includes('attribution') || lower.includes('audit log') || lower.includes('report')) {
+          targetHandoff = { targetAgent: AGENT_ROLES.ANALYTICS, reason: 'Analytics, KPI, or business intelligence inquiry detected' };
+        } else if (lower.includes('funnel') || lower.includes('website') || lower.includes('landing page') || lower.includes('form') || lower.includes('survey')) {
+          targetHandoff = { targetAgent: AGENT_ROLES.WEBSITE_BUILDER, reason: 'Sites, funnels, or form builder inquiry detected' };
+        } else if (lower.includes('integration') || lower.includes('twilio') || lower.includes('resend') || lower.includes('sendgrid') || lower.includes('whatsapp') || lower.includes('connector') || lower.includes('consent')) {
+          targetHandoff = { targetAgent: AGENT_ROLES.INTEGRATION, reason: 'Provider integration or consent inquiry detected' };
+        } else if (lower.includes('developer') || lower.includes('api key') || lower.includes('rest hook') || lower.includes('migration') || lower.includes('rls') || lower.includes('code node')) {
+          targetHandoff = { targetAgent: AGENT_ROLES.DEVELOPER, reason: 'Developer hub, API keys, or database inquiry detected' };
         } else if (lower.includes('contact') || lower.includes('deal') || lower.includes('pipeline') || lower.includes('opportunity') || lower.includes('lead') || lower.includes('appointment')) {
           targetHandoff = { targetAgent: AGENT_ROLES.CRM, reason: 'CRM, pipeline, or contact inquiry detected' };
-        } else if (lower.includes('support') || lower.includes('help') || lower.includes('hours') || lower.includes('faq') || lower.includes('how do i')) {
+        } else if (lower.includes('support') || lower.includes('help') || lower.includes('hours') || lower.includes('faq') || lower.includes('how do i') || lower.includes('guide')) {
           targetHandoff = { targetAgent: AGENT_ROLES.SUPPORT, reason: 'Customer support or knowledge base inquiry detected' };
         }
       }
@@ -174,6 +186,89 @@ export class MultiAgentOrchestrator {
             type: 'proposal_created',
             proposalId: proposal.id,
             toolName: 'trigger_workflow',
+            status: proposal.status || 'pending_review',
+            params: toolParams
+          };
+        }
+      } else if (agent.id === AGENT_ROLES.MARKETING) {
+        if (lower.includes('create campaign') || lower.includes('new campaign')) {
+          const campMatch = message.match(/(?:campaign)(?:\s+(?:named|called|for))?\s+["']?([^"'\n]+?)["']?$/i);
+          const toolParams = {
+            name: campMatch ? campMatch[1].trim() : 'Executive Outreach Campaign',
+            channel: 'email',
+            audienceTag: 'prospect'
+          };
+          yield { type: 'tool_executing', tool: 'create_campaign_proposal', params: toolParams };
+
+          const proposal = await this.proposalStore('create_campaign', toolParams, actor, context);
+          yield {
+            type: 'proposal_created',
+            proposalId: proposal.id,
+            toolName: 'create_campaign',
+            status: proposal.status || 'pending_review',
+            params: toolParams
+          };
+        }
+      } else if (agent.id === AGENT_ROLES.SALES) {
+        if (lower.includes('payment link') || lower.includes('create payment link')) {
+          const toolParams = {
+            amount: 29700,
+            currency: 'usd',
+            title: 'Operza Growth Plan Subscription',
+            allowDiscountCodes: true
+          };
+          yield { type: 'tool_executing', tool: 'create_payment_link_proposal', params: toolParams };
+
+          const proposal = await this.proposalStore('create_payment_link', toolParams, actor, context);
+          yield {
+            type: 'proposal_created',
+            proposalId: proposal.id,
+            toolName: 'create_payment_link',
+            status: proposal.status || 'pending_review',
+            params: toolParams
+          };
+        }
+      } else if (agent.id === AGENT_ROLES.ANALYTICS) {
+        if (lower.includes('kpi') || lower.includes('velocity') || lower.includes('dashboard')) {
+          yield { type: 'tool_executing', tool: 'get_pipeline_velocity', params: {} };
+          let readResult = { velocityDays: 14.2, conversionRate: 0.28 };
+          if (typeof this.toolExecutor.get_pipeline_velocity === 'function') {
+            readResult = await this.toolExecutor.get_pipeline_velocity({}, actor, context);
+          }
+          yield { type: 'tool_completed', tool: 'get_pipeline_velocity', result: readResult };
+        }
+      } else if (agent.id === AGENT_ROLES.WEBSITE_BUILDER) {
+        if (lower.includes('create page') || lower.includes('build funnel') || lower.includes('new page')) {
+          const pageMatch = message.match(/(?:page|funnel)(?:\s+(?:named|called|for))?\s+["']?([^"'\n]+?)["']?$/i);
+          const toolParams = {
+            title: pageMatch ? pageMatch[1].trim() : 'Enterprise Solution Landing Page',
+            slug: 'enterprise-solution',
+            status: 'draft'
+          };
+          yield { type: 'tool_executing', tool: 'create_website_page_proposal', params: toolParams };
+
+          const proposal = await this.proposalStore('create_website_page', toolParams, actor, context);
+          yield {
+            type: 'proposal_created',
+            proposalId: proposal.id,
+            toolName: 'create_website_page',
+            status: proposal.status || 'pending_review',
+            params: toolParams
+          };
+        }
+      } else if (agent.id === AGENT_ROLES.DEVELOPER) {
+        if (lower.includes('create api key') || lower.includes('generate api key')) {
+          const toolParams = {
+            name: 'External Zapier Integration Key',
+            scopes: ['read:contacts', 'write:contacts', 'read:workflows']
+          };
+          yield { type: 'tool_executing', tool: 'generate_api_key_proposal', params: toolParams };
+
+          const proposal = await this.proposalStore('generate_api_key', toolParams, actor, context);
+          yield {
+            type: 'proposal_created',
+            proposalId: proposal.id,
+            toolName: 'generate_api_key',
             status: proposal.status || 'pending_review',
             params: toolParams
           };

@@ -38,25 +38,43 @@ const ACTION_ICON: Record<WorkflowAction['kind'], string> = {
   code: 'zap',
   merge: 'workflow',
   sub_workflow: 'repeat',
+  loop_items: 'repeat',
+  data_filter: 'condition',
+  split_test: 'condition',
+  set_variable: 'zap',
+  math: 'zap',
+  lead_score: 'sparkles',
+  internal_notification: 'bell',
+  zapier: 'zap',
+  error_trigger: 'shield',
 };
 
 const KINDS: Array<{ value: WorkflowAction['kind']; label: string; defaultLabel: string }> = [
   { value: 'email', label: 'Send email', defaultLabel: 'Send email' },
   { value: 'sms', label: 'Send SMS', defaultLabel: 'Send SMS' },
   { value: 'whatsapp', label: 'Send WhatsApp', defaultLabel: 'Send WhatsApp message' },
-  { value: 'wait', label: 'Wait', defaultLabel: 'Wait step' },
+  { value: 'wait', label: 'Wait / Delay', defaultLabel: 'Wait step' },
   { value: 'tag', label: 'Apply tag', defaultLabel: 'Apply tag' },
   { value: 'task', label: 'Create task', defaultLabel: 'Create follow-up task' },
-  { value: 'webhook', label: 'Webhook', defaultLabel: 'POST to endpoint' },
-  { value: 'condition', label: 'If / else', defaultLabel: 'Check contact status' },
-  { value: 'ai_classify', label: 'AI Classify', defaultLabel: 'Classify text or intent' },
-  { value: 'ai_extract', label: 'AI Extract', defaultLabel: 'Extract structured JSON entities' },
-  { value: 'ai_generate', label: 'AI Generate', defaultLabel: 'Generate Copilot response' },
-  { value: 'ai_agent', label: 'AI Agent / Copilot', defaultLabel: 'Execute Copilot AI agent' },
-  { value: 'switch', label: 'Switch / Router', defaultLabel: 'Multi-branch router' },
-  { value: 'code', label: 'Custom Code (JS)', defaultLabel: 'Transform data with JS' },
+  { value: 'webhook', label: 'Webhook (Outbound)', defaultLabel: 'POST to endpoint' },
+  { value: 'condition', label: 'If / else Branch', defaultLabel: 'Check condition rules' },
+  { value: 'switch', label: 'Switch / Multi-Router', defaultLabel: 'Multi-branch router' },
+  { value: 'loop_items', label: 'Loop Over Items (Batch)', defaultLabel: 'Iterate array in batches' },
+  { value: 'data_filter', label: 'Data Filter', defaultLabel: 'Filter array items by condition' },
+  { value: 'split_test', label: 'Split Test (A/B)', defaultLabel: 'Split execution traffic' },
+  { value: 'set_variable', label: 'Set Variable', defaultLabel: 'Extract and compute variables' },
+  { value: 'math', label: 'Math Calculator', defaultLabel: 'Compute arithmetic operations' },
+  { value: 'lead_score', label: 'Lead Scoring', defaultLabel: 'Increment contact lead score' },
+  { value: 'internal_notification', label: 'Team Notification', defaultLabel: 'Dispatch internal alert' },
+  { value: 'sub_workflow', label: 'Execute Sub-Workflow', defaultLabel: 'Call modular child workflow' },
+  { value: 'zapier', label: 'Zapier REST Hook', defaultLabel: 'Trigger Zapier webhook' },
+  { value: 'code', label: 'Custom Code (JS Sandbox)', defaultLabel: 'Transform data with JS' },
+  { value: 'error_trigger', label: 'Error Boundary Handler', defaultLabel: 'Catch execution errors' },
+  { value: 'ai_classify', label: 'AI Cognitive Classifier', defaultLabel: 'Classify text or intent' },
+  { value: 'ai_extract', label: 'AI Entity Extraction', defaultLabel: 'Extract structured JSON entities' },
+  { value: 'ai_generate', label: 'AI Content Generation', defaultLabel: 'Generate Copilot response' },
+  { value: 'ai_agent', label: 'AI Agent / Copilot Swarm', defaultLabel: 'Execute Copilot AI agent' },
   { value: 'merge', label: 'Merge Streams', defaultLabel: 'Merge execution branches' },
-  { value: 'sub_workflow', label: 'Execute Sub-Workflow', defaultLabel: 'Call modular workflow' },
 ];
 
 const TRIGGER_KINDS: Array<{ value: WorkflowTriggerKind; label: string }> = [
@@ -66,7 +84,8 @@ const TRIGGER_KINDS: Array<{ value: WorkflowTriggerKind; label: string }> = [
   { value: 'invoice', label: 'Invoice overdue' },
   { value: 'payment', label: 'Payment received' },
   { value: 'webhook', label: 'Inbound webhook' },
-  { value: 'schedule', label: 'Schedule' },
+  { value: 'schedule', label: 'Schedule (Cron)' },
+  { value: 'workflow_error', label: 'Workflow Error / Boundary' },
 ];
 
 const TRIGGER_ICON: Record<WorkflowTriggerKind, string> = {
@@ -77,6 +96,7 @@ const TRIGGER_ICON: Record<WorkflowTriggerKind, string> = {
   payment: 'wallet',
   webhook: 'webhook',
   schedule: 'clock',
+  workflow_error: 'shield',
 };
 
 const TRIGGER_HINT: Record<WorkflowTriggerKind, string> = {
@@ -87,6 +107,7 @@ const TRIGGER_HINT: Record<WorkflowTriggerKind, string> = {
   payment: 'Starts when a payment is recorded.',
   webhook: 'Starts when an outside system posts to your workspace URL.',
   schedule: 'Starts on a repeating interval for every enrolled contact.',
+  workflow_error: 'Starts when a workflow encounters an unhandled runtime error.',
 };
 
 const FIELD_LABELS: Record<ConditionField, string> = {
@@ -128,6 +149,10 @@ function triggerText(trigger: WorkflowTrigger): string {
       return 'Invoice overdue';
     case 'payment':
       return 'Payment received';
+    case 'workflow_error':
+      return 'Workflow error boundary';
+    default:
+      return 'Workflow trigger';
   }
 }
 
@@ -1409,7 +1434,7 @@ function RunResult({
         </div>
       )}
 
-      <div className="row" style={{ gap: 18, marginTop: 12 }}>
+      <div className="row" style={{ gap: 18, marginTop: 12, flexWrap: 'wrap' }}>
         <div>
           <div className="cell-sub">Contact / Target</div>
           <strong style={{ fontSize: 13 }}>
@@ -1427,6 +1452,17 @@ function RunResult({
             {run.mode === 'dry_run' || run.status === 'simulated' ? 'Not measured' : run.durationMs ? `${(run.durationMs / 1000).toFixed(2)}s` : 'Instant'}
           </strong>
         </div>
+        {run.outboxJobId && (
+          <div>
+            <div className="cell-sub">Durable Outbox Job</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+              <code style={{ fontSize: 11, padding: '2px 5px', background: 'var(--surface-3)', borderRadius: 4 }}>{run.outboxJobId}</code>
+              <Badge tone={run.outboxStatus === 'delivered' ? 'green' : run.outboxStatus === 'dead_letter' ? 'red' : 'blue'}>
+                {run.outboxStatus || 'delivered'}
+              </Badge>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="divider" style={{ margin: '14px 0' }} />

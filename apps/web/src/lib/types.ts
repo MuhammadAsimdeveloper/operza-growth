@@ -355,7 +355,8 @@ export type WorkflowTriggerKind =
   | 'invoice'
   | 'payment'
   | 'webhook'
-  | 'schedule';
+  | 'schedule'
+  | 'workflow_error';
 
 export interface WorkflowTrigger {
   kind: WorkflowTriggerKind;
@@ -395,7 +396,32 @@ export interface WorkflowStepConfig {
 
 export interface WorkflowAction {
   id: ID;
-  kind: 'sms' | 'email' | 'wait' | 'tag' | 'task' | 'webhook' | 'condition' | 'whatsapp' | 'ai_classify' | 'ai_extract' | 'ai_generate' | 'ai_agent' | 'switch' | 'code' | 'merge' | 'sub_workflow';
+  kind:
+    | 'sms'
+    | 'email'
+    | 'wait'
+    | 'tag'
+    | 'task'
+    | 'webhook'
+    | 'condition'
+    | 'whatsapp'
+    | 'ai_classify'
+    | 'ai_extract'
+    | 'ai_generate'
+    | 'ai_agent'
+    | 'switch'
+    | 'code'
+    | 'merge'
+    | 'sub_workflow'
+    | 'loop_items'
+    | 'data_filter'
+    | 'split_test'
+    | 'set_variable'
+    | 'math'
+    | 'lead_score'
+    | 'internal_notification'
+    | 'zapier'
+    | 'error_trigger';
   label: string;
   /** Delay for wait steps, in hours. Ignored by every other kind. */
   delayHours?: number;

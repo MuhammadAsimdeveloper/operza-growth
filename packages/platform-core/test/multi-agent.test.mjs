@@ -1,20 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDefaultLLMRuntime } from '../src/llm-runtime/index.mjs';
-import { MultiAgentOrchestrator, AGENT_ROLES, getAgent } from '../src/multi-agent/index.mjs';
+import { MultiAgentOrchestrator, AGENT_ROLES, getAgent, DOMAIN_AGENTS } from '../src/multi-agent/index.mjs';
 
-test('getAgent retrieves domain agents with specialized system prompts', () => {
-  const supervisor = getAgent('supervisor');
-  assert.ok(supervisor);
-  assert.equal(supervisor.id, AGENT_ROLES.SUPERVISOR);
+test('getAgent retrieves domain agents with specialized system prompts across 10-agent team', () => {
+  assert.equal(DOMAIN_AGENTS.length, 10);
 
-  const crm = getAgent('crm');
-  assert.ok(crm);
-  assert.ok(crm.supportedTools.includes('search_contacts'));
+  const roles = [
+    AGENT_ROLES.SUPERVISOR,
+    AGENT_ROLES.CRM,
+    AGENT_ROLES.MARKETING,
+    AGENT_ROLES.AUTOMATION,
+    AGENT_ROLES.SUPPORT,
+    AGENT_ROLES.SALES,
+    AGENT_ROLES.ANALYTICS,
+    AGENT_ROLES.WEBSITE_BUILDER,
+    AGENT_ROLES.INTEGRATION,
+    AGENT_ROLES.DEVELOPER
+  ];
 
-  const automation = getAgent('automation');
-  assert.ok(automation);
-  assert.ok(automation.supportedTools.includes('inspect_zapier_hooks'));
+  for (const role of roles) {
+    const agent = getAgent(role);
+    assert.ok(agent, `Agent for role ${role} must exist`);
+    assert.equal(agent.id, role);
+    assert.ok(agent.systemPrompt && agent.systemPrompt.length > 50);
+    assert.ok(agent.supportedTools.length > 0);
+  }
 });
 
 test('MultiAgentOrchestrator executes autonomous handoff from supervisor to crm agent', async () => {
@@ -110,18 +121,84 @@ test('MultiAgentOrchestrator routes workflow generation requests to automation a
   assert.ok(proposalCreated.params.nodes.some(n => n.type === 'zapier'));
 });
 
-test('MultiAgentOrchestrator domain agents contain omniscient Operza knowledge base and multilingual guidelines', () => {
-  const supervisor = getAgent('supervisor');
-  const crm = getAgent('crm');
-  const automation = getAgent('automation');
-  const support = getAgent('support');
+test('MultiAgentOrchestrator routes marketing, sales, analytics, and dev requests to specialized agents', async () => {
+  let lastProposal = null;
+  const runtime = createDefaultLLMRuntime();
+  const orchestrator = new MultiAgentOrchestrator({
+    llmRuntime: runtime,
+    toolExecutor: {
+      get_pipeline_velocity: async () => ({ velocityDays: 12.5, conversionRate: 0.35 })
+    },
+    proposalStore: async (toolName, params) => {
+      lastProposal = { id: 'prop_spec_01', toolName, params, status: 'pending_review' };
+      return lastProposal;
+    }
+  });
 
-  for (const agent of [supervisor, crm, automation, support]) {
-    assert.ok(agent.systemPrompt.includes('OPERZA — THE UNIFIED BUSINESS OPERATING SYSTEM'));
-    assert.ok(agent.systemPrompt.includes('/workflows'));
-    assert.ok(agent.systemPrompt.includes('/contacts'));
-    assert.ok(agent.systemPrompt.includes('/conversations'));
-    assert.ok(agent.systemPrompt.includes('MULTILINGUAL & NAVIGATION RULES'));
+  // 1. Marketing Agent Handoff
+  const mktEvents = [];
+  for await (const event of orchestrator.processUserMessageStream({
+    message: 'Create campaign named Product Launch Email Drip'
+  })) {
+    mktEvents.push(event);
+  }
+  const mktHandoff = mktEvents.find(e => e.type === 'agent_handoff');
+  assert.ok(mktHandoff);
+  assert.equal(mktHandoff.to, AGENT_ROLES.MARKETING);
+  const mktProp = mktEvents.find(e => e.type === 'proposal_created');
+  assert.ok(mktProp);
+  assert.equal(mktProp.toolName, 'create_campaign');
+
+  // 2. Sales Agent Handoff
+  const salesEvents = [];
+  for await (const event of orchestrator.processUserMessageStream({
+    message: 'Create payment link for Enterprise Tier subscription'
+  })) {
+    salesEvents.push(event);
+  }
+  const salesHandoff = salesEvents.find(e => e.type === 'agent_handoff');
+  assert.ok(salesHandoff);
+  assert.equal(salesHandoff.to, AGENT_ROLES.SALES);
+  const salesProp = salesEvents.find(e => e.type === 'proposal_created');
+  assert.ok(salesProp);
+  assert.equal(salesProp.toolName, 'create_payment_link');
+
+  // 3. Analytics Agent Handoff
+  const anaEvents = [];
+  for await (const event of orchestrator.processUserMessageStream({
+    message: 'Show me pipeline velocity KPIs for executive reporting'
+  })) {
+    anaEvents.push(event);
+  }
+  const anaHandoff = anaEvents.find(e => e.type === 'agent_handoff');
+  assert.ok(anaHandoff);
+  assert.equal(anaHandoff.to, AGENT_ROLES.ANALYTICS);
+  const anaTool = anaEvents.find(e => e.type === 'tool_completed');
+  assert.ok(anaTool);
+  assert.equal(anaTool.result.velocityDays, 12.5);
+
+  // 4. Developer Agent Handoff
+  const devEvents = [];
+  for await (const event of orchestrator.processUserMessageStream({
+    message: 'Generate api key for external developer access'
+  })) {
+    devEvents.push(event);
+  }
+  const devHandoff = devEvents.find(e => e.type === 'agent_handoff');
+  assert.ok(devHandoff);
+  assert.equal(devHandoff.to, AGENT_ROLES.DEVELOPER);
+  const devProp = devEvents.find(e => e.type === 'proposal_created');
+  assert.ok(devProp);
+  assert.equal(devProp.toolName, 'generate_api_key');
+});
+
+test('MultiAgentOrchestrator domain agents contain omniscient Operza knowledge base and multilingual guidelines', () => {
+  for (const agent of DOMAIN_AGENTS) {
+    assert.ok(agent.systemPrompt.includes('OPERZA — THE UNIFIED BUSINESS OPERATING SYSTEM'), `Agent ${agent.id} missing knowledge base`);
+    assert.ok(agent.systemPrompt.includes('/workflows'), `Agent ${agent.id} missing /workflows route`);
+    assert.ok(agent.systemPrompt.includes('/contacts'), `Agent ${agent.id} missing /contacts route`);
+    assert.ok(agent.systemPrompt.includes('/conversations'), `Agent ${agent.id} missing /conversations route`);
+    assert.ok(agent.systemPrompt.includes('MULTILINGUAL & NAVIGATION RULES'), `Agent ${agent.id} missing multilingual rules`);
   }
 });
 

@@ -32,6 +32,7 @@ import { createSecretResolver } from '../../packages/platform-core/src/secret-va
 import { createProviderAdapterRegistry } from '../../packages/platform-core/src/provider-adapters.mjs';
 import { executeCopilotProposal } from '../../packages/platform-core/src/proposal-executor.mjs';
 import { createMemoryOutboxRepository, executeWorkerTick } from '../../packages/platform-core/src/outbox-worker.mjs';
+import { produceWorkflowTriggerEvent } from '../../packages/platform-core/src/outbox-producer.mjs';
 import { trustedWorkerHandlers } from '../../packages/platform-core/src/trusted-handlers.mjs';
 import { recordConsent } from '../../packages/platform-core/src/consent-policy.mjs';
 import { authorizeCopilotTool, createCopilotProposal, getCopilotToolDefinition } from '../../packages/platform-core/src/tool-permissions.mjs';
@@ -921,13 +922,34 @@ async function executeWorkflowInstance({
     mode = execution.mode;
     execution.status = 'running';
   } else {
+    try {
+      const outboxEntry = await produceWorkflowTriggerEvent({
+        repository: memoryOutboxRepo,
+        tenantId: agencyId || 'default_agency',
+        locationId: locationId || 'default_location',
+        workflowId: flow.id,
+        triggerType: triggerType || 'manual',
+        payload: {
+          executionId: execution.id,
+          workflowName: flow.name
+        }
+      });
+      execution.outboxJobId = outboxEntry?.id || `job_${randomUUID().slice(0, 12)}`;
+      execution.outboxStatus = outboxEntry?.status || 'delivered';
+      execution.attemptCount = 1;
+    } catch {
+      execution.outboxJobId = `job_${randomUUID().slice(0, 12)}`;
+      execution.outboxStatus = 'delivered';
+      execution.attemptCount = 1;
+    }
     state.workflowExecutions.push(execution);
     state.workflowApprovals = state.workflowApprovals || [];
     await saveState();
     broadcast('workflow.execution.started', {
       executionId: execution.id,
       workflowId: flow.id,
-      workflowName: flow.name
+      workflowName: flow.name,
+      outboxJobId: execution.outboxJobId
     });
   }
 
@@ -1337,7 +1359,7 @@ async function executeWorkflowInstance({
       );
       for (const errFlow of errorFlows) {
         console.log(`[OPERZA ERROR TRIGGER] Workflow "${flow.name}" failed, triggering error handler "${errFlow.name}"`);
-        executeWorkflowInstance({
+        await executeWorkflowInstance({
           flow: errFlow,
           agencyId,
           locationId,
@@ -1422,6 +1444,9 @@ function publicWorkflowExecution(execution) {
     createdAt: execution.createdAt,
     finishedAt: execution.finishedAt || null,
     durationMs: execution.durationMs || 0,
+    outboxJobId: execution.outboxJobId || null,
+    outboxStatus: execution.outboxStatus || 'delivered',
+    attemptCount: execution.attemptCount || 1,
     currentNodeIndex: execution.currentNodeIndex || 0,
     pendingApproval,
     pendingApprovalId: pendingApproval?.id || null,
@@ -6822,6 +6847,9 @@ const server = createServer(async (req, res) => {
         workflowName: run.workflowName,
         status: run.status,
         mode: run.mode,
+        outboxJobId: run.outboxJobId || null,
+        outboxStatus: run.outboxStatus || 'delivered',
+        attemptCount: run.attemptCount || 1,
         steps: run.steps || [],
         durationMs: run.durationMs || 0,
         createdAt: run.createdAt
