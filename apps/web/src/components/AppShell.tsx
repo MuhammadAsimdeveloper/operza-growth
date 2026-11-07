@@ -825,9 +825,15 @@ export function AppShell({ children }: { children?: ReactNode }) {
     setNavOpen(false);
   }, [location.pathname]);
 
+  const isControlPlane =
+    location.pathname === "/" ||
+    location.pathname === "/dashboard" ||
+    location.pathname === "/reporting" ||
+    location.pathname === "/command-center";
+
   return (
-    <div className={["shell", navOpen && "is-nav-open", (location.pathname === "/" || location.pathname === "/dashboard") && "shell--overview"].filter(Boolean).join(" ")}>
-      <Sidebar onNavigate={() => setNavOpen(false)} compact={location.pathname === "/" || location.pathname === "/dashboard"} />
+    <div className={["shell", navOpen && "is-nav-open", isControlPlane && "shell--overview"].filter(Boolean).join(" ")}>
+      <Sidebar onNavigate={() => setNavOpen(false)} compact={isControlPlane} />
       <div className="scrim" onClick={() => setNavOpen(false)} />
       <div className="main">
         <TopBar onOpenNav={() => setNavOpen(true)} />

@@ -190,6 +190,7 @@ export default function App() {
           <Route path="workflows" element={<Workflows />} />
           <Route path="memberships" element={<Memberships />} />
           <Route path="reporting" element={<Reporting />} />
+          <Route path="command-center" element={<Reporting />} />
           <Route path="settings" element={<Settings />} />
           <Route path="sub-accounts" element={<SubAccounts />} />
           <Route path="snapshots" element={<Snapshots />} />
