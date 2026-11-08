@@ -519,10 +519,35 @@ export default function AiTrainer() {
                       color: 'var(--text-3)',
                     }}
                   >
-                    <strong>Citations:</strong>
+                    <div style={{ fontWeight: 650, color: 'var(--accent-ink)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Icon name="shield" size={11} /> Grounded Citations ({msg.sources.length}):
+                    </div>
                     {msg.sources.map((src: any, sIdx: number) => (
-                      <div key={sIdx} style={{ marginTop: 2 }}>
-                        • <em>{src.docTitle}</em>: “{src.text.slice(0, 80)}...”
+                      <div
+                        key={sIdx}
+                        style={{
+                          marginTop: 3,
+                          padding: '4px 8px',
+                          background: 'var(--surface-2)',
+                          borderRadius: 4,
+                          border: '1px solid var(--line)'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                          <span style={{ fontWeight: 600, color: 'var(--text)' }}>
+                            📄 {src.title || src.docTitle || 'Knowledge Document'}
+                          </span>
+                          {src.score != null && (
+                            <span style={{ fontSize: 10, color: 'var(--green)', fontWeight: 650 }}>
+                              Score: {Math.round(src.score * 100)}%
+                            </span>
+                          )}
+                        </div>
+                        {src.text && (
+                          <div style={{ marginTop: 2, fontSize: 10, color: 'var(--text-2)', fontStyle: 'italic' }}>
+                            "{src.text.slice(0, 110)}..."
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -543,6 +568,44 @@ export default function AiTrainer() {
                 Copilot is searching knowledge chunks...
               </div>
             )}
+          </div>
+
+          {/* Quick test prompt chips */}
+          <div
+            style={{
+              padding: '6px 12px',
+              background: 'var(--surface-2)',
+              borderTop: '1px solid var(--line)',
+              display: 'flex',
+              gap: 6,
+              overflowX: 'auto',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            {[
+              'What is our retainer price?',
+              'Mera business grow nahi ho raha, kya karun?',
+              'How do I automate onboarding in Operza?',
+              '¿Cómo agrego contactos?'
+            ].map((qText) => (
+              <button
+                key={qText}
+                type="button"
+                onClick={() => setTestQuery(qText)}
+                style={{
+                  background: 'var(--surface)',
+                  border: '1px solid var(--line)',
+                  borderRadius: 'var(--r-pill)',
+                  color: 'var(--text-2)',
+                  fontSize: '11px',
+                  padding: '2px 8px',
+                  cursor: 'pointer',
+                  fontWeight: 500
+                }}
+              >
+                {qText}
+              </button>
+            ))}
           </div>
 
           <div

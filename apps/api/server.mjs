@@ -42,6 +42,7 @@ import { workflowQueue } from './queue.mjs';
 import { handleZapierRoute, dispatchZapierEvent } from './zapier-router.mjs';
 import { createDefaultLLMRuntime } from '../../packages/platform-core/src/llm-runtime/index.mjs';
 import { MultiAgentOrchestrator, AGENT_ROLES, OPERZA_KNOWLEDGE_BASE, MULTILINGUAL_GUIDELINES } from '../../packages/platform-core/src/multi-agent/index.mjs';
+import { CopilotService, RAGEngine, resolveAIProvider, COPILOT_TOOLS } from '../../packages/platform-core/src/copilot/index.mjs';
 
 const secretResolver = createSecretResolver();
 const providerAdapterRegistry = createProviderAdapterRegistry();
@@ -51,6 +52,10 @@ const defaultLLMRuntime = createDefaultLLMRuntime({
   localAIBaseUrl: process.env.LOCALAI_BASE_URL || 'http://localhost:8080/v1',
   openAIApiKey: process.env.OPENAI_API_KEY
 });
+
+// Operza Copilot 2.0 Unified Engine
+const copilotService = new CopilotService();
+const copilotRag = new RAGEngine();
 
 function getMultiAgentOrchestrator(agencyId, locationId, actor) {
   return new MultiAgentOrchestrator({
@@ -4653,20 +4658,47 @@ const server = createServer(async (req, res) => {
       let message = '';
       let sessionId = randomUUID();
       let startAgent = AGENT_ROLES.SUPERVISOR;
+      let activeModule = '';
+      let streamMode = 'auto';
 
       if (method === 'GET') {
         message = url.searchParams.get('message') || '';
         sessionId = url.searchParams.get('sessionId') || sessionId;
         startAgent = url.searchParams.get('startAgent') || startAgent;
+        activeModule = url.searchParams.get('activeModule') || '';
+        streamMode = url.searchParams.get('mode') || streamMode;
       } else {
         const body = await readBody(req);
         message = body.message || '';
         sessionId = body.sessionId || sessionId;
         startAgent = body.startAgent || startAgent;
+        activeModule = body.activeModule || '';
+        streamMode = body.mode || streamMode;
       }
 
       if (!message.trim()) {
         res.write(`data: ${JSON.stringify({ error: 'message parameter is required' })}\n\n`);
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+        return res.end();
+      }
+
+      if (streamMode === 'copilot') {
+        try {
+          for await (const chunk of copilotService.chatStream({
+            message,
+            sessionId,
+            activeModule,
+            agency,
+            activeLocation,
+            actor,
+            state,
+            platformRepository
+          })) {
+            res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+          }
+        } catch (streamErr) {
+          res.write(`data: ${JSON.stringify({ type: 'error', error: streamErr.message })}\n\n`);
+        }
         res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
         return res.end();
       }
@@ -4689,7 +4721,7 @@ const server = createServer(async (req, res) => {
       return res.end();
     }
 
-    // COPILOT SSE STREAMING ROUTE (legacy)
+    // COPILOT SSE STREAMING ROUTE (legacy probe test compatibility)
     if (method === 'GET' && pathname === '/api/copilot/stream') {
       res.writeHead(200, {
         'content-type': 'text/event-stream',
@@ -5105,7 +5137,7 @@ const server = createServer(async (req, res) => {
 
     if (method === 'POST' && pathname === '/api/copilot/chat') {
       const body = await readBody(req);
-      const { message, sessionId: reqSessionId, tools: requestedTools } = body;
+      const { message, sessionId: reqSessionId, activeModule, tools: requestedTools } = body;
       if (typeof message !== 'string' || !message.trim()) return sendJson(res, 400, { error: 'message is required' });
       if (Array.isArray(requestedTools) && requestedTools.length > 10) {
         return sendJson(res, 400, { error: 'A maximum of 10 Copilot tool requests is allowed' });
@@ -5122,178 +5154,47 @@ const server = createServer(async (req, res) => {
       });
 
       const sessionId = reqSessionId || randomUUID();
-      const history = getCopilotHistory(sessionId);
-      history.push({ role: 'user', content: message, timestamp: new Date().toISOString() });
 
-      // Detect tool calls from user message
-      const toolResults = [];
-      const lowerMsg = message.toLowerCase();
-      const runCopilotReadTool = async (toolName, params) => {
-        const feature = checkFeatureAccess(await getTenantEntitlements(agency.id), 'copilotRead');
-        const decision = authorizeCopilotTool({
-          toolName,
-          actorRole: actor.membership.role,
-          tenantCapability: feature.allowed,
-          agentGrant: state.aiToolGrants?.[agency.id]?.[toolName] !== false
+      try {
+        const copilotRes = await copilotService.chat({
+          message,
+          sessionId,
+          activeModule: activeModule || '',
+          agency,
+          activeLocation,
+          actor,
+          state,
+          platformRepository
         });
-        if (decision.decision !== 'allow_read') {
-          return { error: decision.code, decision: decision.decision };
-        }
-        return resolveCopilotToolCall(toolName, params, actor);
-      };
 
-      // Heuristic tool dispatch based on message content
-      if (lowerMsg.includes('search') && (lowerMsg.includes('contact') || lowerMsg.includes('find'))) {
-        const queryMatch = message.match(/(?:search|find|look up)\s+(?:contacts?\s+)?(?:for\s+)?["']?(.+?)["']?\s*$/i);
-        const query = queryMatch ? queryMatch[1] : message;
-        const result = await runCopilotReadTool('search_contacts', { query });
-        toolResults.push({ tool: 'search_contacts', result });
-      }
-      if (lowerMsg.includes('pipeline') || lowerMsg.includes('opportunities') || lowerMsg.includes('deals')) {
-        const result = await runCopilotReadTool('get_pipeline_summary', {});
-        toolResults.push({ tool: 'get_pipeline_summary', result });
-      }
-      if (lowerMsg.includes('availability') || lowerMsg.includes('calendar') || lowerMsg.includes('schedule')) {
-        const dateMatch = message.match(/(\d{4}-\d{2}-\d{2})/);
-        const result = await runCopilotReadTool('get_calendar_availability', { date: dateMatch ? dateMatch[1] : '' });
-        toolResults.push({ tool: 'get_calendar_availability', result });
-      }
-
-      // AI may read tenant data and draft changes. Mutations are persisted as
-      // proposals only; this endpoint never executes a write tool.
-      if (lowerMsg.includes('create contact') || lowerMsg.includes('add contact') || lowerMsg.includes('new contact') || lowerMsg.includes('new lead')) {
-        const emailMatch = message.match(/[\w.-]+@[\w.-]+\.\w+/);
-        const nameMatch = message.match(/(?:contact|lead)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i) ||
-                          message.match(/name[d]?\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i);
-        const companyMatch = message.match(/company\s+(?:is\s+)?([A-Za-z0-9&.\s]+?)(?:$|\s+(?:with|and|email))/i);
-        const fullName = nameMatch ? nameMatch[1].trim() : 'New Lead';
-        const [firstName, ...rest] = fullName.split(' ');
-        const result = await storeCopilotProposal('create_contact', {
-          firstName,
-          lastName: rest.join(' '),
-          email: emailMatch ? emailMatch[0] : '',
-          company: companyMatch ? companyMatch[1].trim() : '',
-          tags: ['copilot-lead']
-        }, actor);
-        toolResults.push({ tool: 'create_contact', result });
-      }
-
-      if (lowerMsg.includes('trigger workflow') || lowerMsg.includes('run workflow') || lowerMsg.includes('execute workflow')) {
-        const wfMatch = message.match(/(?:workflow)\s+["']?([^"'\n]+?)["']?$/i) ||
-                        message.match(/(?:run|trigger|execute)\s+["']?([^"'\n]+?)(?:workflow)?["']?$/i);
-        const result = await storeCopilotProposal('trigger_workflow', {
-          workflowName: wfMatch ? wfMatch[1].trim() : ''
-        }, actor);
-        toolResults.push({ tool: 'trigger_workflow', result });
-      }
-
-      if (lowerMsg.includes('move opportunity') || lowerMsg.includes('update stage') || lowerMsg.includes('move deal')) {
-        const stageMatch = message.match(/to\s+([A-Za-z]+)/i);
-        const oppMatch = message.match(/(?:opportunity|deal)\s+["']?([^"'\n]+?)["']?\s+to/i);
-        const result = await storeCopilotProposal('update_opportunity_stage', {
-          name: oppMatch ? oppMatch[1].trim() : '',
-          stage: stageMatch ? stageMatch[1] : 'Qualified'
-        }, actor);
-        toolResults.push({ tool: 'update_opportunity_stage', result });
-      }
-
-      if (lowerMsg.includes('send sms') || lowerMsg.includes('send email') || lowerMsg.includes('send message')) {
-        const channel = lowerMsg.includes('email') ? 'email' : 'sms';
-        const textMatch = message.match(/(?:saying|message|text)\s+["']?(.+?)["']?$/i);
-        const recipientMatch = message.match(/to\s+([A-Za-z0-9@.\s]+?)(?:\s+saying|\s+message|$)/i);
-        const result = await storeCopilotProposal('send_communication', {
-          recipient: recipientMatch ? recipientMatch[1].trim() : '',
-          channel,
-          message: textMatch ? textMatch[1].trim() : 'Hello from Operza'
-        }, actor);
-        toolResults.push({ tool: 'send_communication', result });
-      }
-
-      if (requestedTools && Array.isArray(requestedTools)) {
-        for (const tc of requestedTools) {
-          const toolName = typeof tc?.name === 'string' ? tc.name : '';
-          const definition = getCopilotToolDefinition(toolName);
-          const capability = definition?.readOnly ? 'copilotRead' : 'copilotProposals';
-          const feature = checkFeatureAccess(await getTenantEntitlements(agency.id), capability);
-          const decision = authorizeCopilotTool({
-            toolName,
-            actorRole: actor.membership.role,
-            tenantCapability: feature.allowed,
-            agentGrant: state.aiToolGrants?.[agency.id]?.[toolName] !== false
+        // Ensure legacy toolResults array format for backwards compatibility with tests
+        const toolResults = copilotRes.message.toolResults || [];
+        if (copilotRes.message.proposal && !toolResults.some(t => t.tool === copilotRes.message.proposal.toolName)) {
+          toolResults.push({
+            tool: copilotRes.message.proposal.toolName,
+            result: copilotRes.message.proposal
           });
-          if (decision.decision === 'allow_read') {
-            const result = await resolveCopilotToolCall(toolName, tc.params || {}, actor);
-            toolResults.push({ tool: toolName, result });
-          } else if (decision.decision === 'proposal_only') {
-            const result = await storeCopilotProposal(toolName, tc.params || {}, actor);
-            toolResults.push({ tool: toolName, result });
-          } else {
-            toolResults.push({ tool: toolName || 'unknown', result: { error: decision.code, decision: decision.decision } });
-          }
         }
+
+        const responseMsg = {
+          role: 'assistant',
+          content: copilotRes.message.content,
+          toolResults: toolResults.length > 0 ? toolResults : undefined,
+          proposals: toolResults.filter(item => item.result?.status === 'pending_review').map(item => item.result),
+          sources: copilotRes.message.sources || [],
+          timestamp: new Date().toISOString()
+        };
+
+        return sendJson(res, 200, {
+          sessionId,
+          message: responseMsg,
+          tools: COPILOT_TOOLS.map(t => t.name),
+          historyLength: copilotRes.historyLength
+        });
+      } catch (chatErr) {
+        console.error('[Copilot API] Chat error:', chatErr);
+        return sendJson(res, 500, { error: chatErr.message || 'Copilot assistant execution error' });
       }
-
-      // Build response
-      const contactCount = (state.records.contacts || []).filter(c => c.agencyId === agency.id && c.locationId === activeLocation.id).length;
-      const taskCount = (state.records.tasks || []).filter(t => t.agencyId === agency.id && t.locationId === activeLocation.id && t.status !== 'completed').length;
-
-      let responseText = '';
-      if (toolResults.length > 0) {
-        const summaries = [];
-        for (const tr of toolResults) {
-          if (tr.result?.status === 'pending_review') {
-            summaries.push(`📝 Drafted **${tr.tool}** proposal (${tr.result.id}). No CRM changes or external messages were executed; human review is required.`);
-          } else if (tr.tool === 'create_contact' && tr.result.success) {
-            summaries.push(`✅ Created contact **${tr.result.name}** (${tr.result.email || 'no email'}) under **${tr.result.company || 'Direct'}**.`);
-          } else if (tr.tool === 'trigger_workflow' && tr.result.success) {
-            summaries.push(`⚡ Executed workflow **${tr.result.workflowName}** (Execution ID: ${tr.result.executionId.slice(0, 8)}). Status: **${tr.result.status}** with ${tr.result.stepsExecuted} step(s).`);
-          } else if (tr.tool === 'update_opportunity_stage' && tr.result.success) {
-            summaries.push(`📈 Moved deal **${tr.result.name}** from '${tr.result.previousStage}' to **${tr.result.newStage}**.`);
-          } else if (tr.tool === 'send_communication' && tr.result.success) {
-            summaries.push(`💬 Dispatched outbound ${tr.result.channel.toUpperCase()} to **${tr.result.contactName}**: "${tr.result.message}".`);
-          } else if (tr.tool === 'search_contacts') {
-            summaries.push(`🔍 Found ${tr.result.count} matching contact(s).`);
-          } else if (tr.tool === 'get_pipeline_summary') {
-            summaries.push(`📊 Pipeline summary: ${tr.result.totalOpportunities} active deals with a total value of $${tr.result.totalValue.toLocaleString()}.`);
-          } else if (tr.tool === 'get_calendar_availability') {
-            summaries.push(`📅 Calendar for ${tr.result.date}: ${tr.result.bookedSlots} booked appointments.`);
-          } else if (tr.result.error) {
-            summaries.push(`⚠️ Tool ${tr.tool} returned: ${tr.result.error}`);
-          }
-        }
-        responseText = summaries.join('\n\n');
-      } else {
-        // Query defaultLLMRuntime for intelligent platform knowledge & multilingual answers
-        try {
-          const completion = await defaultLLMRuntime.completeWithFallback([
-            { role: 'system', content: `You are the Copilot AI for Operza — The Unified Business Operating System.\n${OPERZA_KNOWLEDGE_BASE}\n${MULTILINGUAL_GUIDELINES}` },
-            { role: 'user', content: message }
-          ]);
-          responseText = completion.text || `Hello ${actor.user.name}! In Operza, you can navigate across CRM (/contacts), Visual Workflows (/workflows), Phone (/phone), or Funnels (/funnels). How can I assist you?`;
-        } catch (llmErr) {
-          console.warn('[Copilot API] LLM completion fallback error:', llmErr.message);
-          responseText = `Hello ${actor.user.name}! In Operza, you can navigate across CRM (/contacts), Visual Workflows (/workflows), Phone (/phone), or Funnels (/funnels). How can I assist you?`;
-        }
-      }
-
-      const assistantMsg = {
-        role: 'assistant',
-        content: responseText,
-        toolResults: toolResults.length > 0 ? toolResults : undefined,
-        proposals: toolResults.filter(item => item.result?.status === 'pending_review').map(item => item.result),
-        timestamp: new Date().toISOString()
-      };
-      history.push(assistantMsg);
-
-      // Trim history to last 50 messages
-      if (history.length > 50) history.splice(0, history.length - 50);
-
-      return sendJson(res, 200, {
-        sessionId,
-        message: assistantMsg,
-        tools: Object.keys(copilotTools),
-        historyLength: history.length
-      });
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -8657,30 +8558,16 @@ const server = createServer(async (req, res) => {
       }
 
       state.records.knowledge = state.records.knowledge || [];
-      // Semantic chunking simulation (paragraphs of 150-300 chars)
-      const paragraphs = content.split(/\n\s*\n/).filter(p => p.trim().length > 0);
-      const chunks = (paragraphs.length ? paragraphs : [content]).map((text, idx) => ({
-        id: `chk_${randomUUID().slice(0, 8)}`,
-        index: idx,
-        text: text.trim()
-      }));
-
-      const newDoc = {
-        id: randomUUID(),
+      const newDoc = copilotRag.indexDocument({
         agencyId: agency.id,
         title: title.trim(),
-        type,
-        chunksCount: chunks.length,
-        wordsCount: content.split(/\s+/).filter(Boolean).length,
-        status: 'indexed',
-        chunks,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
+        content: content.trim(),
+        type
+      });
 
       state.records.knowledge.push(newDoc);
       await saveState();
-      auditLog('ai.knowledge_added', actor, { docId: newDoc.id, title: newDoc.title });
+      auditLog('ai.knowledge_added', actor, { docId: newDoc.id, title: newDoc.title, chunks: newDoc.chunksCount });
       broadcast('crm.knowledge.created', { docId: newDoc.id, title: newDoc.title });
 
       return sendJson(res, 201, { success: true, document: newDoc });
@@ -8703,35 +8590,27 @@ const server = createServer(async (req, res) => {
       const { query = '' } = body;
       if (!query.trim()) return sendJson(res, 400, { error: 'Query is required' });
 
-      state.records.knowledge = state.records.knowledge || [];
-      const docs = state.records.knowledge.filter(k => k.agencyId === agency.id);
-      const qLower = query.toLowerCase();
+      try {
+        const chatRes = await copilotService.chat({
+          message: query,
+          sessionId: `ai_trainer_test_${agency.id}`,
+          activeModule: 'AI Copilot Training Center & Knowledge Base (/ai-trainer)',
+          agency,
+          activeLocation,
+          actor,
+          state,
+          platformRepository
+        });
 
-      // Find matching chunks across docs
-      const matchingSources = [];
-      for (const doc of docs) {
-        for (const chunk of doc.chunks || []) {
-          const matchTerms = qLower.split(/\s+/).filter(w => w.length > 2);
-          const hasMatch = matchTerms.some(term => chunk.text.toLowerCase().includes(term));
-          if (hasMatch) {
-            matchingSources.push({
-              docTitle: doc.title,
-              chunkId: chunk.id,
-              text: chunk.text
-            });
-          }
-        }
+        return sendJson(res, 200, {
+          query,
+          answer: chatRes.message.content,
+          sources: chatRes.message.sources || []
+        });
+      } catch (err) {
+        console.error('[AI Trainer Test] Error:', err);
+        return sendJson(res, 500, { error: err.message || 'AI testing error' });
       }
-
-      const answer = matchingSources.length > 0
-        ? `Based on "${matchingSources[0].docTitle}": ${matchingSources[0].text}`
-        : `Operza Copilot evaluated "${query}". All system and knowledge records are online and ready for deployment.`;
-
-      return sendJson(res, 200, {
-        query,
-        answer,
-        sources: matchingSources.slice(0, 3)
-      });
     }
 
     // ═════════════════════════════════════════════════════════════

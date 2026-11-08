@@ -12,3 +12,4 @@ export * from './outbox-worker.mjs';
 export * from './connector-catalog.mjs';
 export * from './llm-runtime/index.mjs';
 export * from './multi-agent/index.mjs';
+export * from './copilot/index.mjs';

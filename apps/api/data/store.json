@@ -107,6 +107,22 @@
       "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
       "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
       "expiresAt": 1794085613850
+    },
+    {
+      "id": "114b9863-3311-49a1-b855-0b433bacdb16",
+      "tokenHash": "5ba84a0d1be39d23658005fc245a1ebae59508f0d47a5c153cf3f6139c8669d3",
+      "csrfHash": "2307be751003616eb20ca77ecd61c81f978c17af6a6496a400876209a8d918e2",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "expiresAt": 1794166402674
+    },
+    {
+      "id": "976a7e36-7624-4521-8deb-299c1070b57d",
+      "tokenHash": "ee633f90b825d0d50d4f853cdae7053bafeee4672049d8b534197bfd78519c4c",
+      "csrfHash": "dc015317c0b191287e9b5c0f92949164d120093e99a2d84020e901acbc74cf39",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "expiresAt": 1794169133618
     }
   ],
   "records": {
@@ -330,7 +346,413 @@
         "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
         "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
         "createdAt": "2026-11-07T12:24:42.067Z",
-        "updatedAt": "2026-11-07T12:24:42.067Z"
+        "updatedAt": "2026-11-07T13:15:10.728Z",
+        "status": "draft"
+      },
+      {
+        "name": "VitalCare Health & Wellness Clinic",
+        "kind": "website",
+        "domain": "vitalcare-clinic",
+        "published": true,
+        "visits": 4,
+        "optins": 0,
+        "pages": [
+          {
+            "id": "wp_u7jyqis",
+            "name": "Home",
+            "path": "/",
+            "headline": "Gentle, State-of-the-Art Dental & Healthcare for Your Family",
+            "subhead": "Accepting new patients with same-day emergency appointments, digital low-radiation imaging, and personalized compassionate care.",
+            "cta": "Schedule Your First Visit Online →",
+            "theme": "plain",
+            "visits": 4,
+            "optins": 0,
+            "blocks": [
+              {
+                "id": "h_b1",
+                "type": "headline",
+                "content": "Modern Healthcare & Family Dentistry with a Gentle Touch",
+                "align": "center"
+              },
+              {
+                "id": "h_b2",
+                "type": "subheadline",
+                "content": "Experience painless treatments, modern digital diagnostics, and comprehensive preventative care for all ages.",
+                "align": "center"
+              },
+              {
+                "id": "h_b3",
+                "type": "hero_image",
+                "imageUrl": "https://images.unsplash.com/photo-1629909613654-28e377c37b09?w=1000&auto=format&fit=crop&q=80",
+                "content": "Modern State-of-the-Art Clinical Care Suites",
+                "align": "center"
+              },
+              {
+                "id": "h_b4",
+                "type": "two_columns",
+                "columnA": "🦷 **Preventative & Cosmetic Dentistry**\nFrom gentle ultrasonic cleanings to porcelain veneers and professional whitening, we protect and enhance your smile.",
+                "columnB": "🩺 **Advanced Digital Diagnostics**\nLow-radiation 3D cone-beam tomography and intraoral digital scanning for precise, comfortable evaluations."
+              },
+              {
+                "id": "h_b5",
+                "type": "testimonials",
+                "content": "Dr. Sarah and the clinical team are wonderful! As someone with high dental anxiety, their gentle approach made all the difference.",
+                "authorName": "David K.",
+                "authorRole": "Patient since 2021",
+                "rating": 5,
+                "align": "center"
+              }
+            ]
+          },
+          {
+            "id": "wp_kgahmx2",
+            "name": "Treatments",
+            "path": "/treatments",
+            "headline": "Comprehensive Dental & Medical Treatment Procedures",
+            "subhead": "Explore our full spectrum of specialized healthcare services from preventative exams to complex restorative surgery.",
+            "cta": "View Treatment Plans",
+            "theme": "plain",
+            "visits": 0,
+            "optins": 0,
+            "blocks": [
+              {
+                "id": "h_t1",
+                "type": "headline",
+                "content": "Advanced Treatment Solutions Tailored to You",
+                "align": "center"
+              },
+              {
+                "id": "h_t2",
+                "type": "two_columns",
+                "columnA": "🌟 **Restorative Dental Implants**\nPermanent, natural-looking titanium implants that restore full bite functionality and preserve jawbone integrity.",
+                "columnB": "✨ **Invisalign Clear Orthodontics**\nDiscreet, comfortable alignment therapy for adults and teens with 3D digital simulation before you begin."
+              }
+            ]
+          },
+          {
+            "id": "wp_vfsljj6",
+            "name": "Doctors",
+            "path": "/doctors",
+            "headline": "Meet Our Dedicated Board-Certified Clinical Team",
+            "subhead": "Our experienced physicians and dentists combine rigorous academic training with warm, compassionate bedside care.",
+            "cta": "Meet The Team",
+            "theme": "plain",
+            "visits": 0,
+            "optins": 0,
+            "blocks": [
+              {
+                "id": "h_d1",
+                "type": "headline",
+                "content": "Over 30+ Years of Combined Clinical Excellence",
+                "align": "center"
+              },
+              {
+                "id": "h_d2",
+                "type": "two_columns",
+                "columnA": "👨‍⚕️ **Dr. Sarah Jenkins, DDS, FAGD**\nChief Dental Officer with fellowship honors in restorative implantology and laser periodontics.",
+                "columnB": "👩‍⚕️ **Dr. Robert Miller, MD**\nSpecialist in preventative family medicine and pediatric wellness with 15+ years serving our community."
+              }
+            ]
+          },
+          {
+            "id": "wp_5npimao",
+            "name": "Patient Info",
+            "path": "/patient-portal",
+            "headline": "New Patient Onboarding & Insurance Information",
+            "subhead": "We partner with all major PPO insurance networks and provide flexible zero-interest financing options.",
+            "cta": "Download Intake Forms",
+            "theme": "plain",
+            "visits": 0,
+            "optins": 0,
+            "blocks": [
+              {
+                "id": "h_p1",
+                "type": "headline",
+                "content": "Seamless, Paperless Patient Experience",
+                "align": "center"
+              },
+              {
+                "id": "h_p2",
+                "type": "two_columns",
+                "columnA": "📋 **Digital Check-In via Smartphone**\nComplete your medical history and insurance cards securely from home before your scheduled arrival.",
+                "columnB": "💳 **In-Network Insurance Partners**\nWe work directly with Delta Dental, MetLife, Cigna, Aetna, and Guardian to maximize your plan benefits."
+              }
+            ]
+          },
+          {
+            "id": "wp_y0vf83o",
+            "name": "Book Appointment",
+            "path": "/book",
+            "headline": "Schedule Your Visit Online in Less Than 2 Minutes",
+            "subhead": "Select your preferred doctor, appointment time, and treatment reason. Emergency same-day slots available.",
+            "cta": "Confirm Appointment Time",
+            "theme": "plain",
+            "visits": 0,
+            "optins": 0,
+            "blocks": [
+              {
+                "id": "h_b_1",
+                "type": "headline",
+                "content": "Instant Real-Time Appointment Scheduling",
+                "align": "center"
+              },
+              {
+                "id": "h_b_2",
+                "type": "cta_button",
+                "buttonText": "Call Clinic Immediately: (555) 234-5678",
+                "buttonLink": "tel:5552345678",
+                "buttonColor": "#0891b2",
+                "align": "center"
+              }
+            ]
+          }
+        ],
+        "globalHeader": {
+          "enabled": true,
+          "brandText": "VitalCare Health & Wellness Clinic",
+          "navLinks": [
+            {
+              "id": "id_k2i2ch1",
+              "label": "Treatments",
+              "url": "/treatments"
+            },
+            {
+              "id": "id_n4o77ak",
+              "label": "Doctors",
+              "url": "/doctors"
+            },
+            {
+              "id": "id_uy5gj4z",
+              "label": "Patient Info",
+              "url": "/patient-portal"
+            },
+            {
+              "id": "id_s5ar1zu",
+              "label": "Book Online",
+              "url": "/book"
+            }
+          ],
+          "ctaLabel": "Book Appointment Online",
+          "ctaUrl": "/book"
+        },
+        "globalFooter": {
+          "enabled": true,
+          "copyrightText": "© 2026 VitalCare Health & Wellness Clinic. All rights reserved.",
+          "footerLinks": [
+            {
+              "id": "id_rfywku5",
+              "label": "HIPAA Compliance",
+              "url": "/hipaa"
+            },
+            {
+              "id": "id_jhugzdo",
+              "label": "Notice of Privacy Practices",
+              "url": "/privacy"
+            },
+            {
+              "id": "id_h0dcnfs",
+              "label": "Emergency Contact",
+              "url": "/emergency"
+            }
+          ]
+        },
+        "id": "f78a0026-b0ef-4477-a0ac-d724193e63ea",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+        "createdAt": "2026-11-07T13:36:41.660Z",
+        "updatedAt": "2026-11-07T13:36:41.660Z"
+      },
+      {
+        "name": "Real Estate Brokerage & Luxury Estates",
+        "kind": "website",
+        "domain": "real-estate",
+        "published": true,
+        "visits": 0,
+        "optins": 0,
+        "pages": [
+          {
+            "id": "wp_xtwglxk",
+            "name": "Home",
+            "path": "/",
+            "headline": "Curated Luxury Residences & Architectural Estates",
+            "subhead": "Discover premier residential listings, waterfront retreats, and off-market investment properties across the region’s most coveted enclaves.",
+            "cta": "Explore Portfolio of Homes →",
+            "theme": "plain",
+            "visits": 0,
+            "optins": 0,
+            "blocks": [
+              {
+                "id": "re_1",
+                "type": "headline",
+                "content": "Architectural Excellence. Unrivaled Real Estate Representation.",
+                "align": "center"
+              },
+              {
+                "id": "re_2",
+                "type": "subheadline",
+                "content": "Connecting extraordinary clients with exceptional architectural properties since 2012.",
+                "align": "center"
+              },
+              {
+                "id": "re_3",
+                "type": "hero_image",
+                "imageUrl": "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?w=1000&auto=format&fit=crop&q=80",
+                "content": "Private Waterfront Villa — Pacific Palisades Collection",
+                "align": "center"
+              },
+              {
+                "id": "re_4",
+                "type": "two_columns",
+                "columnA": "🏡 **Private Off-Market Access**\nExclusive representation for high-net-worth sellers providing discreet marketing without public MLS listing exposure.",
+                "columnB": "📊 **Precision Market Intelligence**\nMicro-neighborhood pricing data, historical appreciation benchmarks, and proprietary absorption rate tracking."
+              }
+            ]
+          },
+          {
+            "id": "wp_gc7kscp",
+            "name": "Featured Properties",
+            "path": "/properties",
+            "headline": "Featured Luxury Residences & Architectural Homes",
+            "subhead": "View high-definition virtual tours, floor plans, and architectural specifications for our active portfolio.",
+            "cta": "Schedule Private Showing",
+            "theme": "plain",
+            "visits": 0,
+            "optins": 0,
+            "blocks": [
+              {
+                "id": "re_p1",
+                "type": "headline",
+                "content": "Current Premier Listings & Estates",
+                "align": "center"
+              },
+              {
+                "id": "re_p2",
+                "type": "two_columns",
+                "columnA": "🌲 **742 Bel Air Heights · $8,450,000**\n6 Beds, 8 Baths, 7,200 SF. Infinity edge pool, smart home automation, panoramic city light views.",
+                "columnB": "🌊 **1204 Pacific Coast Highway · $12,900,000**\nPrivate beach access, architect-designed modernist glass pavilion with guest house and wine room."
+              }
+            ]
+          },
+          {
+            "id": "wp_d48r884",
+            "name": "Neighborhoods",
+            "path": "/neighborhoods",
+            "headline": "Explore Premier Communities & Micro-Markets",
+            "subhead": "In-depth neighborhood guides covering top-rated school districts, private clubs, culinary destinations, and local lifestyle nuances.",
+            "cta": "Download Neighborhood Report",
+            "theme": "plain",
+            "visits": 0,
+            "optins": 0,
+            "blocks": [
+              {
+                "id": "re_n1",
+                "type": "headline",
+                "content": "Curated Guides to the Region’s Finest Addresses",
+                "align": "center"
+              }
+            ]
+          },
+          {
+            "id": "wp_yc5830y",
+            "name": "Home Valuation",
+            "path": "/valuation",
+            "headline": "What Is Your Property Worth in Today’s Market?",
+            "subhead": "Receive an exhaustive comparative market analysis (CMA) prepared by our senior managing brokers within 24 hours.",
+            "cta": "Request Valuation Analysis",
+            "theme": "plain",
+            "visits": 0,
+            "optins": 0,
+            "blocks": [
+              {
+                "id": "re_v1",
+                "type": "headline",
+                "content": "Get a Professional Comparative Market Valuation",
+                "align": "center"
+              },
+              {
+                "id": "re_v2",
+                "type": "cta_button",
+                "buttonText": "Submit Property Address for Free CMA →",
+                "buttonLink": "/valuation",
+                "buttonColor": "#0f172a",
+                "align": "center"
+              }
+            ]
+          },
+          {
+            "id": "wp_wjpatj6",
+            "name": "Agents",
+            "path": "/agents",
+            "headline": "Meet Our Managing Brokers & Advisory Partners",
+            "subhead": "Uncompromising integrity, discrete representation, and unmatched negotiation acumen.",
+            "cta": "Contact an Agent",
+            "theme": "plain",
+            "visits": 0,
+            "optins": 0,
+            "blocks": [
+              {
+                "id": "re_a1",
+                "type": "headline",
+                "content": "Over $750M in Career Transaction Volume",
+                "align": "center"
+              }
+            ]
+          }
+        ],
+        "globalHeader": {
+          "enabled": true,
+          "brandText": "Real Estate Brokerage & Luxury Estates",
+          "navLinks": [
+            {
+              "id": "id_ttn1qll",
+              "label": "Featured Properties",
+              "url": "/properties"
+            },
+            {
+              "id": "id_h0v5rwu",
+              "label": "Neighborhoods",
+              "url": "/neighborhoods"
+            },
+            {
+              "id": "id_zmjgrqz",
+              "label": "Home Valuation",
+              "url": "/valuation"
+            },
+            {
+              "id": "id_ulshneh",
+              "label": "Agents",
+              "url": "/agents"
+            }
+          ],
+          "ctaLabel": "Browse Featured Properties",
+          "ctaUrl": "/properties"
+        },
+        "globalFooter": {
+          "enabled": true,
+          "copyrightText": "© 2026 Real Estate Brokerage & Luxury Estates. All rights reserved.",
+          "footerLinks": [
+            {
+              "id": "id_5fwd1bo",
+              "label": "Equal Housing Opportunity",
+              "url": "/housing-pledge"
+            },
+            {
+              "id": "id_wlc8qts",
+              "label": "Terms of Use",
+              "url": "/terms"
+            },
+            {
+              "id": "id_4w80lhk",
+              "label": "MLS Disclaimers",
+              "url": "/disclaimers"
+            }
+          ]
+        },
+        "id": "1bc94740-b59b-4de0-8d67-31edef0c5ba4",
+        "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+        "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+        "createdAt": "2026-11-07T13:37:39.913Z",
+        "updatedAt": "2026-11-07T13:37:39.913Z"
       }
     ],
     "campaigns": [],
@@ -638,7 +1060,110 @@
     ],
     "phoneNumbers": [],
     "prospects": [],
-    "apiKeys": []
+    "apiKeys": [],
+    "integrations": {
+      "6777383e-4ef3-4327-8bef-3d938ef1c80a": [
+        {
+          "id": "stripe",
+          "name": "Stripe",
+          "category": "Payment",
+          "description": "Credit card processing, subscriptions, and payment links",
+          "icon": "credit-card",
+          "connected": true,
+          "accountName": "Operza Alpha Agency (acct_1928)",
+          "status": "connected",
+          "lastSyncAt": "2026-11-08T07:33:37.370Z"
+        },
+        {
+          "id": "twilio",
+          "name": "Twilio",
+          "category": "Communications",
+          "description": "SMS messaging, phone numbers, and voice call tracking",
+          "icon": "phone",
+          "connected": true,
+          "accountName": "+1 (800) 555-0100",
+          "status": "connected",
+          "lastSyncAt": "2026-11-08T07:33:37.370Z"
+        },
+        {
+          "id": "sendgrid",
+          "name": "SendGrid",
+          "category": "Communications",
+          "description": "Transactional email delivery and marketing campaigns",
+          "icon": "mail",
+          "connected": true,
+          "accountName": "noreply@operza.io",
+          "status": "connected",
+          "lastSyncAt": "2026-11-08T07:33:37.370Z"
+        },
+        {
+          "id": "openai",
+          "name": "OpenAI",
+          "category": "AI & Copilot",
+          "description": "Powering autonomous copilot, conversation replies, and summarization",
+          "icon": "sparkles",
+          "connected": true,
+          "accountName": "GPT-4o & Embeddings",
+          "status": "connected",
+          "lastSyncAt": "2026-11-08T07:33:37.370Z"
+        },
+        {
+          "id": "slack",
+          "name": "Slack",
+          "category": "Notifications",
+          "description": "Real-time notifications for leads, booked appointments, and deals",
+          "icon": "message",
+          "connected": false,
+          "accountName": "",
+          "status": "disconnected",
+          "lastSyncAt": null
+        },
+        {
+          "id": "zapier",
+          "name": "Zapier",
+          "category": "Automation",
+          "description": "Connect Operza triggers to 5,000+ business applications",
+          "icon": "zap",
+          "connected": true,
+          "accountName": "Operza Flow Sync",
+          "status": "connected",
+          "lastSyncAt": "2026-11-08T07:33:37.370Z"
+        },
+        {
+          "id": "google_calendar",
+          "name": "Google Calendar",
+          "category": "Calendar",
+          "description": "Two-way appointment synchronization and scheduling",
+          "icon": "calendar",
+          "connected": true,
+          "accountName": "team@operza.io",
+          "status": "connected",
+          "lastSyncAt": "2026-11-08T07:33:37.370Z"
+        },
+        {
+          "id": "meta_ads",
+          "name": "Meta Ads",
+          "category": "Marketing",
+          "description": "Instant lead sync from Facebook & Instagram lead forms",
+          "icon": "facebook",
+          "connected": false,
+          "accountName": "",
+          "status": "disconnected",
+          "lastSyncAt": null
+        },
+        {
+          "id": "shopify",
+          "name": "Shopify",
+          "category": "Commerce",
+          "description": "E-commerce store orders, customer import, and product sync",
+          "icon": "store",
+          "connected": false,
+          "accountName": "",
+          "status": "disconnected",
+          "lastSyncAt": null
+        }
+      ]
+    }
   },
   "workflowExecutions": [],
   "workflowApprovals": [],
@@ -760,6 +1285,90 @@
         "name": "ASIM tech"
       },
       "timestamp": "2026-11-07T10:39:33.578Z"
+    },
+    {
+      "id": "811c11eb-e534-4642-925f-6f696023fc29",
+      "action": "crm.websites.created",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "userName": "Asim",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "details": {
+        "id": "3efde494-fdee-404f-a2c3-88ca49707070"
+      },
+      "timestamp": "2026-11-07T12:24:42.071Z"
+    },
+    {
+      "id": "e95a727c-8515-4767-ac71-8e6cc30db22d",
+      "action": "website.published",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "userName": "Asim",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "details": {
+        "siteId": "3efde494-fdee-404f-a2c3-88ca49707070",
+        "name": "Abbasi store",
+        "published": true
+      },
+      "timestamp": "2026-11-07T13:14:46.400Z"
+    },
+    {
+      "id": "dcf6d10d-4dfd-4307-953d-57bc57b28d9d",
+      "action": "website.unpublished",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "userName": "Asim",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "details": {
+        "siteId": "3efde494-fdee-404f-a2c3-88ca49707070",
+        "name": "Abbasi store",
+        "published": false
+      },
+      "timestamp": "2026-11-07T13:15:10.728Z"
+    },
+    {
+      "id": "c09025ce-1b63-4a8e-887d-55298293451e",
+      "action": "crm.websites.created",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "userName": "Asim",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "details": {
+        "id": "f78a0026-b0ef-4477-a0ac-d724193e63ea"
+      },
+      "timestamp": "2026-11-07T13:36:41.664Z"
+    },
+    {
+      "id": "980c18d1-cfe9-4347-a97d-5f53992bf89e",
+      "action": "crm.websites.created",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "userName": "Asim",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "details": {
+        "id": "1bc94740-b59b-4de0-8d67-31edef0c5ba4"
+      },
+      "timestamp": "2026-11-07T13:37:39.921Z"
+    },
+    {
+      "id": "00041a55-7ec0-4190-9d99-cfbb367a968f",
+      "action": "auth.login",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "userName": "Asim",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "details": {},
+      "timestamp": "2026-11-08T07:33:22.677Z"
+    },
+    {
+      "id": "6dd58ac0-2c88-4808-8b6c-1a88cfa5f8f7",
+      "action": "auth.login",
+      "userId": "5b129794-bfcc-4e6f-b97d-ab45e94dd311",
+      "userName": "Asim",
+      "agencyId": "6777383e-4ef3-4327-8bef-3d938ef1c80a",
+      "locationId": "cc536216-2df9-48b3-a698-4990fb4e46e3",
+      "details": {},
+      "timestamp": "2026-11-08T08:18:53.621Z"
     }
   ],
   "mediaFiles": {},
@@ -814,5 +1423,7 @@
       },
       "registeredAt": "2026-11-07T09:18:57.701Z"
     }
-  ]
+  ],
+  "zapierHookSubscriptions": [],
+  "zapierHookDeliveries": []
 }
