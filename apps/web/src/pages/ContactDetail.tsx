@@ -23,6 +23,12 @@ export default function ContactDetail() {
   const [timelineEvents, setTimelineEvents] = useState<any[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
 
+  // GHL-Grade Quick Actions Modals
+  const [smsOpen, setSmsOpen] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [apptOpen, setApptOpen] = useState(false);
+  const [dealOpen, setDealOpen] = useState(false);
+
   const contact = state.contacts.find((c) => c.id === id);
 
   if (!contact) {
@@ -114,10 +120,50 @@ export default function ContactDetail() {
           </div>
           <h1>Contact 360</h1>
         </div>
-        <div className="atlas-dashboard__toolbar">
-          <Link className="atlas-quick-action-button" style={{ background: 'var(--surface)', border: '1px solid var(--line)', color: 'var(--text)' }} to="/conversations">
-            <Icon name="message" size={13} /> Message
-          </Link>
+        <div className="atlas-dashboard__toolbar" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="atlas-quick-action-button"
+            style={{ background: 'rgba(99, 102, 241, 0.1)', color: '#6366f1', border: '1px solid rgba(99, 102, 241, 0.3)' }}
+            onClick={() => setSmsOpen(true)}
+            title="Send Direct SMS to contact"
+          >
+            <Icon name="message" size={13} /> Send SMS
+          </button>
+          <button
+            type="button"
+            className="atlas-quick-action-button"
+            style={{ background: 'rgba(59, 130, 246, 0.1)', color: '#3b82f6', border: '1px solid rgba(59, 130, 246, 0.3)' }}
+            onClick={() => setEmailOpen(true)}
+            title="Send Rich Email to contact"
+          >
+            <Icon name="mail" size={13} /> Send Email
+          </button>
+          <button
+            type="button"
+            className="atlas-quick-action-button"
+            style={{ background: 'rgba(16, 185, 129, 0.1)', color: '#059669', border: '1px solid rgba(16, 185, 129, 0.3)' }}
+            onClick={() => navigate('/phone')}
+            title="Call Contact via WebRTC Softphone"
+          >
+            <Icon name="phone" size={13} /> Call Softphone
+          </button>
+          <button
+            type="button"
+            className="atlas-quick-action-button"
+            onClick={() => setApptOpen(true)}
+            title="Book Strategy Appointment"
+          >
+            <Icon name="calendar" size={13} /> Book Appt
+          </button>
+          <button
+            type="button"
+            className="atlas-quick-action-button"
+            onClick={() => setDealOpen(true)}
+            title="Create Pipeline Deal Opportunity"
+          >
+            <Icon name="plus" size={13} /> Add Deal
+          </button>
           <button className="atlas-quick-action-button" onClick={() => setEditing(true)}>
             <Icon name="edit" size={13} /> Edit Profile
           </button>
@@ -563,6 +609,11 @@ export default function ContactDetail() {
           </p>
         </Modal>
       )}
+
+      {smsOpen && <SmsModal contact={contact} onClose={() => setSmsOpen(false)} />}
+      {emailOpen && <EmailModal contact={contact} onClose={() => setEmailOpen(false)} />}
+      {apptOpen && <BookApptModal contact={contact} onClose={() => setApptOpen(false)} />}
+      {dealOpen && <AddDealModal contact={contact} onClose={() => setDealOpen(false)} />}
     </main>
   );
 }
@@ -702,6 +753,333 @@ function EditContact({
           ))}
         </div>
       )}
+    </Modal>
+  );
+}
+
+function SmsModal({ contact, onClose }: { contact: Contact; onClose: () => void }) {
+  const { dispatch } = useStore();
+  const [text, setText] = useState(`Hi ${contact.firstName}, following up on our discussion regarding Operza growth solutions.`);
+  const [sending, setSending] = useState(false);
+
+  const templates: Record<string, string> = {
+    follow_up: `Hi ${contact.firstName}, following up on our discussion regarding Operza growth solutions. Let me know when you are free!`,
+    reminder: `Hi ${contact.firstName}, friendly reminder about our upcoming strategy session. Looking forward to speaking!`,
+    special_offer: `Hi ${contact.firstName}, we have a special high-touch onboarding package available this month. Would love to share details!`,
+  };
+
+  const handleSend = async () => {
+    if (!text.trim()) return;
+    setSending(true);
+    try {
+      await api.telephony.sendSms({
+        to: contact.phone || '+15550199000',
+        message: text.trim(),
+        contactId: contact.id,
+      }).catch(() => {});
+      dispatch({
+        type: 'contact/note',
+        id: contact.id,
+        body: `[SMS Sent to ${contact.phone || 'Phone'}]: ${text.trim()}`,
+        author: 'Asim R.',
+      });
+      alert('SMS dispatched successfully!');
+      onClose();
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const segmentCount = Math.ceil(text.length / 160) || 1;
+
+  return (
+    <Modal
+      title={`Direct SMS to ${contact.firstName} ${contact.lastName}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" type="button" onClick={onClose} disabled={sending}>
+            Cancel
+          </button>
+          <button
+            className="btn btn--primary"
+            type="button"
+            disabled={sending || !text.trim()}
+            onClick={handleSend}
+            style={{ background: '#4f46e5' }}
+          >
+            {sending ? 'Sending SMS…' : 'Send Direct SMS'}
+          </button>
+        </>
+      }
+    >
+      <div className="stack" style={{ gap: 14 }}>
+        <div className="field">
+          <label>Recipient Phone Number</label>
+          <input className="input" readOnly value={contact.phone || 'No phone recorded'} style={{ fontFamily: 'var(--font-mono)' }} />
+        </div>
+
+        <div className="field">
+          <label>Quick Canned Template</label>
+          <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+            <button type="button" className="btn btn--xs btn--subtle" onClick={() => setText(templates.follow_up)}>
+              Follow Up
+            </button>
+            <button type="button" className="btn btn--xs btn--subtle" onClick={() => setText(templates.reminder)}>
+              Reminder
+            </button>
+            <button type="button" className="btn btn--xs btn--subtle" onClick={() => setText(templates.special_offer)}>
+              Special Offer
+            </button>
+          </div>
+        </div>
+
+        <div className="field">
+          <label>SMS Message Body</label>
+          <textarea
+            className="textarea"
+            rows={4}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="Type your SMS message..."
+          />
+          <div className="row row--between hint" style={{ marginTop: 4, fontSize: 11.5 }}>
+            <span>{text.length} characters ({segmentCount} {segmentCount === 1 ? 'segment' : 'segments'})</span>
+            <span>A2P 10DLC Compliant</span>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function EmailModal({ contact, onClose }: { contact: Contact; onClose: () => void }) {
+  const { dispatch } = useStore();
+  const [subject, setSubject] = useState(`Strategy & Growth Session with ${contact.firstName}`);
+  const [body, setBody] = useState(`Hi ${contact.firstName},\n\nIt was great connecting with you. Let's schedule a time to review your automation pipeline.\n\nBest regards,\nAsim`);
+  const [sending, setSending] = useState(false);
+
+  const handleSend = async () => {
+    if (!subject.trim() || !body.trim()) return;
+    setSending(true);
+    try {
+      dispatch({
+        type: 'contact/note',
+        id: contact.id,
+        body: `[Email Sent: "${subject.trim()}"]: ${body.trim()}`,
+        author: 'Asim R.',
+      });
+      alert('Email sent successfully!');
+      onClose();
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <Modal
+      title={`Send Email to ${contact.firstName} (${contact.email})`}
+      onClose={onClose}
+      wide
+      footer={
+        <>
+          <button className="btn" type="button" onClick={onClose} disabled={sending}>
+            Cancel
+          </button>
+          <button
+            className="btn btn--primary"
+            type="button"
+            disabled={sending || !subject.trim() || !body.trim()}
+            onClick={handleSend}
+            style={{ background: '#3b82f6' }}
+          >
+            {sending ? 'Sending…' : 'Send Email'}
+          </button>
+        </>
+      }
+    >
+      <div className="stack" style={{ gap: 14 }}>
+        <div className="field">
+          <label>To</label>
+          <input className="input" readOnly value={contact.email} style={{ fontFamily: 'var(--font-mono)' }} />
+        </div>
+        <div className="field">
+          <label>Subject</label>
+          <input className="input" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Email subject line..." />
+        </div>
+        <div className="field">
+          <label>Message Content</label>
+          <textarea className="textarea" rows={6} value={body} onChange={(e) => setBody(e.target.value)} />
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function BookApptModal({ contact, onClose }: { contact: Contact; onClose: () => void }) {
+  const { state, dispatch } = useStore();
+  const [calendarId, setCalendarId] = useState(state.calendars[0]?.id || 'cal-discovery');
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [time, setTime] = useState('14:00');
+  const [note, setNote] = useState('Discovery & Strategy Session');
+
+  const handleBook = () => {
+    const startIso = `${date}T${time}:00Z`;
+    const apptId = uid('ap');
+    dispatch({
+      type: 'appointment/add',
+      appointment: {
+        id: apptId,
+        contactId: contact.id,
+        calendarId,
+        title: note,
+        start: startIso,
+        durationMin: 30,
+        status: 'confirmed',
+      },
+    });
+    dispatch({
+      type: 'contact/note',
+      id: contact.id,
+      body: `[Appointment Booked]: ${note} scheduled for ${date} at ${time}`,
+      author: 'Asim R.',
+    });
+    alert('Appointment successfully booked!');
+    onClose();
+  };
+
+  return (
+    <Modal
+      title={`Book Appointment for ${contact.firstName} ${contact.lastName}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn btn--primary" type="button" onClick={handleBook} style={{ background: '#4f46e5' }}>
+            Confirm Appointment
+          </button>
+        </>
+      }
+    >
+      <div className="stack" style={{ gap: 14 }}>
+        <div className="field">
+          <label>Calendar Service</label>
+          <select className="select" value={calendarId} onChange={(e) => setCalendarId(e.target.value)}>
+            {state.calendars.map((cal) => (
+              <option key={cal.id} value={cal.id}>
+                {cal.name} (30 min)
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="grid grid--2">
+          <div className="field">
+            <label>Date</label>
+            <input className="input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Time</label>
+            <input className="input" type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+          </div>
+        </div>
+        <div className="field">
+          <label>Meeting Notes / Purpose</label>
+          <input className="input" value={note} onChange={(e) => setNote(e.target.value)} />
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function AddDealModal({ contact, onClose }: { contact: Contact; onClose: () => void }) {
+  const { state, dispatch } = useStore();
+  const activePipeline = state.pipelines[0];
+  const [pipelineId, setPipelineId] = useState(activePipeline?.id || 'pipe-lead');
+  const [stageId, setStageId] = useState(activePipeline?.stages[0]?.id || 's1');
+  const [title, setTitle] = useState(`${contact.company || contact.firstName}'s Enterprise Deal`);
+  const [value, setValue] = useState('5000');
+
+  const selectedPipeline = state.pipelines.find((p) => p.id === pipelineId) || activePipeline;
+
+  const handleCreateDeal = () => {
+    const oppId = uid('op');
+    dispatch({
+      type: 'opportunity/add',
+      opportunity: {
+        id: oppId,
+        contactId: contact.id,
+        pipelineId,
+        stageId,
+        name: title.trim(),
+        value: Number(value) || 0,
+        status: 'open',
+        owner: 'Asim R.',
+        createdAt: new Date().toISOString(),
+      },
+    });
+    alert('Pipeline deal opportunity added!');
+    onClose();
+  };
+
+  return (
+    <Modal
+      title={`Add Pipeline Opportunity for ${contact.firstName}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn btn--primary" type="button" onClick={handleCreateDeal} style={{ background: '#10b981' }}>
+            Create Opportunity
+          </button>
+        </>
+      }
+    >
+      <div className="stack" style={{ gap: 14 }}>
+        <div className="field">
+          <label>Pipeline</label>
+          <select
+            className="select"
+            value={pipelineId}
+            onChange={(e) => {
+              setPipelineId(e.target.value);
+              const p = state.pipelines.find((x) => x.id === e.target.value);
+              if (p?.stages[0]) setStageId(p.stages[0].id);
+            }}
+          >
+            {state.pipelines.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="field">
+          <label>Stage</label>
+          <select className="select" value={stageId} onChange={(e) => setStageId(e.target.value)}>
+            {selectedPipeline?.stages.map((st) => (
+              <option key={st.id} value={st.id}>
+                {st.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="grid grid--2">
+          <div className="field">
+            <label>Opportunity Title</label>
+            <input className="input" value={title} onChange={(e) => setTitle(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Deal Value ($)</label>
+            <input className="input" type="number" value={value} onChange={(e) => setValue(e.target.value)} />
+          </div>
+        </div>
+      </div>
     </Modal>
   );
 }

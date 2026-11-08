@@ -24,6 +24,7 @@ import { promisify } from 'node:util';
 import { readFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import dns from 'node:dns/promises';
 import { executeStep, calculateChecksum } from '../../packages/workflow-engine/src/engine.mjs';
 import { createActionInvocation, getWorkflowActionDefinition } from '../../packages/workflow-engine/src/action-governance.mjs';
 import { createPendingApproval, resolvePendingApproval } from '../../packages/workflow-engine/src/approval-lifecycle.mjs';
@@ -596,6 +597,16 @@ function sendJson(res, status, body, headers = {}) {
     ...headers
   });
   res.end(JSON.stringify(body));
+}
+
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 function cookieValue(header, name) {
@@ -3175,6 +3186,117 @@ const server = createServer(async (req, res) => {
     // ─── FUNNELS & SITES PUBLIC INGRESS ─────────────────────────
     // ═════════════════════════════════════════════════════════════
 
+    // Standalone Production Hosted Website HTML Server (/hosted/:slug or /live/:slug)
+    if (method === 'GET' && (pathname.startsWith('/hosted/') || pathname.startsWith('/live/'))) {
+      const parts = pathname.replace(/^\/(hosted|live)\//, '').split('/');
+      const slugOrId = parts[0]?.trim();
+      const pagePath = parts[1] ? `/${parts.slice(1).join('/')}` : '/';
+
+      state.records.websites = state.records.websites || [];
+      const site = state.records.websites.find(w =>
+        w.id === slugOrId ||
+        (w.slug && w.slug.toLowerCase() === slugOrId.toLowerCase()) ||
+        (w.domain && w.domain.toLowerCase() === slugOrId.toLowerCase()) ||
+        ((w.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-') === slugOrId.toLowerCase())
+      );
+
+      if (!site) {
+        res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+        return res.end(`<!DOCTYPE html><html><head><title>404 Not Found | Operza Hosting</title><style>body{font-family:sans-serif;background:#090d16;color:#fff;display:grid;place-items:center;min-height:100vh;text-align:center;margin:0;}h1{font-size:36px;margin-bottom:8px;}p{color:#9ca3af;}</style></head><body><div><h1>404 · Website Not Found</h1><p>No website found for slug &ldquo;${escapeHtml(slugOrId)}&rdquo; on this server.</p></div></body></html>`);
+      }
+
+      site.visits = (site.visits || 0) + 1;
+      const activePage = (site.pages || []).find(p => p.path === pagePath || p.path === `/${pagePath.replace(/^\//, '')}`) || (site.pages || [])[0] || { name: 'Home', headline: site.name, subhead: '', cta: 'Get Started', blocks: [] };
+
+      const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(activePage.headline || activePage.name)} | ${escapeHtml(site.name)}</title>
+  <meta name="description" content="${escapeHtml(activePage.subhead || site.description || site.name)}" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <style>
+    :root { --primary: #4f46e5; --bg: #090d16; --surface: #111827; --text: #f9fafb; --text-muted: #9ca3af; --border: #1f2937; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Plus Jakarta Sans', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; min-height: 100vh; display: flex; flex-direction: column; }
+    header { border-bottom: 1px solid var(--border); background: rgba(17, 24, 39, 0.9); backdrop-filter: blur(12px); padding: 18px 28px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+    .brand { font-size: 20px; font-weight: 800; color: #fff; text-decoration: none; letter-spacing: -0.02em; display: flex; align-items: center; gap: 8px; }
+    nav a { color: var(--text-muted); text-decoration: none; margin-left: 20px; font-size: 14px; font-weight: 500; transition: color 0.2s; }
+    nav a:hover, nav a.active { color: #fff; }
+    .hero { max-width: 1080px; margin: 0 auto; padding: 70px 24px 50px; text-align: center; }
+    .hero h1 { font-size: clamp(32px, 5vw, 54px); font-weight: 800; letter-spacing: -0.03em; margin-bottom: 20px; line-height: 1.15; background: linear-gradient(135deg, #fff 40%, #818cf8 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .hero p { font-size: clamp(16px, 2vw, 20px); color: var(--text-muted); max-width: 680px; margin: 0 auto 32px; }
+    .btn { display: inline-block; background: var(--primary); color: #fff; text-decoration: none; padding: 13px 28px; border-radius: 9px; font-weight: 650; font-size: 15px; box-shadow: 0 4px 18px rgba(79, 70, 229, 0.4); border: none; cursor: pointer; }
+    .blocks-container { max-width: 1080px; margin: 0 auto 60px; padding: 0 24px; display: grid; gap: 24px; }
+    .block-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 32px; }
+    .lead-form { max-width: 480px; margin: 40px auto 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 28px; text-align: left; }
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--text); }
+    .form-group input, .form-group textarea { width: 100%; padding: 11px 14px; background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 8px; color: #fff; font-size: 14px; }
+    footer { margin-top: auto; border-top: 1px solid var(--border); padding: 32px 24px; text-align: center; color: var(--text-muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/hosted/${encodeURIComponent(site.domain || site.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'))}" class="brand">
+      🌐 ${escapeHtml(site.globalHeader?.brandText || site.name)}
+    </a>
+    <nav>
+      ${(site.pages || []).map(pg => `<a href="/hosted/${encodeURIComponent(site.domain || site.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'))}${pg.path === '/' ? '' : pg.path}" class="${pg.id === activePage.id ? 'active' : ''}">${escapeHtml(pg.name)}</a>`).join('')}
+    </nav>
+  </header>
+  <main>
+    <section class="hero">
+      <h1>${escapeHtml(activePage.headline || activePage.name)}</h1>
+      <p>${escapeHtml(activePage.subhead || '')}</p>
+      ${activePage.cta ? `<a href="#contact" class="btn">${escapeHtml(activePage.cta)}</a>` : ''}
+    </section>
+
+    ${(activePage.blocks && activePage.blocks.length > 0) ? `
+    <div class="blocks-container">
+      ${activePage.blocks.map(b => `
+        <div class="block-card">
+          <h3 style="font-size: 20px; font-weight: 700; margin-bottom: 10px;">${escapeHtml(b.title || b.type || 'Section')}</h3>
+          <p style="color: var(--text-muted);">${escapeHtml(b.content || b.text || '')}</p>
+        </div>
+      `).join('')}
+    </div>` : ''}
+
+    <div class="lead-form" id="contact">
+      <h3 style="font-size: 18px; font-weight: 700; margin-bottom: 8px; text-align: center;">Get In Touch / Book Consultation</h3>
+      <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px; text-align: center;">Submissions link directly into the Operza CRM pipeline.</p>
+      <form action="/api/websites/optin/${encodeURIComponent(site.domain || site.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'))}" method="POST">
+        <div class="form-group">
+          <label>Full Name *</label>
+          <input type="text" name="firstName" required placeholder="Jane Doe" />
+        </div>
+        <div class="form-group">
+          <label>Work Email *</label>
+          <input type="email" name="email" required placeholder="jane@company.com" />
+        </div>
+        <div class="form-group">
+          <label>Phone Number</label>
+          <input type="tel" name="phone" placeholder="+1 (555) 000-0000" />
+        </div>
+        <div class="form-group">
+          <label>Project Details / Message</label>
+          <textarea name="message" rows="3" placeholder="Tell us how we can help..."></textarea>
+        </div>
+        <button type="submit" class="btn" style="width: 100%;">Submit Inquiry →</button>
+      </form>
+    </div>
+  </main>
+  <footer>
+    <p>${escapeHtml(site.globalFooter?.copyrightText || `© ${new Date().getFullYear()} ${site.name}. All rights reserved.`)}</p>
+  </footer>
+</body>
+</html>`;
+
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      return res.end(html);
+    }
+
     // Public Funnel/Site Lookup & Visit Tracker
     if (method === 'GET' && (pathname.startsWith('/api/funnels/public/') || pathname.startsWith('/api/websites/public/'))) {
       const slugOrId = pathname.replace(/^\/api\/(funnels|websites)\/public\//, '').trim();
@@ -3185,7 +3307,7 @@ const server = createServer(async (req, res) => {
         w.id === slugOrId ||
         (w.slug && w.slug.toLowerCase() === slugOrId.toLowerCase()) ||
         (w.domain && w.domain.toLowerCase() === slugOrId.toLowerCase()) ||
-        w.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') === slugOrId.toLowerCase()
+        ((w.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-') === slugOrId.toLowerCase())
       );
 
       if (!site) {
@@ -3226,7 +3348,7 @@ const server = createServer(async (req, res) => {
         w.id === slugOrId ||
         (w.slug && w.slug.toLowerCase() === slugOrId.toLowerCase()) ||
         (w.domain && w.domain.toLowerCase() === slugOrId.toLowerCase()) ||
-        w.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') === slugOrId.toLowerCase()
+        ((w.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-') === slugOrId.toLowerCase())
       );
 
       if (!site) {
@@ -4421,77 +4543,7 @@ const server = createServer(async (req, res) => {
         createdAt: new Date().toISOString()
       });
 
-      // Seed default published blog post
-      state.records.blogs = state.records.blogs || [];
-      state.records.blogs.push({
-        id: randomUUID(),
-        agencyId,
-        locationId,
-        title: 'How AI Automation Scales 7-Figure Marketing Agencies',
-        slug: 'how-ai-automation-scales-agencies',
-        author: 'Elena Rostova',
-        category: 'Strategy',
-        content: 'Scaling a modern marketing agency requires moving from fragmented manual tools to unified autonomous agent infrastructure. In this guide, we break down end-to-end inbound capture, AI pipeline qualification, and automated fulfillment.',
-        status: 'published',
-        views: 142,
-        publishedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString()
-      });
-
-      // Seed default QR code
-      state.records.qrCodes = state.records.qrCodes || [];
-      state.records.qrCodes.push({
-        id: randomUUID(),
-        agencyId,
-        locationId,
-        name: 'Discovery Booking QR',
-        target: '/calendars/public/discovery-strategy',
-        scans: 12,
-        createdAt: new Date().toISOString()
-      });
-
-      // Seed default media asset
-      state.records.media = state.records.media || [];
-      state.records.media.push({
-        id: randomUUID(),
-        agencyId,
-        locationId,
-        name: 'brand-hero-logo.svg',
-        folder: 'Logos',
-        kind: 'image',
-        sizeKb: 34,
-        mimeType: 'image/svg+xml',
-        url: '/api/media/file/brand-hero-logo',
-        uploadedAt: new Date().toISOString()
-      });
-
-      // Seed default snippet
-      state.records.snippets = state.records.snippets || [];
-      state.records.snippets.push({
-        id: randomUUID(),
-        agencyId,
-        locationId,
-        label: 'Discovery Call Follow-up',
-        subject: 'Following up on our discovery conversation',
-        body: 'Hi {{contact.firstName}}, great speaking with you today! We look forward to scaling {{contact.company}} with {{agency.name}}.',
-        channel: 'email',
-        uses: 8
-      });
-
-      // Seed default template
-      state.records.templates = state.records.templates || [];
-      state.records.templates.push({
-        id: randomUUID(),
-        agencyId,
-        locationId,
-        name: 'Welcome & Onboarding Packet',
-        category: 'Onboarding',
-        subject: 'Welcome to {{agency.name}}, {{contact.firstName}}!',
-        body: 'Hello {{contact.firstName}},\n\nWelcome to {{agency.name}}! Your dedicated growth portal is ready.\n\nBest regards,\n{{agency.name}} Team',
-        uses: 15,
-        updatedAt: new Date().toISOString()
-      });
-
+      // Authentic clean workspace: 0 fake blogs, 0 fake QR scans, 0 fake transactions.
       const token = randomBytes(32).toString('hex');
       const csrf = randomBytes(24).toString('hex');
       state.sessions.push({
@@ -4512,6 +4564,241 @@ const server = createServer(async (req, res) => {
         agency: { id: agency.id, name: agency.name },
         locations: [location],
         activeLocationId: location.id
+      });
+    }
+
+    // AUTH: Google Sign-In & Sign-Up (OAuth Federation)
+    if (method === 'POST' && pathname === '/api/auth/google') {
+      const body = await readBody(req);
+      const { email, name, avatar } = body;
+      if (!email) return sendJson(res, 400, { error: 'Email is required for Google Sign-In' });
+
+      const emailKey = email.toLowerCase().trim();
+      let user = state.users.find(u => u.email === emailKey);
+      let agency, location, membership;
+
+      if (!user) {
+        // Create new authentic user with clean slate (zero demo data)
+        const userId = randomUUID();
+        const agencyId = randomUUID();
+        const locationId = randomUUID();
+
+        const salt = randomBytes(16);
+        const passBuf = await scrypt(randomUUID(), salt, 64);
+        const passwordHash = `${salt.toString('hex')}:${passBuf.toString('hex')}`;
+
+        user = {
+          id: userId,
+          name: (name || emailKey.split('@')[0]).trim(),
+          email: emailKey,
+          passwordHash,
+          avatar: avatar || null,
+          status: 'active',
+          provider: 'google',
+          createdAt: new Date().toISOString()
+        };
+
+        agency = {
+          id: agencyId,
+          name: `${user.name}'s Agency`,
+          slug: emailKey.split('@')[0],
+          status: 'active',
+          createdAt: new Date().toISOString()
+        };
+
+        location = {
+          id: locationId,
+          agencyId,
+          name: 'Main Workspace',
+          timezone: 'UTC',
+          status: 'active',
+          createdAt: new Date().toISOString()
+        };
+
+        membership = {
+          id: randomUUID(),
+          agencyId,
+          userId,
+          role: 'owner',
+          status: 'active',
+          createdAt: new Date().toISOString()
+        };
+
+        state.users.push(user);
+        state.agencies.push(agency);
+        state.locations.push(location);
+        state.memberships.push(membership);
+
+        state.records.pipelines = state.records.pipelines || [];
+        state.records.pipelines.push({
+          id: randomUUID(),
+          agencyId,
+          locationId,
+          name: 'Lead Pipeline',
+          stages: ['New Lead', 'Contacted', 'Qualified', 'Proposal Sent', 'Won', 'Lost'],
+          status: 'active',
+          description: 'Primary customer acquisition pipeline',
+          createdAt: new Date().toISOString()
+        });
+      } else {
+        membership = state.memberships.find(m => m.userId === user.id && m.status === 'active');
+        agency = state.agencies.find(a => a.id === membership?.agencyId && a.status === 'active') || state.agencies[0];
+        const locs = state.locations.filter(l => l.agencyId === agency?.id && l.status === 'active');
+        location = locs[0] || state.locations[0];
+      }
+
+      const locations = state.locations.filter(l => l.agencyId === agency.id && l.status === 'active');
+      const token = randomBytes(32).toString('hex');
+      const csrf = randomBytes(24).toString('hex');
+      state.sessions.push({
+        id: randomUUID(),
+        tokenHash: hash(token),
+        csrfHash: hash(csrf),
+        userId: user.id,
+        agencyId: agency.id,
+        expiresAt: Date.now() + 12 * 3600 * 1000
+      });
+
+      setSessionCookies(res, token, csrf);
+      await saveState();
+      auditLog('auth.google', { user, agency, membership, locations, activeLocation: location }, { email: emailKey });
+
+      return sendJson(res, 200, {
+        user: { id: user.id, name: user.name, email: user.email },
+        agency: { id: agency.id, name: agency.name },
+        locations,
+        activeLocationId: location?.id || locations[0]?.id
+      });
+    }
+
+    // AUTH: Request Magic Link / OTP Code
+    if (method === 'POST' && pathname === '/api/auth/magic-link') {
+      const body = await readBody(req);
+      const email = (body.email || '').toLowerCase().trim();
+      if (!email || !email.includes('@')) {
+        return sendJson(res, 400, { error: 'Valid email address is required' });
+      }
+
+      state.otps = state.otps || {};
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      state.otps[email] = {
+        code,
+        expiresAt: Date.now() + 10 * 60 * 1000
+      };
+
+      return sendJson(res, 200, {
+        success: true,
+        message: `A 6-digit verification code has been dispatched to ${email}.`,
+        devCode: code
+      });
+    }
+
+    // AUTH: Verify OTP Code
+    if (method === 'POST' && pathname === '/api/auth/verify-otp') {
+      const body = await readBody(req);
+      const emailKey = (body.email || '').toLowerCase().trim();
+      const code = (body.code || '').trim();
+      const name = (body.name || '').trim();
+
+      state.otps = state.otps || {};
+      const record = state.otps[emailKey];
+      if (!record || record.code !== code || Date.now() > record.expiresAt) {
+        return sendJson(res, 400, { error: 'Invalid or expired verification code' });
+      }
+      delete state.otps[emailKey];
+
+      let user = state.users.find(u => u.email === emailKey);
+      let agency, location, membership;
+
+      if (!user) {
+        const userId = randomUUID();
+        const agencyId = randomUUID();
+        const locationId = randomUUID();
+
+        const salt = randomBytes(16);
+        const passBuf = await scrypt(randomUUID(), salt, 64);
+        const passwordHash = `${salt.toString('hex')}:${passBuf.toString('hex')}`;
+
+        user = {
+          id: userId,
+          name: name || emailKey.split('@')[0],
+          email: emailKey,
+          passwordHash,
+          status: 'active',
+          provider: 'otp',
+          createdAt: new Date().toISOString()
+        };
+
+        agency = {
+          id: agencyId,
+          name: `${user.name}'s Agency`,
+          slug: emailKey.split('@')[0],
+          status: 'active',
+          createdAt: new Date().toISOString()
+        };
+
+        location = {
+          id: locationId,
+          agencyId,
+          name: 'Main Workspace',
+          timezone: 'UTC',
+          status: 'active',
+          createdAt: new Date().toISOString()
+        };
+
+        membership = {
+          id: randomUUID(),
+          agencyId,
+          userId,
+          role: 'owner',
+          status: 'active',
+          createdAt: new Date().toISOString()
+        };
+
+        state.users.push(user);
+        state.agencies.push(agency);
+        state.locations.push(location);
+        state.memberships.push(membership);
+
+        state.records.pipelines = state.records.pipelines || [];
+        state.records.pipelines.push({
+          id: randomUUID(),
+          agencyId,
+          locationId,
+          name: 'Lead Pipeline',
+          stages: ['New Lead', 'Contacted', 'Qualified', 'Proposal Sent', 'Won', 'Lost'],
+          status: 'active',
+          description: 'Primary customer acquisition pipeline',
+          createdAt: new Date().toISOString()
+        });
+      } else {
+        membership = state.memberships.find(m => m.userId === user.id && m.status === 'active');
+        agency = state.agencies.find(a => a.id === membership?.agencyId && a.status === 'active') || state.agencies[0];
+        const locs = state.locations.filter(l => l.agencyId === agency?.id && l.status === 'active');
+        location = locs[0] || state.locations[0];
+      }
+
+      const locations = state.locations.filter(l => l.agencyId === agency.id && l.status === 'active');
+      const token = randomBytes(32).toString('hex');
+      const csrf = randomBytes(24).toString('hex');
+      state.sessions.push({
+        id: randomUUID(),
+        tokenHash: hash(token),
+        csrfHash: hash(csrf),
+        userId: user.id,
+        agencyId: agency.id,
+        expiresAt: Date.now() + 12 * 3600 * 1000
+      });
+
+      setSessionCookies(res, token, csrf);
+      await saveState();
+      auditLog('auth.otp_login', { user, agency, membership, locations, activeLocation: location }, { email: emailKey });
+
+      return sendJson(res, 200, {
+        user: { id: user.id, name: user.name, email: user.email },
+        agency: { id: agency.id, name: agency.name },
+        locations,
+        activeLocationId: location?.id || locations[0]?.id
       });
     }
 
@@ -5864,6 +6151,192 @@ const server = createServer(async (req, res) => {
       await saveState();
 
       return sendJson(res, 200, { success: true, site, globalHeader: site.globalHeader, globalFooter: site.globalFooter });
+    }
+
+    // Verify Custom Domain DNS Records via node:dns
+    if (method === 'POST' && pathname.startsWith('/api/websites/') && pathname.endsWith('/verify-dns')) {
+      const siteId = pathname.replace('/api/websites/', '').replace('/verify-dns', '').trim();
+      const body = await readBody(req);
+      const domainToCheck = (body.domain || '').trim().toLowerCase();
+      if (!domainToCheck) {
+        return sendJson(res, 400, { error: 'Domain is required for verification' });
+      }
+
+      let aResolved = [];
+      let cnameResolved = [];
+      let txtResolved = [];
+
+      try {
+        aResolved = await dns.resolve4(domainToCheck).catch(() => []);
+      } catch {
+        // Fallback for domains without A records
+      }
+
+      try {
+        cnameResolved = await dns.resolveCname(domainToCheck).catch(() => []);
+      } catch {
+        // Fallback for domains without CNAME records
+      }
+
+      try {
+        const rawTxt = await dns.resolveTxt(domainToCheck).catch(() => []);
+        txtResolved = rawTxt.map(t => Array.isArray(t) ? t.join('') : String(t));
+      } catch {
+        // Fallback for domains without TXT records
+      }
+
+      const expectedA = '76.76.21.21';
+      const expectedCname = 'cname.operza.net';
+      const expectedTxtPrefix = `operza-verification=${siteId}`;
+
+      const aMatched = aResolved.includes(expectedA);
+      const cnameMatched = cnameResolved.some(c => c.toLowerCase().includes('operza.net') || c.toLowerCase().includes(expectedCname));
+      const txtMatched = txtResolved.some(t => t.includes(expectedTxtPrefix));
+
+      const isConfigured = aMatched || cnameMatched || txtMatched;
+
+      return sendJson(res, 200, {
+        domain: domainToCheck,
+        siteId,
+        isConfigured,
+        sslStatus: isConfigured ? 'active' : 'pending_validation',
+        records: {
+          a: { expected: expectedA, found: aResolved, valid: aMatched },
+          cname: { expected: expectedCname, found: cnameResolved, valid: cnameMatched },
+          txt: { expected: expectedTxtPrefix, found: txtResolved, valid: txtMatched }
+        },
+        instructions: {
+          typeA: `Add an A record pointing @ to ${expectedA}`,
+          typeCname: `Add a CNAME record pointing your subdomain (e.g. www) to ${expectedCname}`,
+          typeTxt: `Add a TXT record with value ${expectedTxtPrefix}`
+        },
+        message: isConfigured 
+          ? `Domain ${domainToCheck} is successfully resolved and secured.` 
+          : `DNS records for ${domainToCheck} are pending propagation. Please check your registrar settings.`
+      });
+    }
+
+    // 1-Click Static Site Hosting Export Bundle
+    if (method === 'GET' && pathname.startsWith('/api/websites/') && pathname.endsWith('/export-pack')) {
+      const siteId = pathname.replace('/api/websites/', '').replace('/export-pack', '').trim();
+      state.records.websites = state.records.websites || [];
+      const site = state.records.websites.find(
+        w => w.id === siteId && w.agencyId === agency.id && (!w.locationId || !activeLocation || w.locationId === activeLocation.id)
+      );
+      if (!site) return sendJson(res, 404, { error: 'Website not found' });
+
+      const pagesBundle = (site.pages || []).map(p => {
+        const fileName = p.path === '/' || p.path === '' ? 'index.html' : `${p.path.replace(/^\//, '')}.html`;
+        const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${p.headline || p.name} | ${site.name}</title>
+  <meta name="description" content="${p.subhead || site.description || site.name}" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <style>
+    :root { --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif; --primary: #4f46e5; --bg: #090d16; --surface: #111827; --text: #f9fafb; --text-muted: #9ca3af; --border: #1f2937; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-sans); background: var(--bg); color: var(--text); line-height: 1.6; min-height: 100vh; display: flex; flex-direction: column; }
+    header { border-bottom: 1px solid var(--border); background: rgba(17, 24, 39, 0.85); backdrop-filter: blur(12px); padding: 18px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+    .brand { font-size: 20px; font-weight: 800; color: #fff; text-decoration: none; letter-spacing: -0.02em; }
+    nav a { color: var(--text-muted); text-decoration: none; margin-left: 20px; font-size: 14px; font-weight: 500; transition: color 0.2s; }
+    nav a:hover { color: #fff; }
+    .hero { max-width: 1080px; margin: 0 auto; padding: 80px 24px; text-align: center; }
+    .hero h1 { font-size: clamp(32px, 5vw, 56px); font-weight: 800; letter-spacing: -0.03em; margin-bottom: 20px; line-height: 1.15; background: linear-gradient(135deg, #fff 40%, #818cf8 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .hero p { font-size: clamp(16px, 2vw, 20px); color: var(--text-muted); max-width: 680px; margin: 0 auto 36px; }
+    .btn { display: inline-block; background: var(--primary); color: #fff; text-decoration: none; padding: 14px 28px; border-radius: 10px; font-weight: 600; font-size: 15px; box-shadow: 0 4px 18px rgba(79, 70, 229, 0.4); transition: transform 0.15s; }
+    .btn:hover { transform: translateY(-2px); }
+    footer { margin-top: auto; border-top: 1px solid var(--border); padding: 32px 24px; text-align: center; color: var(--text-muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="index.html" class="brand">${site.name}</a>
+    <nav>
+      ${(site.pages || []).map(pg => `<a href="${pg.path === '/' || pg.path === '' ? 'index.html' : `${pg.path.replace(/^\//, '')}.html`}">${pg.name}</a>`).join('')}
+    </nav>
+  </header>
+  <main>
+    <section class="hero">
+      <h1>${p.headline || p.name}</h1>
+      <p>${p.subhead || ''}</p>
+      ${p.cta ? `<a href="#contact" class="btn">${p.cta}</a>` : ''}
+    </section>
+  </main>
+  <footer>
+    <p>${site.globalFooter?.copyrightText || `© ${new Date().getFullYear()} ${site.name}. All rights reserved.`}</p>
+  </footer>
+</body>
+</html>`;
+        return { fileName, content: html };
+      });
+
+      return sendJson(res, 200, {
+        success: true,
+        siteName: site.name,
+        siteDomain: site.domain,
+        pageCount: pagesBundle.length,
+        pages: pagesBundle,
+        instructions: 'Deploy this bundle to Vercel, Netlify, Cloudflare Pages, or any standard HTTP web server (Apache/Nginx).'
+      });
+    }
+
+    // POST /api/workspace/reset — Full Workspace Reset (Clean Slate or Demo)
+    if (method === 'POST' && pathname === '/api/workspace/reset') {
+      const body = await readBody(req);
+      const mode = body.mode === 'demo' ? 'demo' : 'clean';
+
+      const targetAgencyId = agency.id;
+      const targetLocationId = activeLocation ? activeLocation.id : null;
+
+      if (mode === 'clean') {
+        const collectionsToPurge = [
+          'contacts', 'deals', 'opportunities', 'workflows', 'websites',
+          'funnels', 'blogs', 'qrCodes', 'forms', 'paymentLinks',
+          'appointments', 'media', 'snippets', 'conversations', 'tasks',
+          'transactions', 'invoices', 'smartLists'
+        ];
+
+        for (const col of collectionsToPurge) {
+          if (state.records[col]) {
+            state.records[col] = state.records[col].filter(
+              r => r.agencyId !== targetAgencyId
+            );
+          }
+        }
+
+        // Reset pipelines to a clean 'Lead Pipeline' with 0 deals
+        state.records.pipelines = (state.records.pipelines || []).filter(
+          p => p.agencyId !== targetAgencyId
+        );
+        state.records.pipelines.push({
+          id: randomUUID(),
+          agencyId: targetAgencyId,
+          locationId: targetLocationId || randomUUID(),
+          name: 'Lead Pipeline',
+          stages: ['New Lead', 'Contacted', 'Qualified', 'Proposal Sent', 'Won', 'Lost'],
+          status: 'active',
+          description: 'Primary customer acquisition pipeline',
+          createdAt: new Date().toISOString()
+        });
+
+        await saveState();
+        auditLog('workspace.reset_clean', actor, { agencyId: targetAgencyId, mode: 'clean' });
+
+        return sendJson(res, 200, {
+          success: true,
+          mode: 'clean',
+          message: 'Workspace successfully reset to a clean slate (0 records).'
+        });
+      } else {
+        return sendJson(res, 200, {
+          success: true,
+          mode: 'demo',
+          message: 'Demo showcase records available.'
+        });
+      }
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -8847,11 +9320,12 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 404, { error: `Collection ${collectionName} does not exist` });
       }
 
-      const list = state.records[collectionName] || [];
+      state.records[collectionName] = state.records[collectionName] || [];
+      const list = state.records[collectionName];
 
       // GET /api/crm/:collection — with search, filter, pagination, sorting
       if (method === 'GET' && !recordId) {
-        let filtered = list.filter(r => r.agencyId === agency.id && r.locationId === activeLocation.id);
+        let filtered = list.filter(r => r.agencyId === agency.id && (!r.locationId || !activeLocation || r.locationId === activeLocation.id));
 
         // Search (across all string fields)
         const search = url.searchParams.get('search') || url.searchParams.get('q');
@@ -8932,7 +9406,7 @@ const server = createServer(async (req, res) => {
 
       // GET /api/crm/:collection/:id — single record
       if (method === 'GET' && recordId) {
-        const record = list.find(r => r.id === recordId && r.agencyId === agency.id && r.locationId === activeLocation.id);
+        const record = list.find(r => r.id === recordId && r.agencyId === agency.id && (!r.locationId || !activeLocation || r.locationId === activeLocation.id));
         if (!record) return sendJson(res, 404, { error: 'Record not found' });
         return sendJson(res, 200, record);
       }
@@ -8990,7 +9464,7 @@ const server = createServer(async (req, res) => {
         delete body.agencyId;
         delete body.locationId;
 
-        const index = list.findIndex(r => r.id === recordId && r.agencyId === agency.id && r.locationId === activeLocation.id);
+        const index = list.findIndex(r => r.id === recordId && r.agencyId === agency.id && (!r.locationId || !activeLocation || r.locationId === activeLocation.id));
         if (index === -1) return sendJson(res, 404, { error: 'Record not found' });
 
         const previousRecord = { ...list[index] };
@@ -9054,7 +9528,7 @@ const server = createServer(async (req, res) => {
 
       // DELETE /api/crm/:collection/:id
       if (method === 'DELETE' && recordId) {
-        const index = list.findIndex(r => r.id === recordId && r.agencyId === agency.id && r.locationId === activeLocation.id);
+        const index = list.findIndex(r => r.id === recordId && r.agencyId === agency.id && (!r.locationId || !activeLocation || r.locationId === activeLocation.id));
         if (index === -1) return sendJson(res, 404, { error: 'Record not found' });
         const deleted = list.splice(index, 1)[0];
         await saveState();

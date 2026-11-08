@@ -227,6 +227,7 @@ export type Action =
   | { type: 'notifications/clearRead' }
   | { type: 'notifications/read'; id: string }
   | { type: 'notifications/readAll' }
+  | { type: 'workspace/clean' }
   | { type: 'workspace/reset' };
 
 function pruneContacts(state: WorkspaceState, ids: Set<string>): WorkspaceState {
@@ -1283,7 +1284,17 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
     case 'snapshot/delete':
       return { ...state, snapshots: state.snapshots.filter((s) => s.id !== action.id) };
 
+    case 'workspace/clean':
+      try {
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.setItem('operza_clean_workspace', 'true');
+      } catch {}
+      return createEmptyWorkspaceState();
+
     case 'workspace/reset':
+      try {
+        localStorage.removeItem('operza_clean_workspace');
+      } catch {}
       return seed;
 
     default:
@@ -1952,13 +1963,72 @@ export function reducer(state: WorkspaceState, action: Action): WorkspaceState {
   return { ...next, auditLog: [entry, ...next.auditLog].slice(0, 250) };
 }
 
+export function createEmptyWorkspaceState(): WorkspaceState {
+  return {
+    ...seed,
+    contacts: [],
+    opportunities: [],
+    pipelines: [
+      {
+        id: 'pipe-lead',
+        name: 'Lead Pipeline',
+        stages: [
+          { id: 's1', name: 'New Lead', color: '#64748b' },
+          { id: 's2', name: 'Contacted', color: '#3b82f6' },
+          { id: 's3', name: 'Demo Booked', color: '#8b5cf6' },
+          { id: 's4', name: 'Proposal Sent', color: '#f59e0b' },
+          { id: 's5', name: 'Won', color: '#10b981' },
+          { id: 's6', name: 'Lost', color: '#ef4444' },
+        ],
+      },
+    ],
+    conversations: [],
+    tasks: [],
+    appointments: [],
+    calendars: [
+      {
+        id: 'cal-discovery',
+        name: 'Discovery & Strategy Session',
+        color: '#6366f1',
+        availability: [
+          { weekday: 1, start: '09:00', end: '17:00' },
+          { weekday: 2, start: '09:00', end: '17:00' },
+          { weekday: 3, start: '09:00', end: '17:00' },
+          { weekday: 4, start: '09:00', end: '17:00' },
+          { weekday: 5, start: '09:00', end: '17:00' },
+        ],
+        roundRobin: true,
+      },
+    ],
+    sites: [],
+    workflows: [],
+    workflowRuns: [],
+    campaigns: [],
+    posts: [],
+    snippets: [],
+    invoices: [],
+    products: [],
+    paymentLinks: [],
+    forms: [],
+    blogs: [],
+    qrCodes: [],
+    media: [],
+    notifications: [],
+    auditLog: [],
+    savedReports: [],
+  };
+}
+
 function loadInitial(): WorkspaceState {
   try {
+    const isClean = localStorage.getItem('operza_clean_workspace') === 'true';
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return seed;
+    if (!raw) {
+      return isClean ? createEmptyWorkspaceState() : seed;
+    }
     const parsed = JSON.parse(raw) as Partial<WorkspaceState>;
-    // Merge over the seed so a workspace saved by an older build still gets new collections.
-    return parsed.contacts ? { ...seed, ...parsed } : seed;
+    const base = isClean ? createEmptyWorkspaceState() : seed;
+    return { ...base, ...parsed };
   } catch {
     return seed;
   }

@@ -53,8 +53,24 @@ export const api = {
       request('/api/auth/signup', { method: 'POST', body: JSON.stringify(data) }),
     login: (data: { email: string; password: string }) =>
       request('/api/auth/login', { method: 'POST', body: JSON.stringify(data) }),
+    google: (data: { email: string; name?: string; avatar?: string; credential?: string }) =>
+      request('/api/auth/google', { method: 'POST', body: JSON.stringify(data) }),
+    sendMagicLink: (email: string) =>
+      request<{ success: boolean; message: string; devCode?: string }>('/api/auth/magic-link', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      }),
+    verifyOtp: (data: { email: string; code: string; name?: string }) =>
+      request('/api/auth/verify-otp', { method: 'POST', body: JSON.stringify(data) }),
     session: () => request('/api/auth/session'),
     logout: () => request('/api/auth/logout', { method: 'POST' }),
+  },
+  workspace: {
+    reset: (mode: 'clean' | 'demo' = 'clean') =>
+      request<{ success: boolean; mode: string; message: string }>('/api/workspace/reset', {
+        method: 'POST',
+        body: JSON.stringify({ mode }),
+      }),
   },
   crm: {
     list: <T = any>(collection: string) => request<{ data: T[]; total?: number }>(`/api/crm/${collection}`),
@@ -229,6 +245,32 @@ export const api = {
       }),
     getPublic: (slugOrId: string, pageSlug?: string) =>
       request(`/api/websites/public/${encodeURIComponent(slugOrId)}${pageSlug ? `?pageSlug=${encodeURIComponent(pageSlug)}` : ''}`),
+    verifyDns: (id: string, domain: string) =>
+      request<{
+        domain: string;
+        siteId: string;
+        isConfigured: boolean;
+        sslStatus: string;
+        records: {
+          a: { expected: string; found: string[]; valid: boolean };
+          cname: { expected: string; found: string[]; valid: boolean };
+          txt: { expected: string; found: string[]; valid: boolean };
+        };
+        instructions: { typeA: string; typeCname: string; typeTxt: string };
+        message: string;
+      }>(`/api/websites/${id}/verify-dns`, {
+        method: 'POST',
+        body: JSON.stringify({ domain }),
+      }),
+    exportPack: (id: string) =>
+      request<{
+        success: boolean;
+        siteName: string;
+        siteDomain: string;
+        pageCount: number;
+        pages: Array<{ fileName: string; content: string }>;
+        instructions: string;
+      }>(`/api/websites/${id}/export-pack`),
     submitInquiry: (
       slugOrId: string,
       data: {
@@ -353,6 +395,11 @@ export const api = {
       request<{ success: boolean; dtmfLog: any[] }>(`/api/telephony/call/${id}/dtmf`, {
         method: 'POST',
         body: JSON.stringify({ digit }),
+      }),
+    sendSms: (data: { to: string; message: string; contactId?: string }) =>
+      request<{ success: boolean; messageId?: string }>('/api/telephony/sms/send', {
+        method: 'POST',
+        body: JSON.stringify(data),
       }),
   },
   coupons: {

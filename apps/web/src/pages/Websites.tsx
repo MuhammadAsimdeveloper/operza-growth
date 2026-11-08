@@ -163,6 +163,7 @@ export default function Websites() {
   const [maintenanceSite, setMaintenanceSite] = useState<Site | null>(null);
   const [symbolsSite, setSymbolsSite] = useState<Site | null>(null);
   const [publishSite, setPublishSite] = useState<Site | null>(null);
+  const [newlyCreatedSite, setNewlyCreatedSite] = useState<Site | null>(null);
 
   useEffect(() => {
     api.websites.list().then((res) => {
@@ -295,6 +296,98 @@ export default function Websites() {
         <h2>Production Web Properties &amp; Client Portals</h2>
         <p>Deploy responsive websites, manage custom domains, maintain global reusable symbols, and track visual block revisions.</p>
       </section>
+
+      {newlyCreatedSite && (
+        <div
+          style={{
+            margin: '0 0 20px',
+            padding: '16px 20px',
+            borderRadius: 12,
+            background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.12), rgba(99, 102, 241, 0.08))',
+            border: '1px solid rgba(16, 185, 129, 0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 14,
+            boxShadow: '0 4px 18px rgba(16, 185, 129, 0.1)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: '50%',
+                background: '#10b981',
+                color: '#fff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxShadow: '0 2px 10px rgba(16, 185, 129, 0.4)',
+                flexShrink: 0,
+              }}
+            >
+              <Icon name="check" size={20} />
+            </div>
+            <div>
+              <div style={{ fontWeight: 750, fontSize: 15, color: 'var(--text)' }}>
+                Website &quot;{newlyCreatedSite.name}&quot; is live &amp; deployed!
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-2)', marginTop: 2 }}>
+                Hosted at <code style={{ color: 'var(--accent)', fontWeight: 650 }}>/site/{siteSlug(newlyCreatedSite)}</code> ({newlyCreatedSite.pages.length} Pages with Global Header &amp; Footer symbols)
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <a
+              href={`/site/${siteSlug(newlyCreatedSite)}`}
+              target="_blank"
+              rel="noreferrer"
+              className="btn btn--primary"
+              style={{
+                background: '#10b981',
+                borderColor: '#10b981',
+                color: '#fff',
+                fontWeight: 650,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                textDecoration: 'none',
+              }}
+            >
+              <Icon name="external-link" size={14} /> Open Live Website ↗
+            </a>
+            {newlyCreatedSite.pages[0] && (
+              <button
+                type="button"
+                className="btn btn--secondary"
+                onClick={() => setBuilderTarget({ site: newlyCreatedSite, page: newlyCreatedSite.pages[0] })}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <Icon name="edit" size={14} /> Visual Page Builder
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn btn--secondary"
+              onClick={() => setPublishSite(newlyCreatedSite)}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <Icon name="globe" size={14} /> Publish &amp; Domains
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={() => setNewlyCreatedSite(null)}
+              aria-label="Dismiss banner"
+              title="Dismiss"
+            >
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+        </div>
+      )}
 
       <section className="atlas-kpis" aria-label="Website metrics">
         <article className="operza-kpi atlas-kpi">
@@ -552,9 +645,35 @@ export default function Websites() {
           wide
           onClose={() => setPreview(null)}
           footer={
-            <button className="btn btn--primary" onClick={() => setPreview(null)}>
-              Done
-            </button>
+            <div className="row row--between" style={{ width: '100%', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <a
+                  href={`/site/${siteSlug(previewSite)}${previewPage.path === '/' ? '' : previewPage.path}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn btn--secondary"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none', fontWeight: 650 }}
+                >
+                  <Icon name="external-link" size={14} /> Open Live Page ↗
+                </a>
+                <button
+                  type="button"
+                  className="btn btn--secondary"
+                  onClick={() => {
+                    const s = previewSite;
+                    const p = previewPage;
+                    setPreview(null);
+                    setBuilderTarget({ site: s, page: p });
+                  }}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  <Icon name="edit" size={14} /> Edit in Visual Builder
+                </button>
+              </div>
+              <button className="btn btn--primary" onClick={() => setPreview(null)}>
+                Done
+              </button>
+            </div>
           }
         >
           <div className="row row--between" style={{ marginBottom: 12, gap: 10, flexWrap: 'wrap' }}>
@@ -570,8 +689,15 @@ export default function Websites() {
               ))}
             </div>
             <span className="hint" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>
-              {previewSite.published ? '' : 'Draft · '}agency.test/{siteSlug(previewSite)}
-              {previewPage.path === '/' ? '' : previewPage.path}
+              {previewSite.published ? 'Live Edge Host: ' : 'Draft · '}
+              <a
+                href={`/site/${siteSlug(previewSite)}${previewPage.path === '/' ? '' : previewPage.path}`}
+                target="_blank"
+                rel="noreferrer"
+                style={{ color: 'var(--accent)', textDecoration: 'none', fontWeight: 600 }}
+              >
+                /site/{siteSlug(previewSite)}{previewPage.path === '/' ? '' : previewPage.path} ↗
+              </a>
             </span>
           </div>
           <PagePreview site={previewSite} page={previewPage} />
@@ -593,7 +719,18 @@ export default function Websites() {
 
       {addingSite && <AddPageModal site={addingSite} onClose={() => setAddingSiteId(null)} />}
 
-      {newSiteOpen && <NewWebsiteModal onClose={() => setNewSiteOpen(false)} />}
+      {newSiteOpen && (
+        <NewWebsiteModal
+          onClose={() => setNewSiteOpen(false)}
+          onCreated={(newSite) => {
+            setNewSiteOpen(false);
+            setNewlyCreatedSite(newSite);
+            if (newSite.pages && newSite.pages.length > 0) {
+              setPreview({ siteId: newSite.id, pageId: newSite.pages[0].id });
+            }
+          }}
+        />
+      )}
 
       {publishSite && (
         <PublishDeploymentModal
@@ -773,8 +910,7 @@ function PageEditor({ site, page, onClose }: { site: Site; page: SitePage; onClo
             </div>
           </div>
           <div className="hint">
-            Visitors reach this page at agency.test/{siteSlug(site)}
-            {draft.path === '/' ? '' : draft.path}.
+            Live route: <code>/site/{siteSlug(site)}{draft.path === '/' ? '' : draft.path}</code>
           </div>
         </div>
         <div className="builder-box">
@@ -866,7 +1002,7 @@ function AddPageModal({ site, onClose }: { site: Site; onClose: () => void }) {
   );
 }
 
-function NewWebsiteModal({ onClose }: { onClose: () => void }) {
+function NewWebsiteModal({ onClose, onCreated }: { onClose: () => void; onCreated?: (site: Site) => void }) {
   const { dispatch } = useStore();
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('agency-growth');
   const activeTemplate = WEBSITE_TEMPLATES.find((t) => t.id === selectedTemplateId) || WEBSITE_TEMPLATES[0];
@@ -876,6 +1012,7 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
   const [hasManuallyEditedName, setHasManuallyEditedName] = useState(false);
   const [theme, setTheme] = useState<PageTheme>('gradient');
   const [loading, setLoading] = useState(false);
+  const [provisionProgress, setProvisionProgress] = useState<string>('');
 
   // Template auto-naming map so selecting any template automatically fills the business name and domain
   const TEMPLATE_PRESETS: Record<string, { name: string; slug: string }> = {
@@ -891,14 +1028,14 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
   const handleSelectTemplate = (tmpl: typeof activeTemplate) => {
     setSelectedTemplateId(tmpl.id);
     const preset = TEMPLATE_PRESETS[tmpl.id] || { name: tmpl.name, slug: tmpl.id };
-    const isDefaultOrEmpty =
-      !name.trim() ||
-      Object.values(TEMPLATE_PRESETS).some((p) => p.name === name) ||
-      WEBSITE_TEMPLATES.some((t) => t.name === name);
+    const matchesAnyPreset = Object.values(TEMPLATE_PRESETS).some(
+      (p) => p.name.trim().toLowerCase() === name.trim().toLowerCase()
+    );
 
-    if (!hasManuallyEditedName || isDefaultOrEmpty) {
+    if (!name.trim() || !hasManuallyEditedName || matchesAnyPreset) {
       setName(preset.name);
       setDomain(preset.slug);
+      setHasManuallyEditedName(false);
     }
     if (tmpl.theme) {
       setTheme(tmpl.theme);
@@ -908,9 +1045,16 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
   const handleCreate = async () => {
     if (loading) return;
     setLoading(true);
+    setProvisionProgress(`Step 1/3: Compiling ${activeTemplate.pages.length} CMS routes & blocks...`);
+    await new Promise((r) => setTimeout(r, 160));
+
     const siteId = uid('ws');
-    const effectiveName = name.trim() || activeTemplate.name || 'Operza Web Property';
-    const slug = (domain.trim() || effectiveName).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const preset = TEMPLATE_PRESETS[activeTemplate.id] || { name: activeTemplate.name, slug: activeTemplate.id };
+    const effectiveName = name.trim() || preset.name || activeTemplate.name || 'Operza Web Property';
+    const slug = (domain.trim() || preset.slug || effectiveName).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
+    setProvisionProgress('Step 2/3: Binding global navigation & CTA symbols...');
+    await new Promise((r) => setTimeout(r, 160));
 
     const pages: SitePage[] = activeTemplate.pages.map((p) => ({
       id: uid('wp'),
@@ -948,6 +1092,7 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
       },
     };
 
+    setProvisionProgress('Step 3/3: Deploying edge routes & saving...');
     dispatch({ type: 'site/duplicate', copy: newSite });
 
     try {
@@ -956,7 +1101,11 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
       console.error('Failed to create website on backend:', err);
     }
     setLoading(false);
-    onClose();
+    if (onCreated) {
+      onCreated(newSite);
+    } else {
+      onClose();
+    }
   };
 
   return (
@@ -975,20 +1124,25 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
             disabled={loading}
             onClick={handleCreate}
             style={{
-              cursor: loading ? 'not-allowed' : 'pointer',
+              cursor: loading ? 'wait' : 'pointer',
               background: '#4f46e5',
               borderColor: '#4f46e5',
               color: '#ffffff',
               fontWeight: 700,
-              padding: '9px 20px',
+              padding: '10px 22px',
               boxShadow: '0 4px 14px rgba(79, 70, 229, 0.35)',
               display: 'inline-flex',
               alignItems: 'center',
               gap: 8,
+              minWidth: 260,
+              justifyContent: 'center',
             }}
           >
             {loading ? (
-              <>Provisioning Site ({activeTemplate.pages.length} Pages)...</>
+              <>
+                <span className="spinner" style={{ width: 14, height: 14, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
+                {provisionProgress || `Provisioning Site (${activeTemplate.pages.length} Pages)...`}
+              </>
             ) : (
               <>
                 <Icon name="zap" size={14} /> Provision Website ({activeTemplate.pages.length} Pages) →
@@ -1002,7 +1156,7 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
         <div className="grid grid--2">
           <div className="field">
             <label htmlFor="new-site-name">
-              Website Brand / Business Name * {!name.trim() && <span className="hint" style={{ fontWeight: 400, fontSize: 11 }}>(Defaults to &quot;{activeTemplate.name}&quot;)</span>}
+              Website Brand / Business Name * {!name.trim() && <span className="hint" style={{ fontWeight: 500, fontSize: 11, color: '#4f46e5' }}>(Will default to &quot;{TEMPLATE_PRESETS[activeTemplate.id]?.name || activeTemplate.name}&quot;)</span>}
             </label>
             <input
               id="new-site-name"
@@ -1180,7 +1334,8 @@ function PublishDeploymentModal({
   const [copied, setCopied] = useState(false);
   const [customDomain, setCustomDomain] = useState(site.domain && site.domain.includes('.') ? site.domain : '');
   const [verifyingDns, setVerifyingDns] = useState(false);
-  const [dnsVerified, setDnsVerified] = useState(true);
+  const [dnsVerified, setDnsVerified] = useState(false);
+  const [dnsCheckResult, setDnsCheckResult] = useState<any>(null);
   const [exportNotice, setExportNotice] = useState(false);
 
   const slug = siteSlug(site);
@@ -1191,11 +1346,11 @@ function PublishDeploymentModal({
   const handlePublishToCdn = async () => {
     setPublishing(true);
     setPublishStep(1); // Minification & tree shaking
-    await new Promise((r) => setTimeout(r, 600));
+    await new Promise((r) => setTimeout(r, 400));
     setPublishStep(2); // Generating sitemap.xml & robots.txt
-    await new Promise((r) => setTimeout(r, 600));
+    await new Promise((r) => setTimeout(r, 400));
     setPublishStep(3); // Edge distribution across 18 nodes
-    await new Promise((r) => setTimeout(r, 700));
+    await new Promise((r) => setTimeout(r, 400));
 
     dispatch({ type: 'site/update', id: site.id, patch: { published: true } });
     setIsPublished(true);
@@ -1207,17 +1362,47 @@ function PublishDeploymentModal({
     setPublishing(false);
   };
 
-  const handleExportStaticHtml = () => {
-    const htmlContent = generateStaticHtmlExport(site);
-    const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${slug}-static-website-export.html`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+  const handleExportStaticHtml = async () => {
+    try {
+      const pack = await api.websites.exportPack(site.id);
+      if (pack?.pages && pack.pages.length > 0) {
+        pack.pages.forEach((p, idx) => {
+          setTimeout(() => {
+            const blob = new Blob([p.content], { type: 'text/html;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `${slug}-${p.fileName}`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+          }, idx * 150);
+        });
+      } else {
+        const htmlContent = generateStaticHtmlExport(site);
+        const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${slug}-static-website-export.html`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      const htmlContent = generateStaticHtmlExport(site);
+      const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${slug}-static-website-export.html`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
     setExportNotice(true);
     setTimeout(() => setExportNotice(false), 5000);
   };
@@ -1229,18 +1414,25 @@ function PublishDeploymentModal({
   };
 
   const handleSaveCustomDomain = async () => {
+    if (!customDomain.trim()) return;
     setVerifyingDns(true);
+    setDnsCheckResult(null);
     const domainClean = customDomain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
     dispatch({ type: 'site/update', id: site.id, patch: { domain: domainClean } });
     try {
       await api.websites.update(site.id, { domain: domainClean });
-    } catch {
-      // fallback
-    }
-    setTimeout(() => {
+      const res = await api.websites.verifyDns(site.id, domainClean);
+      setDnsCheckResult(res);
+      setDnsVerified(Boolean(res?.isConfigured));
+    } catch (err: any) {
+      setDnsCheckResult({
+        isConfigured: false,
+        message: err.message || 'DNS resolution request failed.'
+      });
+      setDnsVerified(false);
+    } finally {
       setVerifyingDns(false);
-      setDnsVerified(true);
-    }, 700);
+    }
   };
 
   return (
@@ -1387,7 +1579,7 @@ function PublishDeploymentModal({
         {/* Live Subdomain Access */}
         <div className="card" style={{ padding: 18, background: 'var(--surface-2)' }}>
           <strong style={{ fontSize: 13.5, marginBottom: 8, display: 'block' }}>
-            Operza Edge Subdomain (Instant Live URL)
+            Operza Edge Subdomain (Wildcard DNS Target)
           </strong>
           <div className="row" style={{ gap: 8 }}>
             <input
@@ -1404,17 +1596,18 @@ function PublishDeploymentModal({
               <Icon name="copy" size={13} /> {copied ? 'Copied!' : 'Copy URL'}
             </button>
             <a
-              href={liveSubdomainUrl}
+              href={localHostedUrl}
               target="_blank"
               rel="noreferrer"
               className="btn btn--secondary"
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, textDecoration: 'none' }}
+              title="Open working hosted website instance"
             >
-              <Icon name="eye" size={13} /> Open Live Site ↗
+              <Icon name="eye" size={13} /> Open Live Hosted Route ↗
             </a>
           </div>
           <div className="hint" style={{ marginTop: 6, fontSize: 11.5 }}>
-            Every site automatically gets a high-performance, globally cached edge subdomain at <code>.operza.site</code>.
+            Production Wildcard Host: <code>{slug}.operza.site</code>. On local development or staging, the working live route is <code>{localHostedUrl}</code>.
           </div>
         </div>
 
@@ -1450,6 +1643,29 @@ function PublishDeploymentModal({
               {verifyingDns ? 'Querying DNS Servers...' : 'Verify DNS & Provision SSL'}
             </button>
           </div>
+
+          {dnsCheckResult && (
+            <div
+              style={{
+                marginBottom: 12,
+                padding: '10px 14px',
+                borderRadius: 8,
+                background: dnsCheckResult.isConfigured ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                border: dnsCheckResult.isConfigured ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
+                fontSize: 12.5,
+              }}
+            >
+              <div style={{ fontWeight: 650, color: dnsCheckResult.isConfigured ? '#059669' : '#dc2626', marginBottom: 4 }}>
+                {dnsCheckResult.isConfigured ? '✓ Real DNS Resolution Confirmed' : '⚠ Live DNS Check: Pending Propagation'}
+              </div>
+              <div style={{ color: 'var(--text-2)' }}>{dnsCheckResult.message}</div>
+              {dnsCheckResult.records && (
+                <div style={{ marginTop: 6, fontSize: 11.5, fontFamily: 'var(--font-mono)' }}>
+                  A Record: {dnsCheckResult.records.a?.found?.join(', ') || 'none'} | CNAME: {dnsCheckResult.records.cname?.found?.join(', ') || 'none'}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* DNS Configuration Table */}
           <div style={{ border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden', background: 'var(--surface)' }}>
@@ -1544,7 +1760,8 @@ function SiteMaintenanceModal({ site, onClose }: { site: Site; onClose: () => vo
 
   // Custom domain fields
   const [domain, setDomain] = useState(site.domain || '');
-  const [dnsVerified, setDnsVerified] = useState(true);
+  const [dnsVerified, setDnsVerified] = useState(Boolean(site.domain && site.domain.includes('.')));
+  const [dnsCheckResult, setDnsCheckResult] = useState<any>(null);
   const [verifyingDns, setVerifyingDns] = useState(false);
 
   // Injected scripts
@@ -1559,12 +1776,24 @@ function SiteMaintenanceModal({ site, onClose }: { site: Site; onClose: () => vo
   const [faviconUrl, setFaviconUrl] = useState(site.faviconUrl || '');
   const [saving, setSaving] = useState(false);
 
-  const handleVerifyDns = () => {
+  const handleVerifyDns = async () => {
+    if (!domain.trim()) return;
     setVerifyingDns(true);
-    setTimeout(() => {
+    setDnsCheckResult(null);
+    const domainClean = domain.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    try {
+      const res = await api.websites.verifyDns(site.id, domainClean);
+      setDnsCheckResult(res);
+      setDnsVerified(Boolean(res?.isConfigured));
+    } catch (err: any) {
+      setDnsCheckResult({
+        isConfigured: false,
+        message: err.message || 'DNS resolution check failed.'
+      });
+      setDnsVerified(false);
+    } finally {
       setVerifyingDns(false);
-      setDnsVerified(true);
-    }, 800);
+    }
   };
 
   const handleSave = async () => {
@@ -1744,6 +1973,28 @@ function SiteMaintenanceModal({ site, onClose }: { site: Site; onClose: () => vo
             </div>
           </div>
 
+          {dnsCheckResult && (
+            <div
+              style={{
+                padding: '10px 14px',
+                borderRadius: 8,
+                background: dnsCheckResult.isConfigured ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                border: dnsCheckResult.isConfigured ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
+                fontSize: 12.5,
+              }}
+            >
+              <div style={{ fontWeight: 650, color: dnsCheckResult.isConfigured ? '#059669' : '#dc2626', marginBottom: 4 }}>
+                {dnsCheckResult.isConfigured ? '✓ Real DNS Resolution Confirmed' : '⚠ Real DNS Check: Pending Propagation'}
+              </div>
+              <div style={{ color: 'var(--text-2)' }}>{dnsCheckResult.message}</div>
+              {dnsCheckResult.records && (
+                <div style={{ marginTop: 6, fontSize: 11.5, fontFamily: 'var(--font-mono)' }}>
+                  A: {dnsCheckResult.records.a?.found?.join(', ') || 'none'} | CNAME: {dnsCheckResult.records.cname?.found?.join(', ') || 'none'}
+                </div>
+              )}
+            </div>
+          )}
+
           <div style={{ border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden' }}>
             <div style={{ padding: '10px 14px', background: 'var(--surface-2)', borderBottom: '1px solid var(--line)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <strong style={{ fontSize: 12.5 }}>Required DNS Records</strong>
@@ -1765,10 +2016,12 @@ function SiteMaintenanceModal({ site, onClose }: { site: Site; onClose: () => vo
                 <tr>
                   <td><code>CNAME</code></td>
                   <td><code>www</code> (or subdomain)</td>
-                  <td><code>cname.operza.io</code></td>
+                  <td><code>cname.operza.net</code></td>
                   <td>Auto / 3600</td>
                   <td className="cell-right">
-                    <span style={{ color: 'var(--green)', fontSize: 12, fontWeight: 600 }}>● Active</span>
+                    <span style={{ color: dnsVerified ? 'var(--green)' : 'var(--amber)', fontSize: 12, fontWeight: 600 }}>
+                      {dnsVerified ? '● Active' : '○ Pending'}
+                    </span>
                   </td>
                 </tr>
                 <tr>
@@ -1777,7 +2030,9 @@ function SiteMaintenanceModal({ site, onClose }: { site: Site; onClose: () => vo
                   <td><code>76.76.21.21</code></td>
                   <td>Auto / 3600</td>
                   <td className="cell-right">
-                    <span style={{ color: 'var(--green)', fontSize: 12, fontWeight: 600 }}>● Active</span>
+                    <span style={{ color: dnsVerified ? 'var(--green)' : 'var(--amber)', fontSize: 12, fontWeight: 600 }}>
+                      {dnsVerified ? '● Active' : '○ Pending'}
+                    </span>
                   </td>
                 </tr>
               </tbody>
@@ -1874,7 +2129,7 @@ function SiteMaintenanceModal({ site, onClose }: { site: Site; onClose: () => vo
                 🌐
               </div>
               <div style={{ fontSize: 12, color: '#202124' }}>
-                https://{domain || `${siteSlug(site)}.operza.io`}
+                https://{domain || `${siteSlug(site)}.com`}
               </div>
             </div>
             <div style={{ fontSize: 18, color: '#1a0dab', fontWeight: 500, lineHeight: 1.3, marginBottom: 4 }}>

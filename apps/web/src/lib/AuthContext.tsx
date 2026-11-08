@@ -37,6 +37,9 @@ interface AuthState {
 
 interface AuthActions {
   login: (email: string, password: string) => Promise<void>;
+  loginWithGoogle: (data: { email: string; name?: string; avatar?: string; credential?: string }) => Promise<void>;
+  sendMagicLink: (email: string) => Promise<{ success: boolean; message: string; devCode?: string }>;
+  verifyOtp: (data: { email: string; code: string; name?: string }) => Promise<void>;
   signup: (data: { name: string; email: string; password: string; agencyName?: string }) => Promise<void>;
   logout: () => Promise<void>;
   switchLocation: (locationId: string) => void;
@@ -107,6 +110,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const loginWithGoogle = useCallback(async (payload: { email: string; name?: string; avatar?: string; credential?: string }) => {
+    const data = await api.auth.google(payload);
+    const parsed = parseSession(data);
+    setState({
+      ...parsed,
+      isAuthenticated: true,
+      isLoading: false,
+    });
+  }, []);
+
+  const sendMagicLink = useCallback(async (email: string) => {
+    return api.auth.sendMagicLink(email);
+  }, []);
+
+  const verifyOtp = useCallback(async (payload: { email: string; code: string; name?: string }) => {
+    const data = await api.auth.verifyOtp(payload);
+    const parsed = parseSession(data);
+    setState({
+      ...parsed,
+      isAuthenticated: true,
+      isLoading: false,
+    });
+  }, []);
+
   const signup = useCallback(async (data: { name: string; email: string; password: string; agencyName?: string }) => {
     const res = await api.auth.signup(data);
     const parsed = parseSession(res);
@@ -147,11 +174,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     () => ({
       ...state,
       login,
+      loginWithGoogle,
+      sendMagicLink,
+      verifyOtp,
       signup,
       logout,
       switchLocation,
     }),
-    [state, login, signup, logout, switchLocation],
+    [state, login, loginWithGoogle, sendMagicLink, verifyOtp, signup, logout, switchLocation],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

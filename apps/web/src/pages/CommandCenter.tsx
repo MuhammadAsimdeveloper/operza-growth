@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Badge } from '../components/ui';
 import { useStore } from '../lib/store';
@@ -262,7 +263,7 @@ export default function CommandCenter() {
       <section className="atlas-hero">
         <div className="atlas-eyebrow">ATLAS DESKTOP MISSION CONTROL · DISTRIBUTED ENGINE TELEMETRY</div>
         <h1 className="atlas-hero__title">Unified Operations Command Center</h1>
-        <p>Real-time autonomous AI workforce monitoring, transactional outbox throughput, carrier trunk health, and multi-tenant security telemetry.</p>
+        <p>Real-time executive KPI metrics, autonomous AI workforce monitoring, transactional outbox throughput, carrier trunk health, and multi-tenant security telemetry.</p>
       </section>
 
       {actionNotice && (
@@ -270,6 +271,94 @@ export default function CommandCenter() {
           <strong>Action Completed:</strong> {actionNotice}
         </div>
       )}
+
+      {/* Executive Real-Time Business Pulse */}
+      <section className="atlas-kpis" aria-label="Executive Business Metrics" style={{ marginBottom: 20 }}>
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Total Pipeline Value</span>
+            <span className="atlas-status atlas-status--healthy">CRM Deals</span>
+          </div>
+          <div className="atlas-kpi__value tabular">${num(state.opportunities.reduce((s, o) => s + (o.value || 0), 0))}</div>
+          <div className="atlas-kpi__note">{state.opportunities.length} active opportunities</div>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Audience &amp; CRM</span>
+            <span className="atlas-status atlas-status--healthy">Contacts</span>
+          </div>
+          <div className="atlas-kpi__value tabular">{num(state.contacts.length)} Leads</div>
+          <div className="atlas-kpi__note">Inbound omnichannel ingress</div>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Automation Workflows</span>
+            <span className="atlas-status atlas-status--healthy">n8n Engine</span>
+          </div>
+          <div className="atlas-kpi__value tabular">{num(state.workflows.filter(w => w.status === 'published').length)} Live</div>
+          <div className="atlas-kpi__note">{state.workflows.length} total automation graphs</div>
+        </article>
+
+        <article className="operza-kpi atlas-kpi">
+          <div className="atlas-kpi__meta">
+            <span className="atlas-kpi__label">Hosted Sites &amp; Funnels</span>
+            <span className="atlas-status atlas-status--healthy">Edge CDN</span>
+          </div>
+          <div className="atlas-kpi__value tabular">{num(state.sites.filter(s => s.kind === 'website').length)} Sites</div>
+          <div className="atlas-kpi__note">Live DNS verified routes</div>
+        </article>
+      </section>
+
+      {/* Executive Quick-Launch Command Bar */}
+      <section className="card-premium" style={{ padding: '16px 20px', marginBottom: 20, background: 'var(--surface-2)' }}>
+        <div className="row row--between row--wrap" style={{ gap: 12, alignItems: 'center' }}>
+          <div>
+            <strong style={{ fontSize: 13.5, display: 'block', color: 'var(--text)' }}>Executive Quick Launchpad</strong>
+            <span className="hint" style={{ fontSize: 12 }}>Universal shortcuts to primary operating pillars and onboarding guidance</span>
+          </div>
+          <div className="row row--wrap" style={{ gap: 8 }}>
+            <button
+              type="button"
+              className="btn btn--sm btn--primary"
+              onClick={() => window.dispatchEvent(new CustomEvent('operza:open-tour'))}
+              style={{ background: '#4f46e5', fontWeight: 650, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <Icon name="play" size={13} /> Take Product Tour
+            </button>
+            <button
+              type="button"
+              className="btn btn--sm btn--secondary"
+              onClick={() => window.dispatchEvent(new CustomEvent('operza:open-command-palette'))}
+              style={{ fontWeight: 650, display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <Icon name="terminal" size={13} /> Command Palette (Ctrl+K)
+            </button>
+            <Link
+              to="/contacts"
+              className="btn btn--sm btn--secondary"
+              style={{ fontWeight: 650, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <Icon name="users" size={13} /> CRM Contacts
+            </Link>
+            <Link
+              to="/workflows"
+              className="btn btn--sm btn--secondary"
+              style={{ fontWeight: 650, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <Icon name="zap" size={13} /> Workflows
+            </Link>
+            <Link
+              to="/phone"
+              className="btn btn--sm btn--secondary"
+              style={{ fontWeight: 650, textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            >
+              <Icon name="phone" size={13} /> Softphone
+            </Link>
+          </div>
+        </div>
+      </section>
 
       {/* KPI Telemetry Grid */}
       <section className="atlas-kpis" aria-label="Command Center Key Metrics">

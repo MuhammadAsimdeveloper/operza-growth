@@ -1,6 +1,8 @@
 import { useAuth } from '../lib/AuthContext';
 import { api } from '../lib/api';
 import { CopilotHub } from './CopilotHub';
+import { OnboardingTour } from './OnboardingTour';
+import { CommandPalette } from './CommandPalette';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from './Icon';
@@ -1032,6 +1034,28 @@ function UserMenu() {
           )}
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              style={{ width: '100%', justifyContent: 'flex-start', fontSize: 12, color: 'var(--accent, #4f46e5)', fontWeight: 600 }}
+              onClick={() => {
+                setOpen(false);
+                window.dispatchEvent(new CustomEvent('operza:open-tour'));
+              }}
+            >
+              <Icon name="play" size={13} /> Take Product Tour
+            </button>
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              style={{ width: '100%', justifyContent: 'flex-start', fontSize: 12 }}
+              onClick={() => {
+                setOpen(false);
+                window.dispatchEvent(new CustomEvent('operza:open-command-palette'));
+              }}
+            >
+              <Icon name="terminal" size={13} /> Command Palette (Ctrl+K)
+            </button>
             <NavLink
               to="/home"
               className="btn btn--ghost btn--sm"
@@ -1262,6 +1286,8 @@ export function AppShell({ children }: { children?: ReactNode }) {
         <CopilotHub />
       </div>
       <AppLauncherModal isOpen={appsLauncherOpen} onClose={() => setAppsLauncherOpen(false)} />
+      <OnboardingTour />
+      <CommandPalette />
     </div>
   );
 }

@@ -8,7 +8,7 @@ console.log('=====================================================');
 console.log('🚀 Starting Operza Unified Business OS & Automation');
 console.log('=====================================================');
 
-const api = spawn('node', ['apps/api/server.mjs'], {
+const api = spawn('node', ['--watch', 'apps/api/server.mjs'], {
   cwd: root,
   stdio: 'inherit',
   shell: true,

@@ -298,18 +298,58 @@ export default function Settings() {
               <div className="card">
                 <div className="card__head">
                   <div>
-                    <div className="card__title">Reset demo data</div>
-                    <div className="card__sub">Restore the original seed data set</div>
+                    <div className="card__title">Workspace Data & Demo Management</div>
+                    <div className="card__sub">Wipe workspace to zero records or load demonstration showcase data</div>
                   </div>
                 </div>
-                <div className="card__body row row--between row--wrap" style={{ gap: 12 }}>
-                  <p className="hint" style={{ maxWidth: 420 }}>
-                    All changes are stored in your browser&apos;s local storage. Resetting clears them and reloads the
-                    seeded workspace.
-                  </p>
-                  <button className="btn btn--danger" onClick={() => setResetting(true)}>
-                    <Icon name="refresh" size={15} /> Reset workspace
-                  </button>
+                <div className="card__body stack" style={{ gap: 14 }}>
+                  <div className="row row--between row--wrap" style={{ gap: 12, paddingBottom: 14, borderBottom: '1px solid var(--line)' }}>
+                    <div style={{ maxWidth: 440 }}>
+                      <strong style={{ fontSize: 13, color: 'var(--red)', display: 'block', marginBottom: 2 }}>Wipe Workspace (Clean Slate - 0 Data)</strong>
+                      <p className="hint" style={{ fontSize: 12, margin: 0 }}>
+                        Completely purges all contacts, deals, workflows, hosted sites, and messages from this account both locally and on the server. Starts you with a 100% pristine zero-data workspace.
+                      </p>
+                    </div>
+                    <button
+                      className="btn btn--danger"
+                      type="button"
+                      onClick={async () => {
+                        if (confirm('Are you sure you want to wipe all records and reset to a clean zero-data slate? This cannot be undone.')) {
+                          try {
+                            await api.workspace.reset('clean');
+                          } catch {}
+                          dispatch({ type: 'workspace/clean' });
+                          alert('Workspace wiped successfully! All collections are now at 0 records.');
+                        }
+                      }}
+                    >
+                      <Icon name="trash" size={14} /> Wipe All Data (Clean Slate)
+                    </button>
+                  </div>
+
+                  <div className="row row--between row--wrap" style={{ gap: 12 }}>
+                    <div style={{ maxWidth: 440 }}>
+                      <strong style={{ fontSize: 13, display: 'block', marginBottom: 2 }}>Load Demo Showcase Data</strong>
+                      <p className="hint" style={{ fontSize: 12, margin: 0 }}>
+                        Populates sample CRM pipelines, showcase contacts, and automation workflows for exploring features and testing integrations.
+                      </p>
+                    </div>
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={async () => {
+                        if (confirm('Load sample demonstration showcase data into your workspace?')) {
+                          try {
+                            await api.workspace.reset('demo');
+                          } catch {}
+                          dispatch({ type: 'workspace/reset' });
+                          alert('Demo showcase data loaded successfully!');
+                        }
+                      }}
+                    >
+                      <Icon name="refresh" size={14} /> Load Demo Showcase
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
