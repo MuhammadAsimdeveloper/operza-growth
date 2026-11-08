@@ -9062,13 +9062,14 @@ const server = createServer(async (req, res) => {
       if (method === 'POST' && !recordId) {
         const body = await readBody(req);
         // Security: Prevent client from injecting or overriding tenant context IDs
+        const assignedId = (typeof body.id === 'string' && body.id.trim()) ? body.id.trim() : randomUUID();
         delete body.id;
         delete body.agencyId;
         delete body.locationId;
 
         const newRecord = {
           ...body,
-          id: randomUUID(),
+          id: assignedId,
           agencyId: agency.id,
           locationId: activeLocation.id,
           createdAt: new Date().toISOString(),

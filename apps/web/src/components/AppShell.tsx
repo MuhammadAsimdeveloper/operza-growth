@@ -63,54 +63,42 @@ function Sidebar({
   const primaryItems: NavEntry[] = [
     { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
     { to: '/command-center', label: 'Command Center', icon: 'zap' },
-    { to: '/notifications', label: 'Notification Center', icon: 'bell', badge: unreadNotifications },
-    { to: '/conversations', label: 'Conversations & Inbox', icon: 'message', badge: unreadConversations },
-    { to: '/contacts', label: 'Contacts & CRM', icon: 'users' },
-    { to: '/workflows', label: 'Visual Workflows (n8n)', icon: 'zap' },
+    { to: '/conversations', label: 'Conversations & Inbox', icon: 'message', badge: unreadConversations > 0 ? unreadConversations : undefined },
+    { to: '/notifications', label: 'Notification Center', icon: 'bell', badge: unreadNotifications > 0 ? unreadNotifications : undefined },
     { to: '/apps', label: 'All Apps Directory', icon: 'grid', badge: '50+' },
   ];
 
-  // ─── Functional Pillar Accordions (50+ Tools Cleanly Categorized) ───
+  // ─── Functional Pillar Accordions (Organized Enterprise Suites) ───
   const pillars: PillarGroup[] = [
     {
       id: 'crm',
       label: 'CRM & Pipelines',
       icon: 'users',
       items: [
-        { to: '/phone', label: 'Phone System & Softphone', icon: 'phone' },
-        { to: '/calendars', label: 'Calendars & Scheduling', icon: 'calendar' },
-        { to: '/tasks', label: 'Tasks & Follow-ups', icon: 'task' },
+        { to: '/contacts', label: 'Contacts & Leads', icon: 'users' },
         { to: '/opportunities', label: 'Opportunities & Kanban', icon: 'kanban' },
+        { to: '/phone', label: 'Phone System & Softphone', icon: 'phone' },
+        { to: '/calendars', label: 'Calendars & Booking', icon: 'calendar' },
+        { to: '/tasks', label: 'Tasks & Follow-ups', icon: 'task' },
         { to: '/reputation', label: 'Reputation & Reviews', icon: 'star' },
         { to: '/smart-lists', label: 'Smart Lists & Segments', icon: 'sliders' },
       ],
     },
     {
       id: 'marketing',
-      label: 'Marketing & Outreach',
-      icon: 'megaphone',
-      items: [
-        { to: '/campaigns', label: 'Marketing Campaigns', icon: 'megaphone' },
-        { to: '/social', label: 'Social Media Planner', icon: 'share' },
-        { to: '/prospecting', label: 'B2B Prospecting & Scoring', icon: 'target' },
-        { to: '/templates', label: 'Email Templates', icon: 'mail' },
-        { to: '/links', label: 'Trigger Links', icon: 'link' },
-        { to: '/affiliates', label: 'Affiliates & Referrals', icon: 'users' },
-        { to: '/media', label: 'Media Asset Library', icon: 'image' },
-        { to: '/reporting', label: 'Reporting & Analytics', icon: 'chart' },
-      ],
-    },
-    {
-      id: 'sites',
-      label: 'Sites, Funnels & Portals',
+      label: 'Marketing & Sites',
       icon: 'globe',
       items: [
         { to: '/funnels', label: 'Sales Funnels', icon: 'funnel' },
         { to: '/websites', label: 'Websites Builder', icon: 'globe' },
+        { to: '/campaigns', label: 'Marketing Campaigns', icon: 'megaphone' },
+        { to: '/social', label: 'Social Media Planner', icon: 'share' },
+        { to: '/prospecting', label: 'B2B Prospecting & Scoring', icon: 'target' },
         { to: '/forms', label: 'Forms & Surveys', icon: 'clipboard' },
+        { to: '/templates', label: 'Email Templates', icon: 'mail' },
+        { to: '/media', label: 'Media Asset Library', icon: 'image' },
         { to: '/blogs', label: 'Blogs & Articles', icon: 'file' },
         { to: '/qr-codes', label: 'QR Code Engine', icon: 'qr' },
-        { to: '/portal', label: 'Client Portal Hub', icon: 'globe' },
       ],
     },
     {
@@ -118,23 +106,25 @@ function Sidebar({
       label: 'Automation & AI',
       icon: 'zap',
       items: [
-        { to: '/copilot-inbox', label: 'Copilot Proposals', icon: 'check-circle' },
-        { to: '/ai-trainer', label: 'AI Bot Training & RAG', icon: 'sparkles' },
+        { to: '/workflows', label: 'Visual Workflows (n8n)', icon: 'zap' },
+        { to: '/copilot-inbox', label: 'Copilot AI Proposals', icon: 'check-circle' },
+        { to: '/ai-trainer', label: 'AI Bot Training (RAG)', icon: 'sparkles' },
+        { to: '/links', label: 'Trigger Links & Hooks', icon: 'link' },
       ],
     },
     {
       id: 'commerce',
-      label: 'Commerce, Billing & Legal',
+      label: 'Commerce & Billing',
       icon: 'wallet',
       items: [
-        { to: '/store', label: 'Digital Store', icon: 'store' },
         { to: '/payments', label: 'Payments & Transactions', icon: 'wallet' },
-        { to: '/products', label: 'Products & Pricing', icon: 'tag' },
-        { to: '/payment-links', label: 'Payment Links', icon: 'link' },
-        { to: '/coupons', label: 'Coupons & Promos', icon: 'tag' },
-        { to: '/orders', label: 'Customer Orders', icon: 'clipboard' },
-        { to: '/subscriptions', label: 'Subscriptions & MRR', icon: 'repeat' },
+        { to: '/store', label: 'Digital Store & Products', icon: 'store' },
         { to: '/documents', label: 'Contracts & Agreements', icon: 'file' },
+        { to: '/subscriptions', label: 'Subscriptions & MRR', icon: 'repeat' },
+        { to: '/payment-links', label: 'Payment Links', icon: 'link' },
+        { to: '/orders', label: 'Customer Orders', icon: 'clipboard' },
+        { to: '/coupons', label: 'Coupons & Promos', icon: 'tag' },
+        { to: '/affiliates', label: 'Affiliates & Referrals', icon: 'users' },
       ],
     },
     {
@@ -142,52 +132,33 @@ function Sidebar({
       label: 'Client Experience & LMS',
       icon: 'book',
       items: [
-        { to: '/academy', label: 'Operza Cloud Academy & Certs', icon: 'graduation-cap', badge: 'AWS-Grade' },
+        { to: '/academy', label: 'Operza Cloud Academy', icon: 'graduation-cap', badge: 'AWS-Grade' },
+        { to: '/portal', label: 'Client Portal Hub', icon: 'globe' },
         { to: '/memberships', label: 'Memberships & Courses', icon: 'book' },
+        { to: '/reporting', label: 'Reporting & Analytics', icon: 'chart' },
         { to: '/snippets', label: 'Quick Message Snippets', icon: 'message' },
       ],
     },
     {
-      id: 'agency',
-      label: 'Agency & White-Label',
-      icon: 'building',
+      id: 'platform',
+      label: 'Agency & Platform',
+      icon: 'shield',
       items: [
+        { to: '/integrations', label: 'App Marketplace (50+)', icon: 'plug' },
         { to: '/sub-accounts', label: 'Sub-accounts & Locations', icon: 'building' },
         { to: '/snapshots', label: 'Account Snapshots', icon: 'refresh' },
         { to: '/branding', label: 'Custom White-Label Branding', icon: 'sliders' },
-      ],
-    },
-    {
-      id: 'governance',
-      label: 'Platform & Governance',
-      icon: 'shield',
-      items: [
-        { to: '/integrations', label: 'App Marketplace', icon: 'plug' },
+        { to: '/developers', label: 'Developer Hub & Webhooks', icon: 'webhook' },
         { to: '/consent-ledger', label: 'Consent Ledger (TCPA)', icon: 'shield' },
         { to: '/plan-usage', label: 'Plan & Usage Meters', icon: 'chart' },
-        { to: '/developers', label: 'Developer Hub & Webhooks', icon: 'webhook' },
         { to: '/custom-values', label: 'Custom Values', icon: 'sliders' },
-        { to: '/audit-log', label: 'Security & Audit Log', icon: 'clipboard' },
-        { to: '/settings', label: 'Workspace Settings', icon: 'settings' },
-      ],
-    },
-    {
-      id: 'public',
-      label: 'Public & Showcase',
-      icon: 'tag',
-      items: [
-        { to: '/home', label: 'Landing Page & 3D Showcase', icon: 'globe' },
-        { to: '/pricing', label: 'Pricing & Plans Matrix', icon: 'tag' },
-        { to: '/academy', label: 'Operza Academy & Exam', icon: 'graduation-cap' },
-        { to: '/docs', label: 'Documentation & Guides', icon: 'clipboard' },
-        { to: '/platform/crm', label: 'Platform Architecture Tour', icon: 'zap' },
       ],
     },
   ];
 
   // Collapsible Accordion State
   const [expandedPillars, setExpandedPillars] = useState<Record<string, boolean>>(() => {
-    const init: Record<string, boolean> = {};
+    const init: Record<string, boolean> = { crm: true };
     for (const p of pillars) {
       if (p.items.some((i) => i.to === location.pathname || location.pathname.startsWith(i.to + '/'))) {
         init[p.id] = true;
@@ -238,12 +209,22 @@ function Sidebar({
       .filter((pillar) => pillar.items.length > 0);
   }, [pillars, menuFilter]);
 
+  const activeLocName = activeLocation?.name || 'ASIM tech';
+  const agencyName = agency?.name || 'Main Workspace';
+  const locInitials = (activeLocName.split(' ').map((n) => n[0]).join('').slice(0, 2) || 'OP').toUpperCase();
+
   return (
     <aside className="sidebar">
+      {/* Brand Header */}
       <div className="sidebar__brand">
         <div className="brand__mark">OP</div>
         <div className="brand__text">
-          <div className="brand__name">Operza</div>
+          <div className="brand__name">
+            Operza
+            <span style={{ fontSize: 9.5, fontWeight: 700, padding: '1px 5px', borderRadius: 4, background: 'var(--accent-soft)', color: 'var(--accent-ink)', letterSpacing: '0.04em' }}>
+              OS
+            </span>
+          </div>
           <div className="brand__sub">Business Operating System</div>
         </div>
         <button className="icon-btn sidebar__toggle" style={{ marginLeft: 'auto' }} onClick={onNavigate} aria-label="Close navigation">
@@ -251,6 +232,7 @@ function Sidebar({
         </button>
       </div>
 
+      {/* Account / Location Switcher */}
       <div style={{ position: 'relative' }} ref={accountMenuRef}>
         <button
           className="sidebar__account"
@@ -258,20 +240,25 @@ function Sidebar({
           aria-expanded={accountMenuOpen}
           aria-haspopup="menu"
           onClick={() => setAccountMenuOpen((v) => !v)}
-          title="Switch active sub-account / location"
+          title="Switch active sub-account or location"
         >
           <span className="account__avatar">
-            {(agency?.name || 'OP').slice(0, 2).toUpperCase()}
+            {locInitials}
           </span>
-          <span style={{ minWidth: 0, flex: 1 }}>
-            <span className="account__name" style={{ display: 'block' }}>
-              {activeLocation?.name || agency?.name || 'Operza Workspace'}
-            </span>
-            <span className="account__plan" style={{ display: 'block' }}>
-              {agency?.name || 'Agency Workspace'}
-            </span>
-          </span>
-          <Icon name="chevron-down" size={15} />
+          <div className="account__text">
+            <span className="account__name">{activeLocName}</span>
+            <span className="account__plan">{agencyName}</span>
+          </div>
+          <Icon
+            name="chevron-down"
+            size={14}
+            style={{
+              color: 'var(--text-3)',
+              transform: accountMenuOpen ? 'rotate(180deg)' : 'none',
+              transition: 'transform var(--duration-fast) var(--motion-snappy)',
+              marginLeft: 'auto'
+            }}
+          />
         </button>
 
         {accountMenuOpen && (
@@ -279,64 +266,65 @@ function Sidebar({
             className="card"
             style={{
               position: 'absolute',
-              top: '100%',
+              top: 'calc(100% + 4px)',
               left: 12,
               right: 12,
-              zIndex: 50,
+              zIndex: 100,
               boxShadow: 'var(--elevation-floating)',
-              padding: '8px',
+              padding: '6px',
               borderRadius: 'var(--r-md)',
               background: 'var(--surface)',
               border: '1px solid var(--border-strong)',
             }}
           >
-            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', padding: '4px 8px' }}>
-              SWITCH SUB-ACCOUNT
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.05em', color: 'var(--text-3)', padding: '4px 8px 6px', textTransform: 'uppercase' }}>
+              Switch Sub-Account / Location
             </div>
-            {locations.map((loc) => (
-              <button
-                key={loc.id}
-                type="button"
-                className="btn btn--ghost btn--sm"
-                style={{
-                  width: '100%',
-                  justifyContent: 'flex-start',
-                  fontWeight: loc.id === activeLocation?.id ? 700 : 400,
-                  color: loc.id === activeLocation?.id ? 'var(--accent)' : 'var(--text)',
-                }}
-                onClick={() => {
-                  switchLocation(loc.id);
-                  setAccountMenuOpen(false);
-                }}
-              >
-                <Icon name="building" size={13} /> {loc.name}
-              </button>
-            ))}
+            {locations.map((loc) => {
+              const isSelected = loc.id === activeLocation?.id;
+              return (
+                <button
+                  key={loc.id}
+                  type="button"
+                  className={`btn btn--ghost btn--sm`}
+                  style={{
+                    width: '100%',
+                    justifyContent: 'flex-start',
+                    fontWeight: isSelected ? 700 : 500,
+                    color: isSelected ? 'var(--accent)' : 'var(--text)',
+                    background: isSelected ? 'var(--accent-soft)' : 'transparent',
+                    marginBottom: 2,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                  }}
+                  onClick={() => {
+                    switchLocation(loc.id);
+                    setAccountMenuOpen(false);
+                  }}
+                >
+                  <Icon name="building" size={13} style={{ opacity: isSelected ? 1 : 0.6 }} />
+                  <span style={{ flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis' }}>{loc.name}</span>
+                  {isSelected && <Icon name="check" size={13} style={{ color: 'var(--accent)' }} />}
+                </button>
+              );
+            })}
           </div>
         )}
       </div>
 
-      {/* Quick Menu Filter Input */}
-      <div style={{ padding: '8px 12px 2px' }}>
-        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-          <span style={{ position: 'absolute', left: 8, opacity: 0.5, pointerEvents: 'none' }}>
-            <Icon name="search" size={12} />
+      {/* Quick Jump Search Box */}
+      <div className="sidebar__search">
+        <div className="sidebar__search-box">
+          <span style={{ position: 'absolute', left: 8, opacity: 0.5, pointerEvents: 'none', display: 'flex', alignItems: 'center' }}>
+            <Icon name="search" size={13} />
           </span>
           <input
             type="text"
-            placeholder="Filter 50+ pages..."
+            className="sidebar__search-input"
+            placeholder="Jump to page... (⌘K)"
             value={menuFilter}
             onChange={(e) => setMenuFilter(e.target.value)}
-            style={{
-              width: '100%',
-              fontSize: 11.5,
-              padding: '6px 24px 6px 26px',
-              borderRadius: 6,
-              background: 'var(--surface-2, rgba(255,255,255,0.04))',
-              border: '1px solid var(--line, rgba(255,255,255,0.08))',
-              color: 'var(--text, #f8fafc)',
-              outline: 'none',
-            }}
           />
           {menuFilter && (
             <button
@@ -352,13 +340,32 @@ function Sidebar({
         </div>
       </div>
 
+      {/* Navigation Menu */}
       <nav className="sidebar__nav">
-        {/* Pinned Primary Workhorses Section */}
+        {/* Core Operations (Always 1-Click Visible at the Top) */}
         {!menuFilter && (
-          <div style={{ marginBottom: 12 }}>
+          <div style={{ marginBottom: 6 }}>
             <div className="nav__group-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 8px 4px' }}>
               <span>Primary Tools</span>
-              <span style={{ fontSize: 10, color: 'var(--text-3)', fontWeight: 600 }}>Quick Access</span>
+              <button
+                type="button"
+                onClick={onOpenAppsLauncher}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: 9.5,
+                  color: 'var(--accent)',
+                  fontWeight: 650,
+                  cursor: 'pointer',
+                  padding: 0,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 3,
+                }}
+                title="Open 50+ Apps Catalog Modal"
+              >
+                <Icon name="grid" size={11} /> 50+ Catalog ↗
+              </button>
             </div>
             {primaryItems.map((item) => (
               <NavLink
@@ -369,46 +376,18 @@ function Sidebar({
                 onClick={onNavigate}
               >
                 <span className="nav__icon">
-                  <Icon name={item.icon} size={16} />
+                  <Icon name={item.icon} size={15} />
                 </span>
                 <span className="nav__label">{item.label}</span>
-                {item.badge !== undefined && <span className="nav__count">{item.badge}</span>}
+                {Boolean(item.badge) && <span className="nav__count">{item.badge}</span>}
               </NavLink>
             ))}
-
-            {/* Visual 50+ Apps Launcher Banner */}
-            <div style={{ padding: '8px 2px 4px' }}>
-              <button
-                type="button"
-                className="btn btn--subtle"
-                style={{
-                  width: '100%',
-                  justifyContent: 'space-between',
-                  padding: '8px 10px',
-                  background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.16) 0%, rgba(14, 165, 233, 0.08) 100%)',
-                  border: '1px solid rgba(99, 102, 241, 0.32)',
-                  borderRadius: 8,
-                  fontSize: 12,
-                  fontWeight: 700,
-                  color: 'var(--text, #f8fafc)',
-                  boxShadow: '0 2px 6px rgba(0,0,0,0.1)',
-                }}
-                onClick={onOpenAppsLauncher}
-                title="Explore Complete Operza 50+ Operating Tools Directory"
-              >
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-                  <Icon name="grid" size={14} style={{ color: '#818cf8' }} />
-                  <span>All Apps (50+)</span>
-                </span>
-                <span style={{ fontSize: 10.5, color: '#38bdf8', fontWeight: 650 }}>Catalog →</span>
-              </button>
-            </div>
           </div>
         )}
 
         {/* Filtered Primary Items (when searching) */}
         {menuFilter && filteredPrimary.length > 0 && (
-          <div style={{ marginBottom: 12 }}>
+          <div style={{ marginBottom: 6 }}>
             <div className="nav__group-label" style={{ padding: '6px 8px 4px' }}>
               Primary Matches ({filteredPrimary.length})
             </div>
@@ -421,20 +400,20 @@ function Sidebar({
                 onClick={onNavigate}
               >
                 <span className="nav__icon">
-                  <Icon name={item.icon} size={16} />
+                  <Icon name={item.icon} size={15} />
                 </span>
                 <span className="nav__label">{item.label}</span>
-                {item.badge !== undefined && <span className="nav__count">{item.badge}</span>}
+                {Boolean(item.badge) && <span className="nav__count">{item.badge}</span>}
               </NavLink>
             ))}
           </div>
         )}
 
-        {/* Functional Pillars Section (Collapsible Accordions) */}
+        {/* Organized Functional Suites (Collapsible Accordions) */}
         <div>
           {!menuFilter && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 8px 4px' }}>
-              <span style={{ fontSize: 10.5, fontWeight: 750, color: 'var(--text-3)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 8px 4px' }}>
+              <span style={{ fontSize: 10, fontWeight: 750, color: 'var(--text-3)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                 Operating Pillars
               </span>
               <button
@@ -442,7 +421,7 @@ function Sidebar({
                 style={{
                   background: 'none',
                   border: 'none',
-                  color: 'var(--accent, #6366f1)',
+                  color: 'var(--accent)',
                   fontSize: 10.5,
                   fontWeight: 650,
                   cursor: 'pointer',
@@ -457,51 +436,26 @@ function Sidebar({
 
           {filteredPillars.length === 0 && filteredPrimary.length === 0 ? (
             <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 12, color: 'var(--text-3)' }}>
-              No pages match "{menuFilter}"
+              No tools match "{menuFilter}"
             </div>
           ) : (
             filteredPillars.map((pillar) => {
               const isExpanded = menuFilter ? true : Boolean(expandedPillars[pillar.id]);
               return (
-                <div key={pillar.id} style={{ marginBottom: 4 }}>
-                  {/* Accordion Header Button */}
+                <div key={pillar.id} style={{ marginBottom: 3 }}>
+                  {/* Suite Accordion Header */}
                   <button
                     type="button"
-                    style={{
-                      width: '100%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      padding: '7px 8px',
-                      background: isExpanded ? 'var(--surface-2, rgba(255,255,255,0.03))' : 'transparent',
-                      border: 'none',
-                      color: isExpanded ? 'var(--text, #f8fafc)' : 'var(--text-3, #94a3b8)',
-                      cursor: 'pointer',
-                      borderRadius: 6,
-                      fontSize: 11,
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.04em',
-                      transition: 'background 0.12s ease, color 0.12s ease',
-                    }}
+                    className={`nav__suite-btn ${isExpanded ? 'is-expanded' : ''}`}
                     onClick={() => togglePillar(pillar.id)}
                     aria-expanded={isExpanded}
                   >
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-                      <Icon name={pillar.icon} size={13} style={{ opacity: isExpanded ? 1 : 0.7, color: isExpanded ? 'var(--accent)' : 'inherit' }} />
+                      <Icon name={pillar.icon} size={13} style={{ opacity: isExpanded ? 1 : 0.65, color: isExpanded ? 'var(--accent)' : 'inherit' }} />
                       <span>{pillar.label}</span>
                     </span>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                      <span
-                        style={{
-                          fontSize: 9.5,
-                          background: 'var(--line, rgba(255,255,255,0.08))',
-                          padding: '1px 5px',
-                          borderRadius: 4,
-                          fontWeight: 700,
-                          color: 'var(--text-3)',
-                        }}
-                      >
+                      <span className="nav__suite-count">
                         {pillar.items.length}
                       </span>
                       <Icon
@@ -509,16 +463,16 @@ function Sidebar({
                         size={11}
                         style={{
                           transform: isExpanded ? 'rotate(90deg)' : 'none',
-                          transition: 'transform 0.15s ease',
-                          opacity: 0.7,
+                          transition: 'transform var(--duration-fast) var(--motion-snappy)',
+                          opacity: 0.65,
                         }}
                       />
                     </span>
                   </button>
 
-                  {/* Accordion Child Items */}
+                  {/* Suite Child Items */}
                   {isExpanded && (
-                    <div style={{ paddingLeft: 6, marginTop: 2 }}>
+                    <div style={{ paddingLeft: 6, marginTop: 1 }}>
                       {pillar.items.map((item) => (
                         <NavLink
                           key={item.to}
@@ -531,7 +485,7 @@ function Sidebar({
                             <Icon name={item.icon} size={15} />
                           </span>
                           <span className="nav__label">{item.label}</span>
-                          {item.badge !== undefined && <span className="nav__count">{item.badge}</span>}
+                          {Boolean(item.badge) && <span className="nav__count">{item.badge}</span>}
                         </NavLink>
                       ))}
                     </div>
@@ -543,21 +497,35 @@ function Sidebar({
         </div>
       </nav>
 
+      {/* Workspace Footer */}
       <div className="sidebar__footer">
-        <div className="atlas-sidebar__section-label">WORKSPACE</div>
+        <div style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-3)', padding: '2px 8px' }}>
+          WORKSPACE
+        </div>
         <NavLink to="/settings" className={({ isActive }) => `nav__item${isActive ? ' is-active' : ''}`} onClick={onNavigate}>
           <span className="nav__icon">
-            <Icon name="settings" size={16} />
+            <Icon name="settings" size={15} />
           </span>
           <span className="nav__label">Settings</span>
         </NavLink>
         <NavLink to="/audit-log" className={({ isActive }) => `nav__item${isActive ? ' is-active' : ''}`} onClick={onNavigate}>
           <span className="nav__icon">
-            <Icon name="lock" size={16} />
+            <Icon name="lock" size={15} />
           </span>
           <span className="nav__label">Audit &amp; Security</span>
         </NavLink>
-        <div className="atlas-sidebar__user">{user?.name || "Workspace user"}</div>
+
+        {/* User Profile Info Card */}
+        <div className="sidebar__user-card">
+          <div className="sidebar__user-avatar">
+            {(user?.name || 'Asim').slice(0, 1).toUpperCase()}
+          </div>
+          <div style={{ minWidth: 0, flex: 1, lineHeight: 1.25 }}>
+            <div className="sidebar__user-name">{user?.name || 'Asim'}</div>
+            <div className="sidebar__user-role">Administrator</div>
+          </div>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--green)', boxShadow: '0 0 6px var(--green)' }} title="Online & Connected" />
+        </div>
       </div>
     </aside>
   );
@@ -1285,7 +1253,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
   }, [location.pathname]);
 
   return (
-    <div className={["shell", "shell--overview", navOpen && "is-nav-open"].filter(Boolean).join(" ")}>
+    <div className={["shell", navOpen && "is-nav-open"].filter(Boolean).join(" ")}>
       <Sidebar onNavigate={() => setNavOpen(false)} onOpenAppsLauncher={() => setAppsLauncherOpen(true)} />
       <div className="scrim" onClick={() => setNavOpen(false)} />
       <div className="main">

@@ -881,16 +881,22 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
   const TEMPLATE_PRESETS: Record<string, { name: string; slug: string }> = {
     'agency-growth': { name: 'Apex Growth Studio', slug: 'apex-growth' },
     'healthcare-clinic': { name: 'VitalCare Health & Wellness Clinic', slug: 'vitalcare-clinic' },
-    'real-estate-luxury': { name: 'Prestige Real Estate & Estates', slug: 'prestige-estates' },
-    'saas-tech': { name: 'CloudScale B2B SaaS Platform', slug: 'cloudscale-platform' },
-    'fitness-coaching': { name: 'IronPeak Performance Fitness', slug: 'ironpeak-fitness' },
-    'ecommerce-dtc': { name: 'Solstice Artisan Craft Store', slug: 'solstice-store' },
+    'real-estate': { name: 'Prestige Real Estate & Estates', slug: 'prestige-estates' },
+    'b2b-saas': { name: 'CloudScale B2B SaaS Platform', slug: 'cloudscale-platform' },
+    'home-services': { name: 'Apex Elite Home & Contracting Services', slug: 'apex-contracting' },
+    'ecommerce-store': { name: 'Solstice Artisan Craft Store', slug: 'solstice-store' },
+    'blank-canvas': { name: 'Custom Enterprise Portal', slug: 'custom-portal' },
   };
 
   const handleSelectTemplate = (tmpl: typeof activeTemplate) => {
     setSelectedTemplateId(tmpl.id);
-    if (!hasManuallyEditedName) {
-      const preset = TEMPLATE_PRESETS[tmpl.id] || { name: tmpl.name, slug: tmpl.id };
+    const preset = TEMPLATE_PRESETS[tmpl.id] || { name: tmpl.name, slug: tmpl.id };
+    const isDefaultOrEmpty =
+      !name.trim() ||
+      Object.values(TEMPLATE_PRESETS).some((p) => p.name === name) ||
+      WEBSITE_TEMPLATES.some((t) => t.name === name);
+
+    if (!hasManuallyEditedName || isDefaultOrEmpty) {
       setName(preset.name);
       setDomain(preset.slug);
     }
@@ -995,12 +1001,14 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
       <div className="stack" style={{ gap: 16 }}>
         <div className="grid grid--2">
           <div className="field">
-            <label htmlFor="new-site-name">Website Brand / Business Name *</label>
+            <label htmlFor="new-site-name">
+              Website Brand / Business Name * {!name.trim() && <span className="hint" style={{ fontWeight: 400, fontSize: 11 }}>(Defaults to &quot;{activeTemplate.name}&quot;)</span>}
+            </label>
             <input
               id="new-site-name"
               className="input"
               autoFocus
-              placeholder="e.g. Apex Growth Studio"
+              placeholder={`e.g. ${TEMPLATE_PRESETS[activeTemplate.id]?.name || activeTemplate.name}`}
               value={name}
               onChange={(e) => {
                 setHasManuallyEditedName(true);
@@ -1016,7 +1024,7 @@ function NewWebsiteModal({ onClose }: { onClose: () => void }) {
                 id="new-site-domain"
                 className="input"
                 style={{ fontFamily: 'var(--font-mono)' }}
-                placeholder="e.g. apex-growth"
+                placeholder={`e.g. ${TEMPLATE_PRESETS[activeTemplate.id]?.slug || activeTemplate.id}`}
                 value={domain}
                 onChange={(e) => {
                   setHasManuallyEditedName(true);
