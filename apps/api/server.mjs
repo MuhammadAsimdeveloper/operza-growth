@@ -8712,6 +8712,23 @@ const server = createServer(async (req, res) => {
       // POST /api/crm/:collection (Create)
       if (method === 'POST' && !recordId) {
         const body = await readBody(req);
+
+        // Normalize title/name aliases for collections supporting both
+        if (collectionName === 'documents' || collectionName === 'courses') {
+          if (!body.name && body.title) body.name = body.title;
+          if (!body.title && body.name) body.title = body.name;
+        }
+
+        // Schema validation for required fields
+        const schema = collections[collectionName];
+        if (schema && Array.isArray(schema.required)) {
+          for (const reqField of schema.required) {
+            if (!body[reqField] || (typeof body[reqField] === 'string' && !body[reqField].trim())) {
+              return sendJson(res, 400, { error: `Field '${reqField}' is required for ${collectionName}` });
+            }
+          }
+        }
+
         // Security: Prevent client from injecting or overriding tenant context IDs
         const assignedId = (typeof body.id === 'string' && body.id.trim()) ? body.id.trim() : randomUUID();
         delete body.id;

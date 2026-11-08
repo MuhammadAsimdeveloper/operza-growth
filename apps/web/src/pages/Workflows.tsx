@@ -232,6 +232,8 @@ export default function Workflows() {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const [importFeedback, setImportFeedback] = useState('');
+  const [savingWorkflow, setSavingWorkflow] = useState(false);
+  const [saveFeedback, setSaveFeedback] = useState<{ success: boolean; message: string } | null>(null);
 
   useEffect(() => {
     const onDown = (e: globalThis.MouseEvent) => {
@@ -277,6 +279,52 @@ export default function Workflows() {
 
     return () => ws?.close();
   }, []);
+
+  // Sync workflows from backend database on mount
+  useEffect(() => {
+    let active = true;
+    api.crm.list('workflows').then((res) => {
+      if (!active || !res?.data || !Array.isArray(res.data)) return;
+      for (const w of res.data) {
+        if (!state.workflows.some((sw) => sw.id === w.id)) {
+          dispatch({
+            type: 'workflow/add',
+            workflow: {
+              id: w.id,
+              name: w.name,
+              status: w.status === 'published' ? 'published' : 'draft',
+              trigger: w.trigger || { kind: 'tag_added', detail: 'Tag Added' },
+              actions: Array.isArray(w.actions) ? w.actions : (Array.isArray(w.nodes) ? w.nodes : []),
+              enrolled: w.enrolled || 0,
+              completed: w.completed || 0,
+            },
+          });
+        }
+      }
+    }).catch((err) => console.warn('Could not sync workflows from backend:', err));
+    return () => { active = false; };
+  }, [dispatch, state.workflows]);
+
+  const handleSaveWorkflow = async () => {
+    if (!selected) return;
+    setSavingWorkflow(true);
+    setSaveFeedback(null);
+    try {
+      const checkRes = await api.crm.list('workflows');
+      const existing = (checkRes?.data || []).find((w: any) => w.id === selected.id);
+      if (existing) {
+        await api.crm.update('workflows', selected.id, selected);
+      } else {
+        await api.crm.create('workflows', selected);
+      }
+      setSaveFeedback({ success: true, message: 'Saved to backend database' });
+      setTimeout(() => setSaveFeedback(null), 3000);
+    } catch (err: any) {
+      setSaveFeedback({ success: false, message: err?.message || 'Save failed' });
+    } finally {
+      setSavingWorkflow(false);
+    }
+  };
 
   const selected = state.workflows.find((w) => w.id === selectedId) ?? null;
   const live = state.workflows.filter((w) => w.status === 'published');
@@ -740,6 +788,36 @@ export default function Workflows() {
                   <Icon name="plus" size={13} /> Add Step
                 </button>
 
+                {/* Save Workflow to Backend Button */}
+                <button
+                  type="button"
+                  id="save-workflow-btn"
+                  className="btn btn--sm btn--primary"
+                  style={{ background: '#4f46e5', borderColor: '#6366f1' }}
+                  disabled={savingWorkflow}
+                  onClick={handleSaveWorkflow}
+                  title="Persist complete workflow and its nodes to backend database"
+                >
+                  <Icon name="check" size={13} /> {savingWorkflow ? 'Saving...' : 'Save Workflow'}
+                </button>
+
+                {saveFeedback && (
+                  <span
+                    id={saveFeedback.success ? 'workflow-save-success' : 'workflow-save-error'}
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 600,
+                      color: saveFeedback.success ? '#10b981' : '#ef4444',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4
+                    }}
+                  >
+                    <Icon name={saveFeedback.success ? 'check' : 'alert'} size={12} />
+                    {saveFeedback.message}
+                  </span>
+                )}
+
                 {/* Workflow Library Button */}
                 <button
                   type="button"
@@ -883,9 +961,11 @@ export default function Workflows() {
           onClose={() => setCreating(false)}
           onSave={(name, trigger) => {
             const id = uid('wf');
+            const newFlow: Workflow = { id, name, status: 'draft', trigger, actions: [], enrolled: 0, completed: 0 };
+            api.crm.create('workflows', newFlow).catch((err) => console.warn('Could not persist new workflow to backend:', err));
             dispatch({
               type: 'workflow/add',
-              workflow: { id, name, status: 'draft', trigger, actions: [], enrolled: 0, completed: 0 },
+              workflow: newFlow,
             });
             setSelectedId(id);
             setCreating(false);
