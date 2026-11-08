@@ -142,6 +142,7 @@ function Sidebar({
       label: 'Client Experience & LMS',
       icon: 'book',
       items: [
+        { to: '/academy', label: 'Operza Cloud Academy & Certs', icon: 'graduation-cap', badge: 'AWS-Grade' },
         { to: '/memberships', label: 'Memberships & Courses', icon: 'book' },
         { to: '/snippets', label: 'Quick Message Snippets', icon: 'message' },
       ],
@@ -177,6 +178,7 @@ function Sidebar({
       items: [
         { to: '/home', label: 'Landing Page & 3D Showcase', icon: 'globe' },
         { to: '/pricing', label: 'Pricing & Plans Matrix', icon: 'tag' },
+        { to: '/academy', label: 'Operza Academy & Exam', icon: 'graduation-cap' },
         { to: '/docs', label: 'Documentation & Guides', icon: 'clipboard' },
         { to: '/platform/crm', label: 'Platform Architecture Tour', icon: 'zap' },
       ],
@@ -1229,6 +1231,15 @@ function TopBar({ onOpenNav, onOpenAppsLauncher }: { onOpenNav: () => void; onOp
         >
           <Icon name="tag" size={14} />
           <span>Pricing</span>
+        </NavLink>
+        <NavLink
+          to="/academy"
+          className="btn btn--sm btn--ghost"
+          style={{ fontSize: 12, display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--text-2)', padding: '5px 10px' }}
+          title="AWS-Style Operza Cloud Academy & Certification"
+        >
+          <Icon name="graduation-cap" size={14} />
+          <span>Academy</span>
         </NavLink>
 
         <Tooltip label={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}>

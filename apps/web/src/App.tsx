@@ -83,6 +83,7 @@ const CopilotInbox = lazy(() => import('./pages/CopilotInbox'));
 const NotificationCenter = lazy(() => import('./pages/NotificationCenter'));
 const AppsDirectory = lazy(() => import('./pages/AppsDirectory'));
 const PlanUsage = lazy(() => import('./pages/PlanUsage'));
+const Academy = lazy(() => import('./pages/Academy'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
 function PageLoadingFallback() {
@@ -156,6 +157,8 @@ export default function App() {
         <Route path="/site/:slug/:pageSlug" element={<PublicWebsite />} />
         <Route path="/w/:slug" element={<PublicWebsite />} />
         <Route path="/w/:slug/:pageSlug" element={<PublicWebsite />} />
+        <Route path="/certification" element={<Academy />} />
+        <Route path="/verify-cert" element={<Academy />} />
 
         {/* ─── Protected Agency Workspace Routes ─── */}
         <Route
@@ -219,6 +222,8 @@ export default function App() {
           <Route path="consent-ledger" element={<ConsentLedger />} />
           <Route path="copilot-inbox" element={<CopilotInbox />} />
           <Route path="plan-usage" element={<PlanUsage />} />
+          <Route path="academy" element={<Academy />} />
+          <Route path="certification" element={<Academy />} />
           <Route path="*" element={<NotFound />} />
         </Route>
       </Routes>
