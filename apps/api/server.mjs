@@ -606,6 +606,9 @@ function isWebhookReplay(eventId) {
 }
 
 function sendJson(res, status, body, headers = {}) {
+  if (res.headersSent) {
+    return true;
+  }
   let reqId = null;
   try {
     reqId = res.getHeader('x-request-id');
@@ -626,6 +629,7 @@ function sendJson(res, status, body, headers = {}) {
     ...headers
   });
   res.end(JSON.stringify(body));
+  return true;
 }
 
 function escapeHtml(str) {
@@ -2106,6 +2110,9 @@ const server = createServer(async (req, res) => {
     })) {
       return;
     }
+    if (res.headersSent) {
+      return;
+    }
 
     // ═════════════════════════════════════════════════════════════
     // ─── PUBLIC ROUTES (no auth required) ───────────────────────
@@ -2140,11 +2147,23 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const answers = body.answers || {};
 
-      const firstName = answers.firstName || answers.name || 'Website';
-      const lastName = answers.lastName || 'Lead';
-      const email = answers.email || '';
-      const phone = answers.phone || '';
-      const company = answers.company || '';
+      let email = answers.email || answers.workEmail || answers.fld_email || '';
+      let firstName = answers.firstName || answers.first_name || answers.name || answers.fld_first || '';
+      let lastName = answers.lastName || answers.last_name || answers.fld_last || '';
+      let phone = answers.phone || answers.phoneNumber || answers.fld_phone || '';
+      let company = answers.company || answers.companyName || '';
+
+      if (!email || !firstName) {
+        for (const [k, v] of Object.entries(answers)) {
+          const lk = k.toLowerCase();
+          if (!email && (lk.includes('email') || (typeof v === 'string' && v.includes('@')))) email = v;
+          if (!firstName && (lk.includes('first') || lk === 'name')) firstName = v;
+          if (!lastName && lk.includes('last')) lastName = v;
+          if (!phone && lk.includes('phone')) phone = v;
+        }
+      }
+      firstName = firstName || 'Website';
+      lastName = lastName || 'Lead';
 
       state.records.contacts = state.records.contacts || [];
       let contact = email ? state.records.contacts.find(c => c.email === email && c.agencyId === form.agencyId) : null;
@@ -2614,6 +2633,13 @@ const server = createServer(async (req, res) => {
       const { name, email, phone, date, timeSlot, notes } = body;
       if (!name || !email || !date || !timeSlot) {
         return sendJson(res, 400, { error: 'Name, email, date, and timeSlot are required.' });
+      }
+
+      const isSlotConflict = (state.records.appointments || []).some(
+        a => a.calendarId === cal.id && a.startsAt.startsWith(date) && a.startsAt.includes(`T${timeSlot}:`) && a.status !== 'cancelled'
+      );
+      if (isSlotConflict) {
+        return sendJson(res, 409, { error: 'This time slot is no longer available. Please choose another time.' });
       }
 
       const emailKey = String(email).toLowerCase().trim();
@@ -4317,7 +4343,7 @@ const server = createServer(async (req, res) => {
     // ─── AUTH ROUTES ────────────────────────────────────────────
     // ═════════════════════════════════════════════════════════════
     if (pathname.startsWith('/api/auth/')) {
-      if (await handleAuthRoutes(req, res, {
+      const handled = await handleAuthRoutes(req, res, {
         method,
         pathname,
         readBody,
@@ -4333,9 +4359,11 @@ const server = createServer(async (req, res) => {
         setSessionCookies,
         clearSessionCookies,
         getActor
-      })) {
+      });
+      if (handled || res.headersSent) {
         return;
       }
+      return sendJson(res, 404, { error: 'Auth route not found' });
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -6755,6 +6783,9 @@ const server = createServer(async (req, res) => {
     })) {
       return;
     }
+    if (res.headersSent) {
+      return;
+    }
 
     // ═════════════════════════════════════════════════════════════
     // ─── UNIFIED REPORTING & ANALYTICS OVERVIEW ─────────────────
@@ -7534,6 +7565,9 @@ const server = createServer(async (req, res) => {
           portalWelcomeSubhead: 'Manage your projects, invoices, and appointments.'
         })
       })) {
+        return;
+      }
+      if (res.headersSent) {
         return;
       }
     }
@@ -8812,11 +8846,13 @@ const server = createServer(async (req, res) => {
       requestId: req?.requestId,
       url: req?.url
     });
-    sendJson(res, 500, {
-      error: errorDetails,
-      code: error.code || 'INTERNAL_SERVER_ERROR',
-      requestId: req?.requestId
-    });
+    if (!res.headersSent) {
+      sendJson(res, 500, {
+        error: errorDetails,
+        code: error.code || 'INTERNAL_SERVER_ERROR',
+        requestId: req?.requestId
+      });
+    }
   }
 });
 

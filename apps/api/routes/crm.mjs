@@ -34,7 +34,10 @@ export async function handleCrmRoutes(req, res, ctx) {
   if (method === 'POST' && pathname === '/api/crm/contacts/bulk-tag') {
     const body = await readBody(req);
     const { contactIds, tag } = body;
-    if (!Array.isArray(contactIds) || !tag) return sendJson(res, 400, { error: 'contactIds array and tag required' });
+    if (!Array.isArray(contactIds) || !tag) {
+      sendJson(res, 400, { error: 'contactIds array and tag required' });
+      return true;
+    }
 
     let updated = 0;
     for (const id of contactIds) {
@@ -58,7 +61,10 @@ export async function handleCrmRoutes(req, res, ctx) {
   if (method === 'POST' && pathname === '/api/crm/contacts/import') {
     const body = await readBody(req);
     const csvText = body.csv || body.data || '';
-    if (!csvText) return sendJson(res, 400, { error: 'csv field with CSV text is required' });
+    if (!csvText) {
+      sendJson(res, 400, { error: 'csv field with CSV text is required' });
+      return true;
+    }
 
     state.records.contacts = state.records.contacts || [];
     const tenantExisting = state.records.contacts.filter(c => c.agencyId === agency.id && c.locationId === activeLocation.id);
@@ -151,12 +157,16 @@ export async function handleCrmRoutes(req, res, ctx) {
     const body = await readBody(req);
     const { primaryId, mergeIds } = body;
     if (!primaryId || !Array.isArray(mergeIds) || mergeIds.length === 0) {
-      return sendJson(res, 400, { error: 'primaryId and mergeIds array required' });
+      sendJson(res, 400, { error: 'primaryId and mergeIds array required' });
+      return true;
     }
 
     const contacts = state.records.contacts || [];
     const primary = contacts.find(c => c.id === primaryId && c.agencyId === agency.id && c.locationId === activeLocation.id);
-    if (!primary) return sendJson(res, 404, { error: 'Primary contact not found' });
+    if (!primary) {
+      sendJson(res, 404, { error: 'Primary contact not found' });
+      return true;
+    }
 
     const merged = [];
     for (const mergeId of mergeIds) {
@@ -202,7 +212,10 @@ export async function handleCrmRoutes(req, res, ctx) {
     const contact = (state.records.contacts || []).find(
       c => c.id === contactId && c.agencyId === agency.id && c.locationId === activeLocation.id
     );
-    if (!contact) return sendJson(res, 404, { error: 'Contact not found' });
+    if (!contact) {
+      sendJson(res, 404, { error: 'Contact not found' });
+      return true;
+    }
 
     const timeline = [];
     timeline.push({ type: 'contact_created', date: contact.createdAt, detail: `Contact created from ${contact.source || 'manual'}` });
@@ -238,7 +251,10 @@ export async function handleCrmRoutes(req, res, ctx) {
     const listId = pathname.replace('/api/crm/smart-lists/', '').replace(/\/evaluate$/, '').trim();
     state.records.smartLists = state.records.smartLists || [];
     const list = state.records.smartLists.find(l => l.id === listId && l.agencyId === agency.id);
-    if (!list) return sendJson(res, 404, { error: 'Smart list not found' });
+    if (!list) {
+      sendJson(res, 404, { error: 'Smart list not found' });
+      return true;
+    }
 
     state.records.contacts = state.records.contacts || [];
     const tenantContacts = state.records.contacts.filter(c => c.agencyId === agency.id);
@@ -311,7 +327,10 @@ export async function handleCrmRoutes(req, res, ctx) {
     const listId = pathname.split('/')[4];
     state.records.smartLists = state.records.smartLists || [];
     const list = state.records.smartLists.find(l => l.id === listId && l.agencyId === agency.id);
-    if (!list) return sendJson(res, 404, { error: 'Smart list not found' });
+    if (!list) {
+      sendJson(res, 404, { error: 'Smart list not found' });
+      return true;
+    }
     state.records.contacts = state.records.contacts || [];
     const tenantContacts = state.records.contacts.filter(c => c.agencyId === agency.id && c.locationId === activeLocation.id);
     const body = await readBody(req);

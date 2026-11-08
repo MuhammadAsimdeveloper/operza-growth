@@ -27,11 +27,15 @@ export async function handleAuthRoutes(req, res, ctx) {
   if (method === 'POST' && pathname === '/api/auth/signup') {
     const body = await readBody(req);
     const { name, email, password, agencyName } = body;
-    if (!name || !email || !password) return sendJson(res, 400, { error: 'Name, email, and password required' });
+    if (!name || !email || !password) {
+      sendJson(res, 400, { error: 'Name, email, and password required' });
+      return true;
+    }
 
     const emailKey = email.toLowerCase().trim();
     if (state.users.some(u => u.email === emailKey)) {
-      return sendJson(res, 409, { error: 'An account with this email already exists' });
+      sendJson(res, 409, { error: 'An account with this email already exists' });
+      return true;
     }
 
     const salt = randomBytes(16);
@@ -187,7 +191,10 @@ export async function handleAuthRoutes(req, res, ctx) {
   if (method === 'POST' && pathname === '/api/auth/google') {
     const body = await readBody(req);
     const { email, name, avatar } = body;
-    if (!email) return sendJson(res, 400, { error: 'Email is required for Google Sign-In' });
+    if (!email) {
+      sendJson(res, 400, { error: 'Email is required for Google Sign-In' });
+      return true;
+    }
 
     const emailKey = email.toLowerCase().trim();
     let user = state.users.find(u => u.email === emailKey);
@@ -292,7 +299,8 @@ export async function handleAuthRoutes(req, res, ctx) {
     const body = await readBody(req);
     const email = (body.email || '').toLowerCase().trim();
     if (!email || !email.includes('@')) {
-      return sendJson(res, 400, { error: 'Valid email address is required' });
+      sendJson(res, 400, { error: 'Valid email address is required' });
+      return true;
     }
 
     state.otps = state.otps || {};
@@ -320,7 +328,8 @@ export async function handleAuthRoutes(req, res, ctx) {
     state.otps = state.otps || {};
     const record = state.otps[emailKey];
     if (!record || record.code !== code || Date.now() > record.expiresAt) {
-      return sendJson(res, 400, { error: 'Invalid or expired verification code' });
+      sendJson(res, 400, { error: 'Invalid or expired verification code' });
+      return true;
     }
     delete state.otps[emailKey];
 
@@ -425,16 +434,23 @@ export async function handleAuthRoutes(req, res, ctx) {
     const body = await readBody(req);
     const { email, password } = body;
     const user = state.users.find(u => u.email === String(email).toLowerCase().trim() && u.status === 'active');
-    if (!user) return sendJson(res, 401, { error: 'Invalid email or password' });
+    if (!user) {
+      sendJson(res, 401, { error: 'Invalid email or password' });
+      return true;
+    }
 
     const [saltHex, keyHex] = user.passwordHash.split(':');
     const testBuf = await scrypt(password, Buffer.from(saltHex, 'hex'), 64);
     if (!safeEqual(testBuf.toString('hex'), keyHex)) {
-      return sendJson(res, 401, { error: 'Invalid email or password' });
+      sendJson(res, 401, { error: 'Invalid email or password' });
+      return true;
     }
 
     const membership = state.memberships.find(m => m.userId === user.id && m.status === 'active');
-    if (!membership) return sendJson(res, 403, { error: 'No active agency found for user' });
+    if (!membership) {
+      sendJson(res, 403, { error: 'No active agency found for user' });
+      return true;
+    }
 
     const agency = state.agencies.find(a => a.id === membership.agencyId && a.status === 'active');
     const locations = state.locations.filter(l => l.agencyId === agency.id && l.status === 'active');
@@ -466,7 +482,10 @@ export async function handleAuthRoutes(req, res, ctx) {
   // 6. AUTH: Current Session Check
   if (method === 'GET' && pathname === '/api/auth/session') {
     const actor = getActor(req);
-    if (!actor) return sendJson(res, 401, { error: 'Not authenticated' });
+    if (!actor) {
+      sendJson(res, 401, { error: 'Not authenticated' });
+      return true;
+    }
     sendJson(res, 200, {
       user: { id: actor.user.id, name: actor.user.name, email: actor.user.email },
       agency: { id: actor.agency.id, name: actor.agency.name },
@@ -480,7 +499,10 @@ export async function handleAuthRoutes(req, res, ctx) {
   // 7. AUTH: Full user profile
   if (method === 'GET' && pathname === '/api/auth/me') {
     const actor = getActor(req);
-    if (!actor) return sendJson(res, 401, { error: 'Not authenticated' });
+    if (!actor) {
+      sendJson(res, 401, { error: 'Not authenticated' });
+      return true;
+    }
     sendJson(res, 200, {
       user: {
         id: actor.user.id,
