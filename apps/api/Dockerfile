@@ -12,6 +12,8 @@ WORKDIR /app
 # Copy root workspace configurations
 COPY package.json package-lock.json ./
 COPY apps/api/package.json ./apps/api/
+COPY apps/web/package.json ./apps/web/
+COPY packages/action-governance/package.json ./packages/action-governance/
 COPY packages/db/package.json ./packages/db/
 COPY packages/platform-core/package.json ./packages/platform-core/
 COPY packages/shared/package.json ./packages/shared/
