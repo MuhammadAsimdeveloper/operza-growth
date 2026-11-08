@@ -15,6 +15,9 @@
 
 import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { authorizeActionInvocation, createActionInvocation, getWorkflowActionDefinition, isDirectNetworkNode } from './action-governance.mjs';
+import { evaluateExpression } from './expression-engine.mjs';
+import { executeAdvancedNode } from './node-runtime.mjs';
+import { assertSafeTargetUrl } from '../../platform-core/src/ssrf-defense.mjs';
 
 // ---------------------------------------------------------------------------
 // Utility — Checksum
@@ -150,13 +153,21 @@ export async function executeStep({
   const ctx = { ...triggerContext, ...variables, variables };
 
   try {
-    if (isDirectNetworkNode(type)) {
+    if (isDirectNetworkNode(type) && execution?.allowDirectNetwork !== true) {
       return {
         status: 'failed',
         nodeId,
         errorCode: 'DIRECT_NETWORK_TARGET_DISABLED',
         error: 'Direct URL workflow requests are disabled. Use a verified connector-scoped operation instead.'
       };
+    }
+
+    if (type !== 'zapier' && type !== 'zapier_webhook') {
+      const rawTargetUrl = config?.url || config?.webhookUrl || config?.endpoint || config?.destination;
+      if (rawTargetUrl && typeof rawTargetUrl === 'string') {
+        const renderedUrl = renderTemplate(rawTargetUrl, ctx);
+        assertSafeTargetUrl(renderedUrl);
+      }
     }
 
     const actionDefinition = getWorkflowActionDefinition(type);
@@ -296,6 +307,7 @@ export async function executeStep({
 
       case 'webhook': {
         const url = renderTemplate(config.url, ctx);
+        assertSafeTargetUrl(url);
         const method = config.method || 'POST';
         const response = await fetch(url, {
           method,
@@ -369,6 +381,7 @@ export async function executeStep({
       // ---------------------------------------------------------------
       case 'http_request': {
         const url = renderTemplate(config.url, ctx);
+        assertSafeTargetUrl(url);
         const method = (config.method || 'GET').toUpperCase();
         const headers = { 'Content-Type': 'application/json' };
         if (config.headers) {
@@ -510,8 +523,11 @@ export async function executeStep({
         const varName = config.name;
         let varValue;
         if (config.expression) {
-          // Simple expression: pull from context
-          varValue = resolvePath(ctx, config.expression);
+          try {
+            varValue = evaluateExpression({ expression: config.expression, context: ctx });
+          } catch {
+            varValue = resolvePath(ctx, config.expression);
+          }
         } else {
           varValue = renderTemplate(config.value, ctx);
         }
@@ -585,6 +601,7 @@ export async function executeStep({
       // ---------------------------------------------------------------
       case 'slack_notify': {
         const webhookUrl = renderTemplate(config.webhookUrl, ctx);
+        assertSafeTargetUrl(webhookUrl);
         const text = renderTemplate(config.message || config.text, ctx);
         const channel = config.channel ? renderTemplate(config.channel, ctx) : undefined;
         const payload = { text };
@@ -818,10 +835,48 @@ export async function executeStep({
 
       case 'merge': {
         const mode = config.mode || 'combine';
+        let advResult = null;
+        try {
+          const source = config.items || config.arrayPath || ctx.items || [];
+          advResult = executeAdvancedNode({
+            tenantId: execution?.agencyId || 'operza_tenant',
+            node,
+            input: Array.isArray(source) ? source : [],
+            context: ctx
+          });
+        } catch {}
         return {
           status: 'completed',
           nodeId,
-          result: { merged: true, mode }
+          result: {
+            merged: true,
+            mode,
+            ...(advResult ? { items: advResult.items, control: advResult.control } : {})
+          }
+        };
+      }
+
+      case 'split_out':
+      case 'aggregate':
+      case 'remove_duplicates':
+      case 'sort':
+      case 'edit_fields': {
+        const source = config.items || config.arrayPath || ctx.items || [];
+        const advResult = executeAdvancedNode({
+          tenantId: execution?.agencyId || 'operza_tenant',
+          node,
+          input: Array.isArray(source) ? source : [],
+          context: ctx
+        });
+        const setVar = config.resultVariable ? { name: config.resultVariable, value: advResult.items } : undefined;
+        return {
+          status: 'completed',
+          nodeId,
+          ...(setVar ? { setVariable: setVar } : {}),
+          result: {
+            items: advResult.items,
+            control: advResult.control
+          }
         };
       }
 
@@ -926,6 +981,7 @@ export async function executeStep({
         };
         const secretKey = config.signingSecret || execution.agencyId || 'operza_zapier_secret';
         const signature = createHmac('sha256', secretKey).update(JSON.stringify(payload)).digest('hex');
+        assertSafeTargetUrl(zapUrl);
         try {
           const res = await fetch(zapUrl, {
             method: 'POST',
@@ -1189,3 +1245,5 @@ export function buildExecutionTimeline(execution) {
     };
   });
 }
+
+export { validateJsonSchema, normalizeActionSchemas } from './action-governance.mjs';

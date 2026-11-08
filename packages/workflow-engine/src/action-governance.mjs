@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { validateJsonSchema, normalizeActionSchemas } from '../../action-governance/schema.mjs';
+import { validateInput as validateActionInput } from '../../action-governance/index.mjs';
 
 const REF = /^[A-Za-z0-9][A-Za-z0-9_.:-]{2,180}$/;
 const HASH = /^[a-f0-9]{64}$/;
@@ -180,6 +182,11 @@ export function createActionInvocation({
   }
 
   const safeInput = cloneSafeJson(input === undefined ? (node.config || {}) : input);
+  try {
+    validateActionInput(safeInput);
+  } catch (err) {
+    fail('action input validation failed: ' + err.message, err.code ? err.code.toUpperCase() : 'INPUT_INVALID');
+  }
   const serialized = JSON.stringify(safeInput);
   if (serialized.length > 100_000) fail('action input exceeds the maximum serialized size', 'INPUT_TOO_LARGE');
 
@@ -327,3 +334,5 @@ export function auditWorkflowSecurity({ tenantId, workflow } = {}) {
     : findings.some(item => item.severity === 'high') ? 'review_required' : 'ready';
   return freeze({ status, tenantId: tenantId || null, workflowId: workflow && workflow.id || null, findings });
 }
+
+export { validateJsonSchema, normalizeActionSchemas, validateActionInput };

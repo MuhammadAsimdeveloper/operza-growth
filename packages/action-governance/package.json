@@ -1,0 +1,10 @@
+{
+  "name": "@operza/action-governance",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs",
+  "scripts": {
+    "test": "node --test"
+  }
+}
