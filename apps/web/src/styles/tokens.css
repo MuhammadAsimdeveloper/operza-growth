@@ -1,104 +1,166 @@
+/* ============================================================================
+ * RUNE UI DESIGN SYSTEM TOKENS
+ * Derived from anomalyco/rune (High-performance GPU-grade Design Language)
+ * Semantic Token Schema: Layers, OKLab Lightness Ramps, Specular Sheen, Springs
+ * ============================================================================ */
+
 :root {
+  /* ─── Rune Light Appearance (Clean Architectural Contrast) ─── */
+  --bg: #f8f9fa;
+  --bg-base: #f8f9fa;
+  --bg-deep: #f0f2f5;
+
+  /* Layer Hierarchy (Lightness steps away from bg_base) */
+  --layer-01: #ffffff;
+  --layer-02: #f2f4f7;
+  --layer-03: #eaedf2;
+  --layer-04: #dfe3ea;
+
   /* Surfaces */
-  --bg: #f5f6f8;
-  --surface: #ffffff;
-  --surface-2: #fafbfc;
-  --surface-3: #f1f3f6;
-  --sidebar: #ffffff;
+  --surface: var(--layer-01);
+  --surface-2: var(--layer-02);
+  --surface-3: var(--layer-03);
+  --surface-4: var(--layer-04);
+  --sidebar: #fafbfc;
 
-  /* Glassmorphism & Overlays */
+  /* Glassmorphism & Materials */
   --glass-bg: rgba(255, 255, 255, 0.82);
-  --glass-border: rgba(15, 23, 42, 0.08);
-  --glass-blur: blur(16px) saturate(180%);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-blur: blur(20px) saturate(190%);
 
-  /* Ink */
-  --text: #0f172a;
-  --text-2: #475569;
-  --text-3: #7b8794;
+  /* Typography & Ink (Contrast Floors: 4.5:1 Muted, 3:1 Faint) */
+  --text: #161616;
+  --text-base: #161616;
+  --text-2: #5c5c5c;
+  --text-muted: #5c5c5c;
+  --text-3: #808080;
+  --text-faint: #808080;
   --text-inverse: #ffffff;
+  --text-accent: #3b82f6;
 
-  /* Lines */
-  --line: #e5e8ee;
-  --line-strong: #d3d9e2;
-  --line-subtle: rgba(15, 23, 42, 0.04);
+  /* Rune Low-Alpha Foreground Borders */
+  --line: rgba(0, 0, 0, 0.09);
+  --border-muted: rgba(0, 0, 0, 0.06);
+  --border-base: rgba(0, 0, 0, 0.11);
+  --border-strong: rgba(0, 0, 0, 0.20);
+  --line-strong: var(--border-strong);
+  --line-subtle: var(--border-muted);
+  --border-focus: #3b82f6;
 
-  /* Brand */
+  /* Accent & Brand Colors */
   --accent: #4f46e5;
   --accent-hover: #4338ca;
-  --accent-soft: #eef0ff;
+  --accent-soft: rgba(79, 70, 229, 0.10);
   --accent-ink: #3730a3;
-  --accent-glow: 0 0 22px rgba(79, 70, 229, 0.32);
+  --accent-glow: 0 0 24px rgba(79, 70, 229, 0.25);
 
-  /* Status */
-  --green: #0f9d6e;
-  --green-soft: #e6f7f1;
-  --amber: #b45309;
-  --amber-soft: #fef4e6;
-  --red: #d92d20;
-  --red-soft: #fdeceb;
-  --blue: #1d6ce0;
-  --blue-soft: #e8f1fd;
-  --violet: #7c3aed;
-  --violet-soft: #f2ecfe;
+  /* Semantic Status Roles */
+  --green: #10b981;
+  --green-soft: rgba(16, 185, 129, 0.12);
+  --amber: #f59e0b;
+  --amber-soft: rgba(245, 158, 11, 0.12);
+  --red: #ef4444;
+  --red-soft: rgba(239, 68, 68, 0.12);
+  --blue: #3b82f6;
+  --blue-soft: rgba(59, 130, 246, 0.12);
+  --violet: #8b5cf6;
+  --violet-soft: rgba(139, 92, 246, 0.12);
 
-  /* Type */
+  /* Typography Scales */
   --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  --font-mono: 'SFMono-Regular', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SFMono-Regular', Menlo, Consolas, monospace;
 
-  /* Concentric Radii */
+  /* Concentric Border Radii */
   --r-xs: 4px;
   --r-sm: 6px;
-  --r-md: 9px;
+  --r-md: 8px;
   --r-lg: 12px;
   --r-xl: 16px;
   --r-2xl: 20px;
   --r-pill: 9999px;
 
-  /* Layered Elevation & Specular Highlights */
-  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.05);
-  --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.04);
-  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08), 0 2px 4px rgba(16, 24, 40, 0.04);
-  --shadow-lg: 0 16px 40px rgba(16, 24, 40, 0.16);
-  --shadow-xl: 0 24px 48px -12px rgba(15, 23, 42, 0.18);
-  --shadow-specular: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  /* Rune Dual-Layer Elevation & Specular Sheen */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  --shadow-md: 0 4px 14px -2px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --shadow-lg: 0 16px 36px -4px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  --shadow-xl: 0 28px 56px -8px rgba(0, 0, 0, 0.16), 0 8px 20px rgba(0, 0, 0, 0.06);
+  --shadow-specular: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --shadow-inset-sheen: inset 0 1px 0 0 rgba(255, 255, 255, 0.85);
 
-  --sidebar-w: 244px;
-  --topbar-h: 58px;
-  --focus-ring: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent);
+  /* Rune Specific Component Elevation */
+  --elevation-raised: 0 1px 3px rgba(0, 0, 0, 0.06), 0 4px 12px rgba(0, 0, 0, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  --elevation-floating: 0 12px 32px -4px rgba(0, 0, 0, 0.14), 0 4px 12px rgba(0, 0, 0, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --elevation-overlay: 0 24px 64px -8px rgba(0, 0, 0, 0.20), 0 8px 24px rgba(0, 0, 0, 0.08);
+  --elevation-button-neutral: 0 1px 2px rgba(0, 0, 0, 0.05), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  --elevation-button-contrast: 0 1px 3px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+
+  /* Rune Spring Motion Curves */
+  --motion-snappy: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --motion-smooth: cubic-bezier(0.25, 1, 0.5, 1);
+  --motion-disclosure: cubic-bezier(0.19, 1, 0.22, 1);
+
+  --duration-fast: 120ms;
+  --duration-normal: 200ms;
+  --duration-spring: 280ms;
+
+  --sidebar-w: 248px;
+  --topbar-h: 56px;
+  --focus-ring: 0 0 0 1px var(--surface), 0 0 0 3px var(--border-focus);
 }
 
+/* ─── Rune Dark Appearance (Deep Cosmic Obsidian & Micro-Bevel Lighting) ─── */
 [data-theme="dark"] {
-  /* Surfaces — Deep Obsidian & High-Tech Slate */
-  --bg: #07090e;
-  --surface: #0d121d;
-  --surface-2: #141c2c;
-  --surface-3: #1c273c;
-  --sidebar: #0a0e17;
+  --bg: #090a0f;
+  --bg-base: #090a0f;
+  --bg-deep: #06070a;
 
-  /* Glassmorphism & Overlays */
-  --glass-bg: rgba(13, 18, 29, 0.88);
-  --glass-border: rgba(255, 255, 255, 0.08);
-  --glass-blur: blur(20px) saturate(190%);
+  /* Layer Hierarchy: OKLab Lightness steps away from #090a0f */
+  --layer-01: #11141e;
+  --layer-02: #171b28;
+  --layer-03: #1f2536;
+  --layer-04: #272e43;
 
-  /* Ink — Pure White and Titanium Slate */
+  /* Surfaces */
+  --surface: var(--layer-01);
+  --surface-2: var(--layer-02);
+  --surface-3: var(--layer-03);
+  --surface-4: var(--layer-04);
+  --sidebar: #0b0e16;
+
+  /* Glassmorphism & Materials */
+  --glass-bg: rgba(17, 20, 30, 0.85);
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-blur: blur(20px) saturate(200%);
+
+  /* Typography & Ink */
   --text: #f8fafc;
+  --text-base: #f8fafc;
   --text-2: #94a3b8;
+  --text-muted: #94a3b8;
   --text-3: #64748b;
-  --text-inverse: #07090e;
+  --text-faint: #64748b;
+  --text-inverse: #090a0f;
+  --text-accent: #38bdf8;
 
-  /* Lines — Crisp Sub-Pixel Borders */
+  /* Rune Low-Alpha Foreground Borders */
   --line: rgba(255, 255, 255, 0.08);
-  --line-strong: rgba(255, 255, 255, 0.14);
-  --line-subtle: rgba(255, 255, 255, 0.04);
+  --border-muted: rgba(255, 255, 255, 0.06);
+  --border-base: rgba(255, 255, 255, 0.11);
+  --border-strong: rgba(255, 255, 255, 0.20);
+  --line-strong: var(--border-strong);
+  --line-subtle: var(--border-muted);
+  --border-focus: #3b82f6;
 
-  /* Brand — Luminous Indigo Glow */
+  /* Brand — Luminous Indigo / Cobalt Glow */
   --accent: #6366f1;
   --accent-hover: #7b7ef5;
   --accent-soft: rgba(99, 102, 241, 0.16);
   --accent-ink: #c7d2fe;
-  --accent-glow: 0 0 28px rgba(99, 102, 241, 0.45);
+  --accent-glow: 0 0 28px rgba(99, 102, 241, 0.40);
 
-  /* Status */
+  /* Semantic Status Roles */
   --green: #10b981;
   --green-soft: rgba(16, 185, 129, 0.16);
   --amber: #f59e0b;
@@ -110,11 +172,20 @@
   --violet: #a855f7;
   --violet-soft: rgba(168, 85, 247, 0.16);
 
-  /* Elevation & Specular Highlights */
+  /* Rune Dual-Layer Elevation & Specular Micro-Bevel */
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.6), 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.7), 0 2px 6px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 20px 48px rgba(0, 0, 0, 0.82);
-  --shadow-xl: 0 32px 72px rgba(0, 0, 0, 0.9);
-  --shadow-specular: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.6), 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.65), 0 2px 6px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --shadow-lg: 0 20px 48px -4px rgba(0, 0, 0, 0.8), 0 4px 14px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.11);
+  --shadow-xl: 0 32px 72px -8px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.13);
+  --shadow-specular: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --shadow-inset-sheen: inset 0 1px 0 0 rgba(255, 255, 255, 0.10);
+
+  /* Rune Specific Component Elevation */
+  --elevation-raised: 0 1px 3px rgba(0, 0, 0, 0.5), 0 4px 14px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  --elevation-floating: 0 14px 36px -4px rgba(0, 0, 0, 0.75), 0 4px 14px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --elevation-overlay: 0 28px 72px -8px rgba(0, 0, 0, 0.88), 0 8px 24px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.14);
+  --elevation-button-neutral: 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+  --elevation-button-contrast: 0 1px 4px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  --focus-ring: 0 0 0 1px var(--surface), 0 0 0 3px rgba(99, 102, 241, 0.45);
 }

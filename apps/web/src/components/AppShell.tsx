@@ -283,11 +283,11 @@ function Sidebar({
               left: 12,
               right: 12,
               zIndex: 50,
-              boxShadow: 'var(--shadow-lg)',
+              boxShadow: 'var(--elevation-floating)',
               padding: '8px',
               borderRadius: 'var(--r-md)',
               background: 'var(--surface)',
-              border: '1px solid var(--line)',
+              border: '1px solid var(--border-strong)',
             }}
           >
             <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)', padding: '4px 8px' }}>
@@ -648,7 +648,17 @@ export function SearchBox() {
       {open && query.trim() && (
         <div
           className="card"
-          style={{ position: 'absolute', top: 40, left: 0, right: 0, zIndex: 50, boxShadow: 'var(--shadow-lg)', overflow: 'hidden' }}
+          style={{
+            position: 'absolute',
+            top: 42,
+            left: 0,
+            right: 0,
+            zIndex: 50,
+            boxShadow: 'var(--elevation-floating)',
+            border: '1px solid var(--border-strong)',
+            borderRadius: 'var(--r-md)',
+            overflow: 'hidden',
+          }}
         >
           {!hasResults && <div className="empty" style={{ padding: '22px 16px' }}>No matches for “{query}”</div>}
           {results.contacts.map((c) => (
@@ -798,11 +808,11 @@ function NotificationsButton() {
               top: 42,
               width: 340,
               zIndex: 100,
-              boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08)',
+              boxShadow: 'var(--elevation-floating)',
               overflow: 'hidden',
-              background: 'var(--surface, #ffffff)',
-              border: '1px solid var(--line, #e2e8f0)',
-              borderRadius: '12px'
+              background: 'var(--surface)',
+              border: '1px solid var(--border-strong)',
+              borderRadius: 'var(--r-lg)'
             }}
           >
             <div className="card__head" style={{ padding: '12px 16px', borderBottom: '1px solid var(--line)' }}>

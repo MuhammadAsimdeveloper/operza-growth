@@ -186,6 +186,16 @@ export function MarketingLayout() {
             </Link>
 
             <Link
+              to="/academy"
+              style={{
+                ...styles.navLink,
+                ...(isActive('/academy') ? styles.navLinkActive : {}),
+              }}
+            >
+              Academy &amp; Certs
+            </Link>
+
+            <Link
               to="/docs"
               style={{
                 ...styles.navLink,
@@ -363,10 +373,10 @@ export function MarketingLayout() {
             <div>
               <h4 style={styles.footerHeading}>Resources</h4>
               <ul style={styles.footerList}>
+                <li><Link to="/academy" style={styles.footerLink}>Operza Cloud Academy</Link></li>
+                <li><Link to="/certification" style={styles.footerLink}>Verified Credentials</Link></li>
                 <li><Link to="/docs" style={styles.footerLink}>Developer Documentation</Link></li>
                 <li><Link to="/blog" style={styles.footerLink}>Agency Scaling Guides</Link></li>
-                <li><Link to="/docs" style={styles.footerLink}>REST API &amp; Webhooks</Link></li>
-                <li><Link to="/about" style={styles.footerLink}>Engineering Roadmap</Link></li>
                 <li><Link to="/pricing" style={styles.footerLink}>SaaS Pricing Matrix</Link></li>
               </ul>
             </div>
