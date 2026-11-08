@@ -5,6 +5,7 @@
  */
 
 export * from './ai-provider.mjs';
+export * from './cognitive-engine.mjs';
 export * from './system-prompt.mjs';
 export * from './rag-engine.mjs';
 export * from './tool-registry.mjs';
