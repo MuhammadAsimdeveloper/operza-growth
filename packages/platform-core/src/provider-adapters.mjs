@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { assertSafeTargetUrl, buildProviderOutboundHeaders, generateDeterministicIdempotencyKey } from './ssrf-defense.mjs';
 
 /**
  * Resend Email Adapter
@@ -21,14 +22,21 @@ export const resendEmailAdapter = Object.freeze({
     };
   },
 
-  async dispatch({ secret, config = {}, payload = {}, consent } = {}) {
+  async dispatch({ secret, config = {}, payload = {}, consent, tenantId, locationId, actionHash } = {}) {
     if (!consent || consent.status !== 'granted') {
       return { ok: false, error: 'Communication consent not granted', code: 'CONSENT_REQUIRED' };
     }
+    if (config.endpoint) {
+      assertSafeTargetUrl(config.endpoint);
+    }
+    const idempotencyKey = (tenantId && locationId && actionHash)
+      ? generateDeterministicIdempotencyKey({ agencyId: tenantId, locationId, actionHash })
+      : null;
     return {
       ok: true,
       messageId: `msg_re_${randomUUID().slice(0, 12)}`,
       provider: 'resend',
+      idempotencyKey,
       timestamp: new Date().toISOString()
     };
   }
@@ -151,11 +159,18 @@ export const stripePaymentAdapter = Object.freeze({
     };
   },
 
-  async dispatch({ secret, config = {}, payload = {} } = {}) {
+  async dispatch({ secret, config = {}, payload = {}, tenantId, locationId, actionHash } = {}) {
+    if (config.endpoint) {
+      assertSafeTargetUrl(config.endpoint);
+    }
+    const idempotencyKey = (tenantId && locationId && actionHash)
+      ? generateDeterministicIdempotencyKey({ agencyId: tenantId, locationId, actionHash })
+      : null;
     return {
       ok: true,
       paymentIntentId: `pi_${randomUUID().replace(/-/g, '').slice(0, 24)}`,
       provider: 'stripe',
+      idempotencyKey,
       timestamp: new Date().toISOString()
     };
   }

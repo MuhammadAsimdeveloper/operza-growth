@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { gateAiToolExecution } from './billing-ledger.mjs';
 
 /**
  * Authoritative Governed Copilot Proposal Executor
@@ -8,7 +9,9 @@ export async function executeCopilotProposal({
   proposal,
   actor,
   handlers = {},
-  now = Date.now()
+  now = Date.now(),
+  ledger = null,
+  toolCostCents = 10
 } = {}) {
   if (!proposal || typeof proposal !== 'object') {
     return { ok: false, code: 'INVALID_PROPOSAL', message: 'Proposal object is required' };
@@ -37,6 +40,29 @@ export async function executeCopilotProposal({
       code: 'HANDLER_NOT_FOUND',
       message: `No execution handler registered for tool: ${proposal.toolName}`
     };
+  }
+
+  // Credit entitlement gating for mutating AI tool execution
+  if (ledger) {
+    const gateResult = gateAiToolExecution({
+      ledger,
+      agencyId: proposal.tenantId,
+      locationId: proposal.locationId,
+      toolName: proposal.toolName,
+      costCents: toolCostCents,
+      dryRun: false,
+      metadata: { proposalId: proposal.id }
+    });
+
+    if (!gateResult.allowed) {
+      return {
+        ok: false,
+        code: gateResult.code || 'INSUFFICIENT_CREDITS',
+        message: gateResult.error || 'Insufficient credits for AI tool execution',
+        balanceCents: gateResult.balanceCents,
+        costCents: gateResult.costCents
+      };
+    }
   }
 
   try {

@@ -28,9 +28,11 @@ import dns from 'node:dns/promises';
 import { executeStep, calculateChecksum } from '../../packages/workflow-engine/src/engine.mjs';
 import { createActionInvocation, getWorkflowActionDefinition } from '../../packages/workflow-engine/src/action-governance.mjs';
 import { createPendingApproval, resolvePendingApproval } from '../../packages/workflow-engine/src/approval-lifecycle.mjs';
+import { claimExecutionLease, heartbeatExecutionLease, releaseExecutionLease, recoverAbandonedExecutions } from '../../packages/workflow-engine/src/durable-leases.mjs';
 import { createProviderConnection, revokeProviderConnection, publicProviderConnection, PROVIDER_CATALOG, verifyProviderConnection } from '../../packages/platform-core/src/provider-lifecycle.mjs';
 import { createSecretResolver } from '../../packages/platform-core/src/secret-vault.mjs';
 import { createProviderAdapterRegistry } from '../../packages/platform-core/src/provider-adapters.mjs';
+import { createBillingLedgerStore, createImmutableAuditStore, gateAiToolExecution } from '../../packages/platform-core/src/billing-ledger.mjs';
 import { executeCopilotProposal } from '../../packages/platform-core/src/proposal-executor.mjs';
 import { createMemoryOutboxRepository, executeWorkerTick } from '../../packages/platform-core/src/outbox-worker.mjs';
 import { produceWorkflowTriggerEvent } from '../../packages/platform-core/src/outbox-producer.mjs';
@@ -41,6 +43,12 @@ import { resolveEntitlements, listPlans, checkFeatureAccess, checkUsageLimit, cr
 import { createPlatformRepository } from '../../packages/db/lib/platform-repository.mjs';
 import { workflowQueue } from './queue.mjs';
 import { handleZapierRoute, dispatchZapierEvent } from './zapier-router.mjs';
+import { handleSystemRoutes } from './routes/system.mjs';
+import { handleAuthRoutes } from './routes/auth.mjs';
+import { handleAgencyRoutes } from './routes/agency.mjs';
+import { handleCrmRoutes } from './routes/crm.mjs';
+import { parseAndValidateCsvImport, exportContactsToCsv } from '../../packages/platform-core/src/csv-transfer.mjs';
+import { createSmartListView, matchesSmartListView, filterSmartListRecords, generateSmartListSql } from '../../packages/platform-core/src/crm-views-store.mjs';
 import { createDefaultLLMRuntime } from '../../packages/platform-core/src/llm-runtime/index.mjs';
 import { MultiAgentOrchestrator, AGENT_ROLES, OPERZA_KNOWLEDGE_BASE, MULTILINGUAL_GUIDELINES } from '../../packages/platform-core/src/multi-agent/index.mjs';
 import { CopilotService, RAGEngine, resolveAIProvider, COPILOT_TOOLS } from '../../packages/platform-core/src/copilot/index.mjs';
@@ -48,6 +56,8 @@ import { CopilotService, RAGEngine, resolveAIProvider, COPILOT_TOOLS } from '../
 const secretResolver = createSecretResolver();
 const providerAdapterRegistry = createProviderAdapterRegistry();
 const memoryOutboxRepo = createMemoryOutboxRepository();
+const billingLedgerStore = createBillingLedgerStore({ defaultCreditBalance: 10000 });
+const immutableAuditStore = createImmutableAuditStore();
 const defaultLLMRuntime = createDefaultLLMRuntime({
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
   localAIBaseUrl: process.env.LOCALAI_BASE_URL || 'http://localhost:8080/v1',
@@ -122,6 +132,8 @@ try {
   console.warn('[OPERZA] ws package not installed — WebSocket server disabled. Run: npm install ws');
 }
 
+const isStagingOrProd = process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging';
+
 // Conditionally load pg for PostgreSQL dual-mode persistence
 let pgPool = null;
 try {
@@ -140,8 +152,14 @@ try {
         console.error('[OPERZA-DB] Unexpected PostgreSQL pool error:', err.message);
       });
     }
+  } else if (isStagingOrProd) {
+    throw new Error(`[FATAL] Running in ${process.env.NODE_ENV} mode requires DATABASE_URL to be set. Silent fallback to store.json is strictly forbidden.`);
   }
 } catch (err) {
+  if (isStagingOrProd) {
+    console.error('[OPERZA-DB] FATAL:', err.message);
+    throw err;
+  }
   console.warn('[OPERZA-DB] pg module not available or error initializing pool:', err.message);
 }
 
@@ -382,6 +400,17 @@ setInterval(() => {
     if (now - entry.lastAccess > COPILOT_SESSION_TTL) copilotSessions.delete(key);
   }
 }, 5 * 60_000);
+
+// Durable Workflow Leases — Periodic recovery of abandoned/crashed workflow executions
+setInterval(() => {
+  if (Array.isArray(state?.workflowExecutions)) {
+    recoverAbandonedExecutions({
+      executions: state.workflowExecutions,
+      maxAttempts: 3,
+      now: Date.now()
+    });
+  }
+}, 30_000);
 
 // ─── WebSocket Broadcast ──────────────────────────────────────────────
 let wss = null;
@@ -636,6 +665,9 @@ function clearSessionCookies(res) {
 }
 
 async function initDatabase() {
+  if (isStagingOrProd && !pgPool) {
+    throw new Error(`[FATAL] Running in ${process.env.NODE_ENV} mode requires a valid, initialized PostgreSQL pool. Refusing startup.`);
+  }
   if (!pgPool) {
     console.log('📦 [OPERZA-DB] Running in zero-config JSON file mode (data/store.json).');
     return;
@@ -655,6 +687,10 @@ async function initDatabase() {
       client.release();
     }
   } catch (err) {
+    if (isStagingOrProd) {
+      console.error(`[OPERZA-DB] FATAL: PostgreSQL connection check failed in ${process.env.NODE_ENV} mode:`, err.message);
+      throw new Error(`[FATAL] PostgreSQL connection probe failed in ${process.env.NODE_ENV} mode: ${err.message}. Refusing fallback to store.json.`);
+    }
     console.error('[OPERZA-DB] PostgreSQL connection check failed, falling back to local file storage:', err.message);
     pgPool = null;
   }
@@ -930,6 +966,7 @@ async function executeWorkflowInstance({
     createdAt: new Date().toISOString()
   };
 
+  const workerLeaseId = `api-worker-${process.pid || 'local'}`;
   if (currentExecution) {
     flow = flow || execution.workflowSnapshot;
     agencyId = execution.agencyId;
@@ -937,8 +974,9 @@ async function executeWorkflowInstance({
     triggerType = execution.triggerType;
     triggerContext = execution.triggerContext || {};
     mode = execution.mode;
-    execution.status = 'running';
+    claimExecutionLease({ execution, workerLeaseId, leaseDurationMs: 60_000, now: startedAt });
   } else {
+    claimExecutionLease({ execution, workerLeaseId, leaseDurationMs: 60_000, now: startedAt });
     try {
       const outboxEntry = await produceWorkflowTriggerEvent({
         repository: memoryOutboxRepo,
@@ -1182,6 +1220,7 @@ async function executeWorkflowInstance({
   for (let index = startIndex; index < nodes.length; index += 1) {
     const node = nodes[index];
     execution.currentNodeIndex = index;
+    heartbeatExecutionLease({ execution, workerLeaseId, leaseDurationMs: 60_000, now: Date.now() });
     const actionDefinition = getWorkflowActionDefinition(node?.type);
     const requiresApproval = mode !== 'dry_run' &&
       (node?.requiresApproval === true || actionDefinition?.approval === 'human');
@@ -1383,10 +1422,9 @@ async function executeWorkflowInstance({
   }
 
   if (execution.status === 'running') {
-    execution.status = 'completed';
-    execution.finishedAt = new Date().toISOString();
+    releaseExecutionLease({ execution, workerLeaseId, finalStatus: 'completed', now: Date.now() });
   } else if (execution.status === 'failed') {
-    execution.finishedAt = new Date().toISOString();
+    releaseExecutionLease({ execution, workerLeaseId, finalStatus: 'failed', errorCode: execution.lastErrorCode, now: Date.now() });
     // Dispatch Error Trigger Workflows (Automated Resilient Error Boundary)
     if (triggerType !== 'workflow_error') {
       const errorFlows = (state.records.workflows || []).filter(
@@ -2050,151 +2088,23 @@ const server = createServer(async (req, res) => {
     }
 
     // ─── Health, Readiness & Observability Telemetry ─────────────────
-    if (pathname === '/health') {
-      return sendJson(res, 200, {
-        name: 'Operza Unified API',
-        status: 'healthy',
-        version: '2.0.0',
-        wsEnabled: !!wss,
-        uptime: process.uptime(),
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    if (pathname === '/ready') {
-      let dbStatus = 'disconnected';
-      if (pgPool) {
-        try {
-          const testRes = await pgPool.query('SELECT 1');
-          if (testRes.rows.length > 0) dbStatus = 'connected';
-        } catch {
-          dbStatus = 'error';
-        }
-      } else {
-        dbStatus = 'local_file_store';
-      }
-      return sendJson(res, 200, {
-        ready: true,
-        dbEngine: pgPool ? 'postgresql' : 'json_file',
-        dbStatus,
-        wsReady: !!wss,
-        uptime: process.uptime(),
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    if (pathname === '/metrics') {
-      const mem = process.memoryUsage();
-      const entityCounts = {};
-      for (const [key, list] of Object.entries(state.records || {})) {
-        entityCounts[key] = (list || []).length;
-      }
-      return sendJson(res, 200, {
-        uptime: process.uptime(),
-        memory: {
-          rssMb: Math.round(mem.rss / 1024 / 1024 * 100) / 100,
-          heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024 * 100) / 100,
-          heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024 * 100) / 100
-        },
-        connections: {
-          wsClients: wsClients.size
-        },
-        database: {
-          engine: pgPool ? 'postgresql' : 'json_file',
-          totalUsers: (state.users || []).length,
-          totalAgencies: (state.agencies || []).length,
-          totalLocations: (state.locations || []).length,
-          records: entityCounts
-        },
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    // ─── Queue & Relational Database Admin Telemetry ───────────────
-    if (pathname === '/api/admin/queue/status') {
-      return sendJson(res, 200, {
-        queue: workflowQueue.getMetrics(),
-        timestamp: new Date().toISOString()
-      });
-    }
-
-    if (pathname === '/api/admin/worker/status') {
-      return sendJson(res, 200, {
-        status: 'active',
-        workerId: 'operza-worker-tick-daemon',
-        stats: memoryOutboxRepo.getStats(),
-        engine: 'memory_outbox'
-      });
-    }
-
-    if (method === 'POST' && pathname === '/api/admin/worker/tick') {
-      const tickResult = await executeWorkerTick({
-        repository: memoryOutboxRepo,
-        handlers: trustedWorkerHandlers,
-        workerId: `admin-tick-${randomUUID().slice(0, 8)}`
-      });
-      return sendJson(res, 200, {
-        success: true,
-        tick: tickResult,
-        stats: memoryOutboxRepo.getStats()
-      });
-    }
-
-    if (method === 'POST' && pathname === '/api/admin/outbox/enqueue') {
-      const actor = getActor(req);
-      const tenantId = actor?.agency?.id || 'admin-tenant';
-      const locationId = actor?.activeLocation?.id || 'default';
-      const body = await readBody(req);
-      const enq = await memoryOutboxRepo.enqueue({
-        tenantId,
-        locationId,
-        eventType: body.eventType || 'audit.event.record',
-        idempotencyKey: body.idempotencyKey || `idem_${randomUUID()}`,
-        payload: { tenantId, ...(body.payload || {}) }
-      });
-      return sendJson(res, 201, { success: true, ...enq });
-    }
-
-    if (method === 'POST' && pathname === '/api/admin/queue/test-job') {
-      const body = await readBody(req);
-      const delayMs = Number(body.delayMs) || 0;
-      const opts = {
-        idempotencyKey: body.idempotencyKey || req.headers['idempotency-key'] || null,
-        maxRetries: body.maxRetries !== undefined ? Number(body.maxRetries) : undefined
-      };
-      let job;
-      if (delayMs > 0) {
-        job = await workflowQueue.enqueueDelayed('test_queue', body.data || { test: true }, delayMs, opts);
-      } else {
-        job = await workflowQueue.enqueue('test_queue', body.data || { test: true }, opts);
-      }
-      return sendJson(res, 201, { success: true, job, metrics: workflowQueue.getMetrics() });
-    }
-
-    if (pathname === '/api/admin/db/status') {
-      let pgInfo = { connected: false, engine: 'json_file' };
-      if (pgPool) {
-        try {
-          const testRes = await pgPool.query('SELECT current_database(), version()');
-          const tablesRes = await pgPool.query(`
-            SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'
-          `);
-          pgInfo = {
-            connected: true,
-            engine: 'postgresql_relational',
-            database: testRes.rows[0]?.current_database,
-            tableCount: tablesRes.rows.length,
-            tables: tablesRes.rows.map(r => r.table_name)
-          };
-        } catch (err) {
-          pgInfo = { connected: false, error: err.message };
-        }
-      }
-      return sendJson(res, 200, {
-        db: pgInfo,
-        inMemoryCollections: Object.keys(state.records || {}).length,
-        timestamp: new Date().toISOString()
-      });
+    if (await handleSystemRoutes(req, res, {
+      pathname,
+      method,
+      sendJson,
+      readBody,
+      state,
+      pgPool,
+      wss,
+      wsClients,
+      workflowQueue,
+      memoryOutboxRepo,
+      trustedWorkerHandlers,
+      executeWorkerTick,
+      randomUUID,
+      getActor
+    })) {
+      return;
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -4406,492 +4316,26 @@ const server = createServer(async (req, res) => {
     // ═════════════════════════════════════════════════════════════
     // ─── AUTH ROUTES ────────────────────────────────────────────
     // ═════════════════════════════════════════════════════════════
-
-    // AUTH: Signup
-    if (method === 'POST' && pathname === '/api/auth/signup') {
-      const body = await readBody(req);
-      const { name, email, password, agencyName } = body;
-      if (!name || !email || !password) return sendJson(res, 400, { error: 'Name, email, and password required' });
-
-      const emailKey = email.toLowerCase().trim();
-      if (state.users.some(u => u.email === emailKey)) {
-        return sendJson(res, 409, { error: 'An account with this email already exists' });
+    if (pathname.startsWith('/api/auth/')) {
+      if (await handleAuthRoutes(req, res, {
+        method,
+        pathname,
+        readBody,
+        sendJson,
+        state,
+        saveState,
+        auditLog,
+        scrypt,
+        randomBytes,
+        randomUUID,
+        hash,
+        safeEqual,
+        setSessionCookies,
+        clearSessionCookies,
+        getActor
+      })) {
+        return;
       }
-
-      const salt = randomBytes(16);
-      const passBuf = await scrypt(password, salt, 64);
-      const passwordHash = `${salt.toString('hex')}:${passBuf.toString('hex')}`;
-
-      const userId = randomUUID();
-      const agencyId = randomUUID();
-      const locationId = randomUUID();
-
-      const user = { id: userId, name: name.trim(), email: emailKey, passwordHash, status: 'active', createdAt: new Date().toISOString() };
-      const agency = { id: agencyId, name: (agencyName || `${name.trim()}'s Agency`).trim(), slug: emailKey.split('@')[0], status: 'active', createdAt: new Date().toISOString() };
-      const location = { id: locationId, agencyId, name: 'Main Workspace', timezone: 'UTC', status: 'active', createdAt: new Date().toISOString() };
-      const membership = { id: randomUUID(), agencyId, userId, role: 'owner', status: 'active', createdAt: new Date().toISOString() };
-
-      state.users.push(user);
-      state.agencies.push(agency);
-      state.locations.push(location);
-      state.memberships.push(membership);
-
-      // Seed tenant defaults (Calendar, Payment Link, Public Form, Pipeline)
-      state.records.calendars = state.records.calendars || [];
-      const defaultCalId = randomUUID();
-      state.records.calendars.push({
-        id: defaultCalId,
-        agencyId,
-        locationId,
-        name: 'Discovery & Strategy Session',
-        slug: 'discovery-strategy',
-        color: '#6366f1',
-        durationMin: 30,
-        description: '30-minute discovery call to evaluate automation requirements and team fit.',
-        status: 'active',
-        roundRobin: true,
-        availability: [
-          { weekday: 1, start: '09:00', end: '17:00' },
-          { weekday: 2, start: '09:00', end: '17:00' },
-          { weekday: 3, start: '09:00', end: '17:00' },
-          { weekday: 4, start: '09:00', end: '17:00' },
-          { weekday: 5, start: '09:00', end: '17:00' }
-        ],
-        createdAt: new Date().toISOString()
-      });
-
-      state.records.paymentLinks = state.records.paymentLinks || [];
-      state.records.paymentLinks.push({
-        id: randomUUID(),
-        agencyId,
-        locationId,
-        name: 'Growth Retainer - Starter Pack',
-        slug: 'starter-retainer',
-        amount: 1500,
-        currency: 'USD',
-        productIds: [],
-        visits: 0,
-        conversions: 0,
-        active: true,
-        description: 'Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.',
-        createdAt: new Date().toISOString()
-      });
-
-      state.records.forms = state.records.forms || [];
-      state.records.forms.push({
-        id: randomUUID(),
-        agencyId,
-        locationId,
-        name: 'Inbound Consultation Request',
-        publicSlug: 'contact-us',
-        fields: ['firstName', 'lastName', 'email', 'phone', 'company', 'projectDetails'],
-        status: 'published',
-        submissions: 0,
-        description: 'Book your strategy consultation with our growth engineering team.',
-        createdAt: new Date().toISOString()
-      });
-
-      state.records.pipelines = state.records.pipelines || [];
-      state.records.pipelines.push({
-        id: randomUUID(),
-        agencyId,
-        locationId,
-        name: 'Lead Pipeline',
-        stages: ['New Inbound Lead', 'Discovery Call Booked', 'Proposal Sent', 'Won', 'Lost'],
-        status: 'active',
-        description: 'Primary customer acquisition pipeline',
-        createdAt: new Date().toISOString()
-      });
-
-      state.records.workflows = state.records.workflows || [];
-      state.records.workflows.push({
-        id: randomUUID(),
-        agencyId,
-        locationId,
-        name: 'Automated Lead Qualification & AI Scoring',
-        description: 'Auto-scores new leads with Copilot AI, applies qualification tags, and creates team follow-up tasks.',
-        status: 'published',
-        triggerType: 'form',
-        triggerConfig: { formName: 'contact-us' },
-        nodes: [
-          {
-            id: 'node-ai-score',
-            name: 'AI Lead Evaluation',
-            type: 'ai_agent',
-            config: { prompt: 'Analyze lead data and score purchase intent from 1 to 100.' }
-          },
-          {
-            id: 'node-tag',
-            name: 'Apply High-Intent Tag',
-            type: 'tag',
-            config: { tag: 'ai-qualified' }
-          },
-          {
-            id: 'node-task',
-            name: 'Create Priority Outreach Task',
-            type: 'task',
-            config: { title: 'High-Intent Lead Review', priority: 'high', dueInDays: 1 }
-          },
-          {
-            id: 'node-approval',
-            name: 'Executive Proposal Gate',
-            type: 'condition',
-            requiresApproval: true,
-            config: { message: 'Review enterprise proposal before final transmission' }
-          }
-        ],
-        createdAt: new Date().toISOString()
-      });
-
-      // Authentic clean workspace: 0 fake blogs, 0 fake QR scans, 0 fake transactions.
-      const token = randomBytes(32).toString('hex');
-      const csrf = randomBytes(24).toString('hex');
-      state.sessions.push({
-        id: randomUUID(),
-        tokenHash: hash(token),
-        csrfHash: hash(csrf),
-        userId,
-        agencyId,
-        expiresAt: Date.now() + 12 * 3600 * 1000
-      });
-
-      setSessionCookies(res, token, csrf);
-      await saveState();
-      auditLog('auth.signup', { user, agency, membership, locations: [location], activeLocation: location }, { email: emailKey });
-
-      return sendJson(res, 201, {
-        user: { id: user.id, name: user.name, email: user.email },
-        agency: { id: agency.id, name: agency.name },
-        locations: [location],
-        activeLocationId: location.id
-      });
-    }
-
-    // AUTH: Google Sign-In & Sign-Up (OAuth Federation)
-    if (method === 'POST' && pathname === '/api/auth/google') {
-      const body = await readBody(req);
-      const { email, name, avatar } = body;
-      if (!email) return sendJson(res, 400, { error: 'Email is required for Google Sign-In' });
-
-      const emailKey = email.toLowerCase().trim();
-      let user = state.users.find(u => u.email === emailKey);
-      let agency, location, membership;
-
-      if (!user) {
-        // Create new authentic user with clean slate (zero demo data)
-        const userId = randomUUID();
-        const agencyId = randomUUID();
-        const locationId = randomUUID();
-
-        const salt = randomBytes(16);
-        const passBuf = await scrypt(randomUUID(), salt, 64);
-        const passwordHash = `${salt.toString('hex')}:${passBuf.toString('hex')}`;
-
-        user = {
-          id: userId,
-          name: (name || emailKey.split('@')[0]).trim(),
-          email: emailKey,
-          passwordHash,
-          avatar: avatar || null,
-          status: 'active',
-          provider: 'google',
-          createdAt: new Date().toISOString()
-        };
-
-        agency = {
-          id: agencyId,
-          name: `${user.name}'s Agency`,
-          slug: emailKey.split('@')[0],
-          status: 'active',
-          createdAt: new Date().toISOString()
-        };
-
-        location = {
-          id: locationId,
-          agencyId,
-          name: 'Main Workspace',
-          timezone: 'UTC',
-          status: 'active',
-          createdAt: new Date().toISOString()
-        };
-
-        membership = {
-          id: randomUUID(),
-          agencyId,
-          userId,
-          role: 'owner',
-          status: 'active',
-          createdAt: new Date().toISOString()
-        };
-
-        state.users.push(user);
-        state.agencies.push(agency);
-        state.locations.push(location);
-        state.memberships.push(membership);
-
-        state.records.pipelines = state.records.pipelines || [];
-        state.records.pipelines.push({
-          id: randomUUID(),
-          agencyId,
-          locationId,
-          name: 'Lead Pipeline',
-          stages: ['New Lead', 'Contacted', 'Qualified', 'Proposal Sent', 'Won', 'Lost'],
-          status: 'active',
-          description: 'Primary customer acquisition pipeline',
-          createdAt: new Date().toISOString()
-        });
-      } else {
-        membership = state.memberships.find(m => m.userId === user.id && m.status === 'active');
-        agency = state.agencies.find(a => a.id === membership?.agencyId && a.status === 'active') || state.agencies[0];
-        const locs = state.locations.filter(l => l.agencyId === agency?.id && l.status === 'active');
-        location = locs[0] || state.locations[0];
-      }
-
-      const locations = state.locations.filter(l => l.agencyId === agency.id && l.status === 'active');
-      const token = randomBytes(32).toString('hex');
-      const csrf = randomBytes(24).toString('hex');
-      state.sessions.push({
-        id: randomUUID(),
-        tokenHash: hash(token),
-        csrfHash: hash(csrf),
-        userId: user.id,
-        agencyId: agency.id,
-        expiresAt: Date.now() + 12 * 3600 * 1000
-      });
-
-      setSessionCookies(res, token, csrf);
-      await saveState();
-      auditLog('auth.google', { user, agency, membership, locations, activeLocation: location }, { email: emailKey });
-
-      return sendJson(res, 200, {
-        user: { id: user.id, name: user.name, email: user.email },
-        agency: { id: agency.id, name: agency.name },
-        locations,
-        activeLocationId: location?.id || locations[0]?.id
-      });
-    }
-
-    // AUTH: Request Magic Link / OTP Code
-    if (method === 'POST' && pathname === '/api/auth/magic-link') {
-      const body = await readBody(req);
-      const email = (body.email || '').toLowerCase().trim();
-      if (!email || !email.includes('@')) {
-        return sendJson(res, 400, { error: 'Valid email address is required' });
-      }
-
-      state.otps = state.otps || {};
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
-      state.otps[email] = {
-        code,
-        expiresAt: Date.now() + 10 * 60 * 1000
-      };
-
-      return sendJson(res, 200, {
-        success: true,
-        message: `A 6-digit verification code has been dispatched to ${email}.`,
-        devCode: code
-      });
-    }
-
-    // AUTH: Verify OTP Code
-    if (method === 'POST' && pathname === '/api/auth/verify-otp') {
-      const body = await readBody(req);
-      const emailKey = (body.email || '').toLowerCase().trim();
-      const code = (body.code || '').trim();
-      const name = (body.name || '').trim();
-
-      state.otps = state.otps || {};
-      const record = state.otps[emailKey];
-      if (!record || record.code !== code || Date.now() > record.expiresAt) {
-        return sendJson(res, 400, { error: 'Invalid or expired verification code' });
-      }
-      delete state.otps[emailKey];
-
-      let user = state.users.find(u => u.email === emailKey);
-      let agency, location, membership;
-
-      if (!user) {
-        const userId = randomUUID();
-        const agencyId = randomUUID();
-        const locationId = randomUUID();
-
-        const salt = randomBytes(16);
-        const passBuf = await scrypt(randomUUID(), salt, 64);
-        const passwordHash = `${salt.toString('hex')}:${passBuf.toString('hex')}`;
-
-        user = {
-          id: userId,
-          name: name || emailKey.split('@')[0],
-          email: emailKey,
-          passwordHash,
-          status: 'active',
-          provider: 'otp',
-          createdAt: new Date().toISOString()
-        };
-
-        agency = {
-          id: agencyId,
-          name: `${user.name}'s Agency`,
-          slug: emailKey.split('@')[0],
-          status: 'active',
-          createdAt: new Date().toISOString()
-        };
-
-        location = {
-          id: locationId,
-          agencyId,
-          name: 'Main Workspace',
-          timezone: 'UTC',
-          status: 'active',
-          createdAt: new Date().toISOString()
-        };
-
-        membership = {
-          id: randomUUID(),
-          agencyId,
-          userId,
-          role: 'owner',
-          status: 'active',
-          createdAt: new Date().toISOString()
-        };
-
-        state.users.push(user);
-        state.agencies.push(agency);
-        state.locations.push(location);
-        state.memberships.push(membership);
-
-        state.records.pipelines = state.records.pipelines || [];
-        state.records.pipelines.push({
-          id: randomUUID(),
-          agencyId,
-          locationId,
-          name: 'Lead Pipeline',
-          stages: ['New Lead', 'Contacted', 'Qualified', 'Proposal Sent', 'Won', 'Lost'],
-          status: 'active',
-          description: 'Primary customer acquisition pipeline',
-          createdAt: new Date().toISOString()
-        });
-      } else {
-        membership = state.memberships.find(m => m.userId === user.id && m.status === 'active');
-        agency = state.agencies.find(a => a.id === membership?.agencyId && a.status === 'active') || state.agencies[0];
-        const locs = state.locations.filter(l => l.agencyId === agency?.id && l.status === 'active');
-        location = locs[0] || state.locations[0];
-      }
-
-      const locations = state.locations.filter(l => l.agencyId === agency.id && l.status === 'active');
-      const token = randomBytes(32).toString('hex');
-      const csrf = randomBytes(24).toString('hex');
-      state.sessions.push({
-        id: randomUUID(),
-        tokenHash: hash(token),
-        csrfHash: hash(csrf),
-        userId: user.id,
-        agencyId: agency.id,
-        expiresAt: Date.now() + 12 * 3600 * 1000
-      });
-
-      setSessionCookies(res, token, csrf);
-      await saveState();
-      auditLog('auth.otp_login', { user, agency, membership, locations, activeLocation: location }, { email: emailKey });
-
-      return sendJson(res, 200, {
-        user: { id: user.id, name: user.name, email: user.email },
-        agency: { id: agency.id, name: agency.name },
-        locations,
-        activeLocationId: location?.id || locations[0]?.id
-      });
-    }
-
-    // AUTH: Login
-    if (method === 'POST' && pathname === '/api/auth/login') {
-      const body = await readBody(req);
-      const { email, password } = body;
-      const user = state.users.find(u => u.email === String(email).toLowerCase().trim() && u.status === 'active');
-      if (!user) return sendJson(res, 401, { error: 'Invalid email or password' });
-
-      const [saltHex, keyHex] = user.passwordHash.split(':');
-      const testBuf = await scrypt(password, Buffer.from(saltHex, 'hex'), 64);
-      if (!safeEqual(testBuf.toString('hex'), keyHex)) {
-        return sendJson(res, 401, { error: 'Invalid email or password' });
-      }
-
-      const membership = state.memberships.find(m => m.userId === user.id && m.status === 'active');
-      if (!membership) return sendJson(res, 403, { error: 'No active agency found for user' });
-
-      const agency = state.agencies.find(a => a.id === membership.agencyId && a.status === 'active');
-      const locations = state.locations.filter(l => l.agencyId === agency.id && l.status === 'active');
-
-      const token = randomBytes(32).toString('hex');
-      const csrf = randomBytes(24).toString('hex');
-      state.sessions.push({
-        id: randomUUID(),
-        tokenHash: hash(token),
-        csrfHash: hash(csrf),
-        userId: user.id,
-        agencyId: agency.id,
-        expiresAt: Date.now() + 12 * 3600 * 1000
-      });
-
-      setSessionCookies(res, token, csrf);
-      await saveState();
-      auditLog('auth.login', { user, agency, membership, locations, activeLocation: locations[0] }, {});
-
-      return sendJson(res, 200, {
-        user: { id: user.id, name: user.name, email: user.email },
-        agency: { id: agency.id, name: agency.name },
-        locations,
-        activeLocationId: locations[0]?.id
-      });
-    }
-
-    // AUTH: Current Session Check
-    if (method === 'GET' && pathname === '/api/auth/session') {
-      const actor = getActor(req);
-      if (!actor) return sendJson(res, 401, { error: 'Not authenticated' });
-      return sendJson(res, 200, {
-        user: { id: actor.user.id, name: actor.user.name, email: actor.user.email },
-        agency: { id: actor.agency.id, name: actor.agency.name },
-        locations: actor.locations,
-        activeLocationId: actor.activeLocation.id,
-        role: actor.membership.role
-      });
-    }
-
-    // AUTH: Full user profile
-    if (method === 'GET' && pathname === '/api/auth/me') {
-      const actor = getActor(req);
-      if (!actor) return sendJson(res, 401, { error: 'Not authenticated' });
-      return sendJson(res, 200, {
-        user: {
-          id: actor.user.id,
-          name: actor.user.name,
-          email: actor.user.email,
-          createdAt: actor.user.createdAt,
-          status: actor.user.status
-        },
-        agency: {
-          id: actor.agency.id,
-          name: actor.agency.name,
-          slug: actor.agency.slug,
-          createdAt: actor.agency.createdAt
-        },
-        membership: {
-          id: actor.membership.id,
-          role: actor.membership.role
-        },
-        locations: actor.locations.map(l => ({ id: l.id, name: l.name, timezone: l.timezone })),
-        activeLocation: {
-          id: actor.activeLocation.id,
-          name: actor.activeLocation.name,
-          timezone: actor.activeLocation.timezone
-        }
-      });
-    }
-
-    // AUTH: Logout
-    if (method === 'POST' && pathname === '/api/auth/logout') {
-      clearSessionCookies(res);
-      return sendJson(res, 200, { success: true });
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -5384,7 +4828,9 @@ const server = createServer(async (req, res) => {
       const result = await executeCopilotProposal({
         proposal,
         actor,
-        handlers: proposalHandlers
+        handlers: proposalHandlers,
+        ledger: billingLedgerStore,
+        toolCostCents: 10
       });
 
       if (!result.ok) {
@@ -7290,52 +6736,24 @@ const server = createServer(async (req, res) => {
     }
 
     // ═════════════════════════════════════════════════════════════
-    // ─── SMART LISTS DYNAMIC RULE EVALUATION ────────────────────
+    // ─── CRM ENHANCED & SMART LISTS ROUTES (MODULAR ROUTER) ────
     // ═════════════════════════════════════════════════════════════
-
-    if (method === 'GET' && pathname.startsWith('/api/crm/smart-lists/') && pathname.endsWith('/evaluate')) {
-      const listId = pathname.split('/')[4];
-      state.records.smartLists = state.records.smartLists || [];
-      const list = state.records.smartLists.find(l => l.id === listId && l.agencyId === agency.id);
-      if (!list) return sendJson(res, 404, { error: 'Smart list not found' });
-
-      state.records.contacts = state.records.contacts || [];
-      const tenantContacts = state.records.contacts.filter(c => c.agencyId === agency.id);
-
-      // Evaluate rule string or filterField
-      let matches = tenantContacts;
-      const rule = (list.rule || '').toLowerCase().trim();
-
-      if (rule) {
-        if (rule.includes('customer')) {
-          matches = tenantContacts.filter(c => c.status === 'customer' || (c.tags || []).includes('customer'));
-        } else if (rule.includes('lead')) {
-          matches = tenantContacts.filter(c => c.status === 'lead' || (c.tags || []).includes('lead'));
-        } else if (rule.startsWith('tag:') || rule.includes('tags contains') || rule.includes('tagged')) {
-          const tagTarget = rule.replace('tag:', '').replace('tags contains', '').replace('tagged', '').replace(/['"]/g, '').trim();
-          matches = tenantContacts.filter(c => (c.tags || []).some(t => t.toLowerCase().includes(tagTarget)));
-        } else if (rule.includes('company')) {
-          matches = tenantContacts.filter(c => Boolean(c.company && c.company.trim()));
-        } else if (rule.includes('promoter')) {
-          matches = tenantContacts.filter(c => (c.tags || []).includes('promoter'));
-        }
-      } else if (list.filterField && list.value) {
-        const field = list.filterField;
-        const val = String(list.value).toLowerCase();
-        matches = tenantContacts.filter(c => {
-          const cVal = String(c[field] || '').toLowerCase();
-          return list.operator === 'equals' ? cVal === val : cVal.includes(val);
-        });
-      }
-
-      list.count = matches.length;
-      await saveState();
-
-      return sendJson(res, 200, {
-        list,
-        count: matches.length,
-        contacts: matches
-      });
+    if (await handleCrmRoutes(req, res, {
+      method,
+      pathname,
+      readBody,
+      sendJson,
+      state,
+      saveState,
+      auditLog,
+      broadcast,
+      actor,
+      agency,
+      activeLocation,
+      randomUUID,
+      parseCSV
+    })) {
+      return;
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -8076,202 +7494,48 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, notification: notif });
     }
 
-    // ═════════════════════════════════════════════════════════════
-    // ─── CRM ENHANCED ENDPOINTS ─────────────────────────────────
-    // ═════════════════════════════════════════════════════════════
-
-    // ─── Bulk Tag ─────────────────────────────────────────────────
-    if (method === 'POST' && pathname === '/api/crm/contacts/bulk-tag') {
-      const body = await readBody(req);
-      const { contactIds, tag } = body;
-      if (!Array.isArray(contactIds) || !tag) return sendJson(res, 400, { error: 'contactIds array and tag required' });
-
-      let updated = 0;
-      for (const id of contactIds) {
-        const contact = (state.records.contacts || []).find(
-          c => c.id === id && c.agencyId === agency.id && c.locationId === activeLocation.id
-        );
-        if (contact) {
-          contact.tags = Array.from(new Set([...(contact.tags || []), tag]));
-          contact.updatedAt = new Date().toISOString();
-          updated++;
-        }
-      }
-      await saveState();
-      auditLog('crm.contacts.bulk_tag', actor, { tag, count: updated });
-      broadcast('crm.contacts.bulk_updated', { tag, count: updated });
-      return sendJson(res, 200, { success: true, updated });
-    }
-
-    // ─── Import Contacts (CSV text) ──────────────────────────────
-    if (method === 'POST' && pathname === '/api/crm/contacts/import') {
-      const body = await readBody(req);
-      const csvText = body.csv || body.data || '';
-      if (!csvText) return sendJson(res, 400, { error: 'csv field with CSV text is required' });
-
-      const rows = parseCSV(csvText);
-      const imported = [];
-      for (const row of rows) {
-        const contact = {
-          id: randomUUID(),
-          agencyId: agency.id,
-          locationId: activeLocation.id,
-          firstName: row.firstName || row.first_name || row.name || '',
-          lastName: row.lastName || row.last_name || '',
-          email: row.email || '',
-          phone: row.phone || '',
-          company: row.company || '',
-          source: 'CSV Import',
-          tags: row.tags ? row.tags.split(';').map(t => t.trim()) : ['imported'],
-          status: row.status || 'lead',
-          notes: row.notes || '',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-        state.records.contacts.push(contact);
-        imported.push(contact);
-      }
-      await saveState();
-      auditLog('crm.contacts.import', actor, { count: imported.length });
-      broadcast('crm.contacts.imported', { count: imported.length });
-      return sendJson(res, 201, { success: true, imported: imported.length, contacts: imported.map(c => ({ id: c.id, name: `${c.firstName} ${c.lastName}`, email: c.email })) });
-    }
-
-    // ─── Contact Merge / Dedup ───────────────────────────────────
-    if (method === 'POST' && pathname === '/api/crm/contacts/merge') {
-      const body = await readBody(req);
-      const { primaryId, mergeIds } = body;
-      if (!primaryId || !Array.isArray(mergeIds) || mergeIds.length === 0) {
-        return sendJson(res, 400, { error: 'primaryId and mergeIds array required' });
-      }
-
-      const contacts = state.records.contacts || [];
-      const primary = contacts.find(c => c.id === primaryId && c.agencyId === agency.id && c.locationId === activeLocation.id);
-      if (!primary) return sendJson(res, 404, { error: 'Primary contact not found' });
-
-      const merged = [];
-      for (const mergeId of mergeIds) {
-        if (mergeId === primaryId) continue;
-        const idx = contacts.findIndex(c => c.id === mergeId && c.agencyId === agency.id && c.locationId === activeLocation.id);
-        if (idx === -1) continue;
-
-        const dup = contacts[idx];
-
-        // Merge data into primary: fill empty fields, merge tags
-        for (const field of ['lastName', 'email', 'phone', 'company', 'source', 'notes']) {
-          if (!primary[field] && dup[field]) primary[field] = dup[field];
-        }
-        primary.tags = Array.from(new Set([...(primary.tags || []), ...(dup.tags || [])]));
-
-        // Re-link related records
-        for (const opp of (state.records.opportunities || [])) {
-          if (opp.contactId === mergeId) opp.contactId = primaryId;
-        }
-        for (const task of (state.records.tasks || [])) {
-          if (task.contactId === mergeId) task.contactId = primaryId;
-        }
-        for (const note of (state.records.notes || [])) {
-          if (note.contactId === mergeId) note.contactId = primaryId;
-        }
-
-        // Remove duplicate
-        contacts.splice(idx, 1);
-        merged.push(mergeId);
-      }
-
-      primary.updatedAt = new Date().toISOString();
-      await saveState();
-      auditLog('crm.contacts.merge', actor, { primaryId, mergedIds: merged });
-      return sendJson(res, 200, { success: true, primaryId, mergedCount: merged.length, mergedIds: merged });
-    }
-
-    // ─── Contact Activity Timeline ───────────────────────────────
-    const timelineMatch = pathname.match(/^\/api\/crm\/contacts\/([a-zA-Z0-9_-]+)\/timeline$/);
-    if (method === 'GET' && timelineMatch) {
-      const contactId = timelineMatch[1];
-      const contact = (state.records.contacts || []).find(
-        c => c.id === contactId && c.agencyId === agency.id && c.locationId === activeLocation.id
-      );
-      if (!contact) return sendJson(res, 404, { error: 'Contact not found' });
-
-      const timeline = [];
-
-      // Contact creation
-      timeline.push({ type: 'contact_created', date: contact.createdAt, detail: `Contact created from ${contact.source || 'manual'}` });
-
-      // Opportunities
-      for (const opp of (state.records.opportunities || [])) {
-        if (opp.contactId === contactId) {
-          timeline.push({ type: 'opportunity', date: opp.createdAt, detail: `Opportunity: ${opp.name} (${opp.stage})`, recordId: opp.id });
-        }
-      }
-
-      // Tasks
-      for (const task of (state.records.tasks || [])) {
-        if (task.contactId === contactId) {
-          timeline.push({ type: 'task', date: task.createdAt, detail: `Task: ${task.title} (${task.status})`, recordId: task.id });
-        }
-      }
-
-      // Notes
-      for (const note of (state.records.notes || [])) {
-        if (note.contactId === contactId) {
-          timeline.push({ type: 'note', date: note.createdAt, detail: `Note: ${(note.text || '').slice(0, 100)}`, recordId: note.id });
-        }
-      }
-
-      // Audit entries for this contact
-      for (const entry of (state.audit || [])) {
-        if (entry.details && (entry.details.contactId === contactId || entry.details.id === contactId)) {
-          timeline.push({ type: 'audit', date: entry.timestamp, detail: entry.action });
-        }
-      }
-
-      // Sort by date descending
-      timeline.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-
-      return sendJson(res, 200, { contactId, name: `${contact.firstName} ${contact.lastName}`, timeline });
-    }
+    // Note: CRM Enhanced Endpoints (bulk-tag, import, export-csv, merge, timeline)
+    // are now handled cleanly by handleCrmRoutes() above.
 
     // ═════════════════════════════════════════════════════════════
-    // ─── AGENCY: BUSINESS PROFILE ───────────────────────────────
+    // ─── AGENCY: BUSINESS PROFILE, TEAM, WORKSPACES, SNAPSHOTS ──
     // ═════════════════════════════════════════════════════════════
-
-    if (method === 'GET' && pathname === '/api/agency/profile') {
-      return sendJson(res, 200, {
-        name: agency.name,
-        email: agency.email || actor.user?.email || 'support@operza.io',
-        phone: agency.phone || '+1 800-555-0100',
-        website: agency.website || 'https://operza.io',
-        timezone: agency.timezone || 'America/Los_Angeles',
-        currency: agency.currency || 'USD'
-      });
-    }
-
-    if (method === 'PUT' && pathname === '/api/agency/profile') {
-      const body = await readBody(req);
-      if (body.name) agency.name = body.name.trim();
-      if (body.email) agency.email = body.email.trim();
-      if (body.phone) agency.phone = body.phone.trim();
-      if (body.website) agency.website = body.website.trim();
-      if (body.timezone) agency.timezone = body.timezone.trim();
-      if (body.currency) agency.currency = body.currency.trim();
-
-      await saveState();
-      broadcast('agency.profile.updated', { agencyId: agency.id, name: agency.name });
-      auditLog('agency.profile.updated', actor, { agencyId: agency.id, name: agency.name });
-
-      return sendJson(res, 200, {
-        success: true,
-        profile: {
-          name: agency.name,
-          email: agency.email,
-          phone: agency.phone,
-          website: agency.website,
-          timezone: agency.timezone,
-          currency: agency.currency
-        }
-      });
+    if (pathname.startsWith('/api/agency/')) {
+      if (await handleAgencyRoutes(req, res, {
+        method,
+        pathname,
+        readBody,
+        sendJson,
+        state,
+        saveState,
+        auditLog,
+        broadcast,
+        randomBytes,
+        randomUUID,
+        actor,
+        agency,
+        activeLocation,
+        getDefaultBranding: () => ({
+          platformName: agency.name || 'Operza Agency',
+          subdomain: agency.slug || 'app',
+          customDomain: '',
+          cnameTarget: 'cname.operza.io',
+          isDomainVerified: false,
+          sslActive: false,
+          logoUrl: '',
+          faviconUrl: '',
+          primaryColor: '#4f46e5',
+          accentColor: '#6366f1',
+          supportEmail: 'support@operza.io',
+          senderName: agency.name || 'Operza Agency',
+          senderEmail: `noreply@${agency.slug || 'agency'}.test`,
+          isDkimVerified: false,
+          portalWelcomeHeading: 'Client Portal · Welcome',
+          portalWelcomeSubhead: 'Manage your projects, invoices, and appointments.'
+        })
+      })) {
+        return;
+      }
     }
 
     // ═════════════════════════════════════════════════════════════

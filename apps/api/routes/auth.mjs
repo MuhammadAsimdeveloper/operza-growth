@@ -1,0 +1,520 @@
+/**
+ * ============================================================================
+ * Operza Authentication & Session Routes
+ * ============================================================================
+ */
+
+export async function handleAuthRoutes(req, res, ctx) {
+  const {
+    method,
+    pathname,
+    readBody,
+    sendJson,
+    state,
+    saveState,
+    auditLog,
+    scrypt,
+    randomBytes,
+    randomUUID,
+    hash,
+    safeEqual,
+    setSessionCookies,
+    clearSessionCookies,
+    getActor
+  } = ctx;
+
+  // 1. AUTH: Signup
+  if (method === 'POST' && pathname === '/api/auth/signup') {
+    const body = await readBody(req);
+    const { name, email, password, agencyName } = body;
+    if (!name || !email || !password) return sendJson(res, 400, { error: 'Name, email, and password required' });
+
+    const emailKey = email.toLowerCase().trim();
+    if (state.users.some(u => u.email === emailKey)) {
+      return sendJson(res, 409, { error: 'An account with this email already exists' });
+    }
+
+    const salt = randomBytes(16);
+    const passBuf = await scrypt(password, salt, 64);
+    const passwordHash = `${salt.toString('hex')}:${passBuf.toString('hex')}`;
+
+    const userId = randomUUID();
+    const agencyId = randomUUID();
+    const locationId = randomUUID();
+
+    const user = { id: userId, name: name.trim(), email: emailKey, passwordHash, status: 'active', createdAt: new Date().toISOString() };
+    const agency = { id: agencyId, name: (agencyName || `${name.trim()}'s Agency`).trim(), slug: emailKey.split('@')[0], status: 'active', createdAt: new Date().toISOString() };
+    const location = { id: locationId, agencyId, name: 'Main Workspace', timezone: 'UTC', status: 'active', createdAt: new Date().toISOString() };
+    const membership = { id: randomUUID(), agencyId, userId, role: 'owner', status: 'active', createdAt: new Date().toISOString() };
+
+    state.users.push(user);
+    state.agencies.push(agency);
+    state.locations.push(location);
+    state.memberships.push(membership);
+
+    // Seed tenant defaults (Calendar, Payment Link, Public Form, Pipeline)
+    state.records.calendars = state.records.calendars || [];
+    const defaultCalId = randomUUID();
+    state.records.calendars.push({
+      id: defaultCalId,
+      agencyId,
+      locationId,
+      name: 'Discovery & Strategy Session',
+      slug: 'discovery-strategy',
+      color: '#6366f1',
+      durationMin: 30,
+      description: '30-minute discovery call to evaluate automation requirements and team fit.',
+      status: 'active',
+      roundRobin: true,
+      availability: [
+        { weekday: 1, start: '09:00', end: '17:00' },
+        { weekday: 2, start: '09:00', end: '17:00' },
+        { weekday: 3, start: '09:00', end: '17:00' },
+        { weekday: 4, start: '09:00', end: '17:00' },
+        { weekday: 5, start: '09:00', end: '17:00' }
+      ],
+      createdAt: new Date().toISOString()
+    });
+
+    state.records.paymentLinks = state.records.paymentLinks || [];
+    state.records.paymentLinks.push({
+      id: randomUUID(),
+      agencyId,
+      locationId,
+      name: 'Growth Retainer - Starter Pack',
+      slug: 'starter-retainer',
+      amount: 1500,
+      currency: 'USD',
+      productIds: [],
+      visits: 0,
+      conversions: 0,
+      active: true,
+      description: 'Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.',
+      createdAt: new Date().toISOString()
+    });
+
+    state.records.forms = state.records.forms || [];
+    state.records.forms.push({
+      id: randomUUID(),
+      agencyId,
+      locationId,
+      name: 'Inbound Consultation Request',
+      publicSlug: 'contact-us',
+      fields: ['firstName', 'lastName', 'email', 'phone', 'company', 'projectDetails'],
+      status: 'published',
+      submissions: 0,
+      description: 'Book your strategy consultation with our growth engineering team.',
+      createdAt: new Date().toISOString()
+    });
+
+    state.records.pipelines = state.records.pipelines || [];
+    state.records.pipelines.push({
+      id: randomUUID(),
+      agencyId,
+      locationId,
+      name: 'Lead Pipeline',
+      stages: ['New Inbound Lead', 'Discovery Call Booked', 'Proposal Sent', 'Won', 'Lost'],
+      status: 'active',
+      description: 'Primary customer acquisition pipeline',
+      createdAt: new Date().toISOString()
+    });
+
+    state.records.workflows = state.records.workflows || [];
+    state.records.workflows.push({
+      id: randomUUID(),
+      agencyId,
+      locationId,
+      name: 'Automated Lead Qualification & AI Scoring',
+      description: 'Auto-scores new leads with Copilot AI, applies qualification tags, and creates team follow-up tasks.',
+      status: 'published',
+      triggerType: 'form',
+      triggerConfig: { formName: 'contact-us' },
+      nodes: [
+        {
+          id: 'node-ai-score',
+          name: 'AI Lead Evaluation',
+          type: 'ai_agent',
+          config: { prompt: 'Analyze lead data and score purchase intent from 1 to 100.' }
+        },
+        {
+          id: 'node-tag',
+          name: 'Apply High-Intent Tag',
+          type: 'tag',
+          config: { tag: 'ai-qualified' }
+        },
+        {
+          id: 'node-task',
+          name: 'Create Priority Outreach Task',
+          type: 'task',
+          config: { title: 'High-Intent Lead Review', priority: 'high', dueInDays: 1 }
+        },
+        {
+          id: 'node-approval',
+          name: 'Executive Proposal Gate',
+          type: 'condition',
+          requiresApproval: true,
+          config: { message: 'Review enterprise proposal before final transmission' }
+        }
+      ],
+      createdAt: new Date().toISOString()
+    });
+
+    const token = randomBytes(32).toString('hex');
+    const csrf = randomBytes(24).toString('hex');
+    state.sessions.push({
+      id: randomUUID(),
+      tokenHash: hash(token),
+      csrfHash: hash(csrf),
+      userId,
+      agencyId,
+      expiresAt: Date.now() + 12 * 3600 * 1000
+    });
+
+    setSessionCookies(res, token, csrf);
+    await saveState();
+    auditLog('auth.signup', { user, agency, membership, locations: [location], activeLocation: location }, { email: emailKey });
+
+    sendJson(res, 201, {
+      user: { id: user.id, name: user.name, email: user.email },
+      agency: { id: agency.id, name: agency.name },
+      locations: [location],
+      activeLocationId: location.id
+    });
+    return true;
+  }
+
+  // 2. AUTH: Google Sign-In & Sign-Up
+  if (method === 'POST' && pathname === '/api/auth/google') {
+    const body = await readBody(req);
+    const { email, name, avatar } = body;
+    if (!email) return sendJson(res, 400, { error: 'Email is required for Google Sign-In' });
+
+    const emailKey = email.toLowerCase().trim();
+    let user = state.users.find(u => u.email === emailKey);
+    let agency, location, membership;
+
+    if (!user) {
+      const userId = randomUUID();
+      const agencyId = randomUUID();
+      const locationId = randomUUID();
+
+      const salt = randomBytes(16);
+      const passBuf = await scrypt(randomUUID(), salt, 64);
+      const passwordHash = `${salt.toString('hex')}:${passBuf.toString('hex')}`;
+
+      user = {
+        id: userId,
+        name: (name || emailKey.split('@')[0]).trim(),
+        email: emailKey,
+        passwordHash,
+        avatar: avatar || null,
+        status: 'active',
+        provider: 'google',
+        createdAt: new Date().toISOString()
+      };
+
+      agency = {
+        id: agencyId,
+        name: `${user.name}'s Agency`,
+        slug: emailKey.split('@')[0],
+        status: 'active',
+        createdAt: new Date().toISOString()
+      };
+
+      location = {
+        id: locationId,
+        agencyId,
+        name: 'Main Workspace',
+        timezone: 'UTC',
+        status: 'active',
+        createdAt: new Date().toISOString()
+      };
+
+      membership = {
+        id: randomUUID(),
+        agencyId,
+        userId,
+        role: 'owner',
+        status: 'active',
+        createdAt: new Date().toISOString()
+      };
+
+      state.users.push(user);
+      state.agencies.push(agency);
+      state.locations.push(location);
+      state.memberships.push(membership);
+
+      state.records.pipelines = state.records.pipelines || [];
+      state.records.pipelines.push({
+        id: randomUUID(),
+        agencyId,
+        locationId,
+        name: 'Lead Pipeline',
+        stages: ['New Lead', 'Contacted', 'Qualified', 'Proposal Sent', 'Won', 'Lost'],
+        status: 'active',
+        description: 'Primary customer acquisition pipeline',
+        createdAt: new Date().toISOString()
+      });
+    } else {
+      membership = state.memberships.find(m => m.userId === user.id && m.status === 'active');
+      agency = state.agencies.find(a => a.id === membership?.agencyId && a.status === 'active') || state.agencies[0];
+      const locs = state.locations.filter(l => l.agencyId === agency?.id && l.status === 'active');
+      location = locs[0] || state.locations[0];
+    }
+
+    const locations = state.locations.filter(l => l.agencyId === agency.id && l.status === 'active');
+    const token = randomBytes(32).toString('hex');
+    const csrf = randomBytes(24).toString('hex');
+    state.sessions.push({
+      id: randomUUID(),
+      tokenHash: hash(token),
+      csrfHash: hash(csrf),
+      userId: user.id,
+      agencyId: agency.id,
+      expiresAt: Date.now() + 12 * 3600 * 1000
+    });
+
+    setSessionCookies(res, token, csrf);
+    await saveState();
+    auditLog('auth.google', { user, agency, membership, locations, activeLocation: location }, { email: emailKey });
+
+    sendJson(res, 200, {
+      user: { id: user.id, name: user.name, email: user.email },
+      agency: { id: agency.id, name: agency.name },
+      locations,
+      activeLocationId: location?.id || locations[0]?.id
+    });
+    return true;
+  }
+
+  // 3. AUTH: Request Magic Link / OTP Code
+  if (method === 'POST' && pathname === '/api/auth/magic-link') {
+    const body = await readBody(req);
+    const email = (body.email || '').toLowerCase().trim();
+    if (!email || !email.includes('@')) {
+      return sendJson(res, 400, { error: 'Valid email address is required' });
+    }
+
+    state.otps = state.otps || {};
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    state.otps[email] = {
+      code,
+      expiresAt: Date.now() + 10 * 60 * 1000
+    };
+
+    sendJson(res, 200, {
+      success: true,
+      message: `A 6-digit verification code has been dispatched to ${email}.`,
+      devCode: code
+    });
+    return true;
+  }
+
+  // 4. AUTH: Verify OTP Code
+  if (method === 'POST' && pathname === '/api/auth/verify-otp') {
+    const body = await readBody(req);
+    const emailKey = (body.email || '').toLowerCase().trim();
+    const code = (body.code || '').trim();
+    const name = (body.name || '').trim();
+
+    state.otps = state.otps || {};
+    const record = state.otps[emailKey];
+    if (!record || record.code !== code || Date.now() > record.expiresAt) {
+      return sendJson(res, 400, { error: 'Invalid or expired verification code' });
+    }
+    delete state.otps[emailKey];
+
+    let user = state.users.find(u => u.email === emailKey);
+    let agency, location, membership;
+
+    if (!user) {
+      const userId = randomUUID();
+      const agencyId = randomUUID();
+      const locationId = randomUUID();
+
+      const salt = randomBytes(16);
+      const passBuf = await scrypt(randomUUID(), salt, 64);
+      const passwordHash = `${salt.toString('hex')}:${passBuf.toString('hex')}`;
+
+      user = {
+        id: userId,
+        name: name || emailKey.split('@')[0],
+        email: emailKey,
+        passwordHash,
+        status: 'active',
+        provider: 'otp',
+        createdAt: new Date().toISOString()
+      };
+
+      agency = {
+        id: agencyId,
+        name: `${user.name}'s Agency`,
+        slug: emailKey.split('@')[0],
+        status: 'active',
+        createdAt: new Date().toISOString()
+      };
+
+      location = {
+        id: locationId,
+        agencyId,
+        name: 'Main Workspace',
+        timezone: 'UTC',
+        status: 'active',
+        createdAt: new Date().toISOString()
+      };
+
+      membership = {
+        id: randomUUID(),
+        agencyId,
+        userId,
+        role: 'owner',
+        status: 'active',
+        createdAt: new Date().toISOString()
+      };
+
+      state.users.push(user);
+      state.agencies.push(agency);
+      state.locations.push(location);
+      state.memberships.push(membership);
+
+      state.records.pipelines = state.records.pipelines || [];
+      state.records.pipelines.push({
+        id: randomUUID(),
+        agencyId,
+        locationId,
+        name: 'Lead Pipeline',
+        stages: ['New Lead', 'Contacted', 'Qualified', 'Proposal Sent', 'Won', 'Lost'],
+        status: 'active',
+        description: 'Primary customer acquisition pipeline',
+        createdAt: new Date().toISOString()
+      });
+    } else {
+      membership = state.memberships.find(m => m.userId === user.id && m.status === 'active');
+      agency = state.agencies.find(a => a.id === membership?.agencyId && a.status === 'active') || state.agencies[0];
+      const locs = state.locations.filter(l => l.agencyId === agency?.id && l.status === 'active');
+      location = locs[0] || state.locations[0];
+    }
+
+    const locations = state.locations.filter(l => l.agencyId === agency.id && l.status === 'active');
+    const token = randomBytes(32).toString('hex');
+    const csrf = randomBytes(24).toString('hex');
+    state.sessions.push({
+      id: randomUUID(),
+      tokenHash: hash(token),
+      csrfHash: hash(csrf),
+      userId: user.id,
+      agencyId: agency.id,
+      expiresAt: Date.now() + 12 * 3600 * 1000
+    });
+
+    setSessionCookies(res, token, csrf);
+    await saveState();
+    auditLog('auth.otp_login', { user, agency, membership, locations, activeLocation: location }, { email: emailKey });
+
+    sendJson(res, 200, {
+      user: { id: user.id, name: user.name, email: user.email },
+      agency: { id: agency.id, name: agency.name },
+      locations,
+      activeLocationId: location?.id || locations[0]?.id
+    });
+    return true;
+  }
+
+  // 5. AUTH: Login
+  if (method === 'POST' && pathname === '/api/auth/login') {
+    const body = await readBody(req);
+    const { email, password } = body;
+    const user = state.users.find(u => u.email === String(email).toLowerCase().trim() && u.status === 'active');
+    if (!user) return sendJson(res, 401, { error: 'Invalid email or password' });
+
+    const [saltHex, keyHex] = user.passwordHash.split(':');
+    const testBuf = await scrypt(password, Buffer.from(saltHex, 'hex'), 64);
+    if (!safeEqual(testBuf.toString('hex'), keyHex)) {
+      return sendJson(res, 401, { error: 'Invalid email or password' });
+    }
+
+    const membership = state.memberships.find(m => m.userId === user.id && m.status === 'active');
+    if (!membership) return sendJson(res, 403, { error: 'No active agency found for user' });
+
+    const agency = state.agencies.find(a => a.id === membership.agencyId && a.status === 'active');
+    const locations = state.locations.filter(l => l.agencyId === agency.id && l.status === 'active');
+
+    const token = randomBytes(32).toString('hex');
+    const csrf = randomBytes(24).toString('hex');
+    state.sessions.push({
+      id: randomUUID(),
+      tokenHash: hash(token),
+      csrfHash: hash(csrf),
+      userId: user.id,
+      agencyId: agency.id,
+      expiresAt: Date.now() + 12 * 3600 * 1000
+    });
+
+    setSessionCookies(res, token, csrf);
+    await saveState();
+    auditLog('auth.login', { user, agency, membership, locations, activeLocation: locations[0] }, {});
+
+    sendJson(res, 200, {
+      user: { id: user.id, name: user.name, email: user.email },
+      agency: { id: agency.id, name: agency.name },
+      locations,
+      activeLocationId: locations[0]?.id
+    });
+    return true;
+  }
+
+  // 6. AUTH: Current Session Check
+  if (method === 'GET' && pathname === '/api/auth/session') {
+    const actor = getActor(req);
+    if (!actor) return sendJson(res, 401, { error: 'Not authenticated' });
+    sendJson(res, 200, {
+      user: { id: actor.user.id, name: actor.user.name, email: actor.user.email },
+      agency: { id: actor.agency.id, name: actor.agency.name },
+      locations: actor.locations,
+      activeLocationId: actor.activeLocation.id,
+      role: actor.membership.role
+    });
+    return true;
+  }
+
+  // 7. AUTH: Full user profile
+  if (method === 'GET' && pathname === '/api/auth/me') {
+    const actor = getActor(req);
+    if (!actor) return sendJson(res, 401, { error: 'Not authenticated' });
+    sendJson(res, 200, {
+      user: {
+        id: actor.user.id,
+        name: actor.user.name,
+        email: actor.user.email,
+        createdAt: actor.user.createdAt,
+        status: actor.user.status
+      },
+      agency: {
+        id: actor.agency.id,
+        name: actor.agency.name,
+        slug: actor.agency.slug,
+        createdAt: actor.agency.createdAt
+      },
+      membership: {
+        id: actor.membership.id,
+        role: actor.membership.role
+      },
+      locations: actor.locations.map(l => ({ id: l.id, name: l.name, timezone: l.timezone })),
+      activeLocation: {
+        id: actor.activeLocation.id,
+        name: actor.activeLocation.name,
+        timezone: actor.activeLocation.timezone
+      }
+    });
+    return true;
+  }
+
+  // 8. AUTH: Logout
+  if (method === 'POST' && pathname === '/api/auth/logout') {
+    clearSessionCookies(res);
+    sendJson(res, 200, { success: true });
+    return true;
+  }
+
+  return false;
+}

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { executeCopilotProposal } from '../src/proposal-executor.mjs';
+import { createBillingLedgerStore } from '../src/billing-ledger.mjs';
 
 test('executeCopilotProposal rejects unapproved proposal', async () => {
   const proposal = {
@@ -63,4 +64,71 @@ test('executeCopilotProposal executes approved proposal with registered handler 
   assert.ok(res.proposal.receiptId.startsWith('rcpt_'));
   assert.equal(res.receipt.proposalId, 'prop-3');
   assert.equal(res.receipt.entityId, 'contact-alice-123');
+});
+
+test('executeCopilotProposal: fails closed with INSUFFICIENT_CREDITS when ledger balance is zero', async () => {
+  const ledger = createBillingLedgerStore();
+  const proposal = {
+    id: 'prop-credit-fail',
+    status: 'approved',
+    toolName: 'create_contact',
+    params: { firstName: 'Bob', email: 'bob@example.com' },
+    tenantId: 'agency-broke',
+    locationId: 'loc-broke'
+  };
+  const actor = { role: 'admin', id: 'admin-1', user: { id: 'admin-1' } };
+  let handlerCalled = false;
+  const handlers = {
+    create_contact: async () => { handlerCalled = true; return { id: 'contact-bob' }; }
+  };
+
+  const res = await executeCopilotProposal({
+    proposal,
+    actor,
+    handlers,
+    ledger,
+    toolCostCents: 50
+  });
+
+  assert.equal(res.ok, false);
+  assert.equal(res.code, 'INSUFFICIENT_CREDITS');
+  assert.equal(handlerCalled, false);
+});
+
+test('executeCopilotProposal: debits ledger and succeeds when location has sufficient credits', async () => {
+  const ledger = createBillingLedgerStore();
+  ledger.recordTransaction({
+    agencyId: 'agency-funded',
+    locationId: 'loc-funded',
+    entryType: 'credit',
+    amountCents: 500,
+    referenceType: 'subscription_allowance'
+  });
+
+  const proposal = {
+    id: 'prop-credit-ok',
+    status: 'approved',
+    toolName: 'create_contact',
+    params: { firstName: 'Charlie', email: 'charlie@example.com' },
+    tenantId: 'agency-funded',
+    locationId: 'loc-funded'
+  };
+  const actor = { role: 'admin', id: 'admin-1', user: { id: 'admin-1' } };
+  let handlerCalled = false;
+  const handlers = {
+    create_contact: async () => { handlerCalled = true; return { id: 'contact-charlie' }; }
+  };
+
+  const res = await executeCopilotProposal({
+    proposal,
+    actor,
+    handlers,
+    ledger,
+    toolCostCents: 50
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(res.code, 'PROPOSAL_EXECUTED');
+  assert.equal(handlerCalled, true);
+  assert.equal(ledger.getBalance({ agencyId: 'agency-funded', locationId: 'loc-funded' }), 450);
 });
