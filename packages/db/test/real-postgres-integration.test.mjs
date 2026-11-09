@@ -233,7 +233,6 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       await auditClient.query(`
         INSERT INTO immutable_audit_events (id, agency_id, location_id, actor_id, actor_type, event_name, event_hash)
         VALUES ($1, $2, $3, 'system', 'system_cron', 'security.test_event', 'hash_test_123')
-        ON CONFLICT (agency_id, location_id, id) DO NOTHING
       `, [eventId, testAgency, testLoc]);
 
       // Attempting to UPDATE audit event must be BLOCKED by rule (DO INSTEAD NOTHING)
