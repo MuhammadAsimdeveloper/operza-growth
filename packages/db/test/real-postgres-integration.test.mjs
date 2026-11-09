@@ -151,7 +151,7 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
     const rlsCheck = await pool.query(`
       SELECT relname, relrowsecurity, relforcerowsecurity
       FROM pg_class
-      WHERE relname IN ('agencies', 'users', 'agency_memberships', 'contacts', 'opportunities', 'calendars', 'appointments', 'billing_ledger_accounts', 'audit_events')
+      WHERE relname IN ('agencies', 'locations', 'users', 'agency_memberships', 'contacts', 'opportunities', 'calendars', 'appointments', 'billing_ledger_accounts', 'immutable_audit_events')
       AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
     `);
 
@@ -195,11 +195,13 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
 
       // Insert opportunity for Tenant A
       const oppIdA = '40000000-0000-0000-0000-000000000001';
+      const pipeIdA = '50000000-0000-0000-0000-000000000001';
+      const stageIdA = '60000000-0000-0000-0000-000000000001';
       await clientA.query(`
-        INSERT INTO opportunities (id, agency_id, location_id, title, status, monetary_value)
-        VALUES ($1, $2, $3, 'Enterprise Deal A', 'open', 50000)
+        INSERT INTO opportunities (id, agency_id, location_id, pipeline_id, stage_id, name, status, value)
+        VALUES ($1, $2, $3, $4, $5, 'Enterprise Deal A', 'open', 50000)
         ON CONFLICT (agency_id, location_id, id) DO NOTHING
-      `, [oppIdA, agencyA, locA]);
+      `, [oppIdA, agencyA, locA, pipeIdA, stageIdA]);
 
       // Tenant A sees its record
       const checkA = await clientA.query('SELECT * FROM opportunities WHERE id = $1', [oppIdA]);
@@ -229,28 +231,22 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       const eventId = '50000000-0000-0000-0000-000000000001';
 
       await auditClient.query(`
-        INSERT INTO audit_events (id, agency_id, location_id, actor_id, event_type, payload_hash)
-        VALUES ($1, $2, $3, 'system', 'security.test_event', 'hash_test_123')
+        INSERT INTO immutable_audit_events (id, agency_id, location_id, actor_id, actor_type, event_name, event_hash)
+        VALUES ($1, $2, $3, 'system', 'system_cron', 'security.test_event', 'hash_test_123')
         ON CONFLICT (agency_id, location_id, id) DO NOTHING
       `, [eventId, testAgency, testLoc]);
 
-      // Attempting to UPDATE audit event must be BLOCKED by trigger
-      let updateBlocked = false;
-      try {
-        await auditClient.query("UPDATE audit_events SET event_type = 'tampered' WHERE id = $1", [eventId]);
-      } catch (err) {
-        updateBlocked = true;
-      }
-      assert.equal(updateBlocked, true, 'Audit log UPDATE must be blocked by immutability trigger');
+      // Attempting to UPDATE audit event must be BLOCKED by rule (DO INSTEAD NOTHING)
+      const updateRes = await auditClient.query("UPDATE immutable_audit_events SET event_name = 'tampered' WHERE id = $1", [eventId]);
+      assert.equal(updateRes.rowCount, 0, 'Audit log UPDATE must affect 0 rows due to immutability rule');
 
-      // Attempting to DELETE audit event must be BLOCKED by trigger
-      let deleteBlocked = false;
-      try {
-        await auditClient.query("DELETE FROM audit_events WHERE id = $1", [eventId]);
-      } catch (err) {
-        deleteBlocked = true;
-      }
-      assert.equal(deleteBlocked, true, 'Audit log DELETE must be blocked by immutability trigger');
+      // Row still has original event_name
+      const auditRow = await auditClient.query("SELECT event_name FROM immutable_audit_events WHERE id = $1", [eventId]);
+      assert.equal(auditRow.rows[0].event_name, 'security.test_event', 'Audit event data must be unchanged');
+
+      // Attempting to DELETE audit event must be BLOCKED by rule (DO INSTEAD NOTHING)
+      const deleteRes = await auditClient.query("DELETE FROM immutable_audit_events WHERE id = $1", [eventId]);
+      assert.equal(deleteRes.rowCount, 0, 'Audit log DELETE must affect 0 rows due to immutability rule');
 
       await auditClient.query('ROLLBACK');
     } finally {
