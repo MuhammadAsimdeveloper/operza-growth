@@ -186,7 +186,7 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
         INSERT INTO locations (id, agency_id, name) VALUES 
           ('${locA}', '${agencyA}', 'Location A'),
           ('${locB}', '${agencyB}', 'Location B')
-        ON CONFLICT (id) DO NOTHING
+        ON CONFLICT (agency_id, id) DO NOTHING
       `);
 
       // Tenant A Context
@@ -231,7 +231,7 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       await auditClient.query(`
         INSERT INTO audit_events (id, agency_id, location_id, actor_id, event_type, payload_hash)
         VALUES ($1, $2, $3, 'system', 'security.test_event', 'hash_test_123')
-        ON CONFLICT (id) DO NOTHING
+        ON CONFLICT (agency_id, location_id, id) DO NOTHING
       `, [eventId, testAgency, testLoc]);
 
       // Attempting to UPDATE audit event must be BLOCKED by trigger
