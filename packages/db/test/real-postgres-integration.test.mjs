@@ -103,6 +103,18 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
   }
 
   try {
+    // 0. Ensure application and worker least-privilege roles exist in test container
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_app') THEN
+          CREATE ROLE operza_app LOGIN;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_worker') THEN
+          CREATE ROLE operza_worker LOGIN;
+        END IF;
+      END $$;
+    `);
+
     // 1. Create schema_migrations tracking table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
