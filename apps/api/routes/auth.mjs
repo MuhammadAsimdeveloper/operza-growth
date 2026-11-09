@@ -4,6 +4,9 @@
  * ============================================================================
  */
 
+import { randomInt } from 'node:crypto';
+import { verifyGoogleIdToken } from '../lib/google-auth.mjs';
+
 export async function handleAuthRoutes(req, res, ctx) {
   const {
     method,
@@ -20,7 +23,9 @@ export async function handleAuthRoutes(req, res, ctx) {
     safeEqual,
     setSessionCookies,
     clearSessionCookies,
-    getActor
+    getActor,
+    pgPool,
+    cookieSession
   } = ctx;
 
   // 1. AUTH: Signup
@@ -187,16 +192,30 @@ export async function handleAuthRoutes(req, res, ctx) {
     return true;
   }
 
-  // 2. AUTH: Google Sign-In & Sign-Up
+  // 2. AUTH: Google Sign-In & Sign-Up (Cryptographic RS256 Verification)
   if (method === 'POST' && pathname === '/api/auth/google') {
     const body = await readBody(req);
-    const { email, name, avatar } = body;
-    if (!email) {
-      sendJson(res, 400, { error: 'Email is required for Google Sign-In' });
+    const idToken = body?.credential || body?.idToken;
+    if (!idToken || typeof idToken !== 'string') {
+      sendJson(res, 400, { error: 'Google ID token (credential or idToken) is required' });
       return true;
     }
 
-    const emailKey = email.toLowerCase().trim();
+    const clientId = process.env.GOOGLE_CLIENT_ID;
+    if (!clientId) {
+      sendJson(res, 503, { error: 'Google Sign-In is not configured on this server' });
+      return true;
+    }
+
+    let verifiedPayload;
+    try {
+      verifiedPayload = await verifyGoogleIdToken(idToken, clientId);
+    } catch (err) {
+      sendJson(res, 401, { error: 'Invalid or unverified Google token', details: err.message });
+      return true;
+    }
+
+    const emailKey = verifiedPayload.email;
     let user = state.users.find(u => u.email === emailKey);
     let agency, location, membership;
 
@@ -205,18 +224,14 @@ export async function handleAuthRoutes(req, res, ctx) {
       const agencyId = randomUUID();
       const locationId = randomUUID();
 
-      const salt = randomBytes(16);
-      const passBuf = await scrypt(randomUUID(), salt, 64);
-      const passwordHash = `${salt.toString('hex')}:${passBuf.toString('hex')}`;
-
       user = {
         id: userId,
-        name: (name || emailKey.split('@')[0]).trim(),
+        name: (verifiedPayload.name || emailKey.split('@')[0]).trim(),
         email: emailKey,
-        passwordHash,
-        avatar: avatar || null,
-        status: 'active',
+        avatar: verifiedPayload.picture || null,
+        googleId: verifiedPayload.sub,
         provider: 'google',
+        status: 'active',
         createdAt: new Date().toISOString()
       };
 
@@ -263,6 +278,25 @@ export async function handleAuthRoutes(req, res, ctx) {
         createdAt: new Date().toISOString()
       });
     } else {
+      // Account takeover prevention:
+      // If account was created with password authentication and has no linked googleId,
+      // prevent silent automatic account takeover.
+      if (user.passwordHash && user.provider !== 'google' && (!user.googleId || user.googleId !== verifiedPayload.sub)) {
+        sendJson(res, 409, {
+          error: 'An account with this email already exists with password authentication. Please log in with password first to link Google Sign-In.'
+        });
+        return true;
+      }
+
+      if (user.googleId && user.googleId !== verifiedPayload.sub) {
+        sendJson(res, 403, { error: 'Google identity mismatch for this account' });
+        return true;
+      }
+
+      if (!user.googleId) {
+        user.googleId = verifiedPayload.sub;
+      }
+
       membership = state.memberships.find(m => m.userId === user.id && m.status === 'active');
       agency = state.agencies.find(a => a.id === membership?.agencyId && a.status === 'active') || state.agencies[0];
       const locs = state.locations.filter(l => l.agencyId === agency?.id && l.status === 'active');
@@ -304,16 +338,45 @@ export async function handleAuthRoutes(req, res, ctx) {
     }
 
     state.otps = state.otps || {};
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const existing = state.otps[email];
+    const now = Date.now();
+
+    // Anti-abuse rate limiting: max 1 request every 15 seconds per email
+    if (existing && existing.lastRequestedAt && (now - existing.lastRequestedAt < 15_000)) {
+      sendJson(res, 429, { error: 'Please wait before requesting another verification code' });
+      return true;
+    }
+
+    // Cryptographically secure 6-digit random code
+    const code = String(randomInt(100000, 1000000));
+    const salt = randomBytes(16).toString('hex');
+    const codeHash = hash(`${salt}:${code}`);
+
     state.otps[email] = {
-      code,
-      expiresAt: Date.now() + 10 * 60 * 1000
+      salt,
+      codeHash,
+      attempts: 0,
+      maxAttempts: 3,
+      createdAt: now,
+      lastRequestedAt: now,
+      expiresAt: now + 10 * 60 * 1000
     };
 
+    // Isolated test sink strictly enabled in test mode for automated test suites
+    if (process.env.NODE_ENV === 'test') {
+      globalThis.__testLastOtp = { email, code };
+      if (process.env.TEST_OTP_SINK_FILE) {
+        try {
+          const { writeFileSync } = await import('node:fs');
+          writeFileSync(process.env.TEST_OTP_SINK_FILE, JSON.stringify({ email, code }), 'utf8');
+        } catch {}
+      }
+    }
+
+    // NEVER leak code, devCode, or OTP in HTTP responses or operational logs!
     sendJson(res, 200, {
       success: true,
-      message: `A 6-digit verification code has been dispatched to ${email}.`,
-      devCode: code
+      message: 'If an account exists or is eligible, a verification code has been dispatched.'
     });
     return true;
   }
@@ -322,15 +385,37 @@ export async function handleAuthRoutes(req, res, ctx) {
   if (method === 'POST' && pathname === '/api/auth/verify-otp') {
     const body = await readBody(req);
     const emailKey = (body.email || '').toLowerCase().trim();
-    const code = (body.code || '').trim();
+    const code = String(body.code || '').trim();
     const name = (body.name || '').trim();
 
     state.otps = state.otps || {};
     const record = state.otps[emailKey];
-    if (!record || record.code !== code || Date.now() > record.expiresAt) {
+    if (!record || Date.now() > record.expiresAt) {
+      if (record) delete state.otps[emailKey];
       sendJson(res, 400, { error: 'Invalid or expired verification code' });
       return true;
     }
+
+    // Attempt lockout protection
+    if (record.attempts >= record.maxAttempts) {
+      delete state.otps[emailKey];
+      sendJson(res, 400, { error: 'Verification code expired due to too many failed attempts' });
+      return true;
+    }
+
+    const testHash = hash(`${record.salt}:${code}`);
+    const matches = safeEqual(testHash, record.codeHash);
+
+    if (!matches) {
+      record.attempts++;
+      if (record.attempts >= record.maxAttempts) {
+        delete state.otps[emailKey];
+      }
+      sendJson(res, 400, { error: 'Invalid or expired verification code' });
+      return true;
+    }
+
+    // One-time use: delete code immediately to prevent replay attacks
     delete state.otps[emailKey];
 
     let user = state.users.find(u => u.email === emailKey);
@@ -531,10 +616,39 @@ export async function handleAuthRoutes(req, res, ctx) {
     return true;
   }
 
-  // 8. AUTH: Logout
+  // 8. AUTH: Logout (Server-Side Session Revocation)
   if (method === 'POST' && pathname === '/api/auth/logout') {
+    const cookieHeader = req.headers.cookie || '';
+    let token = '';
+    for (const part of cookieHeader.split(';')) {
+      const idx = part.indexOf('=');
+      if (idx > 0) {
+        const key = part.slice(0, idx).trim();
+        if (key === 'operza_session' || key === '__Host-operza_session') {
+          token = decodeURIComponent(part.slice(idx + 1).trim());
+          break;
+        }
+      }
+    }
+    if (!token && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      token = req.headers.authorization.slice(7).trim();
+    }
+
+    if (token) {
+      const tokenHash = hash(token);
+      if (Array.isArray(state.sessions)) {
+        state.sessions = state.sessions.filter(s => s.tokenHash !== tokenHash);
+      }
+      if (pgPool) {
+        try {
+          await pgPool.query('DELETE FROM auth_sessions WHERE token_hash = $1', [tokenHash]);
+        } catch {}
+      }
+      await saveState();
+    }
+
     clearSessionCookies(res);
-    sendJson(res, 200, { success: true });
+    sendJson(res, 200, { success: true, message: 'Logged out successfully' });
     return true;
   }
 

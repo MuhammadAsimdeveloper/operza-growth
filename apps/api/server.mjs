@@ -254,7 +254,32 @@ const RATE_LIMIT_WINDOW_MS = 60_000;   // 1 minute
 const RATE_LIMIT_MAX_REQUESTS = Number(process.env.RATE_LIMIT_MAX_REQUESTS) || (isProd ? 120 : 2000);   // per IP per window
 const RATE_LIMIT_AUTH_MAX = Number(process.env.RATE_LIMIT_AUTH_MAX) || (isProd ? 10 : 200);        // stricter for auth endpoints
 
-function getRateLimitKey(ip) { return ip || 'unknown'; }
+function resolveClientIp(req) {
+  const remoteAddr = req.socket?.remoteAddress || '127.0.0.1';
+  const normalizedRemote = remoteAddr.startsWith('::ffff:') ? remoteAddr.slice(7) : remoteAddr;
+
+  const isLoopback = normalizedRemote === '127.0.0.1' || normalizedRemote === '::1';
+  const trustedProxiesEnv = process.env.TRUSTED_PROXIES || '';
+  const trustedList = trustedProxiesEnv
+    ? trustedProxiesEnv.split(',').map(s => s.trim().toLowerCase())
+    : [];
+  const trustProxy = process.env.TRUST_PROXY === '1' || process.env.TRUST_PROXY === 'true';
+
+  const isTrusted = (isLoopback && (trustProxy || process.env.NODE_ENV === 'test')) ||
+    trustedList.includes(normalizedRemote.toLowerCase());
+
+  if (isTrusted && req.headers && req.headers['x-forwarded-for']) {
+    const rawForwarded = String(req.headers['x-forwarded-for']).split(',');
+    const clientIp = rawForwarded[0]?.trim();
+    if (clientIp) {
+      return clientIp.startsWith('::ffff:') ? clientIp.slice(7) : clientIp;
+    }
+  }
+
+  return normalizedRemote;
+}
+
+function getRateLimitKey(key) { return key || 'unknown'; }
 
 function normalizePhone(p) {
   return String(p || '').replace(/\D/g, '');
@@ -705,8 +730,14 @@ async function syncRelationalWrite(collectionName, action, record, agencyId) {
   try {
     const client = await pgPool.connect();
     try {
-      if (agencyId) {
-        await client.query("SELECT set_config('app.current_agency_id', $1, true)", [String(agencyId)]);
+      await client.query('BEGIN');
+      const targetAgencyId = agencyId || record?.agencyId;
+      const targetLocationId = record?.locationId;
+      if (targetAgencyId) {
+        await client.query("SELECT set_config('app.agency_id', $1, true)", [String(targetAgencyId)]);
+      }
+      if (targetLocationId) {
+        await client.query("SELECT set_config('app.location_id', $1, true)", [String(targetLocationId)]);
       }
       if (collectionName === 'contacts') {
         if (action === 'delete') {
@@ -770,7 +801,85 @@ async function syncRelationalWrite(collectionName, action, record, agencyId) {
             record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
           ]);
         }
+      } else if (collectionName === 'calendars') {
+        if (action === 'delete') {
+          await client.query('DELETE FROM calendars WHERE id = $1', [record.id]);
+        } else {
+          if (targetAgencyId) {
+            await client.query(`
+              INSERT INTO agencies (id, name, slug)
+              VALUES ($1, 'Agency', $2)
+              ON CONFLICT (id) DO NOTHING
+            `, [targetAgencyId, 'agency-' + String(targetAgencyId).slice(0, 8)]);
+          }
+          if (targetAgencyId && targetLocationId) {
+            await client.query(`
+              INSERT INTO locations (id, agency_id, name)
+              VALUES ($1, $2, 'Main Location')
+              ON CONFLICT (agency_id, id) DO NOTHING
+            `, [targetLocationId, targetAgencyId]);
+          }
+
+          await client.query(`
+            INSERT INTO calendars (id, agency_id, location_id, name, slug, duration_min, status, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ON CONFLICT (agency_id, location_id, id) DO UPDATE SET
+              name = EXCLUDED.name,
+              slug = EXCLUDED.slug,
+              duration_min = EXCLUDED.duration_min,
+              status = EXCLUDED.status,
+              updated_at = EXCLUDED.updated_at
+          `, [
+            record.id, targetAgencyId, targetLocationId,
+            record.name || 'Calendar', record.slug || record.id,
+            Number(record.durationMin) || 30,
+            record.status === 'inactive' ? 'inactive' : 'active',
+            record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
+          ]);
+        }
+      } else if (collectionName === 'appointments') {
+        if (action === 'delete') {
+          await client.query('DELETE FROM appointments WHERE id = $1', [record.id]);
+        } else {
+          if (targetAgencyId) {
+            await client.query(`
+              INSERT INTO agencies (id, name, slug)
+              VALUES ($1, 'Agency', $2)
+              ON CONFLICT (id) DO NOTHING
+            `, [targetAgencyId, 'agency-' + String(targetAgencyId).slice(0, 8)]);
+          }
+          if (targetAgencyId && targetLocationId) {
+            await client.query(`
+              INSERT INTO locations (id, agency_id, name)
+              VALUES ($1, $2, 'Main Location')
+              ON CONFLICT (agency_id, id) DO NOTHING
+            `, [targetLocationId, targetAgencyId]);
+          }
+
+          await client.query(`
+            INSERT INTO appointments (id, agency_id, location_id, calendar_id, contact_id, title, starts_at, ends_at, status, notes, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ON CONFLICT (agency_id, location_id, id) DO UPDATE SET
+              title = EXCLUDED.title,
+              starts_at = EXCLUDED.starts_at,
+              ends_at = EXCLUDED.ends_at,
+              status = EXCLUDED.status,
+              notes = EXCLUDED.notes,
+              updated_at = EXCLUDED.updated_at
+          `, [
+            record.id, targetAgencyId, targetLocationId,
+            record.calendarId || record.calendar_id, record.contactId || null,
+            record.title || 'Appointment', record.startsAt || record.starts_at,
+            record.endsAt || record.ends_at, record.status || 'confirmed',
+            record.notes || '',
+            record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
+          ]);
+        }
       }
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw txErr;
     } finally {
       client.release();
     }
@@ -2011,7 +2120,7 @@ const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = url.pathname;
   const method = req.method;
-  const clientIp = req.socket.remoteAddress || '';
+  const clientIp = resolveClientIp(req);
 
   // ─── CORS Preflight ─────────────────────────────────────────────
   if (method === 'OPTIONS') {
@@ -2026,9 +2135,11 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // ─── Global Rate Limiting ───────────────────────────────────────
+  // ─── Global & Scoped Rate Limiting ──────────────────────────────
   const isAuthRoute = pathname.startsWith('/api/auth/');
-  const rateLimit = checkRateLimit(clientIp, isAuthRoute ? RATE_LIMIT_AUTH_MAX : RATE_LIMIT_MAX_REQUESTS);
+  const rateLimitKey = isAuthRoute ? `auth:${clientIp}` : `api:${clientIp}`;
+  const rateLimitMax = isAuthRoute ? RATE_LIMIT_AUTH_MAX : RATE_LIMIT_MAX_REQUESTS;
+  const rateLimit = checkRateLimit(rateLimitKey, rateLimitMax);
   if (!rateLimit.allowed) {
     return sendJson(res, 429, { error: 'Too many requests. Please slow down.' }, {
       'retry-after': String(Math.ceil((rateLimit.resetAt - Date.now()) / 1000)),
@@ -2588,8 +2699,33 @@ const server = createServer(async (req, res) => {
     // Public Calendar Lookup
     if (method === 'GET' && pathname.startsWith('/api/calendars/public/')) {
       const idOrSlug = pathname.replace('/api/calendars/public/', '').trim();
-      const calendars = state.records.calendars || [];
-      const cal = calendars.find(c => (c.id === idOrSlug || c.slug === idOrSlug) && c.status !== 'inactive');
+      let calendars = state.records.calendars || [];
+      let cal = calendars.find(c => (c.id === idOrSlug || c.slug === idOrSlug) && c.status !== 'inactive');
+      if (!cal && pgPool) {
+        try {
+          const calRes = await pgPool.query(
+            "SELECT * FROM calendars WHERE (id::text = $1 OR slug = $1) AND status != 'inactive' LIMIT 1",
+            [idOrSlug]
+          );
+          if (calRes.rows.length > 0) {
+            const row = calRes.rows[0];
+            cal = {
+              id: row.id,
+              agencyId: row.agency_id,
+              locationId: row.location_id,
+              name: row.name,
+              slug: row.slug,
+              durationMin: row.duration_min,
+              status: row.status,
+              availability: row.availability || []
+            };
+            state.records.calendars = state.records.calendars || [];
+            if (!state.records.calendars.some(c => c.id === cal.id)) {
+              state.records.calendars.push(cal);
+            }
+          }
+        } catch {}
+      }
       if (!cal) return sendJson(res, 404, { error: 'Calendar not found or inactive' });
 
       // Generate standard slots if query date is provided
@@ -2599,6 +2735,26 @@ const server = createServer(async (req, res) => {
         const bookedStarts = (state.records.appointments || [])
           .filter(a => a.calendarId === cal.id && a.startsAt && a.startsAt.startsWith(dateParam) && a.status !== 'cancelled')
           .map(a => a.startsAt.split('T')[1]?.slice(0, 5));
+
+        if (pgPool) {
+          try {
+            const client = await pgPool.connect();
+            try {
+              await client.query("SELECT set_config('app.agency_id', $1, true)", [String(cal.agencyId)]);
+              await client.query("SELECT set_config('app.location_id', $1, true)", [String(cal.locationId)]);
+              const pgAppts = await client.query(
+                "SELECT starts_at FROM appointments WHERE calendar_id = $1 AND starts_at::text LIKE $2 AND status != 'cancelled'",
+                [cal.id, `${dateParam}%`]
+              );
+              for (const r of pgAppts.rows) {
+                const tp = new Date(r.starts_at).toISOString().split('T')[1]?.slice(0, 5);
+                if (tp && !bookedStarts.includes(tp)) bookedStarts.push(tp);
+              }
+            } finally {
+              client.release();
+            }
+          } catch {}
+        }
 
         // Filter out 2-way synced external busy blocks (e.g. Google Calendar / Outlook 365)
         const externalBusy = (cal.externalBusyBlocks || [])
@@ -2625,21 +2781,39 @@ const server = createServer(async (req, res) => {
     // Public Calendar Booking Ingress -> Create Appointment + Contact + Prep Task + Trigger Workflow
     if (method === 'POST' && pathname.startsWith('/api/calendars/book/')) {
       const idOrSlug = pathname.replace('/api/calendars/book/', '').trim();
-      const calendars = state.records.calendars || [];
-      const cal = calendars.find(c => (c.id === idOrSlug || c.slug === idOrSlug) && c.status !== 'inactive');
+      let calendars = state.records.calendars || [];
+      let cal = calendars.find(c => (c.id === idOrSlug || c.slug === idOrSlug) && c.status !== 'inactive');
+      if (!cal && pgPool) {
+        try {
+          const calRes = await pgPool.query(
+            "SELECT * FROM calendars WHERE (id::text = $1 OR slug = $1) AND status != 'inactive' LIMIT 1",
+            [idOrSlug]
+          );
+          if (calRes.rows.length > 0) {
+            const row = calRes.rows[0];
+            cal = {
+              id: row.id,
+              agencyId: row.agency_id,
+              locationId: row.location_id,
+              name: row.name,
+              slug: row.slug,
+              durationMin: row.duration_min,
+              status: row.status,
+              availability: row.availability || []
+            };
+            state.records.calendars = state.records.calendars || [];
+            if (!state.records.calendars.some(c => c.id === cal.id)) {
+              state.records.calendars.push(cal);
+            }
+          }
+        } catch {}
+      }
       if (!cal) return sendJson(res, 404, { error: 'Calendar not found or inactive' });
 
       const body = await readBody(req);
       const { name, email, phone, date, timeSlot, notes } = body;
       if (!name || !email || !date || !timeSlot) {
         return sendJson(res, 400, { error: 'Name, email, date, and timeSlot are required.' });
-      }
-
-      const isSlotConflict = (state.records.appointments || []).some(
-        a => a.calendarId === cal.id && a.startsAt.startsWith(date) && a.startsAt.includes(`T${timeSlot}:`) && a.status !== 'cancelled'
-      );
-      if (isSlotConflict) {
-        return sendJson(res, 409, { error: 'This time slot is no longer available. Please choose another time.' });
       }
 
       const emailKey = String(email).toLowerCase().trim();
@@ -2665,8 +2839,6 @@ const server = createServer(async (req, res) => {
           status: 'lead',
           createdAt: new Date().toISOString()
         };
-        state.records.contacts = state.records.contacts || [];
-        state.records.contacts.push(contact);
       } else {
         contact.tags = contact.tags || [];
         if (!contact.tags.includes('booked-call')) contact.tags.push('booked-call');
@@ -2693,6 +2865,75 @@ const server = createServer(async (req, res) => {
         notes: notes || '',
         createdAt: new Date().toISOString()
       };
+
+      // ─────────────────────────────────────────────────────────────
+      // Authoritative PostgreSQL Transactional Reservation
+      // ─────────────────────────────────────────────────────────────
+      if (pgPool) {
+        const client = await pgPool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query("SELECT set_config('app.agency_id', $1, true)", [String(cal.agencyId)]);
+          await client.query("SELECT set_config('app.location_id', $1, true)", [String(cal.locationId)]);
+
+          // Ensure parent agency and location exist in relational tables for FK integrity
+          await client.query(`
+            INSERT INTO agencies (id, name, slug)
+            VALUES ($1, 'Agency', $2)
+            ON CONFLICT (id) DO NOTHING
+          `, [cal.agencyId, 'agency-' + String(cal.agencyId).slice(0, 8)]);
+
+          await client.query(`
+            INSERT INTO locations (id, agency_id, name)
+            VALUES ($1, $2, 'Main Location')
+            ON CONFLICT (agency_id, id) DO NOTHING
+          `, [cal.locationId, cal.agencyId]);
+
+          // Synchronously reserve appointment with GiST exclusion constraint enforcement
+          await client.query(`
+            INSERT INTO appointments (
+              id, agency_id, location_id, calendar_id, contact_id, title, starts_at, ends_at, status, notes, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'confirmed', $9, now(), now())
+          `, [
+            apptId,
+            cal.agencyId,
+            cal.locationId,
+            cal.id,
+            contact.id,
+            appointment.title,
+            startTime,
+            endTime,
+            notes || ''
+          ]);
+
+          await client.query('COMMIT');
+        } catch (dbErr) {
+          await client.query('ROLLBACK').catch(() => {});
+          if (dbErr.code === '23P01' || dbErr.message?.includes('exclude_overlapping_active_appointments')) {
+            return sendJson(res, 409, {
+              error: 'This time slot is no longer available. Please choose another time.',
+              code: 'SLOT_CONFLICT'
+            });
+          }
+          throw dbErr;
+        } finally {
+          client.release();
+        }
+      } else {
+        // Fallback for standalone in-memory mode without PostgreSQL configured
+        const isSlotConflict = (state.records.appointments || []).some(
+          a => a.calendarId === cal.id && a.startsAt.startsWith(date) && a.startsAt.includes(`T${timeSlot}:`) && a.status !== 'cancelled'
+        );
+        if (isSlotConflict) {
+          return sendJson(res, 409, { error: 'This time slot is no longer available. Please choose another time.' });
+        }
+      }
+
+      // Synchronize in-memory representation post-commit
+      state.records.contacts = state.records.contacts || [];
+      if (!state.records.contacts.some(c => c.id === contact.id)) {
+        state.records.contacts.push(contact);
+      }
       state.records.appointments = state.records.appointments || [];
       state.records.appointments.push(appointment);
 
@@ -4358,7 +4599,9 @@ const server = createServer(async (req, res) => {
         safeEqual,
         setSessionCookies,
         clearSessionCookies,
-        getActor
+        getActor,
+        pgPool,
+        cookieSession
       });
       if (handled || res.headersSent) {
         return;
@@ -8791,6 +9034,37 @@ const server = createServer(async (req, res) => {
           locationId: activeLocation.id,
           updatedAt: new Date().toISOString()
         };
+
+        // Synchronous PostgreSQL reservation update for appointments (rescheduling / cancellation)
+        if (collectionName === 'appointments' && pgPool && (body.startsAt || body.endsAt || body.status)) {
+          const client = await pgPool.connect();
+          try {
+            await client.query('BEGIN');
+            await client.query("SELECT set_config('app.agency_id', $1, true)", [String(agency.id)]);
+            await client.query("SELECT set_config('app.location_id', $1, true)", [String(activeLocation.id)]);
+            await client.query(`
+              UPDATE appointments
+              SET starts_at = COALESCE($1, starts_at),
+                  ends_at = COALESCE($2, ends_at),
+                  status = COALESCE($3, status),
+                  updated_at = now()
+              WHERE id = $4 AND agency_id = $5 AND location_id = $6
+            `, [body.startsAt || null, body.endsAt || null, body.status || null, recordId, agency.id, activeLocation.id]);
+            await client.query('COMMIT');
+          } catch (txErr) {
+            await client.query('ROLLBACK').catch(() => {});
+            if (txErr.code === '23P01' || txErr.message?.includes('exclude_overlapping_active_appointments')) {
+              return sendJson(res, 409, {
+                error: 'Cannot reschedule: the selected time slot conflicts with an existing appointment.',
+                code: 'SLOT_CONFLICT'
+              });
+            }
+            throw txErr;
+          } finally {
+            client.release();
+          }
+        }
+
         list[index] = updated;
         await saveState();
         await syncRelationalWrite(collectionName, 'update', updated, agency.id);
