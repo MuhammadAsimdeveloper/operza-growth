@@ -533,6 +533,7 @@ export const api = {
   },
   integrations: {
     list: () => request<{ integrations: any[] }>('/api/integrations'),
+    connectOutlook: () => request<{ success: boolean; authorizationUrl: string }>('/api/integrations/outlook/connect', { method: 'POST' }),
     connect: (id: string, data: any) =>
       request<{ success: boolean; integration: any }>(`/api/integrations/${id}/connect`, { method: 'POST', body: JSON.stringify(data) }),
     disconnect: (id: string) =>
