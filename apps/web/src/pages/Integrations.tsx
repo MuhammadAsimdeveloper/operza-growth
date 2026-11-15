@@ -184,6 +184,18 @@ export default function Integrations() {
       ]);
       setCatalog(catRes.data || []);
       setConnections(connRes.data || []);
+      const verifiedOutlook = (connRes.data || []).find((connection: any) =>
+        connection.providerKey === 'email.microsoft_graph' && connection.status === 'verified'
+      );
+      setMarketplaceApps((prev) => prev.map((app) => app.id === 'outlook'
+        ? {
+            ...app,
+            connected: Boolean(verifiedOutlook),
+            status: verifiedOutlook ? 'connected' : 'disconnected',
+            accountName: verifiedOutlook?.config?.mailbox || verifiedOutlook?.label || undefined
+          }
+        : app
+      ));
       if (catRes.data?.length > 0 && !selectedProviderKey) {
         setSelectedProviderKey(catRes.data[0].providerKey);
       }
@@ -379,6 +391,14 @@ export default function Integrations() {
   };
 
   useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    if (query.get('outlook') === 'connected') {
+      setMarketplaceActionNotice('Microsoft Outlook is connected and verified.');
+      window.history.replaceState({}, '', '/integrations');
+    } else if (query.get('outlook') === 'error') {
+      setMarketplaceActionNotice(`Outlook connection could not finish (${query.get('reason') || 'unknown error'}).`);
+      window.history.replaceState({}, '', '/integrations');
+    }
     fetchPlatformConnections();
     fetchMarketplace();
     fetchZapierDetails();
