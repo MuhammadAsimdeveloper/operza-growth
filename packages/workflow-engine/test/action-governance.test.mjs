@@ -20,7 +20,9 @@ const base = {
   input: { to: 'person@example.com', subject: 'Hello' },
   mode: 'live',
   providerStatus: 'verified',
-  consent: true
+  providerConnectionId: 'provider_connection_001',
+  consent: true,
+  consentId: 'consent_001'
 };
 
 test('catalog classifies external actions separately from tenant CRM writes', () => {
@@ -108,4 +110,26 @@ test('workflow audit rejects tenant mismatches and secret-shaped workflow config
   assert.equal(audit.status, 'blocked');
   assert.ok(audit.findings.some(item => item.code === 'TENANT_MISMATCH'));
   assert.ok(audit.findings.some(item => item.code === 'SECRET_LIKE_FIELD'));
+});
+
+
+test('live external action approval hash binds the exact provider connection and consent record', () => {
+  const invocation = createActionInvocation(base);
+  assert.equal(invocation.providerConnectionId, 'provider_connection_001');
+  assert.equal(invocation.consentId, 'consent_001');
+  assert.equal(authorizeActionInvocation(invocation).code, 'APPROVAL_REQUIRED');
+
+  assert.equal(
+    authorizeActionInvocation({ ...invocation, providerConnectionId: 'provider_connection_other' }).code,
+    'INVOCATION_TAMPERED'
+  );
+  assert.equal(
+    authorizeActionInvocation({ ...invocation, consentId: 'consent_other' }).code,
+    'INVOCATION_TAMPERED'
+  );
+
+  const noConnection = createActionInvocation({ ...base, providerConnectionId: null });
+  assert.equal(authorizeActionInvocation(noConnection).code, 'PROVIDER_CONNECTION_REQUIRED');
+  const noConsentRecord = createActionInvocation({ ...base, consentId: null });
+  assert.equal(authorizeActionInvocation(noConsentRecord).code, 'CONSENT_REQUIRED');
 });

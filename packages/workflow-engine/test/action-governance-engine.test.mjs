@@ -43,7 +43,7 @@ test('raw HTTP workflow nodes are blocked before fetch is called', async () => {
 
 test('verified live delivery requires an approved action and an injected provider adapter', async () => {
   const node = { id: 'node_email', type: 'send_email', config: { to: 'person@example.com', subject: 'Hello' } };
-  const invocation = createActionInvocation({ ...identity, node, mode: 'live', providerStatus: 'verified', consent: true });
+  const invocation = createActionInvocation({ ...identity, node, mode: 'live', providerStatus: 'verified', providerConnectionId: 'provider_connection_001', consent: true, consentId: 'consent_001' });
   const request = createApprovalRequest({
     ...identity,
     nodeId: node.id,
@@ -67,7 +67,9 @@ test('verified live delivery requires an approved action and an injected provide
       actorId: identity.actorId,
       mode: 'live',
       providerStatuses: { email: 'verified' },
+      providerConnectionIds: { email: 'provider_connection_001' },
       consent: true,
+      consentId: 'consent_001',
       approvalEvidence
     },
     triggerContext: {},
@@ -142,4 +144,60 @@ test('approval for one node does not authorize another node in the same workflow
 
   assert.equal(nextPaused.status, 'waiting_approval');
   assert.equal(createdTasks, 1);
+});
+
+
+test('external action executor receives a delivery result but the engine labels it accepted, not delivered', async () => {
+  const node = { id: 'node_email_result', type: 'send_email', config: { to: 'person@example.com', subject: 'Hello', body: 'Test' } };
+  const request = createActionInvocation({
+    ...identity,
+    node,
+    mode: 'live',
+    providerStatus: 'verified',
+    providerConnectionId: 'provider_connection_002',
+    consent: true,
+    consentId: 'consent_002'
+  });
+  const approvalRequest = createApprovalRequest({
+    ...identity,
+    nodeId: node.id,
+    requestedByActorId: identity.actorId,
+    actionHash: request.actionHash,
+    expiresAt: new Date(Date.now() + 60_000).toISOString()
+  });
+  const approvalEvidence = decideApproval({
+    request: approvalRequest,
+    tenantId: identity.tenantId,
+    approvedByActorId: 'actor_admin',
+    decision: 'approved'
+  });
+
+  const result = await executeStep({
+    node,
+    execution: {
+      agencyId: identity.tenantId,
+      workflowId: identity.workflowId,
+      id: identity.executionId,
+      actorId: identity.actorId,
+      mode: 'live',
+      providerStatuses: { email: 'verified' },
+      providerConnectionIds: { email: 'provider_connection_002' },
+      consent: true,
+      consentId: 'consent_002',
+      approvalEvidence
+    },
+    triggerContext: {},
+    providerExecutor: async () => ({
+      ok: true,
+      accepted: true,
+      delivered: false,
+      statusCode: 202,
+      provider: 'microsoft_graph'
+    })
+  });
+
+  assert.equal(result.status, 'completed');
+  assert.equal(result.result.dispatch, 'accepted');
+  assert.equal(result.result.delivered, false);
+  assert.equal(result.result.statusCode, 202);
 });
