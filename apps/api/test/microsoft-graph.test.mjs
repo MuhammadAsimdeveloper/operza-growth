@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createMicrosoftGraphClient } from '../integrations/microsoft-graph.mjs';
+import { createMicrosoftGraphClient, createMicrosoftGraphProviderAdapter } from '../integrations/microsoft-graph.mjs';
 
 const tokenResponse = {
   token_type: 'Bearer',
@@ -85,4 +85,42 @@ test('Microsoft Graph sendMail rejects non-202 responses without fabricating a m
     subject: 'No send',
     body: 'No send'
   }), { code: 'MICROSOFT_GRAPH_SEND_FAILED' });
+});
+
+
+test('Microsoft Outlook provider adapter refreshes tokens and gates send on consent', async () => {
+  const calls = [];
+  const adapter = createMicrosoftGraphProviderAdapter({
+    clientFactory: () => ({
+      async refreshAccessToken({ refreshToken }) {
+        calls.push(['refresh', refreshToken]);
+        return { access_token: 'fresh-access-token-123456' };
+      },
+      async getProfile() {
+        return { id: 'microsoft-user-001', userPrincipalName: 'owner@example.com' };
+      },
+      async sendMail(input) {
+        calls.push(['send', input.to]);
+        return { ok: true, provider: 'microsoft_graph', status: 'accepted' };
+      }
+    })
+  });
+  const verification = await adapter.verify({ secret: 'refresh-token-long-enough', config: {} });
+  assert.equal(verification.verified, true);
+  assert.equal(verification.accountId, 'microsoft-user-001');
+
+  const denied = await adapter.dispatch({
+    secret: 'refresh-token-long-enough',
+    payload: { to: 'lead@example.com', subject: 'Follow up', body: 'Hello' },
+    consent: { status: 'revoked' }
+  });
+  assert.equal(denied.code, 'CONSENT_REQUIRED');
+
+  const sent = await adapter.dispatch({
+    secret: 'refresh-token-long-enough',
+    payload: { to: 'lead@example.com', subject: 'Follow up', body: 'Hello' },
+    consent: { status: 'granted' }
+  });
+  assert.equal(sent.status, 'accepted');
+  assert.equal(calls.filter(([kind]) => kind === 'send').length, 1);
 });
