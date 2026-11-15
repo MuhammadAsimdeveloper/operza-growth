@@ -703,6 +703,23 @@ const SESSION_SCOPES = Object.freeze([
   'payments:read'
 ]);
 
+const SESSION_ROLE_SCOPES = Object.freeze({
+  owner: SESSION_SCOPES,
+  admin: SESSION_SCOPES,
+  member: Object.freeze([
+    'contacts:read', 'contacts:write',
+    'opportunities:read', 'opportunities:write',
+    'calendars:read', 'calendars:write',
+    'tasks:read', 'tasks:write',
+    'webhooks:read', 'workflows:execute'
+  ]),
+  viewer: Object.freeze([
+    'contacts:read', 'opportunities:read',
+    'calendars:read', 'tasks:read',
+    'webhooks:read', 'payments:read'
+  ])
+});
+
 function normalizeZapierScopes(scopes = []) {
   return Array.from(new Set(
     (Array.isArray(scopes) ? scopes : [])
@@ -769,16 +786,22 @@ export function getZapierRequiredScopes(method, pathname) {
   return ['zapier:unsupported'];
 }
 
-/** API-key actors must possess every required scope; browser/session actors use session auth. */
+/** API-key and session actors must possess every route-specific permission. */
 export function isZapierScopeAuthorized(actor, requiredScopes = []) {
-  if (!actor?.isApiKey && !actor?.apiKey) return true;
-  const granted = new Set(normalizeZapierScopes(actor.apiKey?.scopes));
+  const isApiKey = Boolean(actor?.isApiKey || actor?.apiKey);
+  const role = String(actor?.membership?.role || '');
+  const grantedScopes = isApiKey
+    ? normalizeZapierScopes(actor?.apiKey?.scopes)
+    : (SESSION_ROLE_SCOPES[role] || []);
+  const granted = new Set(grantedScopes);
   return requiredScopes.every(scope => granted.has(scope));
 }
 
 function getZapierEffectiveScopes(actor) {
-  if (!actor?.isApiKey && !actor?.apiKey) return [...SESSION_SCOPES];
-  return normalizeZapierScopes(actor.apiKey?.scopes);
+  if (actor?.isApiKey || actor?.apiKey) {
+    return normalizeZapierScopes(actor.apiKey?.scopes);
+  }
+  return [...(SESSION_ROLE_SCOPES[String(actor?.membership?.role || '')] || [])];
 }
 
 /**
