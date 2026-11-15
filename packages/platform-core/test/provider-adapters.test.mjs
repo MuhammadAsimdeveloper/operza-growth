@@ -9,51 +9,53 @@ import {
   createProviderAdapterRegistry
 } from '../src/provider-adapters.mjs';
 
-test('Resend adapter verifies valid re_ keys and rejects malformed keys', async () => {
-  const valid = await resendEmailAdapter.verify({
+test('API-key shape alone never verifies a Resend connection', async () => {
+  const validShape = await resendEmailAdapter.verify({
     secret: 're_test_999888777666',
     config: { senderEmail: 'ops@operza.io' }
   });
-  assert.equal(valid.verified, true);
-  assert.equal(valid.accountId, 'resend:ops@operza.io');
+  assert.equal(validShape.verified, false);
+  assert.equal(validShape.code, 'PROVIDER_ADAPTER_UNAVAILABLE');
 
   const invalid = await resendEmailAdapter.verify({ secret: 'invalid-key' });
   assert.equal(invalid.verified, false);
+  assert.equal(invalid.code, 'INVALID_PROVIDER_CREDENTIAL');
 });
 
-test('Twilio adapter verifies valid tokens and account SIDs', async () => {
-  const valid = await twilioSmsAdapter.verify({
-    secret: 'auth_token_secret_12345678',
-    config: { accountId: 'AC1234567890abcdef' }
-  });
-  assert.equal(valid.verified, true);
-  assert.equal(valid.accountId, 'AC1234567890abcdef');
-
-  const invalid = await twilioSmsAdapter.verify({
-    secret: 'short',
-    config: { accountId: 'INVALID' }
-  });
-  assert.equal(invalid.verified, false);
+test('API-key shape alone never verifies SendGrid, Twilio, Meta or Stripe', async () => {
+  const cases = [
+    [sendgridEmailAdapter, { secret: 'SG.valid-shaped-test-token-000000' }],
+    [twilioSmsAdapter, { secret: 'auth_token_secret_12345678', config: { accountId: 'AC1234567890abcdef' } }],
+    [whatsappMetaAdapter, { secret: 'meta-token-valid-shaped-1234567890', config: { phoneNumberId: '1234567890' } }],
+    [stripePaymentAdapter, { secret: 'sk_test_51Mzxyz123456789012345678' }]
+  ];
+  for (const [adapter, input] of cases) {
+    const result = await adapter.verify(input);
+    assert.equal(result.verified, false);
+    assert.equal(result.code, 'PROVIDER_ADAPTER_UNAVAILABLE');
+  }
 });
 
-test('Stripe adapter verifies sk_ secret keys', async () => {
-  const valid = await stripePaymentAdapter.verify({
-    secret: 'sk_test_51Mzxyz123456789012345678'
-  });
-  assert.equal(valid.verified, true);
-
-  const invalid = await stripePaymentAdapter.verify({
-    secret: 'pk_test_public_key'
-  });
-  assert.equal(invalid.verified, false);
+test('non-live provider adapters never manufacture successful delivery receipts', async () => {
+  const adapters = [resendEmailAdapter, sendgridEmailAdapter, twilioSmsAdapter, whatsappMetaAdapter];
+  for (const adapter of adapters) {
+    const result = await adapter.dispatch({ consent: { status: 'granted' }, payload: {} });
+    assert.equal(result.ok, false);
+    assert.equal(result.code, 'PROVIDER_ADAPTER_UNAVAILABLE');
+  }
+  const stripe = await stripePaymentAdapter.dispatch({});
+  assert.equal(stripe.ok, false);
+  assert.equal(stripe.code, 'PAYMENTS_DISABLED');
 });
 
-test('createProviderAdapterRegistry indexes and lists adapters', () => {
+test('createProviderAdapterRegistry indexes all catalog adapters and supports overrides', () => {
   const registry = createProviderAdapterRegistry();
   assert.ok(registry.has('email.resend'));
   assert.ok(registry.has('sms.twilio'));
   assert.ok(registry.has('payments.stripe'));
+  assert.ok(registry.has('email.microsoft_graph') === false);
 
-  const resend = registry.get('email.resend');
-  assert.equal(resend.id, 'adapter-resend-email-v1');
+  const custom = { providerKey: 'email.microsoft_graph', id: 'outlook-test' };
+  const withOutlook = createProviderAdapterRegistry([custom]);
+  assert.equal(withOutlook.get('email.microsoft_graph').id, 'outlook-test');
 });
