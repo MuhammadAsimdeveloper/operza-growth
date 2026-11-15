@@ -8569,26 +8569,18 @@ const server = createServer(async (req, res) => {
     // ─── INTEGRATIONS & APP MARKETPLACE ─────────────────────────
     // ═════════════════════════════════════════════════════════════
 
-    const getDefaultIntegrations = () => {
-      const hasStripe = Boolean(process.env.STRIPE_SECRET_KEY);
-      const hasTwilio = Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
-      const hasSendGrid = Boolean(process.env.SENDGRID_API_KEY);
-      const hasOpenAI = Boolean(process.env.OPENAI_API_KEY);
-      const hasSlack = Boolean(process.env.SLACK_WEBHOOK_URL);
-      const hasGoogle = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
-
-      return [
-        { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, and payment links', icon: 'credit-card', connected: hasStripe, accountName: hasStripe ? 'Verified Stripe Gateway' : '', status: hasStripe ? 'connected' : 'unconfigured', lastSyncAt: hasStripe ? new Date().toISOString() : null },
-        { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'SMS messaging, phone numbers, and voice call tracking', icon: 'phone', connected: hasTwilio, accountName: hasTwilio ? '+1 (800) 555-0100' : '', status: hasTwilio ? 'connected' : 'unconfigured', lastSyncAt: hasTwilio ? new Date().toISOString() : null },
-        { id: 'sendgrid', name: 'SendGrid', category: 'Communications', description: 'Transactional email delivery and marketing campaigns', icon: 'mail', connected: hasSendGrid, accountName: hasSendGrid ? 'noreply@operza.io' : '', status: hasSendGrid ? 'connected' : 'unconfigured', lastSyncAt: hasSendGrid ? new Date().toISOString() : null },
-        { id: 'openai', name: 'OpenAI', category: 'AI & Copilot', description: 'Powering autonomous copilot, conversation replies, and summarization', icon: 'sparkles', connected: hasOpenAI, accountName: hasOpenAI ? 'GPT-4o & Embeddings' : '', status: hasOpenAI ? 'connected' : 'unconfigured', lastSyncAt: hasOpenAI ? new Date().toISOString() : null },
-        { id: 'slack', name: 'Slack', category: 'Notifications', description: 'Real-time notifications for leads, booked appointments, and deals', icon: 'message', connected: hasSlack, accountName: hasSlack ? '#leads-alerts' : '', status: hasSlack ? 'connected' : 'unconfigured', lastSyncAt: null },
-        { id: 'zapier', name: 'Zapier & Webhooks', category: 'Automation', description: 'Native Operza webhook engine connecting 5,000+ external business applications', icon: 'zap', connected: true, accountName: 'Native Operza Engine', status: 'connected', lastSyncAt: new Date().toISOString() },
-        { id: 'google_calendar', name: 'Google Calendar', category: 'Calendar', description: 'Two-way appointment synchronization and scheduling', icon: 'calendar', connected: hasGoogle, accountName: hasGoogle ? 'team@operza.io' : '', status: hasGoogle ? 'connected' : 'unconfigured', lastSyncAt: null },
-        { id: 'meta_ads', name: 'Meta Ads', category: 'Marketing', description: 'Instant lead sync from Facebook & Instagram lead forms', icon: 'facebook', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
-        { id: 'shopify', name: 'Shopify', category: 'Commerce', description: 'E-commerce store orders, customer import, and product sync', icon: 'store', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null }
-      ];
-    };
+    const getDefaultIntegrations = () => ([
+      { id: 'outlook', name: 'Microsoft Outlook', category: 'Communications', description: 'Microsoft 365 email via delegated OAuth and Microsoft Graph', icon: 'mail', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+      { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, and payment links', icon: 'credit-card', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+      { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'SMS messaging, phone numbers, and voice call tracking', icon: 'phone', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+      { id: 'sendgrid', name: 'SendGrid', category: 'Communications', description: 'Transactional email delivery and marketing campaigns', icon: 'mail', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+      { id: 'openai', name: 'OpenAI', category: 'AI & Copilot', description: 'AI model configuration for Operza Copilot', icon: 'sparkles', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+      { id: 'slack', name: 'Slack', category: 'Notifications', description: 'Real-time notifications for leads, booked appointments, and deals', icon: 'message', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+      { id: 'zapier', name: 'Zapier & Webhooks', category: 'Automation', description: 'Native Operza webhook engine; configure a scoped API key in the Zapier tab', icon: 'zap', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+      { id: 'google_calendar', name: 'Google Calendar', category: 'Calendar', description: 'Two-way appointment synchronization and scheduling', icon: 'calendar', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+      { id: 'meta_ads', name: 'Meta Ads', category: 'Marketing', description: 'Instant lead sync from Facebook & Instagram lead forms', icon: 'facebook', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+      { id: 'shopify', name: 'Shopify', category: 'Commerce', description: 'E-commerce store orders, customer import, and product sync', icon: 'store', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null }
+    ]);
 
     if (method === 'GET' && pathname === '/api/integrations') {
       state.records.integrations = state.records.integrations || {};
@@ -8599,9 +8591,9 @@ const server = createServer(async (req, res) => {
         const defaults = getDefaultIntegrations();
         state.records.integrations[agency.id] = state.records.integrations[agency.id].map(item => {
           const def = defaults.find(d => d.id === item.id);
-          // If marked connected by default seed without user apiKey or verifiedAt, sync with real env reality
-          if (def && item.status === 'connected' && !def.connected && !item.apiKey && !item.verifiedAt) {
-            return { ...item, connected: false, status: 'unconfigured', accountName: '' };
+          // Legacy demo seeds cannot be treated as a verified provider connection.
+          if (def && item.status === 'connected' && !item.verifiedAt) {
+            return { ...def };
           }
           return item;
         });
@@ -8611,28 +8603,15 @@ const server = createServer(async (req, res) => {
 
     if (method === 'POST' && pathname.startsWith('/api/integrations/') && pathname.endsWith('/connect')) {
       const integrationId = pathname.replace('/api/integrations/', '').replace('/connect', '').trim();
-      state.records.integrations = state.records.integrations || {};
-      if (!state.records.integrations[agency.id]) {
-        state.records.integrations[agency.id] = getDefaultIntegrations();
-      }
-      const list = state.records.integrations[agency.id];
-      const target = list.find(i => i.id === integrationId);
-      if (!target) return sendJson(res, 404, { error: 'Integration not found' });
-
-      const body = await readBody(req);
-      target.connected = true;
-      target.status = 'connected';
-      target.accountName = body.accountName || target.accountName || `${agency.name} (${integrationId})`;
-      target.lastSyncAt = new Date().toISOString();
-      target.config = {
-        hasApiKey: Boolean(body.apiKey),
-        webhookUrl: body.webhookUrl || null
-      };
-
-      await saveState();
-      auditLog('integration.connected', actor, { integrationId, name: target.name });
-      broadcast('crm.integration.updated', { integrationId, connected: true });
-      return sendJson(res, 200, { success: true, integration: target });
+      return sendJson(res, 501, {
+        success: false,
+        connected: false,
+        status: 'not_configured',
+        code: 'INTEGRATION_AUTH_FLOW_REQUIRED',
+        message: integrationId === 'outlook'
+          ? 'Use the Microsoft Outlook OAuth connect flow.'
+          : 'This marketplace connector does not yet have a verified provider authorization adapter.'
+      });
     }
 
     if (method === 'POST' && pathname.startsWith('/api/integrations/') && pathname.endsWith('/disconnect')) {
@@ -8657,21 +8636,11 @@ const server = createServer(async (req, res) => {
 
     if (method === 'POST' && pathname.startsWith('/api/integrations/') && pathname.endsWith('/test')) {
       const integrationId = pathname.replace('/api/integrations/', '').replace('/test', '').trim();
-      state.records.integrations = state.records.integrations || {};
-      if (!state.records.integrations[agency.id]) {
-        state.records.integrations[agency.id] = getDefaultIntegrations();
-      }
-      const list = state.records.integrations[agency.id];
-      const target = list.find(i => i.id === integrationId);
-      if (!target) return sendJson(res, 404, { error: 'Integration not found' });
-
-      target.lastSyncAt = new Date().toISOString();
-      await saveState();
-
-      return sendJson(res, 200, {
-        success: true,
-        latencyMs: Math.floor(25 + Math.random() * 30),
-        message: `${target.name} ping verified · Active connection confirmed`
+      return sendJson(res, 501, {
+        success: false,
+        status: 'not_tested',
+        code: 'INTEGRATION_HEALTH_CHECK_UNAVAILABLE',
+        message: `A live health-check adapter is not configured for ${integrationId}.`
       });
     }
 
