@@ -13,7 +13,11 @@ const SCOPE_RULES = Object.freeze({
   'tasks:write': ['POST:/api/v1/zapier/actions/create_task'],
   'workflows:execute': ['POST:/api/v1/zapier/actions/trigger_workflow'],
   'communications:dispatch': ['POST:/api/v1/zapier/actions/send_communication'],
+  'notifications:read': [],
   'notifications:write': ['POST:/api/v1/zapier/actions/send_notification'],
+  'workflows:read': [],
+  'payments:read': [],
+  'calls:read': [],
   'webhooks:read': ['GET:/api/v1/zapier/hooks', 'GET:/api/v1/zapier/deliveries'],
   'webhooks:manage': ['POST:/api/v1/zapier/hooks/subscribe', 'DELETE:/api/v1/zapier/hooks/unsubscribe',
     'POST:/api/v1/zapier/hooks/test']
@@ -24,12 +28,14 @@ const PATH_SCOPES = new Map(
 );
 
 function eventScope(event) {
-  if (event.startsWith('contact.')) return 'contacts:read';
+  if (event.startsWith('contact.') || event === 'tag.added') return 'contacts:read';
   if (event.startsWith('opportunity.')) return 'opportunities:read';
   if (event.startsWith('appointment.')) return 'calendars:read';
   if (event.startsWith('task.')) return 'tasks:read';
   if (event.startsWith('notification.')) return 'notifications:read';
   if (event.startsWith('workflow.')) return 'workflows:read';
+  if (event.startsWith('payment.') || event.startsWith('invoice.')) return 'payments:read';
+  if (event.startsWith('call.')) return 'calls:read';
   return null;
 }
 
@@ -47,6 +53,7 @@ export function getZapierRequiredScope(method, pathname) {
 
   const exact = PATH_SCOPES.get(`${verb}:${path}`);
   if (exact) return exact;
+  if (verb === 'DELETE' && /^\\/api\\/v1\\/zapier\\/hooks\\/unsubscribe\\/[^/]+$/.test(path)) return 'webhooks:manage';
 
   if (verb === 'GET' && path.startsWith('/api/v1/zapier/samples/')) {
     return eventScope(path.slice('/api/v1/zapier/samples/'.length));
@@ -75,7 +82,24 @@ export function authorizeZapierRequest({ method, pathname, actor } = {}) {
     ? actor.apiKey.scopes.filter(scope => typeof scope === 'string')
     : [];
   const requiredScope = getZapierRequiredScope(method, pathname);
-  if (!requiredScope) return { allowed: true, requiredScope: null, grantedScopes: scopes };
+  if (!requiredScope) {
+    const path = String(pathname || '').split('?')[0];
+    const verb = String(method || 'GET').toUpperCase();
+    const publicMetadata = verb === 'GET' && [
+      '/api/v1/zapier/auth/me',
+      '/api/v1/zapier/app-definition',
+      '/api/v1/zapier/schema',
+      '/api/v1/zapier/triggers',
+      '/api/v1/zapier/actions',
+      '/api/v1/zapier/searches'
+    ].includes(path);
+    return {
+      allowed: publicMetadata,
+      requiredScope: null,
+      grantedScopes: scopes,
+      code: publicMetadata ? null : 'UNKNOWN_OR_UNSCOPED_ZAPIER_ROUTE'
+    };
+  }
   const legacyAlias = requiredScope === 'workflows:execute' ? 'workflows:trigger' : null;
   const allowed = scopes.includes(requiredScope) || Boolean(legacyAlias && scopes.includes(legacyAlias));
   return { allowed, requiredScope, grantedScopes: scopes };

@@ -58,6 +58,9 @@ jobs:
       - name: Database Schema & Logic Unit Tests
         run: npm --workspace=@operza/db test
 
+      - name: API Boundary & Zapier Authorization Tests
+        run: node --test apps/api/test/zapier-authz.test.mjs apps/api/test/zapier-endpoints.test.mjs
+
       - name: Production Vite 6 / React 19 Build
         run: npm run build
 
