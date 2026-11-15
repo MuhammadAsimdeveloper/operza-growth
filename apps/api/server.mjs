@@ -7178,6 +7178,134 @@ const server = createServer(async (req, res) => {
       });
     }
 
+    // Microsoft Outlook OAuth authorization-code flow (PKCE; refresh token stored server-side).
+    if (method === 'POST' && pathname === '/api/integrations/outlook/connect') {
+      if (!['owner', 'admin'].includes(actor.membership.role)) {
+        return sendJson(res, 403, { error: 'Only workspace owners and admins can connect Outlook' });
+      }
+      let microsoftClient;
+      try {
+        microsoftClient = createMicrosoftGraphClient();
+      } catch {
+        return sendJson(res, 503, {
+          error: 'Microsoft OAuth is not configured',
+          code: 'MICROSOFT_OAUTH_NOT_CONFIGURED'
+        });
+      }
+
+      const pkce = createMicrosoftPkcePair();
+      const oauthState = randomBytes(32).toString('base64url');
+      state.microsoftOAuthStates = (state.microsoftOAuthStates || []).filter(item => item.expiresAt > Date.now());
+      state.microsoftOAuthStates.push({
+        state: oauthState,
+        agencyId: agency.id,
+        locationId: activeLocation.id,
+        userId: actor.user.id,
+        codeVerifier: pkce.verifier,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 10 * 60 * 1000
+      });
+      if (state.microsoftOAuthStates.length > 500) state.microsoftOAuthStates.splice(0, state.microsoftOAuthStates.length - 500);
+      await saveState();
+
+      const authorizationUrl = microsoftClient.buildAuthorizationUrl({
+        state: oauthState,
+        codeChallenge: pkce.challenge
+      });
+      return sendJson(res, 200, {
+        success: true,
+        authorizationUrl,
+        expiresInSeconds: 600,
+        scopes: ['User.Read', 'Mail.Read', 'Mail.Send', 'offline_access']
+      });
+    }
+
+    // Microsoft redirects back with the single-use state and authorization code.
+    if (method === 'GET' && pathname === '/api/integrations/outlook/callback') {
+      const oauthState = url.searchParams.get('state') || '';
+      const code = url.searchParams.get('code') || '';
+      const oauthError = url.searchParams.get('error');
+      state.microsoftOAuthStates = state.microsoftOAuthStates || [];
+      const index = state.microsoftOAuthStates.findIndex(item =>
+        item.state === oauthState &&
+        item.agencyId === agency.id &&
+        item.locationId === activeLocation.id &&
+        item.userId === actor.user.id
+      );
+      if (!oauthState || index < 0) {
+        return sendJson(res, 400, { error: 'Microsoft OAuth state is invalid or no longer available', code: 'MICROSOFT_OAUTH_STATE_INVALID' });
+      }
+
+      const oauthRecord = state.microsoftOAuthStates.splice(index, 1)[0];
+      await saveState();
+      if (oauthRecord.expiresAt <= Date.now()) {
+        return sendJson(res, 400, { error: 'Microsoft OAuth authorization expired; please reconnect', code: 'MICROSOFT_OAUTH_STATE_EXPIRED' });
+      }
+      if (oauthError || !code) {
+        return sendJson(res, 400, { error: 'Microsoft authorization was not completed', code: 'MICROSOFT_OAUTH_DENIED' });
+      }
+
+      try {
+        const microsoftClient = createMicrosoftGraphClient();
+        const tokens = await microsoftClient.exchangeCode({ code, codeVerifier: oauthRecord.codeVerifier });
+        if (typeof tokens.refresh_token !== 'string' || tokens.refresh_token.length < 16) {
+          return sendJson(res, 502, {
+            error: 'Microsoft did not return a refresh token. Ensure offline_access is consented.',
+            code: 'MICROSOFT_REFRESH_TOKEN_MISSING'
+          });
+        }
+
+        const secretRef = `vault:${agency.id}/${activeLocation.id}/outlook-refresh-token`;
+        await secretResolver.store(secretRef, tokens.refresh_token);
+        const profile = await microsoftClient.getProfile({ accessToken: tokens.access_token });
+        const mailbox = profile.mail || profile.userPrincipalName || '';
+        const pendingConnection = createProviderConnection({
+          tenantId: agency.id,
+          locationId: activeLocation.id,
+          providerKey: 'email.microsoft_graph',
+          secretRef,
+          label: mailbox ? `Outlook · ${mailbox}` : 'Microsoft Outlook',
+          config: {
+            tenantId: process.env.MICROSOFT_TENANT_ID || 'common',
+            mailbox
+          }
+        });
+        const verification = await verifyProviderConnection(pendingConnection, {
+          secretResolver,
+          adapter: providerAdapterRegistry.get('email.microsoft_graph')
+        });
+        const connection = verification.connection;
+
+        if (platformRepository) {
+          await platformRepository.createProviderConnection(connection);
+        } else {
+          state.providerConnections = state.providerConnections || [];
+          state.providerConnections.push(connection);
+          await saveState();
+        }
+
+        auditLog('platform.provider.oauth_connected', actor, {
+          connectionId: connection.id,
+          providerKey: connection.providerKey,
+          status: connection.status
+        });
+        return sendJson(res, verification.ok ? 200 : 502, {
+          success: verification.ok,
+          connection: publicProviderConnection(connection),
+          account: { displayName: profile.displayName || mailbox, mailbox },
+          code: verification.ok ? 'OUTLOOK_CONNECTED' : verification.code
+        });
+      } catch (error) {
+        const unavailable = ['SECRET_STORAGE_UNAVAILABLE', 'VAULT_MASTER_KEY_INVALID'];
+        return sendJson(res, unavailable.includes(error?.code) ? 503 : 502, {
+          error: unavailable.includes(error?.code)
+            ? 'Secure secret storage is not configured; Outlook refresh tokens were not saved'
+            : 'Microsoft Outlook authorization could not be completed',
+          code: error?.code || 'MICROSOFT_OAUTH_CALLBACK_FAILED'
+        });
+      }
+    }
+
     if (method === 'GET' && pathname === '/api/platform/providers') {
       return sendJson(res, 200, {
         data: PROVIDER_CATALOG.map(provider => ({
