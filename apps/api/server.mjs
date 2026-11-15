@@ -7289,20 +7289,20 @@ const server = createServer(async (req, res) => {
           providerKey: connection.providerKey,
           status: connection.status
         });
-        return sendJson(res, verification.ok ? 200 : 502, {
-          success: verification.ok,
-          connection: publicProviderConnection(connection),
-          account: { displayName: profile.displayName || mailbox, mailbox },
-          code: verification.ok ? 'OUTLOOK_CONNECTED' : verification.code
-        });
+        if (verification.ok) {
+          res.writeHead(303, { Location: '/integrations?outlook=connected', 'Cache-Control': 'no-store' });
+          res.end();
+          return true;
+        }
+        res.writeHead(303, { Location: `/integrations?outlook=error&reason=${encodeURIComponent(verification.code || 'verification_failed')}`, 'Cache-Control': 'no-store' });
+        res.end();
+        return true;
       } catch (error) {
         const unavailable = ['SECRET_STORAGE_UNAVAILABLE', 'VAULT_MASTER_KEY_INVALID'];
-        return sendJson(res, unavailable.includes(error?.code) ? 503 : 502, {
-          error: unavailable.includes(error?.code)
-            ? 'Secure secret storage is not configured; Outlook refresh tokens were not saved'
-            : 'Microsoft Outlook authorization could not be completed',
-          code: error?.code || 'MICROSOFT_OAUTH_CALLBACK_FAILED'
-        });
+        const failureCode = unavailable.includes(error?.code) ? 'secret_storage_not_configured' : 'oauth_callback_failed';
+        res.writeHead(303, { Location: `/integrations?outlook=error&reason=${failureCode}`, 'Cache-Control': 'no-store' });
+        res.end();
+        return true;
       }
     }
 
