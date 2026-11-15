@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handleZapierRoute } from '../zapier-router.mjs';
 
-async function invokeZapierRoute({ method = 'GET', pathname, scopes, apiKey = true, body } = {})
+async function invokeZapierRoute({ method = 'GET', pathname, scopes, apiKey = true, body } = {}) {
   let response;
   const actor = {
     user: { id: 'user_test', email: 'zapier-test@operza.test' },

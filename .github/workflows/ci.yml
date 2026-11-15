@@ -43,6 +43,9 @@ jobs:
       - name: Install Monorepo Dependencies
         run: npm ci
 
+      - name: Zapier API Scope & Delivery Regression Tests
+        run: npm --workspace=@operza/api test
+
       - name: TypeScript Typecheck Web Application
         run: npm run typecheck
 
