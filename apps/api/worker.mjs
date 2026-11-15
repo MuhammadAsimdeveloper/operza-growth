@@ -4,21 +4,24 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createWorkflowOutboxRepository } from '../../packages/db/lib/outbox-repository.mjs';
 import { runOutboxWorker } from '../../packages/platform-core/src/durable-worker.mjs';
+import { handlers as bundledTrustedHandlers } from '../../packages/platform-core/src/trusted-handlers.mjs';
 
 const { Pool } = pg;
 
 export async function startDurableWorker({
   databaseUrl = process.env.WORKER_DATABASE_URL,
-  handlerModule = process.env.WORKFLOW_JOB_MODULE,
+  handlerModule = process.env.WORKFLOW_JOB_MODULE || null,
   workerId = process.env.WORKER_ID || 'operza-worker-' + randomUUID(),
   poolOptions = {}
 } = {}) {
   if (!databaseUrl) throw new Error('WORKER_DATABASE_URL is required; do not use the API application connection string.');
-  if (!handlerModule) throw new Error('WORKFLOW_JOB_MODULE must point to a trusted local module exporting a handlers object.');
 
-  const moduleUrl = pathToFileURL(path.resolve(process.cwd(), handlerModule)).href;
-  const loaded = await import(moduleUrl);
-  const handlers = loaded.handlers || loaded.default?.handlers;
+  let handlers = bundledTrustedHandlers;
+  if (handlerModule) {
+    const moduleUrl = pathToFileURL(path.resolve(process.cwd(), handlerModule)).href;
+    const loaded = await import(moduleUrl);
+    handlers = loaded.handlers || loaded.default?.handlers;
+  }
   if (!handlers || typeof handlers !== 'object' || Object.keys(handlers).length === 0) {
     throw new Error('The trusted worker module must export at least one named handler.');
   }
