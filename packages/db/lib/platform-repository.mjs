@@ -98,7 +98,7 @@ export function createPlatformRepository(pool) {
     async checkReady() {
       const requiredTables = [
         'provider_connections', 'communication_consents', 'workflow_approvals',
-        'workflow_action_receipts', 'workflow_outbox', 'tenant_entitlements',
+        'workflow_action_receipts', 'workflow_outbox', 'tenant_entitlements', 'provider_secrets',
         'usage_events', 'copilot_proposals'
       ];
       const [tables, role, rls] = await Promise.all([
