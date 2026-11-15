@@ -58,6 +58,9 @@ jobs:
       - name: Database Schema & Logic Unit Tests
         run: npm --workspace=@operza/db test
 
+      - name: Platform Core Tests (including durable worker)
+        run: npm --workspace=@operza/platform-core test
+
       - name: API Route & Provider Integration Tests
         run: npm --workspace=@operza/api test
 
