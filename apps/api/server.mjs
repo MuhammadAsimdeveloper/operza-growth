@@ -41,6 +41,7 @@ import { recordConsent } from '../../packages/platform-core/src/consent-policy.m
 import { authorizeCopilotTool, createCopilotProposal, getCopilotToolDefinition } from '../../packages/platform-core/src/tool-permissions.mjs';
 import { resolveEntitlements, listPlans, checkFeatureAccess, checkUsageLimit, createUsageEvent, aggregateUsage } from '../../packages/platform-core/src/entitlements.mjs';
 import { createPlatformRepository } from '../../packages/db/lib/platform-repository.mjs';
+import { createPostgresSecretBackend } from '../../packages/db/lib/secret-vault-repository.mjs';
 import { workflowQueue } from './queue.mjs';
 import { handleZapierRoute, dispatchZapierEvent } from './zapier-router.mjs';
 import { handleSystemRoutes } from './routes/system.mjs';
@@ -53,7 +54,7 @@ import { createDefaultLLMRuntime } from '../../packages/platform-core/src/llm-ru
 import { MultiAgentOrchestrator, AGENT_ROLES, OPERZA_KNOWLEDGE_BASE, MULTILINGUAL_GUIDELINES } from '../../packages/platform-core/src/multi-agent/index.mjs';
 import { CopilotService, RAGEngine, resolveAIProvider, COPILOT_TOOLS } from '../../packages/platform-core/src/copilot/index.mjs';
 
-const secretResolver = createSecretResolver();
+let secretResolver = null;
 const providerAdapterRegistry = createProviderAdapterRegistry();
 const memoryOutboxRepo = createMemoryOutboxRepository();
 const billingLedgerStore = createBillingLedgerStore({ defaultCreditBalance: 10000 });
@@ -166,6 +167,22 @@ try {
 const platformDbEnabled = process.env.PLATFORM_DB_ENABLED === 'true';
 if (platformDbEnabled && !pgPool) throw new Error('PLATFORM_DB_ENABLED requires a working DATABASE_URL and the pg module.');
 const platformRepository = platformDbEnabled ? createPlatformRepository(pgPool) : null;
+
+if (isStagingOrProd) {
+  if (!pgPool) throw new Error('Secure provider secret storage requires DATABASE_URL in staging/production.');
+  if (typeof process.env.OPERZA_VAULT_KEY !== 'string' || process.env.OPERZA_VAULT_KEY.length < 16) {
+    throw new Error('OPERZA_VAULT_KEY (minimum 16 characters) is required in staging/production.');
+  }
+  const vaultTable = await pgPool.query("SELECT to_regclass('public.provider_secrets') AS table_name");
+  if (!vaultTable.rows[0]?.table_name) {
+    throw new Error('Migration 016 is required before starting Operza with the production secret vault.');
+  }
+}
+
+secretResolver = createSecretResolver({
+  masterKey: process.env.OPERZA_VAULT_KEY,
+  backend: isStagingOrProd ? createPostgresSecretBackend(pgPool) : undefined
+});
 const scrypt = promisify(scryptCallback);
 const root = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT || 4000);
@@ -7189,6 +7206,19 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 403, { error: 'Only workspace owners and admins can configure providers' });
       }
       const body = await readBody(req);
+      const requiredSecretPrefix = `vault:${agency.id}/${activeLocation.id}/`;
+      if (isStagingOrProd && !String(body.secretRef || '').startsWith(requiredSecretPrefix)) {
+        return sendJson(res, 400, {
+          error: 'Production provider credentials must use a tenant/location-scoped vault reference',
+          code: 'TENANT_VAULT_REFERENCE_REQUIRED'
+        });
+      }
+      if (String(body.secretRef || '').startsWith('vault:') && !String(body.secretRef).startsWith(requiredSecretPrefix)) {
+        return sendJson(res, 403, {
+          error: 'Provider secret reference belongs to a different tenant or location',
+          code: 'CROSS_TENANT_SECRET_REFERENCE'
+        });
+      }
       if (body.providerKey === 'payments.stripe') {
         return sendJson(res, 409, { error: 'Payment processing remains disabled until payment verification, reconciliation and refund controls are deployed', code: 'PAYMENTS_DISABLED' });
       }
@@ -7285,6 +7315,13 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       if (!body.secretRef || !body.plaintext) {
         return sendJson(res, 400, { error: 'secretRef and plaintext are required' });
+      }
+      const requiredSecretPrefix = `vault:${agency.id}/${activeLocation.id}/`;
+      if (!String(body.secretRef).startsWith(requiredSecretPrefix)) {
+        return sendJson(res, 403, {
+          error: 'Secrets must be stored under the active tenant/location vault namespace',
+          code: 'CROSS_TENANT_SECRET_REFERENCE'
+        });
       }
       await secretResolver.store(body.secretRef, body.plaintext);
       return sendJson(res, 200, { success: true, secretRef: body.secretRef, stored: true });
