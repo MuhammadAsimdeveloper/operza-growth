@@ -30,7 +30,7 @@ test('getZapierSamples returns canonical samples for field mapping', () => {
   assert.equal(paymentSamples[0].status, 'paid');
 });
 
-test('dispatchZapierEvent signs outbound payload with HMAC-SHA256', async () => {
+test('dispatchZapierEvent signs and durably enqueues an outbound payload without exposing its secret', async () => {
   const state = {
     zapierHookSubscriptions: [
       {
@@ -47,15 +47,12 @@ test('dispatchZapierEvent signs outbound payload with HMAC-SHA256', async () => 
     zapierHookDeliveries: []
   };
 
-  let receivedUrl = '';
-  let receivedHeaders = {};
-  let receivedBody = null;
-
-  const mockFetch = async (url, options) => {
-    receivedUrl = url;
-    receivedHeaders = options.headers;
-    receivedBody = JSON.parse(options.body);
-    return { ok: true, status: 200, text: async () => '{"received": true}' };
+  let enqueueInput = null;
+  const repository = {
+    async enqueue(input) {
+      enqueueInput = input;
+      return { id: 'outbox_job_001', status: 'pending', deduplicated: false };
+    }
   };
 
   const results = await dispatchZapierEvent({
@@ -64,16 +61,36 @@ test('dispatchZapierEvent signs outbound payload with HMAC-SHA256', async () => 
     event: 'contact.created',
     data: { contactId: 'con_100', email: 'neo@matrix.test' },
     state,
-    fetchFn: mockFetch
+    repository
   });
 
   assert.equal(results.length, 1);
-  assert.equal(results[0].delivered, true);
-  assert.equal(receivedUrl, 'https://hooks.zapier.com/hooks/catch/999/test/');
-  assert.ok(receivedHeaders['X-Operza-Signature'].includes('v1='));
-  assert.equal(receivedHeaders['X-Operza-Event'], 'contact.created');
-  assert.equal(receivedBody.data.email, 'neo@matrix.test');
+  assert.equal(results[0].status, 'queued');
+  assert.equal(results[0].delivered, false);
+  assert.equal(enqueueInput.eventType, 'zapier.webhook.deliver');
+  assert.equal(enqueueInput.payload.targetUrl, 'https://hooks.zapier.com/hooks/catch/999/test/');
+  assert.ok(enqueueInput.payload.signatureHeader.includes('v1='));
+  assert.equal(enqueueInput.payload.body.data.email, 'neo@matrix.test');
+  assert.equal(JSON.stringify(enqueueInput).includes('super-secret-key-007'), false);
   assert.equal(state.zapierHookDeliveries.length, 1);
+  assert.equal(state.zapierHookDeliveries[0].outboxJobId, 'outbox_job_001');
+});
+
+test('dispatchZapierEvent refuses to send or claim delivery without a durable repository', async () => {
+  const state = {
+    zapierHookSubscriptions: [{
+      id: 'zhk_test_2', agencyId: 'agency_test_1', locationId: 'loc_test_1',
+      event: 'contact.created', targetUrl: 'https://hooks.zapier.com/hooks/catch/999/test/',
+      signingSecret: 'super-secret-key-007', status: 'active'
+    }],
+    zapierHookDeliveries: []
+  };
+  const results = await dispatchZapierEvent({
+    agencyId: 'agency_test_1', locationId: 'loc_test_1',
+    event: 'contact.created', data: {}, state
+  });
+  assert.equal(results[0].status, 'not_queued');
+  assert.equal(results[0].delivered, false);
 });
 
 
