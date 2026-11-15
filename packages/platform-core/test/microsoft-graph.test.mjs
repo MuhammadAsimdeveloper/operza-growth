@@ -8,7 +8,8 @@ import {
   getMicrosoftProfile,
   listOutlookMessages,
   sendOutlookMail,
-  createOutlookCalendarEvent
+  createOutlookCalendarEvent,
+  createMicrosoftPkcePair
 } from '../src/microsoft-graph.mjs';
 
 const credentials = {
@@ -127,7 +128,7 @@ test('profile and message listing use the authenticated mailbox and preserve Gra
   const requested = [];
   const fetchFn = async (url) => {
     requested.push(url);
-    if (url.endsWith('/v1.0/me')) {
+    if (url.includes('/v1.0/me?')) {
       return { ok: true, status: 200, json: async () => ({ id: 'user-1', displayName: 'Asim', mail: 'asim@example.test' }) };
     }
     return {
@@ -146,7 +147,7 @@ test('profile and message listing use the authenticated mailbox and preserve Gra
   assert.equal(profile.mail, 'asim@example.test');
   assert.equal(messages.value[0].id, 'message-1');
   assert.equal(messages.nextLink, 'https://graph.microsoft.com/v1.0/me/messages?$skip=25');
-  assert.ok(requested.some(url => url.endsWith('/v1.0/me/messages?$top=25')));
+  assert.ok(requested.some(url => url.includes('/v1.0/me/messages?%24top=25')));
 });
 
 test('sendOutlookMail calls Graph sendMail and returns the provider acceptance status', async () => {
@@ -203,4 +204,11 @@ test('Graph errors return structured status without echoing the access token', a
     }),
     error => error.status === 403 && error.code === 'ErrorAccessDenied' && !error.message.includes('do-not-echo-this-token')
   );
+});
+
+test('PKCE helper generates a high-entropy verifier and matching S256 challenge', async () => {
+  const { verifier, challenge } = createMicrosoftPkcePair();
+  const { createHash } = await import('node:crypto');
+  assert.ok(verifier.length >= 40);
+  assert.equal(challenge, createHash('sha256').update(verifier).digest('base64url'));
 });
