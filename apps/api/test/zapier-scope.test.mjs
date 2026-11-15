@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { handleZapierRoute } from '../zapier-router.mjs';
 
-async function invokeZapierRoute({ method = 'GET', pathname, scopes, apiKey = true } = {}) {
+async function invokeZapierRoute({ method = 'GET', pathname, scopes, apiKey = true, body } = {})
   let response;
   const actor = {
     user: { id: 'user_test', email: 'zapier-test@operza.test' },
@@ -25,7 +25,7 @@ async function invokeZapierRoute({ method = 'GET', pathname, scopes, apiKey = tr
       response = { status, payload };
       return response;
     },
-    readBody: async () => ({
+    readBody: async () => body || ({
       event: 'contact.created',
       target_url: 'https://hooks.example.test/operza'
     }),
@@ -99,4 +99,17 @@ test('Cookie-authenticated Operza users retain normal access to Zapier routes', 
   });
 
   assert.equal(response.status, 200);
+});
+
+test('Zapier communication actions never claim delivery without a verified provider', async () => {
+  const response = await invokeZapierRoute({
+    method: 'POST',
+    pathname: '/api/v1/zapier/actions/send_communication',
+    scopes: ['communications:dispatch'],
+    body: { recipient: 'customer@example.test', channel: 'email', message: 'Hello' }
+  });
+
+  assert.equal(response.status, 501);
+  assert.equal(response.payload.code, 'PROVIDER_NOT_CONFIGURED');
+  assert.equal(response.payload.success, false);
 });

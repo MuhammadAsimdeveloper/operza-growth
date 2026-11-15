@@ -652,6 +652,75 @@ export async function dispatchZapierEvent({ agencyId, locationId, event, data, s
  * @param {object} context Shared server context
  * @returns {Promise<boolean>} Whether request was handled
  */
+
+const ZAPIER_EVENT_SCOPES = Object.freeze({
+  'contact.created': 'contacts:read',
+  'contact.updated': 'contacts:read',
+  'tag.added': 'contacts:read',
+  'opportunity.created': 'opportunities:read',
+  'opportunity.stage_changed': 'opportunities:read',
+  'appointment.booked': 'calendars:read',
+  'appointment.cancelled': 'calendars:read',
+  'task.created': 'tasks:read',
+  'form.submitted': 'forms:read',
+  'payment.received': 'payments:read',
+  'invoice.paid': 'invoices:read',
+  'call.completed': 'calls:read',
+  'workflow.completed': 'workflows:execute',
+  'notification.created': 'notifications:read'
+});
+
+const ZAPIER_SEARCH_SCOPES = Object.freeze({
+  find_contact: 'contacts:read',
+  find_opportunity: 'opportunities:read',
+  find_appointment: 'calendars:read',
+  find_task: 'tasks:read'
+});
+
+const ZAPIER_ACTION_SCOPES = Object.freeze({
+  create_contact: 'contacts:write',
+  update_contact: 'contacts:write',
+  add_tag: 'contacts:write',
+  remove_tag: 'contacts:write',
+  create_opportunity: 'opportunities:write',
+  update_opportunity: 'opportunities:write',
+  create_appointment: 'calendars:write',
+  create_task: 'tasks:write',
+  create_note: 'notes:write',
+  trigger_workflow: 'workflows:execute',
+  send_communication: 'communications:dispatch',
+  send_notification: 'notifications:write'
+});
+
+/**
+ * Resolve the least-privilege API scope required by a Zapier endpoint.
+ * App metadata remains available to authenticated keys; data and mutation
+ * endpoints require an explicit, endpoint-specific grant.
+ */
+function getZapierRequiredScope(method, pathname) {
+  if (pathname === '/api/v1/zapier/hooks' || pathname.startsWith('/api/v1/zapier/hooks/')) {
+    return 'webhooks:manage';
+  }
+  if (pathname === '/api/v1/zapier/deliveries') return 'webhooks:manage';
+
+  if (method === 'GET' && (pathname.startsWith('/api/v1/zapier/polls/') || pathname.startsWith('/api/v1/zapier/samples/'))) {
+    const event = pathname.slice(pathname.lastIndexOf('/') + 1);
+    return ZAPIER_EVENT_SCOPES[event] || null;
+  }
+
+  if (method === 'POST' && pathname.startsWith('/api/v1/zapier/searches/')) {
+    const key = pathname.slice('/api/v1/zapier/searches/'.length);
+    return ZAPIER_SEARCH_SCOPES[key] || null;
+  }
+
+  if (method === 'POST' && pathname.startsWith('/api/v1/zapier/actions/')) {
+    const key = pathname.slice('/api/v1/zapier/actions/'.length);
+    return ZAPIER_ACTION_SCOPES[key] || null;
+  }
+
+  return null;
+}
+
 export async function handleZapierRoute(req, res, {
   method,
   pathname,
@@ -667,6 +736,19 @@ export async function handleZapierRoute(req, res, {
 }) {
   if (!pathname.startsWith('/api/v1/zapier/')) return false;
 
+  const requiredScope = getZapierRequiredScope(method, pathname);
+  if (
+    actor?.apiKey &&
+    requiredScope &&
+    (!Array.isArray(actor.apiKey.scopes) || !actor.apiKey.scopes.includes(requiredScope))
+  ) {
+    return sendJson(res, 403, {
+      error: 'The API key does not grant the scope required for this Zapier endpoint.',
+      code: 'API_SCOPE_REQUIRED',
+      requiredScope
+    });
+  }
+
   // 1. Authentication Check (/api/v1/zapier/auth/me)
   if (method === 'GET' && pathname === '/api/v1/zapier/auth/me') {
     return sendJson(res, 200, {
@@ -675,19 +757,28 @@ export async function handleZapierRoute(req, res, {
       locationId: activeLocation.id,
       agencyName: agency.name,
       userEmail: actor.user.email,
-      scopes: [
-        'contacts:read',
-        'contacts:write',
-        'opportunities:read',
-        'opportunities:write',
-        'calendars:read',
-        'calendars:write',
-        'tasks:read',
-        'tasks:write',
-        'workflows:execute',
-        'communications:dispatch',
-        'webhooks:manage'
-      ]
+      scopes: actor.apiKey
+        ? [...(Array.isArray(actor.apiKey.scopes) ? actor.apiKey.scopes : [])]
+        : [
+            'contacts:read',
+            'contacts:write',
+            'opportunities:read',
+            'opportunities:write',
+            'calendars:read',
+            'calendars:write',
+            'tasks:read',
+            'tasks:write',
+            'forms:read',
+            'payments:read',
+            'invoices:read',
+            'calls:read',
+            'notes:write',
+            'notifications:read',
+            'notifications:write',
+            'workflows:execute',
+            'communications:dispatch',
+            'webhooks:manage'
+          ]
     });
   }
 
@@ -1298,14 +1389,14 @@ export async function handleZapierRoute(req, res, {
         if (!recipient) return sendJson(res, 400, { error: 'recipient is required' });
         if (!message) return sendJson(res, 400, { error: 'message is required' });
 
-        const dispatchId = `disp_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
-        return sendJson(res, 200, {
-          success: true,
-          dispatchId,
+        // Never report a message as sent until a verified provider adapter has
+        // accepted the delivery. This route is intentionally fail-closed.
+        return sendJson(res, 501, {
+          success: false,
+          code: 'PROVIDER_NOT_CONFIGURED',
+          error: 'No verified communication provider is configured for this Zapier action.',
           channel,
-          recipient,
-          status: 'dispatched',
-          sentAt: new Date().toISOString()
+          recipient
         });
       }
 
