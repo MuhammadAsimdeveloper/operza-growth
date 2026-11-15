@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isSafeWebhookUrl, getZapierSamples, dispatchZapierEvent } from '../zapier-router.mjs';
+import { isSafeWebhookUrl, getZapierSamples, dispatchZapierEvent, getZapierRequiredScopes, isZapierScopeAuthorized } from '../zapier-router.mjs';
 
 test('isSafeWebhookUrl rejects insecure and private SSRF target URLs', () => {
   assert.equal(isSafeWebhookUrl('http://insecure.test/hook'), false);
@@ -74,4 +74,21 @@ test('dispatchZapierEvent signs outbound payload with HMAC-SHA256', async () => 
   assert.equal(receivedHeaders['X-Operza-Event'], 'contact.created');
   assert.equal(receivedBody.data.email, 'neo@matrix.test');
   assert.equal(state.zapierHookDeliveries.length, 1);
+});
+
+
+test('Zapier routes map to least-privilege resource scopes', () => {
+  assert.deepEqual(getZapierRequiredScopes('POST', '/api/v1/zapier/actions/create_contact'), ['contacts:write']);
+  assert.deepEqual(getZapierRequiredScopes('GET', '/api/v1/zapier/hooks'), ['webhooks:read']);
+  assert.deepEqual(getZapierRequiredScopes('POST', '/api/v1/zapier/hooks/subscribe'), ['webhooks:manage']);
+  assert.deepEqual(getZapierRequiredScopes('POST', '/api/v1/zapier/actions/trigger_workflow'), ['workflows:execute']);
+  assert.deepEqual(getZapierRequiredScopes('GET', '/api/v1/zapier/polls/contact.created'), ['contacts:read']);
+});
+
+test('Zapier API keys are restricted to their explicit scopes and legacy aliases', () => {
+  assert.equal(isZapierScopeAuthorized({ isApiKey: true, apiKey: { scopes: ['contacts:read'] } }, ['contacts:read']), true);
+  assert.equal(isZapierScopeAuthorized({ isApiKey: true, apiKey: { scopes: ['contacts:read'] } }, ['contacts:write']), false);
+  assert.equal(isZapierScopeAuthorized({ isApiKey: true, apiKey: { scopes: ['workflows:trigger'] } }, ['workflows:execute']), true);
+  assert.equal(isZapierScopeAuthorized({ isApiKey: true, apiKey: { scopes: [] } }, ['contacts:read']), false);
+  assert.equal(isZapierScopeAuthorized({ isApiKey: false }, ['contacts:write']), true);
 });
