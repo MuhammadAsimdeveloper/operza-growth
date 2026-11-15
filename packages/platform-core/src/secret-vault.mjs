@@ -63,65 +63,87 @@ export function decryptSecret(envelope, masterKey) {
  * Factory for creating a pluggable, secure secret resolver.
  * Handles env:, vault:, and kms: URI reference schemes.
  */
-export function createSecretResolver({ masterKey = process.env.OPERZA_VAULT_KEY || 'operza-default-secure-vault-key-2026', initialSecrets = {} } = {}) {
+/**
+ * Create a secret resolver with optional durable encrypted storage.
+ *
+ * The encryption key must be supplied by deployment configuration. There is
+ * deliberately no built-in fallback key. Without a key, vault writes fail
+ * closed instead of storing credentials under a publicly known value.
+ *
+ * A storage adapter may implement async get(ref), set(ref, envelope), and
+ * delete(ref). Only encrypted envelopes are passed to the adapter.
+ */
+export function createSecretResolver({
+  masterKey = process.env.OPERZA_VAULT_KEY,
+  initialSecrets = {},
+  storage = null
+} = {}) {
+  if (
+    storage &&
+    (typeof storage.get !== 'function' ||
+      typeof storage.set !== 'function' ||
+      typeof storage.delete !== 'function')
+  ) {
+    throw new TypeError('Secret storage must implement async get, set, and delete methods');
+  }
+
   const vault = new Map(Object.entries(initialSecrets));
 
+  async function readEnvelope(secretRef) {
+    if (storage) {
+      const persisted = await storage.get(secretRef);
+      if (typeof persisted === 'string' && persisted.length > 0) return persisted;
+    }
+    return vault.get(secretRef) || null;
+  }
+
   return {
-    /**
-     * Store a secret securely in the vault under a URI reference (e.g. vault:agency-1/resend-api-key)
-     */
     async store(secretRef, plaintext) {
-      if (typeof secretRef !== 'string' || !/^(vault|kms):[A-Za-z0-9_.:/-]{2,180}$/.test(secretRef)) {
-        throw new Error('Invalid vault secret reference: ' + secretRef);
+      if (typeof secretRef !== 'string' || !/^vault:[A-Za-z0-9_.:/-]{2,180}$/.test(secretRef)) {
+        throw new Error('Secret references must use the vault: scheme');
       }
       const encrypted = encryptSecret(plaintext, masterKey);
-      vault.set(secretRef, encrypted);
+      if (storage) {
+        await storage.set(secretRef, encrypted);
+      } else {
+        vault.set(secretRef, encrypted);
+      }
       return secretRef;
     },
 
-    /**
-     * Resolve a secret reference to its raw plaintext value.
-     */
     async resolve(secretRef) {
       if (typeof secretRef !== 'string') return null;
 
-      // 1. env:VAR_NAME scheme
       if (secretRef.startsWith('env:')) {
         const envVar = secretRef.slice(4).trim();
         const value = process.env[envVar];
         return typeof value === 'string' && value.length > 0 ? value : null;
       }
 
-      // 2. vault: or kms: scheme
-      if (secretRef.startsWith('vault:') || secretRef.startsWith('kms:')) {
-        const encrypted = vault.get(secretRef);
-        if (!encrypted) return null;
-        try {
-          return decryptSecret(encrypted, masterKey);
-        } catch {
-          return null;
-        }
-      }
+      if (!secretRef.startsWith('vault:')) return null;
 
-      return null;
+      try {
+        const encrypted = await readEnvelope(secretRef);
+        if (!encrypted) return null;
+        return decryptSecret(encrypted, masterKey);
+      } catch {
+        return null;
+      }
     },
 
-    /**
-     * Check if a secret reference exists in vault or environment
-     */
-    has(secretRef) {
+    async has(secretRef) {
       if (typeof secretRef !== 'string') return false;
       if (secretRef.startsWith('env:')) {
         const envVar = secretRef.slice(4).trim();
         return Boolean(process.env[envVar]);
       }
-      return vault.has(secretRef);
+      if (!secretRef.startsWith('vault:')) return false;
+      return Boolean(await readEnvelope(secretRef));
     },
 
-    /**
-     * Remove a secret from the vault
-     */
-    delete(secretRef) {
+    async delete(secretRef) {
+      if (typeof secretRef !== 'string' || !secretRef.startsWith('vault:')) return false;
+      if (storage) return storage.delete(secretRef);
       return vault.delete(secretRef);
     }
   };

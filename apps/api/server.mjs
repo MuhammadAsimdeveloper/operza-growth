@@ -53,7 +53,6 @@ import { createDefaultLLMRuntime } from '../../packages/platform-core/src/llm-ru
 import { MultiAgentOrchestrator, AGENT_ROLES, OPERZA_KNOWLEDGE_BASE, MULTILINGUAL_GUIDELINES } from '../../packages/platform-core/src/multi-agent/index.mjs';
 import { CopilotService, RAGEngine, resolveAIProvider, COPILOT_TOOLS } from '../../packages/platform-core/src/copilot/index.mjs';
 
-const secretResolver = createSecretResolver();
 const providerAdapterRegistry = createProviderAdapterRegistry();
 const memoryOutboxRepo = createMemoryOutboxRepository();
 const billingLedgerStore = createBillingLedgerStore({ defaultCreditBalance: 10000 });
@@ -165,7 +164,63 @@ try {
 
 const platformDbEnabled = process.env.PLATFORM_DB_ENABLED === 'true';
 if (platformDbEnabled && !pgPool) throw new Error('PLATFORM_DB_ENABLED requires a working DATABASE_URL and the pg module.');
+
 const platformRepository = platformDbEnabled ? createPlatformRepository(pgPool) : null;
+
+function parseVaultSecretRef(secretRef) {
+  const match = typeof secretRef === 'string'
+    ? secretRef.match(/^vault:([A-Za-z0-9-]{2,80})\/([A-Za-z0-9-]{2,80})\/([A-Za-z0-9_.-]{2,100})$/)
+    : null;
+  if (!match) return null;
+  return { tenantId: match[1], locationId: match[2], secretRef };
+}
+
+const secretResolver = createSecretResolver({
+  masterKey: process.env.OPERZA_VAULT_KEY,
+  storage: {
+    async get(secretRef) {
+      const scope = parseVaultSecretRef(secretRef);
+      if (!scope) return null;
+      if (platformRepository) return platformRepository.getProviderSecret(scope);
+      const entry = (state.providerSecrets || []).find(item =>
+        item.tenantId === scope.tenantId &&
+        item.locationId === scope.locationId &&
+        item.secretRef === scope.secretRef
+      );
+      return entry?.envelope || null;
+    },
+    async set(secretRef, envelope) {
+      const scope = parseVaultSecretRef(secretRef);
+      if (!scope) throw new Error('Vault reference must include its tenant and location');
+      if (platformRepository) return platformRepository.putProviderSecret({ ...scope, envelope });
+      state.providerSecrets = state.providerSecrets || [];
+      const existing = state.providerSecrets.find(item =>
+        item.tenantId === scope.tenantId &&
+        item.locationId === scope.locationId &&
+        item.secretRef === scope.secretRef
+      );
+      if (existing) existing.envelope = envelope;
+      else state.providerSecrets.push({ ...scope, envelope });
+      await saveState();
+      return true;
+    },
+    async delete(secretRef) {
+      const scope = parseVaultSecretRef(secretRef);
+      if (!scope) return false;
+      if (platformRepository) return platformRepository.deleteProviderSecret(scope);
+      state.providerSecrets = state.providerSecrets || [];
+      const index = state.providerSecrets.findIndex(item =>
+        item.tenantId === scope.tenantId &&
+        item.locationId === scope.locationId &&
+        item.secretRef === scope.secretRef
+      );
+      if (index < 0) return false;
+      state.providerSecrets.splice(index, 1);
+      await saveState();
+      return true;
+    }
+  }
+});
 const scrypt = promisify(scryptCallback);
 const root = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT || 4000);
@@ -234,6 +289,7 @@ const emptyState = () => ({
   workflowExecutions: [],
   workflowApprovals: [],
   providerConnections: [],
+  providerSecrets: [],
   communicationConsents: [],
   copilotProposals: [],
   tenantEntitlements: {},
@@ -7189,6 +7245,14 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 403, { error: 'Only workspace owners and admins can configure providers' });
       }
       const body = await readBody(req);
+      const vaultScope = typeof body.secretRef === 'string' && body.secretRef.startsWith('vault:')
+        ? parseVaultSecretRef(body.secretRef)
+        : null;
+      if (body.secretRef?.startsWith('vault:') && (
+        !vaultScope || vaultScope.tenantId !== agency.id || vaultScope.locationId !== activeLocation.id
+      )) {
+        return sendJson(res, 403, { error: 'Vault references must belong to the active agency and location', code: 'VAULT_SCOPE_MISMATCH' });
+      }
       if (body.providerKey === 'payments.stripe') {
         return sendJson(res, 409, { error: 'Payment processing remains disabled until payment verification, reconciliation and refund controls are deployed', code: 'PAYMENTS_DISABLED' });
       }
@@ -7286,7 +7350,24 @@ const server = createServer(async (req, res) => {
       if (!body.secretRef || !body.plaintext) {
         return sendJson(res, 400, { error: 'secretRef and plaintext are required' });
       }
+      const vaultScope = parseVaultSecretRef(body.secretRef);
+      if (!vaultScope) {
+        return sendJson(res, 400, {
+          error: 'secretRef must use vault:{agencyId}/{locationId}/{name}',
+          code: 'INVALID_VAULT_REFERENCE'
+        });
+      }
+      if (vaultScope.tenantId !== agency.id || vaultScope.locationId !== activeLocation.id) {
+        return sendJson(res, 403, { error: 'Vault references must belong to the active agency and location', code: 'VAULT_SCOPE_MISMATCH' });
+      }
+      if (!process.env.OPERZA_VAULT_KEY || process.env.OPERZA_VAULT_KEY.length < 16) {
+        return sendJson(res, 503, {
+          error: 'Encrypted credential storage is not configured. Set OPERZA_VAULT_KEY in the deployment secret manager.',
+          code: 'VAULT_NOT_CONFIGURED'
+        });
+      }
       await secretResolver.store(body.secretRef, body.plaintext);
+      auditLog('provider.secret.stored', actor, { secretRef: body.secretRef });
       return sendJson(res, 200, { success: true, secretRef: body.secretRef, stored: true });
     }
 

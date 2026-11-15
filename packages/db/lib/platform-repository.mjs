@@ -99,7 +99,7 @@ export function createPlatformRepository(pool) {
       const requiredTables = [
         'provider_connections', 'communication_consents', 'workflow_approvals',
         'workflow_action_receipts', 'workflow_outbox', 'tenant_entitlements',
-        'usage_events', 'copilot_proposals'
+        'usage_events', 'copilot_proposals', 'provider_secret_vault'
       ];
       const [tables, role, rls] = await Promise.all([
         pool.query(
@@ -143,6 +143,38 @@ export function createPlatformRepository(pool) {
         });
       }
       return { ready: true, tables: requiredTables };
+    },
+
+    async getProviderSecret({ tenantId, locationId, secretRef }) {
+      return withTenant(tenantId, locationId, async client => {
+        const result = await client.query(
+          'SELECT encrypted_value FROM provider_secret_vault WHERE agency_id=$1 AND location_id=$2 AND secret_ref=$3',
+          [tenantId, locationId, secretRef]
+        );
+        return result.rows[0]?.encrypted_value || null;
+      });
+    },
+
+    async putProviderSecret({ tenantId, locationId, secretRef, envelope }) {
+      return withTenant(tenantId, locationId, async client => {
+        await client.query(
+          'INSERT INTO provider_secret_vault (agency_id,location_id,secret_ref,encrypted_value) ' +
+          'VALUES ($1,$2,$3,$4) ON CONFLICT (agency_id,location_id,secret_ref) ' +
+          'DO UPDATE SET encrypted_value=EXCLUDED.encrypted_value,updated_at=now()',
+          [tenantId, locationId, secretRef, envelope]
+        );
+        return true;
+      });
+    },
+
+    async deleteProviderSecret({ tenantId, locationId, secretRef }) {
+      return withTenant(tenantId, locationId, async client => {
+        const result = await client.query(
+          'DELETE FROM provider_secret_vault WHERE agency_id=$1 AND location_id=$2 AND secret_ref=$3',
+          [tenantId, locationId, secretRef]
+        );
+        return result.rowCount === 1;
+      });
     },
 
     async createProviderConnection(connection) {

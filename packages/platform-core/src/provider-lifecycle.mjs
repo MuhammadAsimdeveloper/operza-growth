@@ -43,8 +43,8 @@ export function createProviderConnection(input, { now = Date.now(), id = randomU
   assertTenant(input);
   const provider = PROVIDERS.get(input.providerKey);
   if (!provider) fail('Provider is not in the supported catalog', 'UNSUPPORTED_PROVIDER');
-  if (typeof input.secretRef !== 'string' || !/^(env|vault|kms):[A-Za-z0-9_.:/-]{2,180}$/.test(input.secretRef)) {
-    fail('A server-side env:, vault: or kms: secret reference is required', 'INVALID_SECRET_REFERENCE');
+  if (typeof input.secretRef !== 'string' || !/^(env|vault):[A-Za-z0-9_.:/-]{2,180}$/.test(input.secretRef)) {
+    fail('A server-side env: or vault: secret reference is required', 'INVALID_SECRET_REFERENCE');
   }
   const timestamp = new Date(now).toISOString();
   const label = typeof input.label === 'string' ? input.label.trim().slice(0, 100) : provider.label;
