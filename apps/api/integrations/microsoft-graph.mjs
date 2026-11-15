@@ -7,7 +7,6 @@ const DEFAULT_SCOPES = Object.freeze([
   'email',
   'offline_access',
   'User.Read',
-  'Mail.Read',
   'Mail.Send'
 ]);
 
@@ -98,9 +97,9 @@ export function createMicrosoftGraphClient({
   async function tokenRequest(fields) {
     const form = new URLSearchParams({
       client_id: appId,
-      redirect_uri: callback,
       ...fields
     });
+    if (fields.grant_type === 'authorization_code') form.set('redirect_uri', callback);
     if (clientSecret) form.set('client_secret', clientSecret);
 
     const response = await request(tokenEndpoint, {
@@ -129,7 +128,7 @@ export function createMicrosoftGraphClient({
     buildAuthorizationUrl({ state, codeChallenge, scopes = DEFAULT_SCOPES } = {}) {
       const oauthState = requiredString(state, 'OAuth state', 512);
       const challenge = requiredString(codeChallenge, 'PKCE code challenge', 256);
-      if (!Array.isArray(scopes) || scopes.some(scope => typeof scope !== 'string' || !/^[A-Za-z.]+$/.test(scope))) {
+      if (!Array.isArray(scopes) || scopes.some(scope => typeof scope !== 'string' || !/^[A-Za-z._-]+$/.test(scope))) {
         throw Object.assign(new TypeError('OAuth scopes must be a list of valid scope names'), { code: 'MICROSOFT_INVALID_SCOPES' });
       }
       const url = new URL(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/authorize`);
