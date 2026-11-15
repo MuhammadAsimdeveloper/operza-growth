@@ -34,7 +34,7 @@ CREATE POLICY agency_isolation_policy ON contacts
 
 ## Platform control-plane tables
 
-Migrations 008–016 add provider connections, encrypted tenant-scoped provider secrets, communication consent events, workflow approvals, action receipts, leased workflow outbox records, tenant entitlements, usage events and Copilot proposals. These tables are protected by transaction-local RLS context (app.agency_id, and app.location_id where applicable).
+Migrations 008–017 add provider connections, encrypted tenant-scoped provider secrets, communication consent events, workflow approvals, action receipts, leased workflow outbox records, tenant entitlements, usage events and Copilot proposals. These tables are protected by transaction-local RLS context (app.agency_id, and app.location_id where applicable).
 
 The outbox repository is available at lib/outbox-repository.mjs. It provides tenant-scoped enqueue and action receipts for the application role, plus row-locking claims, renewable leases, retry scheduling and dead-letter transitions for a dedicated worker role.
 

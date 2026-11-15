@@ -32,6 +32,8 @@ import { claimExecutionLease, heartbeatExecutionLease, releaseExecutionLease, re
 import { createProviderConnection, revokeProviderConnection, publicProviderConnection, PROVIDER_CATALOG, verifyProviderConnection } from '../../packages/platform-core/src/provider-lifecycle.mjs';
 import { createSecretResolver } from '../../packages/platform-core/src/secret-vault.mjs';
 import { createProviderAdapterRegistry } from '../../packages/platform-core/src/provider-adapters.mjs';
+import { createMicrosoftGraphEmailAdapter } from '../../packages/platform-core/src/microsoft-graph-adapter.mjs';
+import { buildMicrosoftAuthorizationUrl, createMicrosoftPkcePair, exchangeMicrosoftAuthorizationCode, getMicrosoftProfile } from '../../packages/platform-core/src/microsoft-graph.mjs';
 import { createBillingLedgerStore, createImmutableAuditStore, gateAiToolExecution } from '../../packages/platform-core/src/billing-ledger.mjs';
 import { executeCopilotProposal } from '../../packages/platform-core/src/proposal-executor.mjs';
 import { createMemoryOutboxRepository, executeWorkerTick } from '../../packages/platform-core/src/outbox-worker.mjs';
@@ -53,7 +55,7 @@ import { createDefaultLLMRuntime } from '../../packages/platform-core/src/llm-ru
 import { MultiAgentOrchestrator, AGENT_ROLES, OPERZA_KNOWLEDGE_BASE, MULTILINGUAL_GUIDELINES } from '../../packages/platform-core/src/multi-agent/index.mjs';
 import { CopilotService, RAGEngine, resolveAIProvider, COPILOT_TOOLS } from '../../packages/platform-core/src/copilot/index.mjs';
 
-const providerAdapterRegistry = createProviderAdapterRegistry();
+let providerAdapterRegistry;
 const memoryOutboxRepo = createMemoryOutboxRepository();
 const billingLedgerStore = createBillingLedgerStore({ defaultCreditBalance: 10000 });
 const immutableAuditStore = createImmutableAuditStore();
@@ -221,6 +223,10 @@ const secretResolver = createSecretResolver({
     }
   }
 });
+providerAdapterRegistry = createProviderAdapterRegistry([
+  createMicrosoftGraphEmailAdapter({ secretResolver })
+]);
+
 const scrypt = promisify(scryptCallback);
 const root = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT || 4000);
@@ -290,6 +296,7 @@ const emptyState = () => ({
   workflowApprovals: [],
   providerConnections: [],
   providerSecrets: [],
+  microsoftOAuthTransactions: [],
   communicationConsents: [],
   copilotProposals: [],
   tenantEntitlements: {},

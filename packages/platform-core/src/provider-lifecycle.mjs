@@ -5,6 +5,7 @@ const ALLOWED_CONFIG = new Set(['accountId', 'region', 'senderEmail', 'senderNam
 export const PROVIDER_CATALOG = Object.freeze([
   Object.freeze({ key: 'email.sendgrid', channel: 'email', label: 'SendGrid Email', status: 'adapter_required' }),
   Object.freeze({ key: 'email.resend', channel: 'email', label: 'Resend Email', status: 'adapter_required' }),
+  Object.freeze({ key: 'email.microsoft_graph', channel: 'email', label: 'Microsoft Outlook / Graph', status: 'tenant_oauth_required' }),
   Object.freeze({ key: 'sms.twilio', channel: 'sms', label: 'Twilio SMS', status: 'adapter_required' }),
   Object.freeze({ key: 'whatsapp.meta_cloud', channel: 'whatsapp', label: 'WhatsApp Cloud API', status: 'adapter_required' }),
   Object.freeze({ key: 'payments.stripe', channel: 'payments', label: 'Stripe Payments', status: 'disabled_pending_compliance' })
@@ -83,7 +84,13 @@ export async function verifyProviderConnection(connection, { secretResolver, ada
     if (typeof secret !== 'string' || secret.length < 1 || secret.length > 16_384) {
       return { ok: false, code: 'SECRET_NOT_FOUND', connection };
     }
-    const result = await adapter.verify({ secret, config: connection.config });
+    const result = await adapter.verify({
+      secret,
+      config: connection.config,
+      secretRef: connection.secretRef,
+      tenantId: connection.tenantId,
+      locationId: connection.locationId
+    });
     if (result?.verified !== true) {
       const updated = { ...connection, status: 'degraded', lastCheckCode: 'PROVIDER_VERIFICATION_FAILED', updatedAt: new Date(now).toISOString() };
       return { ok: false, code: 'PROVIDER_VERIFICATION_FAILED', connection: updated };
@@ -94,7 +101,12 @@ export async function verifyProviderConnection(connection, { secretResolver, ada
       verifiedAt: new Date(now).toISOString(),
       updatedAt: new Date(now).toISOString(),
       lastCheckCode: null,
-      verification: { adapter: adapter.id || connection.providerKey, accountId: typeof result.accountId === 'string' ? result.accountId.slice(0, 120) : null }
+      verification: {
+        adapter: adapter.id || connection.providerKey,
+        accountId: typeof result.accountId === 'string' ? result.accountId.slice(0, 120) : null,
+        senderEmail: typeof result.senderEmail === 'string' ? result.senderEmail.slice(0, 180) : null,
+        senderName: typeof result.senderName === 'string' ? result.senderName.slice(0, 120) : null
+      }
     };
     return { ok: true, code: 'PROVIDER_VERIFIED', connection: updated };
   } catch {
