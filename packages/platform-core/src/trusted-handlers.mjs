@@ -71,54 +71,20 @@ export function createTrustedWorkerHandlers({ fetchFn = postPinnedHttps } = {}) 
   /**
    * Processes a workflow trigger event enqueued into the transactional outbox.
    */
-  'workflow.trigger.enqueued': async (payload, { job, workerId, lease }) => {
-    if (!payload?.tenantId || !payload?.workflowId) {
-      throw new PermanentJobError('Payload missing required tenantId or workflowId', 'INVALID_PAYLOAD');
-    }
-    if (lease?.lost) return { status: 'lease_lost' };
-
-    const executionId = payload.executionId || `exec_${crypto.randomUUID()}`;
-    const actionReceiptHash = sha256({
-      tenantId: payload.tenantId,
-      workflowId: payload.workflowId,
-      executionId,
-      triggerType: payload.triggerType || 'manual',
-      idempotencyKey: job.idempotencyKey
-    });
-
-    return {
-      status: 'success',
-      executionId,
-      actionReceiptHash,
-      workerId,
-      processedAt: new Date().toISOString()
-    };
-  },
+  'workflow.trigger.enqueued': async () => {
+    throw new PermanentJobError(
+      'Workflow trigger jobs require the API workflow runtime handler, which is not connected to this worker',
+      'WORKFLOW_RUNTIME_NOT_CONFIGURED'
+    );
 
   /**
    * Resumes an approval-paused workflow execution from its exact pinned node.
    */
-  'workflow.step.resume': async (payload, { job, workerId, lease }) => {
-    if (!payload?.tenantId || !payload?.executionId || !payload?.nodeId) {
-      throw new PermanentJobError('Payload missing required resume references', 'INVALID_RESUME_PAYLOAD');
-    }
-    if (lease?.lost) return { status: 'lease_lost' };
-
-    const actionHash = payload.actionHash || sha256({
-      tenantId: payload.tenantId,
-      executionId: payload.executionId,
-      nodeId: payload.nodeId
-    });
-
-    return {
-      status: 'resumed',
-      executionId: payload.executionId,
-      nodeId: payload.nodeId,
-      actionHash,
-      workerId,
-      resumedAt: new Date().toISOString()
-    };
-  },
+  'workflow.step.resume': async () => {
+    throw new PermanentJobError(
+      'Approval resume jobs require persisted execution-state integration, which is not connected to this worker',
+      'WORKFLOW_RESUME_NOT_CONFIGURED'
+    );
 
   /**
    * Governed connector action execution (safe in-memory or simulated dispatch).
@@ -157,37 +123,20 @@ export function createTrustedWorkerHandlers({ fetchFn = postPinnedHttps } = {}) 
   /**
    * CRM Lead Qualification event handler.
    */
-  'crm.lead.qualified': async (payload, { job, workerId, lease }) => {
-    if (!payload?.tenantId || !payload?.contactId) {
-      throw new PermanentJobError('Payload missing contactId or tenantId', 'INVALID_LEAD_PAYLOAD');
-    }
-    if (lease?.lost) return { status: 'lease_lost' };
-
-    return {
-      status: 'qualified',
-      contactId: payload.contactId,
-      score: payload.score ?? 85,
-      workerId,
-      qualifiedAt: new Date().toISOString()
-    };
-  },
+  'crm.lead.qualified': async () => {
+    throw new PermanentJobError(
+      'Lead qualification handler is not connected to a persisted CRM scoring service',
+      'CRM_QUALIFICATION_NOT_CONFIGURED'
+    );
 
   /**
    * Audit event recording handler.
    */
-  'audit.event.record': async (payload, { job, workerId, lease }) => {
-    if (!payload?.tenantId || !payload?.action) {
-      throw new PermanentJobError('Payload missing required audit action or tenantId', 'INVALID_AUDIT_PAYLOAD');
-    }
-    if (lease?.lost) return { status: 'lease_lost' };
-
-    return {
-      status: 'recorded',
-      eventId: `audit_${crypto.randomUUID()}`,
-      workerId,
-      recordedAt: new Date().toISOString()
-    };
-  },
+  'audit.event.record': async () => {
+    throw new PermanentJobError(
+      'Audit event worker handler is not connected to the immutable audit repository',
+      'AUDIT_REPOSITORY_NOT_CONFIGURED'
+    );
 
   /**
    * Deliver a signed Zapier REST Hook from a durable outbox job.
