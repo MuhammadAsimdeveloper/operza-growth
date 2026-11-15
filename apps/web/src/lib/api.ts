@@ -518,6 +518,8 @@ export const api = {
     getUsage: () => request<any>('/api/platform/usage'),
     getProviderCatalog: () => request<{ data: any[] }>('/api/platform/providers'),
     getConnections: () => request<{ data: any[] }>('/api/platform/connections'),
+    startMicrosoftOAuth: () =>
+      request<{ success: boolean; authorizationUrl: string; expiresInSeconds: number }>('/api/platform/microsoft/oauth/start', { method: 'POST' }),
     createConnection: (data: { providerKey: string; secretRef: string; label?: string; config?: Record<string, string> }) =>
       request<{ success: boolean; connection: any }>('/api/platform/connections', { method: 'POST', body: JSON.stringify(data) }),
     verifyConnection: (id: string) =>

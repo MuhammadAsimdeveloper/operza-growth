@@ -58,6 +58,7 @@ interface MarketplaceApp {
 const UNIVERSAL_CONNECTORS = [
   { id: 'slack', name: 'Slack', category: 'Communications', auth: 'OAuth 2.0', triggers: ['New Channel Message', 'Reaction Added'], actions: ['Send Channel Message', 'Send Direct Message', 'Create Channel'] },
   { id: 'gmail', name: 'Gmail', category: 'Communications', auth: 'OAuth 2.0', triggers: ['New Email', 'New Attachment', 'New Labeled Email'], actions: ['Send Email', 'Create Draft', 'Add Label'] },
+  { id: 'outlook', name: 'Microsoft Outlook', category: 'Communications', auth: 'Microsoft OAuth 2.0', triggers: ['New Email', 'New Calendar Event'], actions: ['Send Email', 'Create Draft', 'Create Calendar Event'] },
   { id: 'google_sheets', name: 'Google Sheets', category: 'Productivity', auth: 'OAuth 2.0', triggers: ['New Spreadsheet Row', 'Updated Spreadsheet Row'], actions: ['Create Spreadsheet Row', 'Update Row', 'Lookup Row'] },
   { id: 'salesforce', name: 'Salesforce', category: 'CRM', auth: 'OAuth 2.0', triggers: ['New Lead', 'Updated Opportunity', 'New Account'], actions: ['Create Lead', 'Update Opportunity', 'Add Contact to Campaign'] },
   { id: 'stripe', name: 'Stripe', category: 'Commerce', auth: 'API Key', triggers: ['Payment Succeeded', 'Subscription Created', 'Invoice Paid'], actions: ['Create Customer', 'Create Invoice', 'Create Payment Link'] },
@@ -108,6 +109,7 @@ export default function Integrations() {
   const [catalog, setCatalog] = useState<ProviderCatalogEntry[]>([]);
   const [connections, setConnections] = useState<ProviderConnection[]>([]);
   const [connectionsLoading, setConnectionsLoading] = useState(true);
+  const [microsoftConnecting, setMicrosoftConnecting] = useState(false);
 
   // App Marketplace State
   const [marketplaceApps, setMarketplaceApps] = useState<MarketplaceApp[]>(DEFAULT_MARKETPLACE_APPS);
@@ -411,6 +413,17 @@ export default function Integrations() {
     }
   };
 
+  const handleMicrosoftConnect = async () => {
+    setMicrosoftConnecting(true);
+    try {
+      const result = await api.platform.startMicrosoftOAuth();
+      window.location.assign(result.authorizationUrl);
+    } catch (err: any) {
+      setConnectError(err.message || 'Could not start Microsoft Outlook authorization');
+      setMicrosoftConnecting(false);
+    }
+  };
+
   const handleVerifyConnection = async (connId: string) => {
     setVerifyingId(connId);
     setVerificationFeedback(null);
@@ -647,6 +660,16 @@ export default function Integrations() {
                 <strong style={{ fontSize: 14 }}>Configured Provider Connections ({connections.length})</strong>
               </div>
               <div className="row" style={{ gap: 8 }}>
+                <button
+                  type="button"
+                  onClick={handleMicrosoftConnect}
+                  disabled={microsoftConnecting}
+                  className="btn btn--sm"
+                  style={{ gap: 5 }}
+                >
+                  <Icon name="mail" size={12} />
+                  {microsoftConnecting ? 'Opening Microsoft...' : connections.some(c => c.providerKey === 'email.microsoft_graph' && c.status === 'verified') ? 'Reconnect Outlook' : 'Connect Outlook'}
+                </button>
                 <button
                   type="button"
                   onClick={fetchPlatformConnections}

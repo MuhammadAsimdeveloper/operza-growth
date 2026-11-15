@@ -7226,14 +7226,237 @@ const server = createServer(async (req, res) => {
       });
     }
 
+    if (method === 'POST' && pathname === '/api/platform/microsoft/oauth/start') {
+      if (!['owner', 'admin'].includes(actor.membership.role)) {
+        return sendJson(res, 403, { error: 'Only workspace owners and admins can connect Microsoft Outlook' });
+      }
+
+      const clientId = process.env.MICROSOFT_GRAPH_CLIENT_ID || process.env.MICROSOFT_CALENDAR_CLIENT_ID;
+      const clientSecret = process.env.MICROSOFT_GRAPH_CLIENT_SECRET || process.env.MICROSOFT_CALENDAR_CLIENT_SECRET;
+      const vaultKey = process.env.OPERZA_VAULT_KEY || '';
+      if (!clientId || !clientSecret) {
+        return sendJson(res, 503, {
+          error: 'Microsoft Entra OAuth is not configured. Set MICROSOFT_GRAPH_CLIENT_ID and MICROSOFT_GRAPH_CLIENT_SECRET.',
+          code: 'MICROSOFT_OAUTH_NOT_CONFIGURED'
+        });
+      }
+      if (vaultKey.length < 32) {
+        return sendJson(res, 503, {
+          error: 'Secure token storage is not configured. Set OPERZA_VAULT_KEY to a stable random value of at least 32 characters.',
+          code: 'VAULT_NOT_CONFIGURED'
+        });
+      }
+
+      const publicBaseUrl = process.env.PUBLIC_BASE_URL || 'http://localhost:4000';
+      const redirectUri = process.env.MICROSOFT_GRAPH_REDIRECT_URI ||
+        new URL('/api/platform/microsoft/oauth/callback', publicBaseUrl).toString();
+      const tenant = process.env.MICROSOFT_GRAPH_TENANT || 'common';
+      const stateToken = randomBytes(32).toString('base64url');
+      const pkce = createMicrosoftPkcePair();
+      const now = Date.now();
+
+      state.microsoftOAuthTransactions = (state.microsoftOAuthTransactions || [])
+        .filter(item => item.expiresAt > now)
+        .slice(-100);
+      state.microsoftOAuthTransactions.push({
+        stateHash: hash(stateToken),
+        tenantId: agency.id,
+        locationId: activeLocation.id,
+        userId: actor.user.id,
+        codeVerifier: pkce.verifier,
+        createdAt: new Date(now).toISOString(),
+        expiresAt: now + 10 * 60 * 1000
+      });
+      await saveState();
+
+      const authorizationUrl = buildMicrosoftAuthorizationUrl({
+        clientId,
+        redirectUri,
+        state: stateToken,
+        codeChallenge: pkce.challenge,
+        tenant
+      });
+      auditLog('provider.microsoft_oauth.started', actor, { tenantId: agency.id, locationId: activeLocation.id });
+      return sendJson(res, 200, { success: true, authorizationUrl, expiresInSeconds: 600 });
+    }
+
+    if (method === 'GET' && pathname === '/api/platform/microsoft/oauth/callback') {
+      if (!['owner', 'admin'].includes(actor.membership.role)) {
+        return sendJson(res, 403, { error: 'Only workspace owners and admins can complete Microsoft Outlook connection' });
+      }
+      const oauthError = url.searchParams.get('error');
+      if (oauthError) {
+        return sendJson(res, 400, {
+          error: 'Microsoft authorization was not completed',
+          code: 'MICROSOFT_OAUTH_DENIED'
+        });
+      }
+
+      const authorizationCode = url.searchParams.get('code');
+      const returnedState = url.searchParams.get('state');
+      if (!authorizationCode || !returnedState) {
+        return sendJson(res, 400, { error: 'Microsoft authorization code and state are required', code: 'MICROSOFT_OAUTH_CALLBACK_INVALID' });
+      }
+
+      const transactionList = state.microsoftOAuthTransactions || [];
+      const transactionIndex = transactionList.findIndex(item =>
+        item.stateHash === hash(returnedState) &&
+        item.tenantId === agency.id &&
+        item.locationId === activeLocation.id &&
+        item.userId === actor.user.id &&
+        item.expiresAt > Date.now()
+      );
+      if (transactionIndex < 0) {
+        return sendJson(res, 400, {
+          error: 'Microsoft OAuth state is invalid, expired, already used, or belongs to another workspace.',
+          code: 'MICROSOFT_OAUTH_STATE_INVALID'
+        });
+      }
+
+      const transaction = transactionList[transactionIndex];
+      transactionList.splice(transactionIndex, 1);
+      state.microsoftOAuthTransactions = transactionList;
+      await saveState();
+
+      try {
+        const clientId = process.env.MICROSOFT_GRAPH_CLIENT_ID || process.env.MICROSOFT_CALENDAR_CLIENT_ID;
+        const clientSecret = process.env.MICROSOFT_GRAPH_CLIENT_SECRET || process.env.MICROSOFT_CALENDAR_CLIENT_SECRET;
+        const redirectUri = process.env.MICROSOFT_GRAPH_REDIRECT_URI ||
+          new URL('/api/platform/microsoft/oauth/callback', process.env.PUBLIC_BASE_URL || 'http://localhost:4000').toString();
+        const tenant = process.env.MICROSOFT_GRAPH_TENANT || 'common';
+
+        const tokens = await exchangeMicrosoftAuthorizationCode({
+          clientId,
+          clientSecret,
+          redirectUri,
+          code: authorizationCode,
+          codeVerifier: transaction.codeVerifier,
+          tenant
+        });
+        if (!tokens.refreshToken) {
+          return sendJson(res, 502, {
+            error: 'Microsoft did not issue a refresh token. Confirm offline_access is enabled for this app registration.',
+            code: 'MICROSOFT_REFRESH_TOKEN_MISSING'
+          });
+        }
+
+        const profile = await getMicrosoftProfile({ accessToken: tokens.accessToken });
+        const senderEmail = profile.mail || profile.userPrincipalName || '';
+        if (!profile.id || !senderEmail) {
+          return sendJson(res, 502, { error: 'Microsoft Graph did not return a usable mailbox profile', code: 'MICROSOFT_PROFILE_INVALID' });
+        }
+
+        const secretRef = `vault:${agency.id}/${activeLocation.id}/microsoft-graph-refresh-token`;
+        await secretResolver.store(secretRef, tokens.refreshToken);
+
+        const existingConnections = platformRepository
+          ? await platformRepository.listProviderConnections({ tenantId: agency.id, locationId: activeLocation.id })
+          : (state.providerConnections || []).filter(item =>
+              item.tenantId === agency.id && item.locationId === activeLocation.id
+            );
+        for (const existing of existingConnections.filter(item => item.providerKey === 'email.microsoft_graph' && item.status !== 'revoked')) {
+          const revoked = revokeProviderConnection(existing);
+          if (platformRepository) {
+            await platformRepository.updateProviderConnection({
+              tenantId: agency.id,
+              locationId: activeLocation.id,
+              connection: revoked
+            });
+          } else {
+            const index = state.providerConnections.findIndex(item => item.id === existing.id);
+            if (index >= 0) state.providerConnections[index] = revoked;
+          }
+        }
+
+        const pendingConnection = createProviderConnection({
+          tenantId: agency.id,
+          locationId: activeLocation.id,
+          providerKey: 'email.microsoft_graph',
+          secretRef,
+          label: `Microsoft Outlook — ${senderEmail}`,
+          config: {
+            accountId: profile.id,
+            senderEmail,
+            senderName: profile.displayName || senderEmail
+          }
+        });
+
+        if (platformRepository) {
+          await platformRepository.createProviderConnection(pendingConnection);
+        } else {
+          state.providerConnections = state.providerConnections || [];
+          state.providerConnections.push(pendingConnection);
+        }
+
+        const adapter = providerAdapterRegistry.get('email.microsoft_graph');
+        const verification = await verifyProviderConnection(pendingConnection, { secretResolver, adapter });
+        const verifiedConnection = verification.connection;
+        if (platformRepository) {
+          await platformRepository.updateProviderConnection({
+            tenantId: agency.id,
+            locationId: activeLocation.id,
+            connection: verifiedConnection
+          });
+        } else {
+          const index = state.providerConnections.findIndex(item => item.id === pendingConnection.id);
+          if (index >= 0) state.providerConnections[index] = verifiedConnection;
+        }
+        await saveState();
+
+        if (!verification.ok) {
+          auditLog('provider.microsoft_oauth.verification_failed', actor, {
+            connectionId: pendingConnection.id,
+            code: verification.code
+          });
+          const webUrl = new URL(process.env.OPERZA_WEB_URL || 'http://localhost:5173');
+          webUrl.pathname = '/integrations';
+          webUrl.search = '';
+          webUrl.searchParams.set('microsoft', 'verification_failed');
+          res.writeHead(302, { Location: webUrl.toString(), 'Cache-Control': 'no-store' });
+          res.end();
+          return;
+        }
+
+        auditLog('provider.microsoft_oauth.connected', actor, {
+          connectionId: pendingConnection.id,
+          accountId: profile.id,
+          senderEmail
+        });
+        broadcast('platform.providers.verified', publicProviderConnection(verifiedConnection));
+
+        const webUrl = new URL(process.env.OPERZA_WEB_URL || 'http://localhost:5173');
+        webUrl.pathname = '/integrations';
+        webUrl.search = '';
+        webUrl.searchParams.set('microsoft', 'connected');
+        res.writeHead(302, { Location: webUrl.toString(), 'Cache-Control': 'no-store' });
+        res.end();
+        return;
+      } catch (error) {
+        auditLog('provider.microsoft_oauth.failed', actor, {
+          code: error?.code || 'MICROSOFT_OAUTH_FAILED'
+        });
+        return sendJson(res, 502, {
+          error: 'Microsoft Outlook connection could not be completed. Review the Entra app registration, redirect URI, and Graph permissions.',
+          code: error?.code || 'MICROSOFT_OAUTH_FAILED'
+        });
+      }
+    }
+
     if (method === 'GET' && pathname === '/api/platform/providers') {
       return sendJson(res, 200, {
         data: PROVIDER_CATALOG.map(provider => ({
           key: provider.key,
+          providerKey: provider.key,
           channel: provider.channel,
+          category: provider.channel,
+          name: provider.label,
           label: provider.label,
           availability: provider.status,
-          liveDispatchEnabled: false
+          liveDispatchEnabled: false,
+          capabilities: provider.key === 'email.microsoft_graph' ? ['mail.read', 'mail.send', 'calendar.readwrite'] : [],
+          secretRefFormatHint: provider.key === 'email.microsoft_graph'
+            ? `vault:${agency.id}/${activeLocation.id}/microsoft-graph-refresh-token (managed by OAuth)`
+            : 'vault:{agencyId}/{locationId}/{secret-name}'
         }))
       });
     }
