@@ -645,6 +645,99 @@ export async function dispatchZapierEvent({ agencyId, locationId, event, data, s
   return results;
 }
 
+
+const ZAPIER_SCOPE_ALIASES = Object.freeze({
+  'workflows:trigger': 'workflows:execute'
+});
+
+const SESSION_SCOPES = Object.freeze([
+  'contacts:read', 'contacts:write',
+  'opportunities:read', 'opportunities:write',
+  'calendars:read', 'calendars:write',
+  'tasks:read', 'tasks:write',
+  'workflows:execute', 'communications:dispatch',
+  'webhooks:read', 'webhooks:manage', 'notifications:write',
+  'payments:read'
+]);
+
+function normalizeZapierScopes(scopes = []) {
+  return Array.from(new Set(
+    (Array.isArray(scopes) ? scopes : [])
+      .filter(scope => typeof scope === 'string')
+      .map(scope => ZAPIER_SCOPE_ALIASES[scope] || scope)
+  ));
+}
+
+/**
+ * Return the least-privilege scope set required by a Zapier API route.
+ * Unknown write/search routes fail closed for API-key actors.
+ */
+export function getZapierRequiredScopes(method, pathname) {
+  const verb = String(method || 'GET').toUpperCase();
+  const path = String(pathname || '').split('?')[0];
+
+  if (
+    path === '/api/v1/zapier/auth/me' ||
+    path === '/api/v1/zapier/app-definition' ||
+    path === '/api/v1/zapier/schema' ||
+    path === '/api/v1/zapier/triggers' ||
+    path === '/api/v1/zapier/actions' ||
+    path === '/api/v1/zapier/searches' ||
+    path.startsWith('/api/v1/zapier/samples/')
+  ) return [];
+
+  if (verb === 'GET' && path === '/api/v1/zapier/hooks') return ['webhooks:read'];
+  if (verb === 'GET' && path === '/api/v1/zapier/deliveries') return ['webhooks:read'];
+  if (verb === 'POST' && path === '/api/v1/zapier/hooks/subscribe') return ['webhooks:manage'];
+  if (verb === 'POST' && path === '/api/v1/zapier/hooks/test') return ['webhooks:manage'];
+  if (verb === 'DELETE' && path.startsWith('/api/v1/zapier/hooks/unsubscribe')) return ['webhooks:manage'];
+
+  if (verb === 'GET' && path.startsWith('/api/v1/zapier/polls/')) {
+    const event = path.slice('/api/v1/zapier/polls/'.length);
+    if (event.startsWith('contact.')) return ['contacts:read'];
+    if (event.startsWith('opportunity.')) return ['opportunities:read'];
+    if (event.startsWith('appointment.')) return ['calendars:read'];
+    if (event.startsWith('task.')) return ['tasks:read'];
+    if (event.startsWith('payment.')) return ['payments:read'];
+    return ['zapier:unsupported'];
+  }
+
+  if (verb === 'POST' && path.startsWith('/api/v1/zapier/searches/')) {
+    const search = path.slice('/api/v1/zapier/searches/'.length);
+    if (search === 'find_contact') return ['contacts:read'];
+    if (search === 'find_opportunity') return ['opportunities:read'];
+    if (search === 'find_appointment') return ['calendars:read'];
+    if (search === 'find_task') return ['tasks:read'];
+    return ['zapier:unsupported'];
+  }
+
+  if (verb === 'POST' && path.startsWith('/api/v1/zapier/actions/')) {
+    const action = path.slice('/api/v1/zapier/actions/'.length);
+    if (['create_contact', 'update_contact', 'add_tag', 'remove_tag', 'create_note'].includes(action)) return ['contacts:write'];
+    if (['create_opportunity', 'update_opportunity'].includes(action)) return ['opportunities:write'];
+    if (action === 'create_appointment') return ['calendars:write'];
+    if (action === 'create_task') return ['tasks:write'];
+    if (action === 'trigger_workflow') return ['workflows:execute'];
+    if (action === 'send_communication') return ['communications:dispatch'];
+    if (action === 'send_notification') return ['notifications:write'];
+    return ['zapier:unsupported'];
+  }
+
+  return ['zapier:unsupported'];
+}
+
+/** API-key actors must possess every required scope; browser/session actors use session auth. */
+export function isZapierScopeAuthorized(actor, requiredScopes = []) {
+  if (!actor?.isApiKey && !actor?.apiKey) return true;
+  const granted = new Set(normalizeZapierScopes(actor.apiKey?.scopes));
+  return requiredScopes.every(scope => granted.has(scope));
+}
+
+function getZapierEffectiveScopes(actor) {
+  if (!actor?.isApiKey && !actor?.apiKey) return [...SESSION_SCOPES];
+  return normalizeZapierScopes(actor.apiKey?.scopes);
+}
+
 /**
  * Handles incoming Zapier HTTP requests.
  * @param {object} req Incoming HTTP request
@@ -663,9 +756,20 @@ export async function handleZapierRoute(req, res, {
   sendJson,
   readBody,
   executeWorkflowInstance,
-  broadcast
+  broadcast,
+  fetchFn = globalThis.fetch
 }) {
   if (!pathname.startsWith('/api/v1/zapier/')) return false;
+
+  const requiredScopes = getZapierRequiredScopes(method, pathname);
+  if (!isZapierScopeAuthorized(actor, requiredScopes)) {
+    sendJson(res, 403, {
+      error: 'API key is missing required permission for this Zapier operation',
+      code: 'INSUFFICIENT_SCOPE',
+      requiredScopes
+    });
+    return true;
+  }
 
   // 1. Authentication Check (/api/v1/zapier/auth/me)
   if (method === 'GET' && pathname === '/api/v1/zapier/auth/me') {
@@ -675,19 +779,7 @@ export async function handleZapierRoute(req, res, {
       locationId: activeLocation.id,
       agencyName: agency.name,
       userEmail: actor.user.email,
-      scopes: [
-        'contacts:read',
-        'contacts:write',
-        'opportunities:read',
-        'opportunities:write',
-        'calendars:read',
-        'calendars:write',
-        'tasks:read',
-        'tasks:write',
-        'workflows:execute',
-        'communications:dispatch',
-        'webhooks:manage'
-      ]
+      scopes: getZapierEffectiveScopes(actor)
     });
   }
 
@@ -799,13 +891,33 @@ export async function handleZapierRoute(req, res, {
     }
 
     const samples = getZapierSamples(event, state.records || {});
-    const samplePayload = samples[0] || { test: true, timestamp: new Date().toISOString() };
+    const samplePayload = samples[0] || { test: true };
     const deliveryId = `test_deliv_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
     const timestamp = Math.floor(Date.now() / 1000);
-    const testSecret = `sec_test_${randomBytes(16).toString('hex')}`;
-    const signature = createHmac('sha256', testSecret)
-      .update(`${timestamp}.${JSON.stringify(samplePayload)}`)
-      .digest('hex');
+    const payload = { event, deliveryId, timestamp, test: true, data: samplePayload };
+    let httpStatus = 0;
+    let responseBody = '';
+    let delivered = false;
+
+    try {
+      const response = await fetchFn(targetUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Operza-Event': event,
+          'X-Operza-Delivery-Id': deliveryId,
+          'X-Operza-Test': 'true'
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(8_000)
+      });
+      httpStatus = response.status;
+      delivered = response.ok;
+      responseBody = await response.text().catch(() => '');
+    } catch {
+      // Never return network internals, DNS data or credentials in API responses.
+      responseBody = 'Webhook endpoint could not be reached';
+    }
 
     state.zapierHookDeliveries = state.zapierHookDeliveries || [];
     const deliveryRecord = {
@@ -814,22 +926,24 @@ export async function handleZapierRoute(req, res, {
       locationId: activeLocation.id,
       event,
       targetUrl,
-      payload: samplePayload,
-      httpStatus: 200,
-      delivered: true,
+      payload,
+      httpStatus,
+      responseBody: responseBody.slice(0, 300),
+      delivered,
       deliveredAt: new Date().toISOString()
     };
     state.zapierHookDeliveries.unshift(deliveryRecord);
     if (state.zapierHookDeliveries.length > 200) state.zapierHookDeliveries.length = 200;
     await saveState();
 
-    return sendJson(res, 200, {
-      success: true,
+    return sendJson(res, delivered ? 200 : 502, {
+      success: delivered,
+      status: delivered ? 'accepted' : 'failed',
       deliveryId,
       targetUrl,
       event,
-      sampleSent: samplePayload,
-      signatureHeader: `t=${timestamp},v1=${signature}`
+      httpStatus,
+      sampleSent: samplePayload
     });
   }
 
@@ -1298,14 +1412,14 @@ export async function handleZapierRoute(req, res, {
         if (!recipient) return sendJson(res, 400, { error: 'recipient is required' });
         if (!message) return sendJson(res, 400, { error: 'message is required' });
 
-        const dispatchId = `disp_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
-        return sendJson(res, 200, {
-          success: true,
-          dispatchId,
+        // Provider-backed delivery is intentionally unavailable here. Never claim sent
+        // or dispatched until a verified adapter returns a provider acknowledgement.
+        return sendJson(res, 501, {
+          success: false,
           channel,
-          recipient,
-          status: 'dispatched',
-          sentAt: new Date().toISOString()
+          status: 'not_dispatched',
+          code: 'PROVIDER_NOT_CONFIGURED',
+          message: 'Connect and verify a supported communication provider before dispatch.'
         });
       }
 
