@@ -53,7 +53,8 @@ export function getZapierRequiredScope(method, pathname) {
 
   const exact = PATH_SCOPES.get(`${verb}:${path}`);
   if (exact) return exact;
-  if (verb === 'DELETE' && /^\\/api\\/v1\\/zapier\\/hooks\\/unsubscribe\\/[^/]+$/.test(path)) return 'webhooks:manage';
+  const unsubscribePrefix = '/api/v1/zapier/hooks/unsubscribe/';
+  if (verb === 'DELETE' && path.startsWith(unsubscribePrefix) && path.slice(unsubscribePrefix.length).length > 0 && !path.slice(unsubscribePrefix.length).includes('/')) return 'webhooks:manage';
 
   if (verb === 'GET' && path.startsWith('/api/v1/zapier/samples/')) {
     return eventScope(path.slice('/api/v1/zapier/samples/'.length));
