@@ -1,184 +1,120 @@
-import { randomUUID } from 'node:crypto';
-import { assertSafeTargetUrl, buildProviderOutboundHeaders, generateDeterministicIdempotencyKey } from './ssrf-defense.mjs';
-
 /**
- * Resend Email Adapter
+ * Provider adapters that are not yet backed by a live provider API deliberately
+ * fail closed. A well-formed key is not proof of account ownership or delivery.
  */
+function unavailable(provider, operation) {
+  return {
+    ok: false,
+    verified: false,
+    error: `A live ${provider} ${operation} adapter is not configured.`,
+    code: 'PROVIDER_ADAPTER_UNAVAILABLE'
+  };
+}
+
+function invalidSecret(message) {
+  return { verified: false, error: message, code: 'INVALID_PROVIDER_CREDENTIAL' };
+}
+
 export const resendEmailAdapter = Object.freeze({
   id: 'adapter-resend-email-v1',
   providerKey: 'email.resend',
   channel: 'email',
-
   async verify({ secret, config = {} } = {}) {
     if (typeof secret !== 'string' || !secret.startsWith('re_') || secret.length < 12) {
-      return { verified: false, error: 'Invalid Resend API key format (must start with re_)' };
+      return invalidSecret('Invalid Resend API key format');
     }
     if (config.senderEmail && !config.senderEmail.includes('@')) {
-      return { verified: false, error: 'Invalid sender email address in config' };
+      return invalidSecret('Invalid sender email address in config');
     }
-    return {
-      verified: true,
-      accountId: config.senderEmail ? `resend:${config.senderEmail}` : 'resend:verified-org'
-    };
+    return unavailable('Resend', 'verification');
   },
-
-  async dispatch({ secret, config = {}, payload = {}, consent, tenantId, locationId, actionHash } = {}) {
+  async dispatch({ consent } = {}) {
     if (!consent || consent.status !== 'granted') {
       return { ok: false, error: 'Communication consent not granted', code: 'CONSENT_REQUIRED' };
     }
-    if (config.endpoint) {
-      assertSafeTargetUrl(config.endpoint);
-    }
-    const idempotencyKey = (tenantId && locationId && actionHash)
-      ? generateDeterministicIdempotencyKey({ agencyId: tenantId, locationId, actionHash })
-      : null;
-    return {
-      ok: true,
-      messageId: `msg_re_${randomUUID().slice(0, 12)}`,
-      provider: 'resend',
-      idempotencyKey,
-      timestamp: new Date().toISOString()
-    };
+    return unavailable('Resend', 'send');
   }
 });
 
-/**
- * SendGrid Email Adapter
- */
 export const sendgridEmailAdapter = Object.freeze({
   id: 'adapter-sendgrid-email-v3',
   providerKey: 'email.sendgrid',
   channel: 'email',
-
-  async verify({ secret, config = {} } = {}) {
+  async verify({ secret } = {}) {
     if (typeof secret !== 'string' || !secret.startsWith('SG.') || secret.length < 16) {
-      return { verified: false, error: 'Invalid SendGrid API key format (must start with SG.)' };
+      return invalidSecret('Invalid SendGrid API key format');
     }
-    return {
-      verified: true,
-      accountId: config.senderEmail ? `sendgrid:${config.senderEmail}` : 'sendgrid:verified-user'
-    };
+    return unavailable('SendGrid', 'verification');
   },
-
-  async dispatch({ secret, config = {}, payload = {}, consent } = {}) {
+  async dispatch({ consent } = {}) {
     if (!consent || consent.status !== 'granted') {
       return { ok: false, error: 'Communication consent not granted', code: 'CONSENT_REQUIRED' };
     }
-    return {
-      ok: true,
-      messageId: `msg_sg_${randomUUID().slice(0, 12)}`,
-      provider: 'sendgrid',
-      timestamp: new Date().toISOString()
-    };
+    return unavailable('SendGrid', 'send');
   }
 });
 
-/**
- * Twilio SMS Adapter
- */
 export const twilioSmsAdapter = Object.freeze({
   id: 'adapter-twilio-sms-v1',
   providerKey: 'sms.twilio',
   channel: 'sms',
-
   async verify({ secret, config = {} } = {}) {
     if (typeof secret !== 'string' || secret.length < 16) {
-      return { verified: false, error: 'Twilio Auth Token must be at least 16 characters' };
+      return invalidSecret('Twilio Auth Token must be at least 16 characters');
     }
     if (config.accountId && !config.accountId.startsWith('AC')) {
-      return { verified: false, error: 'Twilio Account SID must start with AC' };
+      return invalidSecret('Twilio Account SID must start with AC');
     }
-    return {
-      verified: true,
-      accountId: config.accountId || 'AC_verified_account'
-    };
+    return unavailable('Twilio', 'verification');
   },
-
-  async dispatch({ secret, config = {}, payload = {}, consent } = {}) {
+  async dispatch({ consent } = {}) {
     if (!consent || consent.status !== 'granted') {
       return { ok: false, error: 'Communication consent not granted', code: 'CONSENT_REQUIRED' };
     }
-    return {
-      ok: true,
-      messageId: `SM_${randomUUID().replace(/-/g, '').slice(0, 32)}`,
-      provider: 'twilio',
-      timestamp: new Date().toISOString()
-    };
+    return unavailable('Twilio', 'send');
   }
 });
 
-/**
- * WhatsApp Meta Cloud API Adapter
- */
 export const whatsappMetaAdapter = Object.freeze({
   id: 'adapter-whatsapp-meta-v21',
   providerKey: 'whatsapp.meta_cloud',
   channel: 'whatsapp',
-
   async verify({ secret, config = {} } = {}) {
     if (typeof secret !== 'string' || secret.length < 20) {
-      return { verified: false, error: 'Meta System User Token must be at least 20 characters' };
+      return invalidSecret('Meta System User Token must be at least 20 characters');
     }
     if (config.phoneNumberId && config.phoneNumberId.length < 5) {
-      return { verified: false, error: 'Invalid WhatsApp Phone Number ID' };
+      return invalidSecret('Invalid WhatsApp Phone Number ID');
     }
-    return {
-      verified: true,
-      accountId: config.phoneNumberId || 'meta_whatsapp_verified'
-    };
+    return unavailable('Meta WhatsApp', 'verification');
   },
-
-  async dispatch({ secret, config = {}, payload = {}, consent } = {}) {
+  async dispatch({ consent } = {}) {
     if (!consent || consent.status !== 'granted') {
       return { ok: false, error: 'Communication consent not granted', code: 'CONSENT_REQUIRED' };
     }
-    return {
-      ok: true,
-      messageId: `wamid.HBgL${randomUUID().replace(/-/g, '').slice(0, 24)}`,
-      provider: 'whatsapp.meta_cloud',
-      timestamp: new Date().toISOString()
-    };
+    return unavailable('Meta WhatsApp', 'send');
   }
 });
 
-/**
- * Stripe Payment Adapter
- */
 export const stripePaymentAdapter = Object.freeze({
   id: 'adapter-stripe-payments-v1',
   providerKey: 'payments.stripe',
   channel: 'payments',
-
-  async verify({ secret, config = {} } = {}) {
+  async verify({ secret } = {}) {
     if (typeof secret !== 'string' || (!secret.startsWith('sk_') && !secret.startsWith('rk_')) || secret.length < 20) {
-      return { verified: false, error: 'Invalid Stripe Secret Key format (must start with sk_ or rk_)' };
+      return invalidSecret('Invalid Stripe secret key format');
     }
-    return {
-      verified: true,
-      accountId: config.accountId || 'acct_stripe_live'
-    };
+    return unavailable('Stripe', 'verification');
   },
-
-  async dispatch({ secret, config = {}, payload = {}, tenantId, locationId, actionHash } = {}) {
-    if (config.endpoint) {
-      assertSafeTargetUrl(config.endpoint);
-    }
-    const idempotencyKey = (tenantId && locationId && actionHash)
-      ? generateDeterministicIdempotencyKey({ agencyId: tenantId, locationId, actionHash })
-      : null;
+  async dispatch() {
     return {
-      ok: true,
-      paymentIntentId: `pi_${randomUUID().replace(/-/g, '').slice(0, 24)}`,
-      provider: 'stripe',
-      idempotencyKey,
-      timestamp: new Date().toISOString()
+      ok: false,
+      error: 'Stripe payment execution remains disabled pending payment, refund and reconciliation controls.',
+      code: 'PAYMENTS_DISABLED'
     };
   }
 });
 
-/**
- * Registry of available adapters
- */
 export function createProviderAdapterRegistry(customAdapters = []) {
   const adapters = new Map([
     [resendEmailAdapter.providerKey, resendEmailAdapter],
@@ -189,20 +125,12 @@ export function createProviderAdapterRegistry(customAdapters = []) {
   ]);
 
   for (const adapter of customAdapters) {
-    if (adapter?.providerKey) {
-      adapters.set(adapter.providerKey, adapter);
-    }
+    if (adapter?.providerKey) adapters.set(adapter.providerKey, adapter);
   }
 
   return {
-    get(providerKey) {
-      return adapters.get(providerKey) || null;
-    },
-    has(providerKey) {
-      return adapters.has(providerKey);
-    },
-    list() {
-      return Array.from(adapters.values());
-    }
+    get(providerKey) { return adapters.get(providerKey) || null; },
+    has(providerKey) { return adapters.has(providerKey); },
+    list() { return Array.from(adapters.values()); }
   };
 }
