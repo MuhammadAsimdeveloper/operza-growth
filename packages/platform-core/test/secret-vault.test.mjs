@@ -55,3 +55,51 @@ test('createSecretResolver resolves env, vault and kms schemes', async () => {
   const invalid = await resolver.resolve('unknown:reference');
   assert.equal(invalid, null);
 });
+
+
+test('createSecretResolver refuses the built-in fallback key when no master key is configured', async () => {
+  const previous = process.env.OPERZA_VAULT_KEY;
+  delete process.env.OPERZA_VAULT_KEY;
+  try {
+    const resolver = createSecretResolver();
+    await assert.rejects(
+      () => resolver.store('vault:tenant-alpha/resend-key', 're_test_secret_123'),
+      /Master key must be a string/
+    );
+  } finally {
+    if (previous === undefined) delete process.env.OPERZA_VAULT_KEY;
+    else process.env.OPERZA_VAULT_KEY = previous;
+  }
+});
+
+test('createSecretResolver supports durable encrypted storage across resolver instances', async () => {
+  const encryptedRecords = new Map();
+  const storage = {
+    async get(secretRef) {
+      return encryptedRecords.get(secretRef) || null;
+    },
+    async set(secretRef, envelope) {
+      encryptedRecords.set(secretRef, envelope);
+    },
+    async delete(secretRef) {
+      return encryptedRecords.delete(secretRef);
+    }
+  };
+  const masterKey = 'strong-test-master-key-2026-32-chars';
+  const secretRef = 'vault:tenant-alpha/resend-key';
+  const plaintext = 're_production_secret_value_123456';
+
+  const firstResolver = createSecretResolver({ masterKey, storage });
+  await firstResolver.store(secretRef, plaintext);
+
+  const storedEnvelope = encryptedRecords.get(secretRef);
+  assert.ok(storedEnvelope.startsWith('v1:'));
+  assert.equal(storedEnvelope.includes(plaintext), false);
+
+  const secondResolver = createSecretResolver({ masterKey, storage });
+  assert.equal(await secondResolver.resolve(secretRef), plaintext);
+  assert.equal(await secondResolver.has(secretRef), true);
+
+  await secondResolver.delete(secretRef);
+  assert.equal(await secondResolver.resolve(secretRef), null);
+});
