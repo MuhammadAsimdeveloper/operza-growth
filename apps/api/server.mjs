@@ -32,6 +32,7 @@ import { claimExecutionLease, heartbeatExecutionLease, releaseExecutionLease, re
 import { createProviderConnection, revokeProviderConnection, publicProviderConnection, PROVIDER_CATALOG, verifyProviderConnection } from '../../packages/platform-core/src/provider-lifecycle.mjs';
 import { createSecretResolver, createMemorySecretStorage } from '../../packages/platform-core/src/secret-vault.mjs';
 import { createPostgresSecretStorage } from '../../packages/db/lib/provider-secret-storage.mjs';
+import { createWorkflowOutboxRepository } from '../../packages/db/lib/outbox-repository.mjs';
 import { createMicrosoftGraphClient, createMicrosoftPkcePair, createMicrosoftGraphProviderAdapter } from './integrations/microsoft-graph.mjs';
 import { createProviderAdapterRegistry } from '../../packages/platform-core/src/provider-adapters.mjs';
 import { createBillingLedgerStore, createImmutableAuditStore, gateAiToolExecution } from '../../packages/platform-core/src/billing-ledger.mjs';
@@ -168,6 +169,7 @@ try {
 const platformDbEnabled = process.env.PLATFORM_DB_ENABLED === 'true';
 if (platformDbEnabled && !pgPool) throw new Error('PLATFORM_DB_ENABLED requires a working DATABASE_URL and the pg module.');
 const platformRepository = platformDbEnabled ? createPlatformRepository(pgPool) : null;
+const durableOutboxRepo = pgPool ? createWorkflowOutboxRepository(pgPool) : null;
 
 // Production/staging never fall back to ephemeral secret storage or an embedded key.
 if (isStagingOrProd && (!platformDbEnabled || Buffer.byteLength(process.env.OPERZA_VAULT_KEY || '', 'utf8') < 32)) {
@@ -2986,6 +2988,7 @@ const server = createServer(async (req, res) => {
       }).catch(err => console.error('Appointment workflow trigger failed:', err));
 
       dispatchZapierEvent({
+        repository: durableOutboxRepo,
         state,
         agencyId: cal.agencyId,
         locationId: cal.locationId,
