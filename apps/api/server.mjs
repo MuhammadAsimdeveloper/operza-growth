@@ -42,6 +42,7 @@ import { authorizeCopilotTool, createCopilotProposal, getCopilotToolDefinition }
 import { resolveEntitlements, listPlans, checkFeatureAccess, checkUsageLimit, createUsageEvent, aggregateUsage } from '../../packages/platform-core/src/entitlements.mjs';
 import { createPlatformRepository } from '../../packages/db/lib/platform-repository.mjs';
 import { createPostgresSecretBackend } from '../../packages/db/lib/secret-vault-repository.mjs';
+import { createZapierHookRepository } from '../../packages/db/lib/zapier-hook-repository.mjs';
 import { createPostgresOAuthStateStore } from '../../packages/db/lib/outlook-oauth-state-repository.mjs';
 import { createOutlookOAuthService, createMemoryOAuthStateStore } from '../../packages/platform-core/src/outlook-oauth.mjs';
 import { workflowQueue } from './queue.mjs';
@@ -167,24 +168,25 @@ try {
   console.warn('[OPERZA-DB] pg module not available or error initializing pool:', err.message);
 }
 
-const platformDbEnabled = process.env.PLATFORM_DB_ENABLED === 'true';
+const platformDbEnabled = process.env.PLATFORM_DB_ENABLED === 'true' || isStagingOrProd;
 if (platformDbEnabled && !pgPool) throw new Error('PLATFORM_DB_ENABLED requires a working DATABASE_URL and the pg module.');
 const platformRepository = platformDbEnabled ? createPlatformRepository(pgPool) : null;
+const zapierRepository = platformDbEnabled ? createZapierHookRepository(pgPool) : null;
 
 if (isStagingOrProd) {
   if (!pgPool) throw new Error('Secure provider secret storage requires DATABASE_URL in staging/production.');
   if (typeof process.env.OPERZA_VAULT_KEY !== 'string' || process.env.OPERZA_VAULT_KEY.length < 16) {
     throw new Error('OPERZA_VAULT_KEY (minimum 16 characters) is required in staging/production.');
   }
-  const vaultTable = await pgPool.query("SELECT to_regclass('public.provider_secrets') AS table_name");
-  if (!vaultTable.rows[0]?.table_name) {
-    throw new Error('Migration 016 is required before starting Operza with the production secret vault.');
-  }
+  const requiredTables=await pgPool.query("SELECT to_regclass('public.provider_secrets') AS provider_secrets,to_regclass('public.workflow_outbox') AS workflow_outbox,to_regclass('public.zapier_rest_hook_subscriptions') AS zapier_subscriptions,to_regclass('public.zapier_rest_hook_deliveries') AS zapier_deliveries");
+  const t=requiredTables.rows[0]||{};
+  if(!t.provider_secrets)throw new Error('Migration 016 is required before starting Operza with the production secret vault.');
+  if(!t.workflow_outbox||!t.zapier_subscriptions||!t.zapier_deliveries)throw new Error('Migrations 008 and 018 are required before durable Zapier event delivery can start.');
 }
 
 secretResolver = createSecretResolver({
   masterKey: process.env.OPERZA_VAULT_KEY,
-  backend: isStagingOrProd ? createPostgresSecretBackend(pgPool) : undefined
+  backend: (isStagingOrProd || platformDbEnabled) ? createPostgresSecretBackend(pgPool) : undefined
 });
 const microsoftOAuthConfigured = Boolean(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET && process.env.MICROSOFT_REDIRECT_URI);
 let outlookStateStore = createMemoryOAuthStateStore();
@@ -3004,6 +3006,7 @@ const server = createServer(async (req, res) => {
       }).catch(err => console.error('Appointment workflow trigger failed:', err));
 
       dispatchZapierEvent({
+        zapierRepository,
         state,
         agencyId: cal.agencyId,
         locationId: cal.locationId,
@@ -4675,7 +4678,9 @@ const server = createServer(async (req, res) => {
         sendJson,
         readBody,
         executeWorkflowInstance,
-        broadcast
+        broadcast,
+        zapierRepository,
+        secretResolver
       });
       return;
     }
@@ -9117,6 +9122,7 @@ const server = createServer(async (req, res) => {
           }).catch(console.error);
 
           dispatchZapierEvent({
+            zapierRepository,
             state,
             agencyId: agency.id,
             locationId: activeLocation.id,
@@ -9196,6 +9202,7 @@ const server = createServer(async (req, res) => {
           }).catch(console.error);
 
           dispatchZapierEvent({
+            zapierRepository,
             state,
             agencyId: agency.id,
             locationId: activeLocation.id,
@@ -9218,6 +9225,7 @@ const server = createServer(async (req, res) => {
           }).catch(console.error);
 
           dispatchZapierEvent({
+            zapierRepository,
             state,
             agencyId: agency.id,
             locationId: activeLocation.id,
