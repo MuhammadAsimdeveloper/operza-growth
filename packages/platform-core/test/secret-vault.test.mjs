@@ -14,8 +14,8 @@ test('encryptSecret and decryptSecret round-trip with authenticated encryption',
 });
 
 test('decryptSecret fails with invalid master key or tampered ciphertext', () => {
-  const masterKey = 'correct-master-key-1234567890';
-  const wrongKey = 'wrong-master-key-0987654321';
+  const masterKey = 'correct-master-key-long-enough-for-this-test-123456';
+  const wrongKey = 'wrong-master-key-long-enough-for-this-test-123456';
   const plaintext = 'sk_live_test_api_key_secret';
 
   const envelope = encryptSecret(plaintext, masterKey);
@@ -36,7 +36,7 @@ test('decryptSecret fails with invalid master key or tampered ciphertext', () =>
 
 test('createSecretResolver resolves env, vault and kms schemes', async () => {
   process.env.TEST_OPERZA_SECRET = 'sg_env_resolved_key_12345';
-  const resolver = createSecretResolver({ masterKey: 'test-master-key-xyz' });
+  const resolver = createSecretResolver({ masterKey: 'test-master-key-long-enough-for-this-suite-123456', storage: createMemorySecretStorage() });
 
   // 1. env: scheme
   const envVal = await resolver.resolve('env:TEST_OPERZA_SECRET');
