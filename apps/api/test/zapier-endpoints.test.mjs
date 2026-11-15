@@ -107,7 +107,9 @@ test('Zapier API keys are restricted to their explicit scopes and legacy aliases
   assert.equal(isZapierScopeAuthorized({ isApiKey: true, apiKey: { scopes: ['contacts:read'] } }, ['contacts:write']), false);
   assert.equal(isZapierScopeAuthorized({ isApiKey: true, apiKey: { scopes: ['workflows:trigger'] } }, ['workflows:execute']), true);
   assert.equal(isZapierScopeAuthorized({ isApiKey: true, apiKey: { scopes: [] } }, ['contacts:read']), false);
-  assert.equal(isZapierScopeAuthorized({ isApiKey: false }, ['contacts:write']), true);
+  assert.equal(isZapierScopeAuthorized({ isApiKey: false, membership: { role: 'admin' } }, ['contacts:write']), true);
+  assert.equal(isZapierScopeAuthorized({ isApiKey: false, membership: { role: 'viewer' } }, ['contacts:write']), false);
+  assert.equal(isZapierScopeAuthorized({ isApiKey: false, membership: { role: 'viewer' } }, ['contacts:read']), true);
 });
 
 
