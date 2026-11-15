@@ -5082,7 +5082,7 @@ const server = createServer(async (req, res) => {
             label: (params.label || 'Copilot Generated API Key').trim(),
             keyHash: hash(secretToken),
             maskedKey,
-            scopes: Array.isArray(params.scopes) ? params.scopes : ['contacts:read', 'workflows:trigger'],
+            scopes: Array.isArray(params.scopes) ? params.scopes : ['contacts:read'],
             createdAt: new Date().toISOString(),
             lastUsedAt: null
           };

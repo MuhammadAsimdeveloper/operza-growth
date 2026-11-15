@@ -16,6 +16,7 @@
  */
 
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { authorizeZapierRequest } from './zapier-authz.mjs';
 
 /**
  * Validates whether a target webhook URL is safe for outbound dispatch.
@@ -598,11 +599,13 @@ export async function dispatchZapierEvent({ agencyId, locationId, event, data, s
           'X-Operza-Event': event,
           'X-Operza-Delivery-Id': deliveryId
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        redirect: 'error',
+        signal: AbortSignal.timeout(10_000)
       });
       httpStatus = res.status;
       success = res.ok;
-      responseBody = await res.text().catch(() => '');
+      // Do not persist arbitrary third-party response text; it may contain secrets or PII.
       if (res.status === 410 || res.status === 404) {
         sub.status = 'deactivated';
         sub.deactivationReason = 'TARGET_GONE_OR_NOT_FOUND';
@@ -617,7 +620,7 @@ export async function dispatchZapierEvent({ agencyId, locationId, event, data, s
       }
     } catch (err) {
       httpStatus = 500;
-      responseBody = err.message;
+      responseBody = 'Webhook delivery request failed';
       sub.consecutiveFailures = (sub.consecutiveFailures || 0) + 1;
       if (sub.consecutiveFailures >= 5) {
         sub.status = 'deactivated';
@@ -633,7 +636,7 @@ export async function dispatchZapierEvent({ agencyId, locationId, event, data, s
       event,
       payload,
       httpStatus,
-      responseBody: responseBody.slice(0, 500),
+      responseBody: '',
       delivered: success,
       deliveredAt: new Date().toISOString()
     };
@@ -663,9 +666,19 @@ export async function handleZapierRoute(req, res, {
   sendJson,
   readBody,
   executeWorkflowInstance,
-  broadcast
+  broadcast,
+  fetchFn = globalThis.fetch
 }) {
   if (!pathname.startsWith('/api/v1/zapier/')) return false;
+
+  const authorization = authorizeZapierRequest({ method, pathname, actor });
+  if (!authorization.allowed) {
+    return sendJson(res, 403, {
+      error: 'The API key does not have permission to perform this Zapier operation',
+      code: 'API_KEY_SCOPE_REQUIRED',
+      requiredScope: authorization.requiredScope
+    });
+  }
 
   // 1. Authentication Check (/api/v1/zapier/auth/me)
   if (method === 'GET' && pathname === '/api/v1/zapier/auth/me') {
@@ -675,19 +688,11 @@ export async function handleZapierRoute(req, res, {
       locationId: activeLocation.id,
       agencyName: agency.name,
       userEmail: actor.user.email,
-      scopes: [
-        'contacts:read',
-        'contacts:write',
-        'opportunities:read',
-        'opportunities:write',
-        'calendars:read',
-        'calendars:write',
-        'tasks:read',
-        'tasks:write',
-        'workflows:execute',
-        'communications:dispatch',
-        'webhooks:manage'
-      ]
+      // Report the grants actually attached to this developer key. Never advertise
+      // permissions that the token does not possess.
+      scopes: actor.isApiKey && Array.isArray(actor.apiKey?.scopes)
+        ? [...new Set(actor.apiKey.scopes.filter(scope => typeof scope === 'string'))]
+        : []
     });
   }
 
@@ -803,31 +808,61 @@ export async function handleZapierRoute(req, res, {
     const deliveryId = `test_deliv_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
     const timestamp = Math.floor(Date.now() / 1000);
     const testSecret = `sec_test_${randomBytes(16).toString('hex')}`;
+    const payload = { event, deliveryId, timestamp, data: samplePayload };
     const signature = createHmac('sha256', testSecret)
-      .update(`${timestamp}.${JSON.stringify(samplePayload)}`)
+      .update(`${timestamp}.${JSON.stringify(payload)}`)
       .digest('hex');
 
+    let httpStatus = 0;
+    let delivered = false;
+    try {
+      const response = await fetchFn(targetUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Operza-Signature': `t=${timestamp},v1=${signature}`,
+          'X-Operza-Event': event,
+          'X-Operza-Delivery-Id': deliveryId
+        },
+        body: JSON.stringify(payload),
+        redirect: 'error',
+        signal: AbortSignal.timeout(10_000)
+      });
+      httpStatus = response.status;
+      delivered = Boolean(response.ok);
+    } catch {
+      httpStatus = 502;
+    }
+
     state.zapierHookDeliveries = state.zapierHookDeliveries || [];
-    const deliveryRecord = {
+    state.zapierHookDeliveries.unshift({
       id: deliveryId,
       agencyId: agency.id,
       locationId: activeLocation.id,
       event,
       targetUrl,
-      payload: samplePayload,
-      httpStatus: 200,
-      delivered: true,
+      httpStatus,
+      delivered,
       deliveredAt: new Date().toISOString()
-    };
-    state.zapierHookDeliveries.unshift(deliveryRecord);
+    });
     if (state.zapierHookDeliveries.length > 200) state.zapierHookDeliveries.length = 200;
     await saveState();
 
+    if (!delivered) {
+      return sendJson(res, 502, {
+        success: false,
+        code: 'WEBHOOK_TEST_FAILED',
+        deliveryId,
+        httpStatus
+      });
+    }
     return sendJson(res, 200, {
       success: true,
+      delivered: true,
       deliveryId,
       targetUrl,
       event,
+      httpStatus,
       sampleSent: samplePayload,
       signatureHeader: `t=${timestamp},v1=${signature}`
     });
@@ -1290,22 +1325,13 @@ export async function handleZapierRoute(req, res, {
       }
 
       case 'send_communication': {
-        const recipient = data.recipient || data.to;
-        const channel = data.channel || 'email';
-        const message = data.message || data.text || '';
-        const subject = data.subject || 'Automated Update via Zapier';
-
-        if (!recipient) return sendJson(res, 400, { error: 'recipient is required' });
-        if (!message) return sendJson(res, 400, { error: 'message is required' });
-
-        const dispatchId = `disp_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
-        return sendJson(res, 200, {
-          success: true,
-          dispatchId,
-          channel,
-          recipient,
-          status: 'dispatched',
-          sentAt: new Date().toISOString()
+        // This action must not claim success until a verified provider adapter,
+        // consent re-check and durable dispatch receipt are wired into this route.
+        return sendJson(res, 501, {
+          success: false,
+          status: 'not_configured',
+          code: 'PROVIDER_DISPATCH_NOT_IMPLEMENTED',
+          message: 'Communication dispatch is not enabled for this Zapier action yet.'
         });
       }
 
