@@ -2232,7 +2232,11 @@ const server = createServer(async (req, res) => {
       trustedWorkerHandlers,
       executeWorkerTick,
       randomUUID,
-      getActor
+      getActor,
+      platformRepository,
+      platformDbEnabled,
+      isStagingOrProd,
+      secretVaultDurable: Boolean(platformDbEnabled && process.env.OPERZA_VAULT_KEY && Buffer.byteLength(process.env.OPERZA_VAULT_KEY, 'utf8') >= 32)
     })) {
       return;
     }
