@@ -84,7 +84,7 @@ export async function verifyProviderConnection(connection, { secretResolver, ada
     if (typeof secret !== 'string' || secret.length < 1 || secret.length > 16_384) {
       return { ok: false, code: 'SECRET_NOT_FOUND', connection };
     }
-    const result = await adapter.verify({ secret, config: connection.config });
+    const result = await adapter.verify({ secret, secretRef: connection.secretRef, connection, config: connection.config });
     if (result?.verified !== true) {
       const updated = { ...connection, status: 'degraded', lastCheckCode: 'PROVIDER_VERIFICATION_FAILED', updatedAt: new Date(now).toISOString() };
       return { ok: false, code: 'PROVIDER_VERIFICATION_FAILED', connection: updated };

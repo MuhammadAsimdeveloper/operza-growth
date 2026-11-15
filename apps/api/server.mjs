@@ -42,6 +42,8 @@ import { authorizeCopilotTool, createCopilotProposal, getCopilotToolDefinition }
 import { resolveEntitlements, listPlans, checkFeatureAccess, checkUsageLimit, createUsageEvent, aggregateUsage } from '../../packages/platform-core/src/entitlements.mjs';
 import { createPlatformRepository } from '../../packages/db/lib/platform-repository.mjs';
 import { createPostgresSecretBackend } from '../../packages/db/lib/secret-vault-repository.mjs';
+import { createPostgresOAuthStateStore } from '../../packages/db/lib/outlook-oauth-state-repository.mjs';
+import { createOutlookOAuthService, createMemoryOAuthStateStore } from '../../packages/platform-core/src/outlook-oauth.mjs';
 import { workflowQueue } from './queue.mjs';
 import { handleZapierRoute, dispatchZapierEvent } from './zapier-router.mjs';
 import { handleSystemRoutes } from './routes/system.mjs';
@@ -55,7 +57,8 @@ import { MultiAgentOrchestrator, AGENT_ROLES, OPERZA_KNOWLEDGE_BASE, MULTILINGUA
 import { CopilotService, RAGEngine, resolveAIProvider, COPILOT_TOOLS } from '../../packages/platform-core/src/copilot/index.mjs';
 
 let secretResolver = null;
-const providerAdapterRegistry = createProviderAdapterRegistry();
+let providerAdapterRegistry = createProviderAdapterRegistry();
+let outlookOAuthService = null;
 const memoryOutboxRepo = createMemoryOutboxRepository();
 const billingLedgerStore = createBillingLedgerStore({ defaultCreditBalance: 10000 });
 const immutableAuditStore = createImmutableAuditStore();
@@ -183,6 +186,23 @@ secretResolver = createSecretResolver({
   masterKey: process.env.OPERZA_VAULT_KEY,
   backend: isStagingOrProd ? createPostgresSecretBackend(pgPool) : undefined
 });
+const microsoftOAuthConfigured = Boolean(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET && process.env.MICROSOFT_REDIRECT_URI);
+let outlookStateStore = createMemoryOAuthStateStore();
+if (pgPool) {
+  const oauthStateTable = await pgPool.query("SELECT to_regclass('public.provider_oauth_states') AS table_name");
+  if (oauthStateTable.rows[0]?.table_name) outlookStateStore = createPostgresOAuthStateStore(pgPool, { masterKey: process.env.OPERZA_VAULT_KEY });
+  else if (isStagingOrProd && microsoftOAuthConfigured) throw new Error('Migration 017 is required before enabling Microsoft Outlook OAuth in staging/production.');
+}
+outlookOAuthService = createOutlookOAuthService({
+  clientId: process.env.MICROSOFT_CLIENT_ID,
+  clientSecret: process.env.MICROSOFT_CLIENT_SECRET,
+  redirectUri: process.env.MICROSOFT_REDIRECT_URI,
+  tenant: process.env.MICROSOFT_TENANT_ID || 'common',
+  stateKey: process.env.OPERZA_VAULT_KEY,
+  secretResolver,
+  stateStore: outlookStateStore
+});
+providerAdapterRegistry = createProviderAdapterRegistry([outlookOAuthService.adapter]);
 const scrypt = promisify(scryptCallback);
 const root = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT || 4000);
@@ -7180,14 +7200,69 @@ const server = createServer(async (req, res) => {
       });
     }
 
+    if (method === 'GET' && pathname === '/api/platform/oauth/outlook/start') {
+      if (!['owner','admin'].includes(actor.membership.role)) return sendJson(res,403,{error:'Only workspace owners and admins can connect Outlook'});
+      if (!outlookOAuthService?.isConfigured) return sendJson(res,503,{error:'Microsoft Outlook OAuth is not configured on this deployment',code:'OUTLOOK_OAUTH_NOT_CONFIGURED'});
+      try {
+        const auth=await outlookOAuthService.begin({tenantId:agency.id,locationId:activeLocation.id,actorId:actor.user.id});
+        res.writeHead(302,{Location:auth.authorizationUrl,'Cache-Control':'no-store',Pragma:'no-cache'});res.end();return;
+      } catch(err) { return sendJson(res,400,{error:'Could not start Outlook authorization',code:err.code||'OUTLOOK_OAUTH_START_FAILED'}); }
+    }
+
+    if (method === 'GET' && pathname === '/api/platform/oauth/outlook/callback') {
+      const destination=new URL('/integrations',process.env.APP_BASE_URL||process.env.FRONTEND_URL||url.origin);
+      if(url.searchParams.has('error')) {
+        destination.searchParams.set('outlook','denied');
+        res.writeHead(302,{Location:destination.toString(),'Cache-Control':'no-store'});res.end();return;
+      }
+      try {
+        if(!outlookOAuthService?.isConfigured) throw Object.assign(new Error('Outlook OAuth unavailable'),{code:'OUTLOOK_OAUTH_NOT_CONFIGURED'});
+        if(!['owner','admin'].includes(actor.membership.role)) throw Object.assign(new Error('Admin role required'),{code:'OUTLOOK_ROLE_FORBIDDEN'});
+        const result=await outlookOAuthService.complete({
+          code:url.searchParams.get('code'),state:url.searchParams.get('state'),
+          tenantId:agency.id,locationId:activeLocation.id,actorId:actor.user.id
+        });
+        const pending=createProviderConnection({
+          tenantId:agency.id,locationId:activeLocation.id,providerKey:'email.microsoft_graph',
+          secretRef:result.secretRef,label:result.email?'Outlook · '+result.email:'Microsoft Outlook',
+          config:{accountId:result.accountId,senderEmail:result.email||'',senderName:result.displayName||''}
+        });
+        const verification=await verifyProviderConnection(pending,{secretResolver,adapter:providerAdapterRegistry.get('email.microsoft_graph')});
+        if(!verification.ok) {
+          await secretResolver.delete(result.secretRef).catch(()=>{});
+          throw Object.assign(new Error('Microsoft Graph mailbox verification failed'),{code:verification.code||'OUTLOOK_MAILBOX_VERIFICATION_FAILED'});
+        }
+        const saved=platformRepository
+          ? await platformRepository.createProviderConnection(verification.connection)
+          : (()=>{state.providerConnections=state.providerConnections||[];state.providerConnections.push(verification.connection);return publicProviderConnection(verification.connection);})();
+        if(!platformRepository) await saveState();
+        auditLog('provider.outlook.connected',actor,{connectionId:verification.connection.id,providerKey:'email.microsoft_graph'});
+        broadcast('platform.providers.verified',saved);
+        destination.searchParams.set('outlook','connected');
+        res.writeHead(302,{Location:destination.toString(),'Cache-Control':'no-store'});res.end();return;
+      } catch(err) {
+        logStructured('warn','Outlook OAuth callback failed',{code:err?.code||'OUTLOOK_OAUTH_CALLBACK_FAILED'});
+        destination.searchParams.set('outlook','failed');destination.searchParams.set('reason',err?.code||'OUTLOOK_OAUTH_CALLBACK_FAILED');
+        res.writeHead(302,{Location:destination.toString(),'Cache-Control':'no-store'});res.end();return;
+      }
+    }
+
     if (method === 'GET' && pathname === '/api/platform/providers') {
       return sendJson(res, 200, {
         data: PROVIDER_CATALOG.map(provider => ({
-          key: provider.key,
-          channel: provider.channel,
-          label: provider.label,
-          availability: provider.status,
-          liveDispatchEnabled: false
+          providerKey: provider.key,
+          name: provider.label,
+          category: provider.channel,
+          capabilities: provider.key === 'email.microsoft_graph' ? ['OAuth 2.0','Send email','Refresh tokens']
+            : provider.channel === 'email' ? ['Send email'] : provider.channel === 'sms' ? ['Send SMS']
+            : provider.channel === 'whatsapp' ? ['Send WhatsApp message'] : [],
+          availability: provider.key === 'email.microsoft_graph'
+            ? (outlookOAuthService?.isConfigured ? 'oauth_ready' : 'oauth_configuration_required')
+            : provider.status,
+          adapterAvailable: providerAdapterRegistry.has(provider.key),
+          oauthAvailable: provider.key === 'email.microsoft_graph' ? Boolean(outlookOAuthService?.isConfigured) : false,
+          liveDispatch: false,
+          secretRefFormatHint: 'vault:<tenant>/<location>/<credential-name>'
         }))
       });
     }
@@ -8461,7 +8536,7 @@ const server = createServer(async (req, res) => {
         { id: 'sendgrid', name: 'SendGrid', category: 'Communications', description: 'Transactional email delivery and marketing campaigns', icon: 'mail', connected: hasSendGrid, accountName: hasSendGrid ? 'noreply@operza.io' : '', status: hasSendGrid ? 'connected' : 'unconfigured', lastSyncAt: hasSendGrid ? new Date().toISOString() : null },
         { id: 'openai', name: 'OpenAI', category: 'AI & Copilot', description: 'Powering autonomous copilot, conversation replies, and summarization', icon: 'sparkles', connected: hasOpenAI, accountName: hasOpenAI ? 'GPT-4o & Embeddings' : '', status: hasOpenAI ? 'connected' : 'unconfigured', lastSyncAt: hasOpenAI ? new Date().toISOString() : null },
         { id: 'slack', name: 'Slack', category: 'Notifications', description: 'Real-time notifications for leads, booked appointments, and deals', icon: 'message', connected: hasSlack, accountName: hasSlack ? '#leads-alerts' : '', status: hasSlack ? 'connected' : 'unconfigured', lastSyncAt: null },
-        { id: 'zapier', name: 'Zapier & Webhooks', category: 'Automation', description: 'Native Operza webhook engine connecting 5,000+ external business applications', icon: 'zap', connected: true, accountName: 'Native Operza Engine', status: 'connected', lastSyncAt: new Date().toISOString() },
+        { id: 'zapier', name: 'Zapier & Webhooks API', category: 'Automation', description: 'Operza exposes a tenant-scoped REST Hook API for Zapier; no external Zapier account is assumed connected.', icon: 'zap', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
         { id: 'google_calendar', name: 'Google Calendar', category: 'Calendar', description: 'Two-way appointment synchronization and scheduling', icon: 'calendar', connected: hasGoogle, accountName: hasGoogle ? 'team@operza.io' : '', status: hasGoogle ? 'connected' : 'unconfigured', lastSyncAt: null },
         { id: 'meta_ads', name: 'Meta Ads', category: 'Marketing', description: 'Instant lead sync from Facebook & Instagram lead forms', icon: 'facebook', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
         { id: 'shopify', name: 'Shopify', category: 'Commerce', description: 'E-commerce store orders, customer import, and product sync', icon: 'store', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null }
@@ -8497,6 +8572,12 @@ const server = createServer(async (req, res) => {
       const target = list.find(i => i.id === integrationId);
       if (!target) return sendJson(res, 404, { error: 'Integration not found' });
 
+      // Generic marketplace metadata must not be promoted to a connected
+      // account until a real provider-specific authentication adapter exists.
+      return sendJson(res,501,{
+        success:false,code:'INTEGRATION_ADAPTER_NOT_IMPLEMENTED',
+        error:'This connector requires a provider-specific authentication and verification flow before it can be connected.'
+      });
       const body = await readBody(req);
       target.connected = true;
       target.status = 'connected';
@@ -8543,13 +8624,9 @@ const server = createServer(async (req, res) => {
       const target = list.find(i => i.id === integrationId);
       if (!target) return sendJson(res, 404, { error: 'Integration not found' });
 
-      target.lastSyncAt = new Date().toISOString();
-      await saveState();
-
-      return sendJson(res, 200, {
-        success: true,
-        latencyMs: Math.floor(25 + Math.random() * 30),
-        message: `${target.name} ping verified · Active connection confirmed`
+      return sendJson(res,501,{
+        success:false,code:'INTEGRATION_TEST_NOT_IMPLEMENTED',
+        error:'A live provider-specific health check is not implemented for this marketplace connector.'
       });
     }
 
