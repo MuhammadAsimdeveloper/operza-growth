@@ -1,128 +1,138 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto';
 
 const ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH = 16;
+const IV_LENGTH = 12;
 const SALT_LENGTH = 16;
 const TAG_LENGTH = 16;
+const MIN_MASTER_KEY_LENGTH = 32;
 
-/**
- * Derive a 256-bit encryption key from a master key string and salt using scrypt.
- */
-function deriveKey(masterKey, salt) {
-  if (!masterKey || typeof masterKey !== 'string' || masterKey.length < 8) {
-    throw new Error('Master key must be a string of at least 8 characters');
+function validateMasterKey(masterKey) {
+  if (typeof masterKey !== 'string' || masterKey.length < MIN_MASTER_KEY_LENGTH) {
+    throw Object.assign(new Error('OPERZA_VAULT_KEY must contain at least 32 characters'), {
+      code: 'VAULT_MASTER_KEY_REQUIRED'
+    });
   }
-  return scryptSync(masterKey, salt, 32);
+  return masterKey;
 }
 
-/**
- * Encrypt a secret string using AES-256-GCM.
- * Returns an envelope string: v1:salt:iv:tag:ciphertext (all hex-encoded).
- */
+function deriveKey(masterKey, salt) {
+  return scryptSync(validateMasterKey(masterKey), salt, 32);
+}
+
+function decodeHex(value, expectedLength, label) {
+  if (typeof value !== 'string' || !/^(?:[a-f0-9]{2})+$/i.test(value)) {
+    throw new Error('Invalid secret envelope ' + label);
+  }
+  const bytes = Buffer.from(value, 'hex');
+  if (expectedLength && bytes.length !== expectedLength) {
+    throw new Error('Invalid secret envelope ' + label + ' length');
+  }
+  return bytes;
+}
+
+/** Encrypt a secret using authenticated AES-256-GCM. */
 export function encryptSecret(plaintext, masterKey) {
   if (typeof plaintext !== 'string' || plaintext.length === 0) {
     throw new TypeError('Plaintext must be a non-empty string');
   }
   const salt = randomBytes(SALT_LENGTH);
-  const key = deriveKey(masterKey, salt);
   const iv = randomBytes(IV_LENGTH);
-
-  const cipher = createCipheriv(ALGORITHM, key, iv);
-  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const cipher = createCipheriv(ALGORITHM, deriveKey(masterKey, salt), iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
-
-  return `v1:${salt.toString('hex')}:${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`;
+  return ['v1', salt.toString('hex'), iv.toString('hex'), tag.toString('hex'), ciphertext.toString('hex')].join(':');
 }
 
-/**
- * Decrypt an AES-256-GCM envelope string.
- */
+/** Decrypt an authenticated AES-256-GCM envelope. */
 export function decryptSecret(envelope, masterKey) {
-  if (typeof envelope !== 'string' || !envelope.startsWith('v1:')) {
-    throw new Error('Invalid secret envelope format');
-  }
+  if (typeof envelope !== 'string') throw new Error('Invalid secret envelope format');
   const parts = envelope.split(':');
-  if (parts.length !== 5) {
-    throw new Error('Malformed secret envelope');
-  }
-  const [, saltHex, ivHex, tagHex, cipherHex] = parts;
-  const salt = Buffer.from(saltHex, 'hex');
-  const iv = Buffer.from(ivHex, 'hex');
-  const tag = Buffer.from(tagHex, 'hex');
-  const ciphertext = Buffer.from(cipherHex, 'hex');
-
-  const key = deriveKey(masterKey, salt);
-  const decipher = createDecipheriv(ALGORITHM, key, iv);
+  if (parts.length !== 5 || parts[0] !== 'v1') throw new Error('Malformed secret envelope');
+  const salt = decodeHex(parts[1], SALT_LENGTH, 'salt');
+  const iv = decodeHex(parts[2], IV_LENGTH, 'iv');
+  const tag = decodeHex(parts[3], TAG_LENGTH, 'tag');
+  const ciphertext = decodeHex(parts[4], null, 'ciphertext');
+  const decipher = createDecipheriv(ALGORITHM, deriveKey(masterKey, salt), iv);
   decipher.setAuthTag(tag);
-
-  const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-  return decrypted.toString('utf8');
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
 }
 
 /**
- * Factory for creating a pluggable, secure secret resolver.
- * Handles env:, vault:, and kms: URI reference schemes.
+ * Create a secret resolver with an optional persistent encrypted backend.
+ * The backend contract is get(ref), set(ref, encryptedValue), delete(ref).
+ * Memory storage is for local development and tests only; production and
+ * staging require a persistent backend. No default encryption key is used.
  */
-export function createSecretResolver({ masterKey = process.env.OPERZA_VAULT_KEY || 'operza-default-secure-vault-key-2026', initialSecrets = {} } = {}) {
-  const vault = new Map(Object.entries(initialSecrets));
+export function createSecretResolver({
+  masterKey = process.env.OPERZA_VAULT_KEY,
+  backend = null,
+  initialSecrets = {},
+  allowInMemory = !['production', 'staging'].includes(process.env.NODE_ENV)
+} = {}) {
+  const memory = new Map(Object.entries(initialSecrets));
+  const hasBackend = Boolean(backend && typeof backend.get === 'function' &&
+    typeof backend.set === 'function' && typeof backend.delete === 'function');
+
+  function assertCanEncrypt() {
+    validateMasterKey(masterKey);
+    if (!hasBackend && !allowInMemory) {
+      throw Object.assign(new Error('Persistent secret backend is not configured'), {
+        code: 'SECRET_BACKEND_UNAVAILABLE'
+      });
+    }
+  }
+
+  async function getEncrypted(secretRef) {
+    if (hasBackend) return backend.get(secretRef);
+    if (!allowInMemory) {
+      throw Object.assign(new Error('Persistent secret backend is not configured'), {
+        code: 'SECRET_BACKEND_UNAVAILABLE'
+      });
+    }
+    return memory.get(secretRef) || null;
+  }
 
   return {
-    /**
-     * Store a secret securely in the vault under a URI reference (e.g. vault:agency-1/resend-api-key)
-     */
     async store(secretRef, plaintext) {
       if (typeof secretRef !== 'string' || !/^(vault|kms):[A-Za-z0-9_.:/-]{2,180}$/.test(secretRef)) {
-        throw new Error('Invalid vault secret reference: ' + secretRef);
+        throw Object.assign(new Error('Invalid vault secret reference'), { code: 'INVALID_SECRET_REFERENCE' });
       }
+      assertCanEncrypt();
       const encrypted = encryptSecret(plaintext, masterKey);
-      vault.set(secretRef, encrypted);
+      if (hasBackend) await backend.set(secretRef, encrypted);
+      else memory.set(secretRef, encrypted);
       return secretRef;
     },
 
-    /**
-     * Resolve a secret reference to its raw plaintext value.
-     */
     async resolve(secretRef) {
       if (typeof secretRef !== 'string') return null;
-
-      // 1. env:VAR_NAME scheme
       if (secretRef.startsWith('env:')) {
-        const envVar = secretRef.slice(4).trim();
-        const value = process.env[envVar];
+        const value = process.env[secretRef.slice(4).trim()];
         return typeof value === 'string' && value.length > 0 ? value : null;
       }
-
-      // 2. vault: or kms: scheme
-      if (secretRef.startsWith('vault:') || secretRef.startsWith('kms:')) {
-        const encrypted = vault.get(secretRef);
-        if (!encrypted) return null;
-        try {
-          return decryptSecret(encrypted, masterKey);
-        } catch {
-          return null;
-        }
+      if (!secretRef.startsWith('vault:') && !secretRef.startsWith('kms:')) return null;
+      try {
+        const encrypted = await getEncrypted(secretRef);
+        if (!encrypted || typeof masterKey !== 'string' || masterKey.length < MIN_MASTER_KEY_LENGTH) return null;
+        return decryptSecret(encrypted, masterKey);
+      } catch {
+        return null;
       }
-
-      return null;
     },
 
-    /**
-     * Check if a secret reference exists in vault or environment
-     */
-    has(secretRef) {
+    async has(secretRef) {
       if (typeof secretRef !== 'string') return false;
-      if (secretRef.startsWith('env:')) {
-        const envVar = secretRef.slice(4).trim();
-        return Boolean(process.env[envVar]);
-      }
-      return vault.has(secretRef);
+      if (secretRef.startsWith('env:')) return Boolean(process.env[secretRef.slice(4).trim()]);
+      try { return Boolean(await getEncrypted(secretRef)); } catch { return false; }
     },
 
-    /**
-     * Remove a secret from the vault
-     */
-    delete(secretRef) {
-      return vault.delete(secretRef);
+    async delete(secretRef) {
+      if (typeof secretRef !== 'string') return false;
+      if (hasBackend) return backend.delete(secretRef);
+      if (!allowInMemory) {
+        throw Object.assign(new Error('Persistent secret backend is not configured'), { code: 'SECRET_BACKEND_UNAVAILABLE' });
+      }
+      return memory.delete(secretRef);
     }
   };
 }
