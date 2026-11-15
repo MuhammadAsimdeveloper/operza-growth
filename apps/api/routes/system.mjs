@@ -38,23 +38,51 @@ export async function handleSystemRoutes(req, res, ctx) {
   // 2. Readiness probe
   if (pathname === '/ready') {
     let dbStatus = 'disconnected';
+    let ready = true;
+    let platformStatus = 'not_enabled';
+    let platformError = null;
     if (pgPool) {
       try {
         const testRes = await pgPool.query('SELECT 1');
         if (testRes.rows.length > 0) dbStatus = 'connected';
       } catch {
         dbStatus = 'error';
+        ready = false;
       }
     } else {
       dbStatus = 'local_file_store';
     }
-    sendJson(res, 200, {
-      ready: true,
+
+    if (ctx.isStagingOrProd && dbStatus !== 'connected') ready = false;
+    if (ctx.isStagingOrProd && !ctx.platformDbEnabled) {
+      ready = false;
+      platformStatus = 'disabled';
+      platformError = 'Normalized PostgreSQL platform mode is required in staging and production';
+    } else if (ctx.platformDbEnabled) {
+      try {
+        await ctx.platformRepository?.checkReady();
+        platformStatus = 'ready';
+      } catch (error) {
+        ready = false;
+        platformStatus = 'not_ready';
+        platformError = error?.code || 'PLATFORM_READINESS_FAILED';
+      }
+    }
+    if (ctx.isStagingOrProd && !ctx.secretVaultDurable) {
+      ready = false;
+      platformError = platformError || 'DURABLE_SECRET_STORAGE_REQUIRED';
+    }
+
+    sendJson(res, ready ? 200 : 503, {
+      ready,
       dbEngine: pgPool ? 'postgresql' : 'json_file',
       dbStatus,
+      platformStatus,
+      secretVault: ctx.secretVaultDurable ? 'durable_postgresql' : 'ephemeral_or_unconfigured',
       wsReady: !!wss,
       uptime: process.uptime(),
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      ...(platformError ? { platformError } : {})
     });
     return true;
   }
@@ -62,10 +90,6 @@ export async function handleSystemRoutes(req, res, ctx) {
   // 3. Observability metrics
   if (pathname === '/metrics') {
     const mem = process.memoryUsage();
-    const entityCounts = {};
-    for (const [key, list] of Object.entries(state.records || {})) {
-      entityCounts[key] = (list || []).length;
-    }
     sendJson(res, 200, {
       uptime: process.uptime(),
       memory: {
@@ -81,11 +105,22 @@ export async function handleSystemRoutes(req, res, ctx) {
         totalUsers: (state.users || []).length,
         totalAgencies: (state.agencies || []).length,
         totalLocations: (state.locations || []).length,
-        records: entityCounts
       },
       timestamp: new Date().toISOString()
     });
     return true;
+  }
+
+  if (pathname.startsWith('/api/admin/')) {
+    const actor = getActor?.(req);
+    if (!actor?.user?.id) {
+      sendJson(res, 401, { error: 'Authentication required', code: 'AUTH_REQUIRED' });
+      return true;
+    }
+    if (!['owner', 'admin'].includes(actor.membership?.role)) {
+      sendJson(res, 403, { error: 'Workspace administrator permission required', code: 'ADMIN_REQUIRED' });
+      return true;
+    }
   }
 
   // 4. Admin Queue Status
