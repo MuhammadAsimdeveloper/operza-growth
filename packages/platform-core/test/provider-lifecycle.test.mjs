@@ -46,3 +46,17 @@ test('revocation is terminal and prevents dispatch', () => {
   assert.equal(revoked.status, 'revoked');
   assert.equal(providerMayDispatch(revoked), false);
 });
+
+
+test('Microsoft Outlook Graph is a supported email provider connection type', () => {
+  assert.equal(PROVIDER_CATALOG.some(item => item.key === 'email.microsoft_graph' && item.channel === 'email'), true);
+  const connection = createProviderConnection({
+    tenantId: 'tenant_001',
+    locationId: 'location_001',
+    providerKey: 'email.microsoft_graph',
+    secretRef: 'vault:tenant_001/location_001/outlook-refresh-token',
+    config: { tenantId: 'organizations', mailbox: 'owner@example.com' }
+  });
+  assert.equal(connection.status, 'pending_verification');
+  assert.equal(connection.providerKey, 'email.microsoft_graph');
+});
