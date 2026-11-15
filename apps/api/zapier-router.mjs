@@ -559,89 +559,132 @@ export function getZapierSamples(event, existingRecords = {}) {
  * @param {object} params
  * @returns {Promise<Array<object>>}
  */
-export async function dispatchZapierEvent({ agencyId, locationId, event, data, state, fetchFn = globalThis.fetch }) {
+export async function dispatchZapierEvent({
+  agencyId,
+  locationId,
+  event,
+  data,
+  state,
+  repository
+}) {
   if (!state || !agencyId || !event) return [];
   state.zapierHookSubscriptions = state.zapierHookSubscriptions || [];
   state.zapierHookDeliveries = state.zapierHookDeliveries || [];
 
   const subscriptions = state.zapierHookSubscriptions.filter(
-    s => s.agencyId === agencyId && (!locationId || s.locationId === locationId) && s.event === event && s.status === 'active'
+    subscription =>
+      subscription.agencyId === agencyId &&
+      (!locationId || subscription.locationId === locationId) &&
+      subscription.event === event &&
+      subscription.status === 'active'
   );
 
   const results = [];
   const timestamp = Math.floor(Date.now() / 1000);
 
-  for (const sub of subscriptions) {
+  for (const subscription of subscriptions) {
     const deliveryId = `deliv_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
-    const payload = {
+    const body = {
       event,
       deliveryId,
       timestamp,
-      subscriptionId: sub.id,
+      subscriptionId: subscription.id,
       data
     };
-
-    const signature = createHmac('sha256', sub.signingSecret)
-      .update(`${timestamp}.${JSON.stringify(payload)}`)
+    const signature = createHmac('sha256', subscription.signingSecret)
+      .update(`${timestamp}.${JSON.stringify(body)}`)
       .digest('hex');
+    const signatureHeader = `t=${timestamp},v1=${signature}`;
 
-    let httpStatus = 0;
-    let responseBody = '';
-    let success = false;
-
-    try {
-      const res = await fetchFn(sub.targetUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Operza-Signature': `t=${timestamp},v1=${signature}`,
-          'X-Operza-Event': event,
-          'X-Operza-Delivery-Id': deliveryId
-        },
-        body: JSON.stringify(payload)
-      });
-      httpStatus = res.status;
-      success = res.ok;
-      responseBody = await res.text().catch(() => '');
-      if (res.status === 410 || res.status === 404) {
-        sub.status = 'deactivated';
-        sub.deactivationReason = 'TARGET_GONE_OR_NOT_FOUND';
-      } else if (!res.ok) {
-        sub.consecutiveFailures = (sub.consecutiveFailures || 0) + 1;
-        if (sub.consecutiveFailures >= 5) {
-          sub.status = 'deactivated';
-          sub.deactivationReason = 'CONSECUTIVE_DELIVERY_FAILURES';
-        }
-      } else {
-        sub.consecutiveFailures = 0;
-      }
-    } catch (err) {
-      httpStatus = 500;
-      responseBody = err.message;
-      sub.consecutiveFailures = (sub.consecutiveFailures || 0) + 1;
-      if (sub.consecutiveFailures >= 5) {
-        sub.status = 'deactivated';
-        sub.deactivationReason = 'CONSECUTIVE_DELIVERY_FAILURES';
-      }
+    if (!repository || typeof repository.enqueue !== 'function') {
+      const result = {
+        id: deliveryId,
+        subscriptionId: subscription.id,
+        agencyId,
+        locationId: subscription.locationId,
+        event,
+        status: 'not_queued',
+        delivered: false,
+        httpStatus: null,
+        responseBody: 'Durable PostgreSQL outbox is not configured',
+        createdAt: new Date().toISOString()
+      };
+      state.zapierHookDeliveries.unshift(result);
+      results.push(result);
+      continue;
     }
 
-    const deliveryRecord = {
-      id: deliveryId,
-      subscriptionId: sub.id,
-      agencyId,
-      locationId: sub.locationId,
-      event,
-      payload,
-      httpStatus,
-      responseBody: responseBody.slice(0, 500),
-      delivered: success,
-      deliveredAt: new Date().toISOString()
-    };
-    state.zapierHookDeliveries.unshift(deliveryRecord);
-    if (state.zapierHookDeliveries.length > 200) state.zapierHookDeliveries.length = 200;
-    results.push(deliveryRecord);
+    if (!isSafeWebhookUrl(subscription.targetUrl)) {
+      const result = {
+        id: deliveryId,
+        subscriptionId: subscription.id,
+        agencyId,
+        locationId: subscription.locationId,
+        event,
+        status: 'blocked',
+        delivered: false,
+        httpStatus: null,
+        responseBody: 'Unsafe webhook target URL',
+        createdAt: new Date().toISOString()
+      };
+      state.zapierHookDeliveries.unshift(result);
+      results.push(result);
+      continue;
+    }
+
+    try {
+      const job = await repository.enqueue({
+        tenantId: agencyId,
+        locationId: subscription.locationId,
+        eventType: 'zapier.webhook.deliver',
+        idempotencyKey: `idem_zapier_${subscription.id}_${deliveryId}`,
+        maxAttempts: 6,
+        payload: {
+          tenantId: agencyId,
+          locationId: subscription.locationId,
+          subscriptionId: subscription.id,
+          event,
+          targetUrl: subscription.targetUrl,
+          body,
+          signatureHeader
+        }
+      });
+
+      const result = {
+        id: deliveryId,
+        outboxJobId: job.id,
+        subscriptionId: subscription.id,
+        agencyId,
+        locationId: subscription.locationId,
+        event,
+        status: job.status === 'delivered' ? 'delivered' : 'queued',
+        delivered: job.status === 'delivered',
+        httpStatus: null,
+        createdAt: new Date().toISOString()
+      };
+      state.zapierHookDeliveries.unshift(result);
+      results.push(result);
+    } catch (error) {
+      const result = {
+        id: deliveryId,
+        subscriptionId: subscription.id,
+        agencyId,
+        locationId: subscription.locationId,
+        event,
+        status: 'enqueue_failed',
+        delivered: false,
+        httpStatus: null,
+        responseBody: error?.code || 'OUTBOX_ENQUEUE_FAILED',
+        createdAt: new Date().toISOString()
+      };
+      state.zapierHookDeliveries.unshift(result);
+      results.push(result);
+    }
   }
 
+  if (state.zapierHookDeliveries.length > 500) {
+    state.zapierHookDeliveries.length = 500;
+  }
   return results;
 }
 
