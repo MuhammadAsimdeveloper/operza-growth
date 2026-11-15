@@ -208,17 +208,32 @@ export default function Integrations() {
 
   const fetchMarketplace = async () => {
     try {
-      const res = await api.integrations.list();
+      const [res, providerRes] = await Promise.all([
+        api.integrations.list(),
+        api.platform.getConnections()
+      ]);
+      const verifiedOutlook = (providerRes.data || []).find((connection: any) =>
+        connection.providerKey === 'email.microsoft_graph' && connection.status === 'verified'
+      );
       if (res?.integrations && res.integrations.length > 0) {
-        // Merge with defaults
+        // The local provider record is authoritative for OAuth-backed Outlook.
         const merged = DEFAULT_MARKETPLACE_APPS.map((def) => {
           const remote = res.integrations.find((r: any) => r.id === def.id);
-          return remote ? { ...def, ...remote } : def;
+          const app = remote ? { ...def, ...remote } : def;
+          if (def.id === 'outlook') {
+            return {
+              ...app,
+              connected: Boolean(verifiedOutlook),
+              status: verifiedOutlook ? 'connected' : 'disconnected',
+              accountName: verifiedOutlook?.config?.mailbox || verifiedOutlook?.label || undefined
+            };
+          }
+          return app;
         });
         setMarketplaceApps(merged);
       }
     } catch {
-      // Keep defaults
+      // Keep the last known provider state; never promote a local demo default.
     }
   };
 
