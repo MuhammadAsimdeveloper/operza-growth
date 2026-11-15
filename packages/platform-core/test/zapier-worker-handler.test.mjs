@@ -36,12 +36,12 @@ test('Zapier webhook worker delivers the signed payload and returns the actual p
 test('Zapier webhook worker fails closed on unsafe targets', async () => {
   const handlers = createTrustedWorkerHandlers({ fetchFn: async () => { throw new Error('must not fetch'); } });
   await assert.rejects(
-    handlers['zapier.webhook.deliver']({ ...basePayload, targetUrl: 'http://127.0.0.1/internal' }, {
+    handlers['zapier.webhook.deliver']({ ...basePayload, targetUrl: 'https://127.0.0.1/internal' }, {
       job: { id: 'job_002', idempotencyKey: 'idem_zapier_002' },
       workerId: 'worker_001',
       lease: { lost: false }
     }),
-    { code: 'SSRF_PRIVATE_NETWORK_TARGET' }
+    { code: 'SSRF_PRIVATE_IP_TARGET' }
   );
 });
 
