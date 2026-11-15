@@ -30,7 +30,9 @@ import { createActionInvocation, getWorkflowActionDefinition } from '../../packa
 import { createPendingApproval, resolvePendingApproval } from '../../packages/workflow-engine/src/approval-lifecycle.mjs';
 import { claimExecutionLease, heartbeatExecutionLease, releaseExecutionLease, recoverAbandonedExecutions } from '../../packages/workflow-engine/src/durable-leases.mjs';
 import { createProviderConnection, revokeProviderConnection, publicProviderConnection, PROVIDER_CATALOG, verifyProviderConnection } from '../../packages/platform-core/src/provider-lifecycle.mjs';
-import { createSecretResolver } from '../../packages/platform-core/src/secret-vault.mjs';
+import { createSecretResolver, createMemorySecretStorage } from '../../packages/platform-core/src/secret-vault.mjs';
+import { createPostgresSecretStorage } from '../../packages/db/lib/provider-secret-storage.mjs';
+import { createMicrosoftGraphClient, createMicrosoftPkcePair, createMicrosoftGraphProviderAdapter } from './integrations/microsoft-graph.mjs';
 import { createProviderAdapterRegistry } from '../../packages/platform-core/src/provider-adapters.mjs';
 import { createBillingLedgerStore, createImmutableAuditStore, gateAiToolExecution } from '../../packages/platform-core/src/billing-ledger.mjs';
 import { executeCopilotProposal } from '../../packages/platform-core/src/proposal-executor.mjs';
@@ -53,8 +55,8 @@ import { createDefaultLLMRuntime } from '../../packages/platform-core/src/llm-ru
 import { MultiAgentOrchestrator, AGENT_ROLES, OPERZA_KNOWLEDGE_BASE, MULTILINGUAL_GUIDELINES } from '../../packages/platform-core/src/multi-agent/index.mjs';
 import { CopilotService, RAGEngine, resolveAIProvider, COPILOT_TOOLS } from '../../packages/platform-core/src/copilot/index.mjs';
 
-const secretResolver = createSecretResolver();
-const providerAdapterRegistry = createProviderAdapterRegistry();
+let secretResolver = null;
+const providerAdapterRegistry = createProviderAdapterRegistry([createMicrosoftGraphProviderAdapter()]);
 const memoryOutboxRepo = createMemoryOutboxRepository();
 const billingLedgerStore = createBillingLedgerStore({ defaultCreditBalance: 10000 });
 const immutableAuditStore = createImmutableAuditStore();
@@ -166,6 +168,18 @@ try {
 const platformDbEnabled = process.env.PLATFORM_DB_ENABLED === 'true';
 if (platformDbEnabled && !pgPool) throw new Error('PLATFORM_DB_ENABLED requires a working DATABASE_URL and the pg module.');
 const platformRepository = platformDbEnabled ? createPlatformRepository(pgPool) : null;
+
+// Production/staging never fall back to ephemeral secret storage or an embedded key.
+if (isStagingOrProd && (!platformDbEnabled || Buffer.byteLength(process.env.OPERZA_VAULT_KEY || '', 'utf8') < 32)) {
+  throw new Error('[FATAL] Staging/production requires PLATFORM_DB_ENABLED=true, migration 016, and a 32-byte OPERZA_VAULT_KEY.');
+}
+const providerSecretStorage = platformDbEnabled
+  ? createPostgresSecretStorage(pgPool)
+  : (isStagingOrProd ? undefined : createMemorySecretStorage());
+secretResolver = createSecretResolver({
+  masterKey: process.env.OPERZA_VAULT_KEY,
+  storage: providerSecretStorage
+});
 const scrypt = promisify(scryptCallback);
 const root = path.dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.PORT || 4000);
@@ -1102,13 +1116,14 @@ async function executeWorkflowInstance({
           workflowName: flow.name
         }
       });
-      execution.outboxJobId = outboxEntry?.id || `job_${randomUUID().slice(0, 12)}`;
-      execution.outboxStatus = outboxEntry?.status || 'delivered';
-      execution.attemptCount = 1;
+      execution.outboxJobId = outboxEntry?.id || null;
+      execution.outboxStatus = outboxEntry?.status || 'pending';
+      execution.attemptCount = 0;
     } catch {
-      execution.outboxJobId = `job_${randomUUID().slice(0, 12)}`;
-      execution.outboxStatus = 'delivered';
-      execution.attemptCount = 1;
+      execution.outboxJobId = null;
+      execution.outboxStatus = 'enqueue_failed';
+      execution.lastErrorCode = 'OUTBOX_ENQUEUE_FAILED';
+      execution.attemptCount = 0;
     }
     state.workflowExecutions.push(execution);
     state.workflowApprovals = state.workflowApprovals || [];
@@ -1634,7 +1649,7 @@ function publicWorkflowExecution(execution) {
     finishedAt: execution.finishedAt || null,
     durationMs: execution.durationMs || 0,
     outboxJobId: execution.outboxJobId || null,
-    outboxStatus: execution.outboxStatus || 'delivered',
+    outboxStatus: execution.outboxStatus || 'not_enqueued',
     attemptCount: execution.attemptCount || 1,
     currentNodeIndex: execution.currentNodeIndex || 0,
     pendingApproval,
@@ -7283,10 +7298,26 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 403, { error: 'Only workspace owners and admins can store secrets' });
       }
       const body = await readBody(req);
-      if (!body.secretRef || !body.plaintext) {
+      if (typeof body.secretRef !== 'string' || typeof body.plaintext !== 'string' || !body.plaintext) {
         return sendJson(res, 400, { error: 'secretRef and plaintext are required' });
       }
-      await secretResolver.store(body.secretRef, body.plaintext);
+      const expectedPrefix = `vault:${agency.id}/${activeLocation.id}/`;
+      if (!body.secretRef.startsWith(expectedPrefix)) {
+        return sendJson(res, 400, {
+          error: 'Vault references must be scoped to the active tenant and location',
+          code: 'VAULT_TENANT_SCOPE_MISMATCH'
+        });
+      }
+      try {
+        await secretResolver.store(body.secretRef, body.plaintext);
+      } catch (error) {
+        const unavailable = ['SECRET_STORAGE_UNAVAILABLE', 'VAULT_MASTER_KEY_INVALID'];
+        return sendJson(res, unavailable.includes(error?.code) ? 503 : 400, {
+          error: unavailable.includes(error?.code) ? 'Secure secret storage is not configured for this environment' : 'Secret could not be stored',
+          code: error?.code || 'SECRET_STORE_FAILED'
+        });
+      }
+      auditLog('platform.secret.stored', actor, { secretRef: body.secretRef });
       return sendJson(res, 200, { success: true, secretRef: body.secretRef, stored: true });
     }
 
@@ -7603,7 +7634,7 @@ const server = createServer(async (req, res) => {
         status: run.status,
         mode: run.mode,
         outboxJobId: run.outboxJobId || null,
-        outboxStatus: run.outboxStatus || 'delivered',
+        outboxStatus: run.outboxStatus || 'not_enqueued',
         attemptCount: run.attemptCount || 1,
         steps: run.steps || [],
         durationMs: run.durationMs || 0,
