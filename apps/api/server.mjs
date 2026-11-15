@@ -7307,14 +7307,30 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'GET' && pathname === '/api/platform/providers') {
+      const providerDetails = {
+        'email.microsoft_graph': { capabilities: ['oauth2', 'send_email', 'refresh_tokens'], configFields: ['tenantId', 'mailbox'] },
+        'email.sendgrid': { capabilities: ['email'], configFields: ['senderEmail'] },
+        'email.resend': { capabilities: ['email'], configFields: ['senderEmail'] },
+        'sms.twilio': { capabilities: ['sms'], configFields: ['accountId'] },
+        'whatsapp.meta_cloud': { capabilities: ['whatsapp'], configFields: ['phoneNumberId', 'businessAccountId'] },
+        'payments.stripe': { capabilities: ['payments'], configFields: ['accountId'] }
+      };
       return sendJson(res, 200, {
-        data: PROVIDER_CATALOG.map(provider => ({
-          key: provider.key,
-          channel: provider.channel,
-          label: provider.label,
-          availability: provider.status,
-          liveDispatchEnabled: false
-        }))
+        data: PROVIDER_CATALOG.map(provider => {
+          const details = providerDetails[provider.key] || { capabilities: [], configFields: [] };
+          return {
+            providerKey: provider.key,
+            name: provider.label,
+            category: provider.channel === 'payments' ? 'payment' : provider.channel,
+            capabilities: details.capabilities,
+            requiredConfigFields: details.configFields,
+            secretRefFormatHint: provider.key === 'email.microsoft_graph'
+              ? 'Connected using Microsoft OAuth'
+              : 'env:<SERVER_VARIABLE> or vault:<AGENCY_UUID>/<LOCATION_UUID>/<SECRET_NAME>',
+            availability: provider.status,
+            liveDispatch: provider.key === 'email.microsoft_graph'
+          };
+        })
       });
     }
 
