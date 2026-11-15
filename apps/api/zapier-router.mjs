@@ -17,6 +17,7 @@
 
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { authorizeZapierRequest } from './zapier-authz.mjs';
+import { assertPublicWebhookTarget, postWebhookWithPinnedDns } from '../../packages/platform-core/src/zapier-worker-handler.mjs';
 
 /**
  * Validates whether a target webhook URL is safe for outbound dispatch.
@@ -676,6 +677,7 @@ export async function handleZapierRoute(req, res, {
   broadcast,
   zapierRepository,
   secretResolver,
+  sendWebhook = postWebhookWithPinnedDns,
   fetchFn = globalThis.fetch
 }) {
   if (!pathname.startsWith('/api/v1/zapier/')) return false;
@@ -744,6 +746,7 @@ export async function handleZapierRoute(req, res, {
     const body=await readBody(req),targetUrl=(body.target_url||body.targetUrl||'').trim(),event=(body.event||'').trim();
     if(!targetUrl||!event)return sendJson(res,400,{error:'target_url and event are required'});
     if(!isSafeWebhookUrl(targetUrl))return sendJson(res,400,{error:'A valid public HTTPS endpoint is required',code:'INVALID_WEBHOOK_URL'});
+    try{await assertPublicWebhookTarget(targetUrl);}catch(error){return sendJson(res,400,{error:'Webhook destination failed public-address validation',code:error.code||'INVALID_WEBHOOK_URL'});}
     if(zapierRepository){
       if(typeof secretResolver?.store!=='function')return sendJson(res,503,{error:'Encrypted secret storage unavailable',code:'SECRET_RESOLVER_UNAVAILABLE'});
       const id=randomUUID(),secret=randomBytes(32).toString('base64url'),secretRef=`vault:${agency.id}/${activeLocation.id}/zapier-hook-${id}`;
@@ -799,8 +802,7 @@ export async function handleZapierRoute(req, res, {
     let httpStatus = 0;
     let delivered = false;
     try {
-      const response = await fetchFn(targetUrl, {
-        method: 'POST',
+      const response = await sendWebhook(targetUrl, {
         headers: {
           'Content-Type': 'application/json',
           'X-Operza-Signature': `t=${timestamp},v1=${signature}`,
@@ -808,8 +810,7 @@ export async function handleZapierRoute(req, res, {
           'X-Operza-Delivery-Id': deliveryId
         },
         body: JSON.stringify(payload),
-        redirect: 'error',
-        signal: AbortSignal.timeout(10_000)
+        timeoutMs: 10_000
       });
       httpStatus = response.status;
       delivered = Boolean(response.ok);
