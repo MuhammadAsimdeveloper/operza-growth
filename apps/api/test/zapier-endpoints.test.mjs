@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isSafeWebhookUrl, getZapierSamples, dispatchZapierEvent, getZapierRequiredScopes, isZapierScopeAuthorized } from '../zapier-router.mjs';
+import { isSafeWebhookUrl, getZapierSamples, dispatchZapierEvent, getZapierRequiredScopes, isZapierScopeAuthorized, handleZapierRoute } from '../zapier-router.mjs';
 
 test('isSafeWebhookUrl rejects insecure and private SSRF target URLs', () => {
   assert.equal(isSafeWebhookUrl('http://insecure.test/hook'), false);
@@ -108,4 +108,40 @@ test('Zapier API keys are restricted to their explicit scopes and legacy aliases
   assert.equal(isZapierScopeAuthorized({ isApiKey: true, apiKey: { scopes: ['workflows:trigger'] } }, ['workflows:execute']), true);
   assert.equal(isZapierScopeAuthorized({ isApiKey: true, apiKey: { scopes: [] } }, ['contacts:read']), false);
   assert.equal(isZapierScopeAuthorized({ isApiKey: false }, ['contacts:write']), true);
+});
+
+
+test('Zapier HTTP router blocks API keys without the route-specific scope', async () => {
+  const headers = {};
+  let statusCode = 0;
+  let responseBody = null;
+  const res = {
+    writeHead(status, values = {}) { statusCode = status; Object.assign(headers, values); },
+    end(body) { responseBody = JSON.parse(body); }
+  };
+  const handled = await handleZapierRoute(
+    { method: 'POST', url: '/api/v1/zapier/actions/create_contact', headers: {} },
+    res,
+    {
+      method: 'POST',
+      pathname: '/api/v1/zapier/actions/create_contact',
+      actor: { isApiKey: true, apiKey: { scopes: ['contacts:read'] } },
+      agency: { id: 'agency_001', name: 'Test Agency' },
+      activeLocation: { id: 'location_001' },
+      state: {},
+      saveState: async () => {},
+      sendJson(response, status, payload) {
+        response.writeHead(status, { 'content-type': 'application/json' });
+        response.end(JSON.stringify(payload));
+        return true;
+      },
+      readBody: async () => ({}),
+      executeWorkflowInstance: async () => {},
+      broadcast: () => {}
+    }
+  );
+  assert.equal(handled, true);
+  assert.equal(statusCode, 403);
+  assert.equal(responseBody.code, 'INSUFFICIENT_SCOPE');
+  assert.deepEqual(responseBody.requiredScopes, ['contacts:write']);
 });
