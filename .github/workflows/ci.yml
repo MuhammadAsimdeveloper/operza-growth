@@ -58,6 +58,9 @@ jobs:
       - name: Database Schema & Logic Unit Tests
         run: npm --workspace=@operza/db test
 
+      - name: API Route & Provider Integration Tests
+        run: npm --workspace=@operza/api test
+
       - name: Production Vite 6 / React 19 Build
         run: npm run build
 
@@ -96,7 +99,7 @@ jobs:
       - name: Install Monorepo Dependencies
         run: npm ci
 
-      - name: Execute Real PostgreSQL Migrations 001-014 & RLS Suite
+      - name: Execute Real PostgreSQL Migrations 001-016 & RLS Suite
         env:
           OPERZA_TEST_DATABASE_URL: postgresql://operza_ci_admin:ci_test_password_123@127.0.0.1:5432/operza_ci_test
         run: npm --workspace=@operza/db test
