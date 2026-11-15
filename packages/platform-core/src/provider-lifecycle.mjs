@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 const REF = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{1,180}$/;
-const ALLOWED_CONFIG = new Set(['accountId', 'region', 'senderEmail', 'senderName', 'phoneNumberId', 'businessAccountId', 'webhookId']);
+const ALLOWED_CONFIG = new Set(['accountId', 'region', 'senderEmail', 'senderName', 'fromNumber', 'phoneNumberId', 'businessAccountId', 'webhookId']);
 
 export const PROVIDER_CATALOG = Object.freeze([
   Object.freeze({ key: 'email.sendgrid', channel: 'email', label: 'SendGrid Email', status: 'adapter_required' }),
   Object.freeze({ key: 'email.resend', channel: 'email', label: 'Resend Email', status: 'adapter_required' }),
+  Object.freeze({ key: 'email.microsoft_graph', channel: 'email', label: 'Microsoft Outlook (Graph)', status: 'oauth_required' }),
   Object.freeze({ key: 'sms.twilio', channel: 'sms', label: 'Twilio SMS', status: 'adapter_required' }),
   Object.freeze({ key: 'whatsapp.meta_cloud', channel: 'whatsapp', label: 'WhatsApp Cloud API', status: 'adapter_required' }),
   Object.freeze({ key: 'payments.stripe', channel: 'payments', label: 'Stripe Payments', status: 'disabled_pending_compliance' })
