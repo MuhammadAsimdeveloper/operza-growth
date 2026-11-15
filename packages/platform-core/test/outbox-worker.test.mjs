@@ -41,7 +41,7 @@ test('createMemoryOutboxRepository enqueues, deduplicates and claims jobs', asyn
   assert.equal(stats.pending, 0);
 });
 
-test('executeWorkerTick processes outbox batch with trusted handlers', async () => {
+test('executeWorkerTick dead-letters events with no real trusted business handler', async () => {
   const repo = createMemoryOutboxRepository();
 
   await repo.enqueue({
@@ -59,8 +59,9 @@ test('executeWorkerTick processes outbox batch with trusted handlers', async () 
 
   assert.equal(tickResult.claimed, 1);
   assert.equal(tickResult.processed, 1);
-  assert.equal(tickResult.results[0].status, 'delivered');
+  assert.equal(tickResult.results[0].status, 'dead_letter');
 
   const stats = repo.getStats();
-  assert.equal(stats.completed, 1);
+  assert.equal(stats.completed, 0);
+  assert.equal(stats.dead_letter, 1);
 });
