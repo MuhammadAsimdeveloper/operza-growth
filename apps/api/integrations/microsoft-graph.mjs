@@ -205,3 +205,52 @@ export function createMicrosoftGraphClient({
     }
   });
 }
+
+
+/**
+ * Provider-lifecycle adapter. The vault secret is an OAuth refresh token;
+ * each send obtains a short-lived access token and returns Graph's 202
+ * acceptance status (never a fabricated delivery receipt).
+ */
+export function createMicrosoftGraphProviderAdapter({ clientFactory = createMicrosoftGraphClient } = {}) {
+  return Object.freeze({
+    id: 'adapter-microsoft-graph-mail-v1',
+    providerKey: 'email.microsoft_graph',
+    channel: 'email',
+
+    async verify({ secret, config = {} } = {}) {
+      if (typeof secret !== 'string' || secret.length < 16) {
+        return { verified: false, error: 'Microsoft OAuth refresh token is missing or malformed' };
+      }
+      const client = clientFactory({ tenantId: config.tenantId || 'common' });
+      const tokens = await client.refreshAccessToken({ refreshToken: secret });
+      if (typeof tokens?.access_token !== 'string' || tokens.access_token.length < 16) {
+        return { verified: false, error: 'Microsoft did not issue an access token' };
+      }
+      const profile = await client.getProfile({ accessToken: tokens.access_token });
+      const accountId = profile?.id || profile?.userPrincipalName || profile?.mail;
+      if (typeof accountId !== 'string' || !accountId) {
+        return { verified: false, error: 'Microsoft Graph returned no account identity' };
+      }
+      return { verified: true, accountId: accountId.slice(0, 120) };
+    },
+
+    async dispatch({ secret, config = {}, payload = {}, consent } = {}) {
+      if (!consent || consent.status !== 'granted') {
+        return { ok: false, error: 'Communication consent not granted', code: 'CONSENT_REQUIRED' };
+      }
+      const client = clientFactory({ tenantId: config.tenantId || 'common' });
+      const tokens = await client.refreshAccessToken({ refreshToken: secret });
+      if (typeof tokens?.access_token !== 'string' || tokens.access_token.length < 16) {
+        return { ok: false, error: 'Microsoft token refresh did not return an access token', code: 'MICROSOFT_TOKEN_REFRESH_FAILED' };
+      }
+      return client.sendMail({
+        accessToken: tokens.access_token,
+        to: payload.to || payload.recipient,
+        subject: payload.subject,
+        body: payload.body || payload.message,
+        bodyType: payload.bodyType || 'Text'
+      });
+    }
+  });
+}
