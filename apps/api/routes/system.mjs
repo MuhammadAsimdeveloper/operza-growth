@@ -103,7 +103,7 @@ export async function handleSystemRoutes(req, res, ctx) {
   // Guard: Admin routes require an authenticated platform superadmin or valid OPERZA_ADMIN_KEY.
   // Standard tenant agency owners/admins are NOT permitted to invoke platform-level operations.
   if (pathname.startsWith('/api/admin/')) {
-    const actor = getActor(req);
+    const actor = await getActor(req);
     const isStagingOrProd = process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging';
     const disallowedKeys = new Set([
       'operza-internal-admin-telemetry-key-min-32-chars',
@@ -164,16 +164,53 @@ export async function handleSystemRoutes(req, res, ctx) {
           FROM workflow_outbox
         `);
         const row = statsRes.rows[0] || {};
+        const stats = {
+          pending: Number(row.pending || 0),
+          leased: Number(row.leased || 0),
+          delivered: Number(row.delivered || 0),
+          dead_letter: Number(row.dead_letter || 0),
+          total: Number(row.total || 0)
+        };
+
+        // Query real worker heartbeat table for alive workers within last 30 seconds
+        const heartbeatRes = await pgPool.query(`
+          SELECT worker_id, hostname, pid, last_heartbeat_at, status, metadata,
+                 EXTRACT(EPOCH FROM (now() - last_heartbeat_at))::int AS seconds_since_heartbeat
+          FROM worker_heartbeats
+          WHERE status = 'alive' AND last_heartbeat_at >= now() - INTERVAL '30 seconds'
+          ORDER BY last_heartbeat_at DESC
+          LIMIT 1
+        `).catch(() => ({ rows: [] }));
+
+        const activeWorker = heartbeatRes.rows[0];
+        if (activeWorker) {
+          sendJson(res, 200, {
+            status: 'active',
+            workerId: activeWorker.worker_id,
+            lastHeartbeatAt: activeWorker.last_heartbeat_at,
+            secondsSinceHeartbeat: activeWorker.seconds_since_heartbeat,
+            stats,
+            engine: 'postgresql'
+          });
+          return true;
+        }
+
+        const historicalRes = await pgPool.query(`
+          SELECT worker_id, last_heartbeat_at, status
+          FROM worker_heartbeats
+          ORDER BY last_heartbeat_at DESC
+          LIMIT 1
+        `).catch(() => ({ rows: [] }));
+        const lastKnown = historicalRes.rows[0];
+
         sendJson(res, 200, {
-          status: 'active',
-          workerId: 'operza-worker-pg-pool',
-          stats: {
-            pending: Number(row.pending || 0),
-            leased: Number(row.leased || 0),
-            delivered: Number(row.delivered || 0),
-            dead_letter: Number(row.dead_letter || 0),
-            total: Number(row.total || 0)
-          },
+          status: 'inactive',
+          workerId: null,
+          lastKnownWorkerId: lastKnown?.worker_id || null,
+          lastHeartbeatAt: lastKnown?.last_heartbeat_at || null,
+          stats,
+          code: 'NO_ACTIVE_WORKER_HEARTBEAT',
+          message: 'No active worker heartbeat detected within the last 30 seconds',
           engine: 'postgresql'
         });
         return true;
@@ -233,7 +270,7 @@ export async function handleSystemRoutes(req, res, ctx) {
 
   // 7. Admin Outbox Enqueue
   if (method === 'POST' && pathname === '/api/admin/outbox/enqueue') {
-    const actor = getActor(req);
+    const actor = await getActor(req);
     const tenantId = actor?.agency?.id || 'admin-tenant';
     const locationId = actor?.activeLocation?.id || 'default';
     const body = await readBody(req);

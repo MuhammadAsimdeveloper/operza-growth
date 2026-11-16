@@ -170,14 +170,45 @@ export async function handleAuthRoutes(req, res, ctx) {
 
     const token = randomBytes(32).toString('hex');
     const csrf = randomBytes(24).toString('hex');
+    const sessionId = randomUUID();
+    const tokenHash = hash(token);
+    const csrfHash = hash(csrf);
+    const expiresAtMs = Date.now() + 12 * 3600 * 1000;
     state.sessions.push({
-      id: randomUUID(),
-      tokenHash: hash(token),
-      csrfHash: hash(csrf),
+      id: sessionId,
+      tokenHash,
+      csrfHash,
       userId,
       agencyId,
-      expiresAt: Date.now() + 12 * 3600 * 1000
+      expiresAt: expiresAtMs
     });
+
+    if (pgPool) {
+      try {
+        await pgPool.query(
+          'INSERT INTO agencies (id, name, slug, status) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING',
+          [agencyId, agency.name, agency.slug, 'active']
+        );
+        await pgPool.query(
+          'INSERT INTO users (id, name, email, password_hash, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING',
+          [userId, user.name, user.email, user.passwordHash, 'active']
+        );
+        await pgPool.query(
+          'INSERT INTO agency_memberships (id, agency_id, user_id, role, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (agency_id, user_id) DO NOTHING',
+          [membership.id, agencyId, userId, membership.role || 'owner', 'active']
+        );
+        await pgPool.query(
+          'INSERT INTO locations (id, agency_id, name, status) VALUES ($1, $2, $3, $4) ON CONFLICT (agency_id, id) DO NOTHING',
+          [locationId, agencyId, location.name, 'active']
+        );
+        await pgPool.query(
+          'INSERT INTO auth_sessions (id, token_hash, csrf_hash, user_id, agency_id, expires_at) VALUES ($1, $2, $3, $4, $5, to_timestamp($6 / 1000.0)) ON CONFLICT (token_hash) DO NOTHING',
+          [sessionId, tokenHash, csrfHash, userId, agencyId, expiresAtMs]
+        );
+      } catch (dbErr) {
+        console.warn('[AUTH-PG-SYNC] Failed to write auth record to PostgreSQL:', dbErr.message);
+      }
+    }
 
     setSessionCookies(res, token, csrf);
     await saveState();
@@ -306,14 +337,29 @@ export async function handleAuthRoutes(req, res, ctx) {
     const locations = state.locations.filter(l => l.agencyId === agency.id && l.status === 'active');
     const token = randomBytes(32).toString('hex');
     const csrf = randomBytes(24).toString('hex');
+    const sessionId = randomUUID();
+    const tokenHash = hash(token);
+    const csrfHash = hash(csrf);
+    const expiresAtMs = Date.now() + 12 * 3600 * 1000;
     state.sessions.push({
-      id: randomUUID(),
-      tokenHash: hash(token),
-      csrfHash: hash(csrf),
+      id: sessionId,
+      tokenHash,
+      csrfHash,
       userId: user.id,
       agencyId: agency.id,
-      expiresAt: Date.now() + 12 * 3600 * 1000
+      expiresAt: expiresAtMs
     });
+
+    if (pgPool) {
+      try {
+        await pgPool.query(
+          'INSERT INTO auth_sessions (id, token_hash, csrf_hash, user_id, agency_id, expires_at) VALUES ($1, $2, $3, $4, $5, to_timestamp($6 / 1000.0)) ON CONFLICT (token_hash) DO NOTHING',
+          [sessionId, tokenHash, csrfHash, user.id, agency.id, expiresAtMs]
+        );
+      } catch (dbErr) {
+        console.warn('[AUTH-LOGIN-PG] Failed to write session to PostgreSQL:', dbErr.message);
+      }
+    }
 
     setSessionCookies(res, token, csrf);
     await saveState();
@@ -492,14 +538,29 @@ export async function handleAuthRoutes(req, res, ctx) {
     const locations = state.locations.filter(l => l.agencyId === agency.id && l.status === 'active');
     const token = randomBytes(32).toString('hex');
     const csrf = randomBytes(24).toString('hex');
+    const sessionId = randomUUID();
+    const tokenHash = hash(token);
+    const csrfHash = hash(csrf);
+    const expiresAtMs = Date.now() + 12 * 3600 * 1000;
     state.sessions.push({
-      id: randomUUID(),
-      tokenHash: hash(token),
-      csrfHash: hash(csrf),
+      id: sessionId,
+      tokenHash,
+      csrfHash,
       userId: user.id,
       agencyId: agency.id,
-      expiresAt: Date.now() + 12 * 3600 * 1000
+      expiresAt: expiresAtMs
     });
+
+    if (pgPool) {
+      try {
+        await pgPool.query(
+          'INSERT INTO auth_sessions (id, token_hash, csrf_hash, user_id, agency_id, expires_at) VALUES ($1, $2, $3, $4, $5, to_timestamp($6 / 1000.0)) ON CONFLICT (token_hash) DO NOTHING',
+          [sessionId, tokenHash, csrfHash, user.id, agency.id, expiresAtMs]
+        );
+      } catch (dbErr) {
+        console.warn('[AUTH-LOGIN-PG] Failed to write session to PostgreSQL:', dbErr.message);
+      }
+    }
 
     setSessionCookies(res, token, csrf);
     await saveState();
@@ -542,14 +603,29 @@ export async function handleAuthRoutes(req, res, ctx) {
 
     const token = randomBytes(32).toString('hex');
     const csrf = randomBytes(24).toString('hex');
+    const sessionId = randomUUID();
+    const tokenHash = hash(token);
+    const csrfHash = hash(csrf);
+    const expiresAtMs = Date.now() + 12 * 3600 * 1000;
     state.sessions.push({
-      id: randomUUID(),
-      tokenHash: hash(token),
-      csrfHash: hash(csrf),
+      id: sessionId,
+      tokenHash,
+      csrfHash,
       userId: user.id,
       agencyId: agency.id,
-      expiresAt: Date.now() + 12 * 3600 * 1000
+      expiresAt: expiresAtMs
     });
+
+    if (pgPool) {
+      try {
+        await pgPool.query(
+          'INSERT INTO auth_sessions (id, token_hash, csrf_hash, user_id, agency_id, expires_at) VALUES ($1, $2, $3, $4, $5, to_timestamp($6 / 1000.0)) ON CONFLICT (token_hash) DO NOTHING',
+          [sessionId, tokenHash, csrfHash, user.id, agency.id, expiresAtMs]
+        );
+      } catch (dbErr) {
+        console.warn('[AUTH-LOGIN-PG] Failed to write session to PostgreSQL:', dbErr.message);
+      }
+    }
 
     setSessionCookies(res, token, csrf);
     await saveState();
@@ -566,7 +642,7 @@ export async function handleAuthRoutes(req, res, ctx) {
 
   // 6. AUTH: Current Session Check
   if (method === 'GET' && pathname === '/api/auth/session') {
-    const actor = getActor(req);
+    const actor = await getActor(req);
     if (!actor) {
       sendJson(res, 401, { error: 'Not authenticated' });
       return true;
@@ -583,7 +659,7 @@ export async function handleAuthRoutes(req, res, ctx) {
 
   // 7. AUTH: Full user profile
   if (method === 'GET' && pathname === '/api/auth/me') {
-    const actor = getActor(req);
+    const actor = await getActor(req);
     if (!actor) {
       sendJson(res, 401, { error: 'Not authenticated' });
       return true;

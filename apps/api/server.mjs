@@ -46,6 +46,7 @@ import { createPostgresSecretBackend } from '../../packages/db/lib/secret-vault-
 import { createZapierHookRepository } from '../../packages/db/lib/zapier-hook-repository.mjs';
 import { createPostgresOAuthStateStore } from '../../packages/db/lib/outlook-oauth-state-repository.mjs';
 import { createOutlookOAuthService, createMemoryOAuthStateStore } from '../../packages/platform-core/src/outlook-oauth.mjs';
+import { executeCalendarSync, googleCalendarAdapter, microsoftGraphCalendarAdapter } from '../../packages/platform-core/src/calendar-sync.mjs';
 import { workflowQueue } from './queue.mjs';
 import { handleZapierRoute, dispatchZapierEvent } from './zapier-router.mjs';
 import { handleSystemRoutes } from './routes/system.mjs';
@@ -762,8 +763,16 @@ async function initDatabase() {
           payload jsonb NOT NULL,
           updated_at timestamptz NOT NULL DEFAULT now()
         );
+        CREATE TABLE IF NOT EXISTS worker_heartbeats (
+          worker_id text PRIMARY KEY,
+          hostname text,
+          pid integer,
+          last_heartbeat_at timestamptz NOT NULL DEFAULT now(),
+          status text NOT NULL DEFAULT 'alive' CHECK (status IN ('alive', 'stopped', 'degraded')),
+          metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+        );
       `);
-      console.log('🐘 [OPERZA-DB] Connected to PostgreSQL. Initialized table: operza_app_state');
+      console.log('🐘 [OPERZA-DB] Connected to PostgreSQL. Initialized tables: operza_app_state, worker_heartbeats');
     } finally {
       client.release();
     }
@@ -793,25 +802,38 @@ async function syncRelationalWrite(collectionName, action, record, agencyId) {
       }
       if (collectionName === 'contacts') {
         if (action === 'delete') {
-          await client.query('DELETE FROM contacts WHERE id = $1', [record.id]);
+          await client.query('DELETE FROM location_records WHERE agency_id = $1 AND collection = $2 AND id = $3', [targetAgencyId, 'contacts', record.id]).catch(() => {});
+          await client.query('DELETE FROM contacts WHERE id = $1', [record.id]).catch(() => {});
         } else {
           await client.query(`
-            INSERT INTO contacts (id, agency_id, location_id, first_name, last_name, email, phone, company, status, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-            ON CONFLICT (id) DO UPDATE SET
-              first_name = EXCLUDED.first_name,
-              last_name = EXCLUDED.last_name,
-              email = EXCLUDED.email,
-              phone = EXCLUDED.phone,
-              company = EXCLUDED.company,
-              status = EXCLUDED.status,
+            INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
+            VALUES ($1, $2, $3, 'contacts', $4::jsonb, $5, $6)
+            ON CONFLICT (agency_id, location_id, collection, id) DO UPDATE SET
+              body = EXCLUDED.body,
               updated_at = EXCLUDED.updated_at
           `, [
-            record.id, record.agencyId, record.locationId,
-            record.firstName || '', record.lastName || '', record.email || '',
-            record.phone || '', record.company || '', record.status || 'lead',
+            record.id, targetAgencyId, targetLocationId || targetAgencyId,
+            JSON.stringify(record),
             record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
-          ]);
+          ]).catch(async () => {
+            await client.query(`
+              INSERT INTO contacts (id, agency_id, location_id, first_name, last_name, email, phone, company, status, created_at, updated_at)
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+              ON CONFLICT (id) DO UPDATE SET
+                first_name = EXCLUDED.first_name,
+                last_name = EXCLUDED.last_name,
+                email = EXCLUDED.email,
+                phone = EXCLUDED.phone,
+                company = EXCLUDED.company,
+                status = EXCLUDED.status,
+                updated_at = EXCLUDED.updated_at
+            `, [
+              record.id, targetAgencyId, targetLocationId || targetAgencyId,
+              record.firstName || '', record.lastName || '', record.email || '',
+              record.phone || '', record.company || '', record.status || 'lead',
+              record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
+            ]);
+          });
         }
       } else if (collectionName === 'tasks') {
         if (action === 'delete') {
@@ -872,20 +894,28 @@ async function syncRelationalWrite(collectionName, action, record, agencyId) {
             `, [targetLocationId, targetAgencyId]);
           }
 
+          const calAvailability = JSON.stringify({
+            ...(record.availability || {}),
+            externalSync: record.externalSync || null,
+            externalBusyBlocks: record.externalBusyBlocks || []
+          });
+
           await client.query(`
-            INSERT INTO calendars (id, agency_id, location_id, name, slug, duration_min, status, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO calendars (id, agency_id, location_id, name, slug, duration_min, status, availability, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10)
             ON CONFLICT (agency_id, location_id, id) DO UPDATE SET
               name = EXCLUDED.name,
               slug = EXCLUDED.slug,
               duration_min = EXCLUDED.duration_min,
               status = EXCLUDED.status,
+              availability = EXCLUDED.availability,
               updated_at = EXCLUDED.updated_at
           `, [
-            record.id, targetAgencyId, targetLocationId,
+            record.id, targetAgencyId, targetLocationId || targetAgencyId,
             record.name || 'Calendar', record.slug || record.id,
             Number(record.durationMin) || 30,
             record.status === 'inactive' ? 'inactive' : 'active',
+            calAvailability,
             record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
           ]);
         }
@@ -927,6 +957,59 @@ async function syncRelationalWrite(collectionName, action, record, agencyId) {
             record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
           ]);
         }
+      } else if (collectionName === 'workflows') {
+        if (action === 'delete') {
+          await client.query('DELETE FROM workflow_definitions WHERE agency_id = $1 AND id = $2', [targetAgencyId, record.id]);
+        } else {
+          if (targetAgencyId) {
+            await client.query(`
+              INSERT INTO agencies (id, name, slug)
+              VALUES ($1, 'Agency', $2)
+              ON CONFLICT (id) DO NOTHING
+            `, [targetAgencyId, 'agency-' + String(targetAgencyId).slice(0, 8)]);
+          }
+          if (targetAgencyId && targetLocationId) {
+            await client.query(`
+              INSERT INTO locations (id, agency_id, name)
+              VALUES ($1, $2, 'Main Location')
+              ON CONFLICT (agency_id, id) DO NOTHING
+            `, [targetLocationId, targetAgencyId]);
+          }
+          await client.query(`
+            INSERT INTO workflow_definitions (id, agency_id, location_id, name, status, trigger_type, trigger_config, nodes, version, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11)
+            ON CONFLICT (agency_id, location_id, id) DO UPDATE SET
+              name = EXCLUDED.name,
+              status = EXCLUDED.status,
+              trigger_type = EXCLUDED.trigger_type,
+              trigger_config = EXCLUDED.trigger_config,
+              nodes = EXCLUDED.nodes,
+              version = EXCLUDED.version,
+              updated_at = EXCLUDED.updated_at
+          `, [
+            record.id, targetAgencyId, targetLocationId || targetAgencyId,
+            record.name || 'Workflow', record.status || 'draft',
+            record.triggerType || record.trigger?.kind || 'manual', JSON.stringify(record.triggerConfig || record.trigger || {}),
+            JSON.stringify(record.nodes || record.actions || []), Number(record.version) || 1,
+            record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
+          ]);
+        }
+      } else {
+        if (action === 'delete') {
+          await client.query('DELETE FROM location_records WHERE agency_id = $1 AND collection = $2 AND id = $3', [targetAgencyId, collectionName, record.id]).catch(() => {});
+        } else {
+          await client.query(`
+            INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
+            ON CONFLICT (agency_id, location_id, collection, id) DO UPDATE SET
+              body = EXCLUDED.body,
+              updated_at = EXCLUDED.updated_at
+          `, [
+            record.id, targetAgencyId, targetLocationId || targetAgencyId,
+            collectionName, JSON.stringify(record),
+            record.createdAt || new Date().toISOString(), record.updatedAt || new Date().toISOString()
+          ]).catch(() => {});
+        }
       }
       await client.query('COMMIT');
     } catch (txErr) {
@@ -942,6 +1025,143 @@ async function syncRelationalWrite(collectionName, action, record, agencyId) {
         code: 'RELATIONAL_WRITE_FAILED'
       });
     }
+  }
+}
+
+async function loadAuthoritativeCollectionRecords(collectionName, agencyId, locationId) {
+  if (!pgPool) {
+    state.records[collectionName] = state.records[collectionName] || [];
+    return state.records[collectionName].filter(r => r.agencyId === agencyId && (!r.locationId || !locationId || r.locationId === locationId));
+  }
+
+  const client = await pgPool.connect();
+  try {
+    if (agencyId) await client.query("SELECT set_config('app.agency_id', $1, true)", [String(agencyId)]);
+    if (locationId) await client.query("SELECT set_config('app.location_id', $1, true)", [String(locationId)]);
+
+    if (collectionName === 'calendars') {
+      const res = await client.query(`
+        SELECT id, agency_id, location_id, name, slug, color, duration_min, availability, round_robin, description, status, created_at, updated_at
+        FROM calendars
+        WHERE agency_id = $1 AND ($2::uuid IS NULL OR location_id = $2)
+        ORDER BY created_at DESC
+      `, [agencyId, locationId || null]);
+      return res.rows.map(row => ({
+        id: row.id,
+        agencyId: row.agency_id,
+        locationId: row.location_id,
+        name: row.name,
+        slug: row.slug,
+        color: row.color,
+        durationMin: row.duration_min,
+        roundRobin: row.round_robin,
+        description: row.description,
+        status: row.status,
+        availability: row.availability || {},
+        externalSync: row.availability?.externalSync || null,
+        externalBusyBlocks: row.availability?.externalBusyBlocks || [],
+        createdAt: row.created_at?.toISOString?.() || row.created_at,
+        updatedAt: row.updated_at?.toISOString?.() || row.updated_at
+      }));
+    }
+
+    if (collectionName === 'appointments') {
+      const res = await client.query(`
+        SELECT id, agency_id, location_id, calendar_id, contact_id, title, starts_at, ends_at, status, assigned_to, notes, created_at, updated_at
+        FROM appointments
+        WHERE agency_id = $1 AND ($2::uuid IS NULL OR location_id = $2)
+        ORDER BY starts_at ASC
+      `, [agencyId, locationId || null]);
+      return res.rows.map(row => ({
+        id: row.id,
+        agencyId: row.agency_id,
+        locationId: row.location_id,
+        calendarId: row.calendar_id,
+        contactId: row.contact_id,
+        title: row.title,
+        startsAt: row.starts_at?.toISOString?.() || row.starts_at,
+        endsAt: row.ends_at?.toISOString?.() || row.ends_at,
+        status: row.status,
+        assignedTo: row.assigned_to,
+        notes: row.notes,
+        createdAt: row.created_at?.toISOString?.() || row.created_at,
+        updatedAt: row.updated_at?.toISOString?.() || row.updated_at
+      }));
+    }
+
+    if (collectionName === 'opportunities') {
+      const res = await client.query(`
+        SELECT id, agency_id, location_id, pipeline_id, stage_id, name, value, status, created_at, updated_at
+        FROM opportunities
+        WHERE agency_id = $1 AND ($2::uuid IS NULL OR location_id = $2)
+        ORDER BY created_at DESC
+      `, [agencyId, locationId || null]);
+      return res.rows.map(row => ({
+        id: row.id,
+        agencyId: row.agency_id,
+        locationId: row.location_id,
+        pipelineId: row.pipeline_id,
+        stageId: row.stage_id,
+        name: row.name,
+        value: row.value,
+        status: row.status,
+        createdAt: row.created_at?.toISOString?.() || row.created_at,
+        updatedAt: row.updated_at?.toISOString?.() || row.updated_at
+      }));
+    }
+
+    if (collectionName === 'workflows') {
+      const res = await client.query(`
+        SELECT id, agency_id, location_id, name, status, trigger_type, trigger_config, nodes, version, created_at, updated_at
+        FROM workflow_definitions
+        WHERE agency_id = $1 AND ($2::uuid IS NULL OR location_id = $2)
+        ORDER BY created_at DESC
+      `, [agencyId, locationId || null]);
+      return res.rows.map(row => {
+        const parsedNodes = typeof row.nodes === 'string' ? JSON.parse(row.nodes) : (row.nodes || []);
+        const triggerConf = typeof row.trigger_config === 'string' ? JSON.parse(row.trigger_config) : (row.trigger_config || {});
+        return {
+          id: row.id,
+          agencyId: row.agency_id,
+          locationId: row.location_id,
+          name: row.name,
+          status: row.status,
+          triggerType: row.trigger_type,
+          triggerConfig: triggerConf,
+          trigger: triggerConf?.kind ? triggerConf : { kind: row.trigger_type, ...triggerConf },
+          nodes: parsedNodes,
+          actions: parsedNodes,
+          version: row.version,
+          createdAt: row.created_at?.toISOString?.() || row.created_at,
+          updatedAt: row.updated_at?.toISOString?.() || row.updated_at
+        };
+      });
+    }
+
+    // Default to location_records for other collections (contacts, tasks, forms, etc.)
+    const res = await client.query(`
+      SELECT id, agency_id, location_id, body, created_at, updated_at
+      FROM location_records
+      WHERE agency_id = $1 AND ($2::uuid IS NULL OR location_id = $2) AND collection = $3
+      ORDER BY updated_at DESC
+    `, [agencyId, locationId || null, collectionName]).catch(() => ({ rows: [] }));
+
+    if (res.rows.length > 0) {
+      return res.rows.map(row => ({
+        ...(row.body || {}),
+        id: row.id,
+        agencyId: row.agency_id,
+        locationId: row.location_id,
+        createdAt: row.created_at?.toISOString?.() || row.created_at,
+        updatedAt: row.updated_at?.toISOString?.() || row.updated_at
+      }));
+    }
+
+    // Fallback to in-memory records if location_records empty
+    state.records[collectionName] = state.records[collectionName] || [];
+    return state.records[collectionName].filter(r => r.agencyId === agencyId && (!r.locationId || !locationId || r.locationId === locationId));
+  } finally {
+    client.release();
   }
 }
 
@@ -1019,7 +1239,7 @@ async function saveState() {
   return writeQueue;
 }
 
-function getActor(req) {
+async function getActor(req) {
   let token = cookieValue(req.headers.cookie, cookieSession);
   let isBearer = false;
   if (!token && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
@@ -1029,7 +1249,67 @@ function getActor(req) {
   if (!token) return null;
 
   const tokenHash = hash(token);
-  const session = state.sessions.find(s => s.tokenHash === tokenHash && s.expiresAt > Date.now());
+  let session = state.sessions.find(s => s.tokenHash === tokenHash && s.expiresAt > Date.now());
+
+  // If session is not in local memory, check authoritative PostgreSQL auth_sessions table
+  if (!session && pgPool) {
+    try {
+      const sessRes = await pgPool.query(`
+        SELECT s.id, s.token_hash, s.csrf_hash, s.user_id, s.agency_id,
+               extract(epoch from s.expires_at) * 1000 AS expires_at_ms,
+               u.name as user_name, u.email as user_email, u.status as user_status,
+               a.name as agency_name, a.slug as agency_slug, a.status as agency_status
+        FROM auth_sessions s
+        JOIN users u ON u.id = s.user_id
+        JOIN agencies a ON a.id = s.agency_id
+        WHERE s.token_hash = $1 AND s.expires_at > now()
+      `, [tokenHash]);
+
+      if (sessRes.rows.length > 0) {
+        const row = sessRes.rows[0];
+        session = {
+          id: row.id,
+          tokenHash: row.token_hash,
+          csrfHash: row.csrf_hash,
+          userId: row.user_id,
+          agencyId: row.agency_id,
+          expiresAt: Number(row.expires_at_ms)
+        };
+        state.sessions.push(session);
+
+        let user = state.users.find(u => u.id === row.user_id);
+        if (!user) {
+          user = { id: row.user_id, name: row.user_name, email: row.user_email, status: row.user_status || 'active' };
+          state.users.push(user);
+        }
+        let agency = state.agencies.find(a => a.id === row.agency_id);
+        if (!agency) {
+          agency = { id: row.agency_id, name: row.agency_name, slug: row.agency_slug, status: row.agency_status || 'active' };
+          state.agencies.push(agency);
+        }
+
+        let locations = state.locations.filter(l => l.agencyId === row.agency_id && l.status === 'active');
+        if (locations.length === 0) {
+          const locRes = await pgPool.query('SELECT id, agency_id, name FROM locations WHERE agency_id = $1', [row.agency_id]);
+          locations = locRes.rows.map(l => ({ id: l.id, agencyId: l.agency_id, name: l.name, status: 'active' }));
+          state.locations.push(...locations);
+        }
+
+        let membership = state.memberships.find(m => m.agencyId === row.agency_id && m.userId === row.user_id);
+        if (!membership) {
+          membership = { id: randomUUID(), agencyId: row.agency_id, userId: row.user_id, role: 'owner', status: 'active' };
+          state.memberships.push(membership);
+        }
+
+        const requestedLoc = req.headers['x-operza-location'];
+        const activeLocation = locations.find(l => l.id === requestedLoc) || locations[0] || { id: 'default', agencyId: row.agency_id, name: 'Main Location' };
+
+        return { user, agency, membership, locations, activeLocation, csrfHash: session.csrfHash, isBearer };
+      }
+    } catch (pgErr) {
+      console.warn('[AUTH-ACTOR-PG] Failed to load session from PostgreSQL:', pgErr.message);
+    }
+  }
   if (session) {
     const user = state.users.find(u => u.id === session.userId && u.status === 'active');
     const agency = state.agencies.find(a => a.id === session.agencyId && a.status === 'active');
@@ -1643,6 +1923,21 @@ async function executeWorkflowInstance({
     status: execution.status,
     durationMs: execution.durationMs
   });
+  if (pgPool) {
+    try {
+      await pgPool.query(`
+        UPDATE workflow_executions SET
+          status = $2,
+          finished_at = CASE WHEN $2 IN ('completed', 'failed', 'canceled') THEN now() ELSE finished_at END,
+          last_error_code = $3,
+          state = $4::jsonb,
+          updated_at = now()
+        WHERE agency_id = $5 AND id = $1
+      `, [execution.id, execution.status, execution.lastErrorCode || null, JSON.stringify(execution.steps || []), agencyId]);
+    } catch (pgErr) {
+      console.warn('[WORKFLOW-EXEC-PERSIST] DB update warning:', pgErr.message);
+    }
+  }
   await saveState();
   return execution;
 }
@@ -4686,7 +4981,7 @@ const server = createServer(async (req, res) => {
     // ═════════════════════════════════════════════════════════════
     // ─── AUTH REQUIRED FOR ALL ROUTES BELOW ─────────────────────
     // ═════════════════════════════════════════════════════════════
-    const actor = getActor(req);
+    const actor = await getActor(req);
     if (!actor) return sendJson(res, 401, { error: 'Authentication required' });
     const { agency, activeLocation } = actor;
 
@@ -6139,32 +6434,173 @@ const server = createServer(async (req, res) => {
     // Connect 2-Way External Calendar Sync
     if (method === 'POST' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/sync/connect')) {
       const calId = pathname.replace('/api/calendars/', '').replace('/sync/connect', '').trim();
-      const calendars = state.records.calendars || [];
-      const cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
+      let calendars = state.records.calendars || [];
+      let cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
+      if (!cal && pgPool) {
+        const calRes = await pgPool.query('SELECT * FROM calendars WHERE agency_id = $1 AND id = $2', [agency.id, calId]);
+        if (calRes.rows.length > 0) {
+          const row = calRes.rows[0];
+          cal = {
+            id: row.id,
+            agencyId: row.agency_id,
+            locationId: row.location_id,
+            name: row.name,
+            slug: row.slug,
+            durationMin: row.duration_min,
+            status: row.status,
+            availability: row.availability || {},
+            externalSync: row.availability?.externalSync || null,
+            externalBusyBlocks: row.availability?.externalBusyBlocks || []
+          };
+          calendars.push(cal);
+        }
+      }
       if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
 
       const body = await readBody(req);
       const provider = body.provider || 'google_calendar';
-      const email = body.email || actor?.user?.email || 'operator@operza.io';
+      const token = body.accessToken || body.apiKey || body.token;
+      const refreshToken = body.refreshToken;
+
+      // Verification check: never mark connected without actual credentials verification
+      if (!token && !refreshToken) {
+        return sendJson(res, 401, {
+          success: false,
+          code: 'CALENDAR_AUTH_FAILED',
+          error: 'Calendar provider authorization required: missing access token or refresh token'
+        });
+      }
+
+      let adapter = null;
+      if (provider === 'google_calendar' || provider === 'google') {
+        adapter = googleCalendarAdapter;
+      } else if (provider === 'microsoft_graph' || provider === 'outlook') {
+        adapter = microsoftGraphCalendarAdapter;
+      } else {
+        return sendJson(res, 400, {
+          success: false,
+          code: 'UNSUPPORTED_CALENDAR_PROVIDER',
+          error: `Provider '${provider}' is not supported for calendar synchronization.`
+        });
+      }
+
+      const verification = await adapter.verify({
+        accessToken: token,
+        refreshToken,
+        clientId: body.clientId,
+        clientSecret: body.clientSecret,
+        fetchFn: globalThis.fetch
+      });
+
+      if (!verification.verified) {
+        return sendJson(res, 401, {
+          success: false,
+          code: verification.code || 'CALENDAR_AUTH_FAILED',
+          error: 'Calendar provider rejected authorization: invalid or expired credentials'
+        });
+      }
+
+      const email = verification.email || body.email || actor?.user?.email || 'operator@operza.io';
       cal.externalSync = {
         provider,
         email,
-        calendarName: body.calendarName || `${provider === 'google_calendar' ? 'Google' : 'Outlook'} Calendar (${email})`,
-        syncDirection: 'two_way',
-        status: 'active',
+        calendarName: verification.calendarName || body.calendarName || `${provider === 'google_calendar' ? 'Google' : 'Outlook'} Calendar (${email})`,
+        syncDirection: body.syncDirection || 'two_way',
+        status: 'connected',
         lastSyncAt: new Date().toISOString(),
-        connectedAt: new Date().toISOString()
+        connectedAt: new Date().toISOString(),
+        accessToken: verification.freshAccessToken || token,
+        refreshToken: refreshToken || null
       };
+
       if (Array.isArray(body.busyBlocks)) {
         cal.externalBusyBlocks = body.busyBlocks;
+      } else {
+        // Perform initial sync to ingest busy blocks
+        try {
+          const syncResult = await executeCalendarSync({
+            calendar: cal,
+            appointments: state.records.appointments || [],
+            syncDirection: cal.externalSync.syncDirection,
+            credentials: { accessToken: cal.externalSync.accessToken, refreshToken: cal.externalSync.refreshToken },
+            fetchFn: globalThis.fetch
+          });
+          cal.externalBusyBlocks = syncResult.busyBlocks;
+          cal.externalSync.lastSyncAt = syncResult.lastSyncAt;
+        } catch (syncErr) {
+          console.warn('[CALENDAR-SYNC] Initial busy block fetch warning:', syncErr.message);
+        }
       }
+
       cal.updatedAt = new Date().toISOString();
       await saveState();
+      await syncRelationalWrite('calendars', 'update', cal, agency.id);
 
       auditLog('calendar.sync.connected', actor, { calendarId: cal.id, provider, email });
       broadcast('crm.calendar.synced', { calendarId: cal.id, externalSync: cal.externalSync });
 
       return sendJson(res, 200, { success: true, externalSync: cal.externalSync, calendar: cal });
+    }
+
+    // Trigger Calendar Sync Now
+    if (method === 'POST' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/sync/now')) {
+      const calId = pathname.replace('/api/calendars/', '').replace('/sync/now', '').trim();
+      const calendars = state.records.calendars || [];
+      const cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
+      if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
+      if (!cal.externalSync || cal.externalSync.status !== 'connected') {
+        return sendJson(res, 400, { error: 'Calendar is not connected to an external provider', code: 'CALENDAR_NOT_CONNECTED' });
+      }
+
+      try {
+        const syncResult = await executeCalendarSync({
+          calendar: cal,
+          appointments: state.records.appointments || [],
+          syncDirection: cal.externalSync.syncDirection || 'two_way',
+          credentials: { accessToken: cal.externalSync.accessToken, refreshToken: cal.externalSync.refreshToken },
+          fetchFn: globalThis.fetch
+        });
+        cal.externalBusyBlocks = syncResult.busyBlocks;
+        cal.externalSync.lastSyncAt = syncResult.lastSyncAt;
+        cal.updatedAt = new Date().toISOString();
+        await saveState();
+        await syncRelationalWrite('calendars', 'update', cal, agency.id);
+
+        return sendJson(res, 200, {
+          success: true,
+          calendarId: cal.id,
+          busyBlocksCount: cal.externalBusyBlocks.length,
+          lastSyncAt: cal.externalSync.lastSyncAt
+        });
+      } catch (err) {
+        if (err.code === 'CALENDAR_AUTH_FAILED' || err.code === 'CALENDAR_UNAUTHORIZED') {
+          cal.externalSync.status = 'error';
+          cal.updatedAt = new Date().toISOString();
+          await saveState();
+          await syncRelationalWrite('calendars', 'update', cal, agency.id);
+          return sendJson(res, 401, { error: 'Calendar provider authorization expired', code: 'CALENDAR_AUTH_FAILED' });
+        }
+        return sendJson(res, 500, { error: err.message, code: err.code || 'CALENDAR_SYNC_FAILED' });
+      }
+    }
+
+    // Disconnect 2-Way Calendar Sync
+    if (method === 'POST' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/sync/disconnect')) {
+      const calId = pathname.replace('/api/calendars/', '').replace('/sync/disconnect', '').trim();
+      const calendars = state.records.calendars || [];
+      const cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
+      if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
+
+      cal.externalSync = { status: 'disconnected', provider: null };
+      cal.externalBusyBlocks = [];
+      cal.updatedAt = new Date().toISOString();
+      await saveState();
+      await syncRelationalWrite('calendars', 'update', cal, agency.id);
+
+      auditLog('calendar.sync.disconnected', actor, { calendarId: cal.id });
+      broadcast('crm.calendar.synced', { calendarId: cal.id, externalSync: cal.externalSync });
+
+      return sendJson(res, 200, { success: true, calendarId: cal.id, externalSync: cal.externalSync });
     }
 
     // Retrieve Calendar 2-Way Sync Status
@@ -7562,6 +7998,36 @@ const server = createServer(async (req, res) => {
 
     if (method === 'GET' && pathname === '/api/workflows/runs') {
       await expirePendingWorkflowApprovals();
+      if (pgPool) {
+        try {
+          const resExec = await pgPool.query(`
+            SELECT id, agency_id, location_id, workflow_id, status, trigger_event,
+                   current_node_id, state, attempts, last_error_code, finished_at, created_at, updated_at
+            FROM workflow_executions
+            WHERE agency_id = $1 AND ($2::uuid IS NULL OR location_id = $2)
+            ORDER BY created_at DESC
+          `, [agency.id, activeLocation?.id || null]);
+          if (resExec.rows.length > 0) {
+            const mappedRuns = resExec.rows.map(row => ({
+              id: row.id,
+              agencyId: row.agency_id,
+              locationId: row.location_id,
+              workflowId: row.workflow_id,
+              status: row.status,
+              triggerContext: row.trigger_event,
+              currentNodeId: row.current_node_id,
+              state: row.state,
+              attempts: row.attempts,
+              lastErrorCode: row.last_error_code,
+              createdAt: row.created_at?.toISOString?.() || row.created_at,
+              finishedAt: row.finished_at?.toISOString?.() || row.finished_at
+            }));
+            return sendJson(res, 200, mappedRuns.map(publicWorkflowExecution));
+          }
+        } catch (pgErr) {
+          console.warn('[WORKFLOW-RUNS] PG query warning:', pgErr.message);
+        }
+      }
       const runs = (state.workflowExecutions || []).filter(
         w => w.agencyId === agency.id && w.locationId === activeLocation.id
       );
@@ -7570,6 +8036,34 @@ const server = createServer(async (req, res) => {
 
     if (method === 'GET' && pathname === '/api/workflows/approvals') {
       await expirePendingWorkflowApprovals();
+      if (pgPool) {
+        try {
+          const appRes = await pgPool.query(`
+            SELECT id, agency_id, location_id, execution_id, workflow_id, node_id, action_id, action_hash, status, requested_at, expires_at
+            FROM workflow_approvals
+            WHERE agency_id = $1 AND ($2::uuid IS NULL OR location_id = $2) AND status = 'pending'
+            ORDER BY requested_at DESC
+          `, [agency.id, activeLocation?.id || null]);
+          if (appRes.rows.length > 0) {
+            const mapped = appRes.rows.map(row => ({
+              id: row.id,
+              agencyId: row.agency_id,
+              locationId: row.location_id,
+              executionId: row.execution_id,
+              workflowId: row.workflow_id,
+              nodeId: row.node_id,
+              actionId: row.action_id,
+              actionHash: row.action_hash,
+              status: row.status,
+              createdAt: row.requested_at?.toISOString?.() || row.requested_at,
+              expiresAt: row.expires_at?.toISOString?.() || row.expires_at
+            }));
+            return sendJson(res, 200, mapped.map(publicWorkflowApproval));
+          }
+        } catch (pgErr) {
+          console.warn('[WORKFLOW-APPROVALS] PG query warning:', pgErr.message);
+        }
+      }
       state.workflowApprovals = state.workflowApprovals || [];
       const approvals = state.workflowApprovals.filter(
         item => item.agencyId === agency.id && item.locationId === activeLocation.id && item.status === 'pending'
@@ -8581,23 +9075,18 @@ const server = createServer(async (req, res) => {
     // ═════════════════════════════════════════════════════════════
 
     const getDefaultIntegrations = () => {
-      const hasStripe = Boolean(process.env.STRIPE_SECRET_KEY);
-      const hasTwilio = Boolean(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
-      const hasSendGrid = Boolean(process.env.SENDGRID_API_KEY);
-      const hasOpenAI = Boolean(process.env.OPENAI_API_KEY);
-      const hasSlack = Boolean(process.env.SLACK_WEBHOOK_URL);
-      const hasGoogle = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
-
       return [
-        { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, and payment links', icon: 'credit-card', connected: hasStripe, accountName: hasStripe ? 'Verified Stripe Gateway' : '', status: hasStripe ? 'connected' : 'unconfigured', lastSyncAt: hasStripe ? new Date().toISOString() : null },
-        { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'SMS messaging, phone numbers, and voice call tracking', icon: 'phone', connected: hasTwilio, accountName: hasTwilio ? '+1 (800) 555-0100' : '', status: hasTwilio ? 'connected' : 'unconfigured', lastSyncAt: hasTwilio ? new Date().toISOString() : null },
-        { id: 'sendgrid', name: 'SendGrid', category: 'Communications', description: 'Transactional email delivery and marketing campaigns', icon: 'mail', connected: hasSendGrid, accountName: hasSendGrid ? 'noreply@operza.io' : '', status: hasSendGrid ? 'connected' : 'unconfigured', lastSyncAt: hasSendGrid ? new Date().toISOString() : null },
-        { id: 'openai', name: 'OpenAI', category: 'AI & Copilot', description: 'Powering autonomous copilot, conversation replies, and summarization', icon: 'sparkles', connected: hasOpenAI, accountName: hasOpenAI ? 'GPT-4o & Embeddings' : '', status: hasOpenAI ? 'connected' : 'unconfigured', lastSyncAt: hasOpenAI ? new Date().toISOString() : null },
-        { id: 'slack', name: 'Slack', category: 'Notifications', description: 'Real-time notifications for leads, booked appointments, and deals', icon: 'message', connected: hasSlack, accountName: hasSlack ? '#leads-alerts' : '', status: hasSlack ? 'connected' : 'unconfigured', lastSyncAt: null },
+        { id: 'twilio', name: 'Twilio', category: 'Communications', description: 'SMS messaging, phone numbers, and voice call tracking', icon: 'phone', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+        { id: 'sendgrid', name: 'SendGrid', category: 'Communications', description: 'Transactional email delivery and marketing campaigns', icon: 'mail', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+        { id: 'resend', name: 'Resend', category: 'Communications', description: 'Modern developer email delivery with domain verification', icon: 'mail', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+        { id: 'whatsapp', name: 'WhatsApp (Meta Cloud API)', category: 'Communications', description: 'Official WhatsApp business messaging', icon: 'message', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+        { id: 'google_calendar', name: 'Google Calendar', category: 'Calendar', description: 'Two-way appointment synchronization and scheduling', icon: 'calendar', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+        { id: 'outlook', name: 'Microsoft 365 (Outlook & Calendar)', category: 'Communications', description: 'Two-way Outlook mail and calendar sync', icon: 'mail', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
         { id: 'zapier', name: 'Zapier & Webhooks API', category: 'Automation', description: 'Operza exposes a tenant-scoped REST Hook API for Zapier; no external Zapier account is assumed connected.', icon: 'zap', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
-        { id: 'google_calendar', name: 'Google Calendar', category: 'Calendar', description: 'Two-way appointment synchronization and scheduling', icon: 'calendar', connected: hasGoogle, accountName: hasGoogle ? 'team@operza.io' : '', status: hasGoogle ? 'connected' : 'unconfigured', lastSyncAt: null },
+        { id: 'stripe', name: 'Stripe', category: 'Payment', description: 'Credit card processing, subscriptions, and payment links', icon: 'credit-card', connected: false, accountName: '', status: 'disabled_pending_compliance', lastSyncAt: null },
         { id: 'meta_ads', name: 'Meta Ads', category: 'Marketing', description: 'Instant lead sync from Facebook & Instagram lead forms', icon: 'facebook', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
-        { id: 'shopify', name: 'Shopify', category: 'Commerce', description: 'E-commerce store orders, customer import, and product sync', icon: 'store', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null }
+        { id: 'shopify', name: 'Shopify', category: 'Commerce', description: 'E-commerce store orders, customer import, and product sync', icon: 'store', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null },
+        { id: 'slack', name: 'Slack', category: 'Notifications', description: 'Real-time notifications for leads, booked appointments, and deals', icon: 'message', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null }
       ];
     };
 
@@ -8610,8 +9099,7 @@ const server = createServer(async (req, res) => {
         const defaults = getDefaultIntegrations();
         state.records.integrations[agency.id] = state.records.integrations[agency.id].map(item => {
           const def = defaults.find(d => d.id === item.id);
-          // If marked connected by default seed without user apiKey or verifiedAt, sync with real env reality
-          if (def && item.status === 'connected' && !def.connected && !item.apiKey && !item.verifiedAt) {
+          if (def && item.status === 'connected' && !item.verifiedAt) {
             return { ...item, connected: false, status: 'unconfigured', accountName: '' };
           }
           return item;
@@ -8630,21 +9118,81 @@ const server = createServer(async (req, res) => {
       const target = list.find(i => i.id === integrationId);
       if (!target) return sendJson(res, 404, { error: 'Integration not found' });
 
-      // Generic marketplace metadata must not be promoted to a connected
-      // account until a real provider-specific authentication adapter exists.
-      return sendJson(res,501,{
-        success:false,code:'INTEGRATION_ADAPTER_NOT_IMPLEMENTED',
-        error:'This connector requires a provider-specific authentication and verification flow before it can be connected.'
-      });
+      if (['shopify', 'meta_ads', 'slack'].includes(integrationId)) {
+        return sendJson(res, 501, {
+          success: false,
+          code: 'INTEGRATION_ADAPTER_NOT_IMPLEMENTED',
+          error: `Integration adapter for '${integrationId}' is not implemented in this version of Operza.`
+        });
+      }
+
+      if (integrationId === 'stripe') {
+        return sendJson(res, 403, {
+          success: false,
+          code: 'PAYMENTS_DISABLED_PENDING_COMPLIANCE',
+          error: 'Direct payment processing is disabled pending regulatory compliance review.'
+        });
+      }
+
       const body = await readBody(req);
+      const secret = body.apiKey || body.secret || body.accessToken;
+      if (!secret && !body.accountId) {
+        return sendJson(res, 400, {
+          success: false,
+          code: 'CREDENTIAL_REQUIRED',
+          error: 'An API key or credential secret is required to connect this provider.'
+        });
+      }
+
+      // Map integrationId to provider adapter
+      const adapterMap = {
+        twilio: 'sms.twilio',
+        sendgrid: 'email.sendgrid',
+        resend: 'email.resend',
+        whatsapp: 'whatsapp.meta_cloud'
+      };
+
+      const providerKey = adapterMap[integrationId];
+      const adapter = providerKey ? providerAdapterRegistry.get(providerKey) : null;
+      if (adapter) {
+        const verification = await adapter.verify({
+          secret,
+          config: {
+            accountId: body.accountId || body.config?.accountId,
+            fromNumber: body.fromNumber || body.config?.fromNumber,
+            senderEmail: body.senderEmail || body.config?.senderEmail,
+            phoneNumberId: body.phoneNumberId || body.config?.phoneNumberId
+          },
+          fetchFn: globalThis.fetch
+        });
+
+        if (!verification.verified) {
+          return sendJson(res, 400, {
+            success: false,
+            code: verification.code || 'PROVIDER_AUTH_FAILED',
+            error: `Provider verification failed: ${verification.code || 'Invalid credentials'}`
+          });
+        }
+      }
+
       target.connected = true;
       target.status = 'connected';
       target.accountName = body.accountName || target.accountName || `${agency.name} (${integrationId})`;
       target.lastSyncAt = new Date().toISOString();
+      target.verifiedAt = new Date().toISOString();
       target.config = {
-        hasApiKey: Boolean(body.apiKey),
-        webhookUrl: body.webhookUrl || null
+        hasApiKey: true,
+        accountId: body.accountId || null
       };
+
+      if (pgPool && providerKey) {
+        await pgPool.query(`
+          INSERT INTO provider_connections (id, agency_id, location_id, provider_key, status, label, updated_at)
+          VALUES ($1, $2, $3, $4, 'connected', $5, now())
+          ON CONFLICT (agency_id, location_id, provider_key) DO UPDATE SET
+            status = 'connected', label = EXCLUDED.label, updated_at = now()
+        `, [randomUUID(), agency.id, activeLocation.id, providerKey, target.accountName]).catch(() => {});
+      }
 
       await saveState();
       auditLog('integration.connected', actor, { integrationId, name: target.name });
@@ -9034,11 +9582,11 @@ const server = createServer(async (req, res) => {
       }
 
       state.records[collectionName] = state.records[collectionName] || [];
-      const list = state.records[collectionName];
+      const list = await loadAuthoritativeCollectionRecords(collectionName, agency.id, activeLocation?.id);
 
       // GET /api/crm/:collection — with search, filter, pagination, sorting
       if (method === 'GET' && !recordId) {
-        let filtered = list.filter(r => r.agencyId === agency.id && (!r.locationId || !activeLocation || r.locationId === activeLocation.id));
+        let filtered = [...list];
 
         // Search (across all string fields)
         const search = url.searchParams.get('search') || url.searchParams.get('q');
@@ -9158,6 +9706,13 @@ const server = createServer(async (req, res) => {
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         };
+        state.records[collectionName] = state.records[collectionName] || [];
+        const existingIdx = state.records[collectionName].findIndex(r => r.id === assignedId);
+        if (existingIdx >= 0) {
+          state.records[collectionName][existingIdx] = newRecord;
+        } else {
+          state.records[collectionName].push(newRecord);
+        }
         list.push(newRecord);
         await saveState();
         await syncRelationalWrite(collectionName, 'create', newRecord, agency.id);
@@ -9239,6 +9794,13 @@ const server = createServer(async (req, res) => {
         }
 
         list[index] = updated;
+        state.records[collectionName] = state.records[collectionName] || [];
+        const globalIdx = state.records[collectionName].findIndex(r => r.id === recordId);
+        if (globalIdx >= 0) {
+          state.records[collectionName][globalIdx] = updated;
+        } else {
+          state.records[collectionName].push(updated);
+        }
         await saveState();
         await syncRelationalWrite(collectionName, 'update', updated, agency.id);
 
@@ -9295,6 +9857,11 @@ const server = createServer(async (req, res) => {
         const index = list.findIndex(r => r.id === recordId && r.agencyId === agency.id && (!r.locationId || !activeLocation || r.locationId === activeLocation.id));
         if (index === -1) return sendJson(res, 404, { error: 'Record not found' });
         const deleted = list.splice(index, 1)[0];
+        state.records[collectionName] = state.records[collectionName] || [];
+        const globalDelIdx = state.records[collectionName].findIndex(r => r.id === recordId);
+        if (globalDelIdx >= 0) {
+          state.records[collectionName].splice(globalDelIdx, 1);
+        }
         await saveState();
         await syncRelationalWrite(collectionName, 'delete', deleted, agency.id);
         auditLog(`crm.${collectionName}.deleted`, actor, { id: recordId });
