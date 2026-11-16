@@ -127,6 +127,7 @@ services:
       - WORKFLOW_JOB_MODULE=packages/platform-core/src/trusted-handlers.mjs
       - WORKER_ID=operza-prod-durable-worker
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - OPERZA_VAULT_KEY=${OPERZA_VAULT_KEY:?OPERZA_VAULT_KEY is required in production}
     deploy:
       resources:
         limits:
@@ -162,6 +163,7 @@ services:
       - DATABASE_URL=postgresql://${POSTGRES_APP_USER:-operza_app}:${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-operza_db}
       - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
       - SESSION_SECRET=${SESSION_SECRET:?SESSION_SECRET must be set to at least 32 random characters}
+      - OPERZA_VAULT_KEY=${OPERZA_VAULT_KEY:?OPERZA_VAULT_KEY is required in production}
       - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-}
       - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
       - RATE_LIMIT_MAX_REQUESTS=${RATE_LIMIT_MAX_REQUESTS:-180}

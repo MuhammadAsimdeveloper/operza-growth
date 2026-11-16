@@ -68,7 +68,7 @@ test('refreshes an expired access token and persists the rotated refresh token',
 
 test('dispatch rechecks contact consent and only accepts Graph 202',async()=>{
   const ref='vault:agency_123/location_123/microsoft-outlook-1';
-  const secrets=resolver({[ref]:JSON.stringify({accessToken:'valid',refreshToken:'refresh',expiresAt:Date.now()+60_000})});
+  const secrets=resolver({[ref]:JSON.stringify({accessToken:'valid',refreshToken:'refresh',expiresAt:Date.now()+300_000})});
   const calls=[];
   const service=createOutlookOAuthService({...config,secretResolver:secrets,fetchFn:async(url,opts)=>{
     calls.push({url,opts});return response(url.endsWith('/sendMail')?202:200,{id:'user',mail:'user@example.com'});

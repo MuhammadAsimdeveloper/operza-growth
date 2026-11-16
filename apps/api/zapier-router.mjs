@@ -765,7 +765,7 @@ export async function handleZapierRoute(req, res, {
 
   // 6. REST Hook Unsubscribe
   if(method==='DELETE'&&pathname.startsWith('/api/v1/zapier/hooks/unsubscribe')){
-    let subId=pathname.replace('/api/v1/zapier/hooks/unsubscribe','').replace(/^\\//,'').trim();
+    let subId=pathname.replace('/api/v1/zapier/hooks/unsubscribe','').replace(/^\//,'').trim();
     if(!subId){const body=await readBody(req).catch(()=>({}));subId=body.subscription_id||body.subscriptionId||body.id;}
     if(zapierRepository){
       const cancelled=await zapierRepository.cancelSubscription({tenantId:agency.id,locationId:activeLocation.id,subscriptionId:subId});
@@ -837,7 +837,9 @@ export async function handleZapierRoute(req, res, {
         success: false,
         code: 'WEBHOOK_TEST_FAILED',
         deliveryId,
-        httpStatus
+        httpStatus,
+        signatureHeader: `t=${timestamp},v1=${signature}`,
+        error: `Target webhook endpoint returned HTTP ${httpStatus || 'network failure'}`
       });
     }
     return sendJson(res, 200, {

@@ -184,15 +184,17 @@ if (isStagingOrProd) {
   if(!t.workflow_outbox||!t.zapier_subscriptions||!t.zapier_deliveries)throw new Error('Migrations 008 and 018 are required before durable Zapier event delivery can start.');
 }
 
+const effectiveVaultKey = process.env.OPERZA_VAULT_KEY || (!isStagingOrProd ? 'operza-dev-vault-key-32chars-min-len' : undefined);
+
 secretResolver = createSecretResolver({
-  masterKey: process.env.OPERZA_VAULT_KEY,
+  masterKey: effectiveVaultKey,
   backend: (isStagingOrProd || platformDbEnabled) ? createPostgresSecretBackend(pgPool) : undefined
 });
 const microsoftOAuthConfigured = Boolean(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET && process.env.MICROSOFT_REDIRECT_URI);
 let outlookStateStore = createMemoryOAuthStateStore();
 if (pgPool) {
   const oauthStateTable = await pgPool.query("SELECT to_regclass('public.provider_oauth_states') AS table_name");
-  if (oauthStateTable.rows[0]?.table_name) outlookStateStore = createPostgresOAuthStateStore(pgPool, { masterKey: process.env.OPERZA_VAULT_KEY });
+  if (oauthStateTable.rows[0]?.table_name) outlookStateStore = createPostgresOAuthStateStore(pgPool, { masterKey: effectiveVaultKey });
   else if (isStagingOrProd && microsoftOAuthConfigured) throw new Error('Migration 017 is required before enabling Microsoft Outlook OAuth in staging/production.');
 }
 outlookOAuthService = createOutlookOAuthService({
@@ -200,7 +202,7 @@ outlookOAuthService = createOutlookOAuthService({
   clientSecret: process.env.MICROSOFT_CLIENT_SECRET,
   redirectUri: process.env.MICROSOFT_REDIRECT_URI,
   tenant: process.env.MICROSOFT_TENANT_ID || 'common',
-  stateKey: process.env.OPERZA_VAULT_KEY,
+  stateKey: effectiveVaultKey,
   secretResolver,
   stateStore: outlookStateStore
 });
@@ -211,6 +213,11 @@ const port = Number(process.env.PORT || 4000);
 const host = process.env.HOST || '0.0.0.0';
 const dataFile = path.resolve(root, process.env.DATA_FILE || './data/store.json');
 const isProd = process.env.NODE_ENV === 'production';
+if (isStagingOrProd) {
+  if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET === 'operza-local-development-secret-key-32chars' || process.env.SESSION_SECRET.length < 32) {
+    throw new Error('[FATAL] SESSION_SECRET must be configured with a cryptographically strong secret (minimum 32 characters) in staging and production.');
+  }
+}
 const secret = String(process.env.SESSION_SECRET || 'operza-local-development-secret-key-32chars');
 
 // Webhook signature secrets (env vars)

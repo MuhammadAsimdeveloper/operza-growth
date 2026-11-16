@@ -15,33 +15,18 @@ import {
  * Verifies API key formats, webhook signatures, mock isolation, and sandbox contracts.
  */
 
-test('Stripe Sandbox Contract: Key format and simulated charge', async () => {
-  // Test key format validation
-  const invalidKey = await stripePaymentAdapter.verify({ secret: 'not_a_valid_stripe_key' });
-  assert.equal(invalidKey.verified, false);
-  assert.match(invalidKey.error, /must start with sk_ or rk_/);
+test('Stripe Sandbox Contract: Disabled pending compliance without simulated success', async () => {
+  // Test that Stripe strictly fails closed and never reports fake simulation
+  const check = await stripePaymentAdapter.verify({ secret: 'sk_test_mock' });
+  assert.equal(check.verified, false);
+  assert.equal(check.code, 'PAYMENTS_DISABLED_PENDING_COMPLIANCE');
 
-  const testKey = await stripePaymentAdapter.verify({
-    secret: 'sk_test_51MockStripeKeyForSandboxTestingOnly0000',
-    config: { accountId: 'acct_test_123' }
-  });
-  assert.equal(testKey.verified, true);
-  assert.equal(testKey.accountId, 'acct_test_123');
-
-  // Simulated sandbox dispatch
   const dispatch = await stripePaymentAdapter.dispatch({
-    secret: 'sk_test_51MockStripeKeyForSandboxTestingOnly0000',
-    config: { currency: 'usd' },
-    payload: { amountCents: 4900, customerId: 'cus_test_1' },
-    tenantId: 'tenant_test',
-    locationId: 'loc_test',
-    actionHash: 'action_hash_001'
+    secret: 'sk_test_mock',
+    payload: { amountCents: 4900 }
   });
-
-  assert.equal(dispatch.ok, true);
-  assert.equal(dispatch.provider, 'stripe');
-  assert.ok(dispatch.paymentIntentId.startsWith('pi_'));
-  assert.ok(dispatch.idempotencyKey);
+  assert.equal(dispatch.ok, false);
+  assert.equal(dispatch.code, 'PAYMENTS_DISABLED_PENDING_COMPLIANCE');
 });
 
 test('Stripe Webhook Signature Verification Contract', () => {
@@ -77,49 +62,54 @@ test('Twilio SMS & Softphone Sandbox Contract', async () => {
     config: { accountId: 'BAD_SID' }
   });
   assert.equal(badSid.verified, false);
-  assert.match(badSid.error, /must start with AC/);
+  assert.equal(badSid.code, 'INVALID_CREDENTIAL_FORMAT');
 
-  // Valid Test SID and Token
+  // Valid Test SID and Token with mocked API response
+  const mockFetch = async () => ({ ok: true, status: 200, json: async () => ({ sid: 'AC00000000000000000000000000000000' }) });
   const valid = await twilioSmsAdapter.verify({
     secret: 'valid_length_token_12345678',
-    config: { accountId: 'AC00000000000000000000000000000000' }
+    config: { accountId: 'AC00000000000000000000000000000000' },
+    fetchFn: mockFetch
   });
   assert.equal(valid.verified, true);
 
-  // Simulated dispatch with explicit consent
+  // Dispatch with explicit consent
   const dispatch = await twilioSmsAdapter.dispatch({
     secret: 'valid_length_token_12345678',
-    config: { fromNumber: '+15005550006' },
-    payload: { to: '+15551234567', body: 'Verification Code: 948210' },
-    consent: { status: 'granted' }
+    config: { fromNumber: '+15005550006', accountId: 'AC00000000000000000000000000000000' },
+    payload: { contactId: 'c1', to: '+15551234567', body: 'Verification Code: 948210' },
+    consent: { status: 'granted', channel: 'sms', contactId: 'c1' },
+    fetchFn: async () => ({ ok: true, status: 201, json: async () => ({ sid: 'SM_mock_12345' }) })
   });
 
   assert.equal(dispatch.ok, true);
   assert.equal(dispatch.provider, 'twilio');
-  assert.ok(dispatch.messageId.startsWith('SM_'));
+  assert.ok(dispatch.providerMessageId.startsWith('SM_'));
 });
 
 test('Resend & SendGrid Email Sandbox Contracts', async () => {
   // Resend format verification
   const badResend = await resendEmailAdapter.verify({ secret: 'invalid_resend' });
   assert.equal(badResend.verified, false);
-  assert.match(badResend.error, /must start with re_/);
+  assert.equal(badResend.code, 'INVALID_CREDENTIAL_FORMAT');
 
   const goodResend = await resendEmailAdapter.verify({
     secret: 're_mock_test_key_1234567890',
-    config: { senderEmail: 'noreply@operza.io' }
+    config: { senderEmail: 'noreply@operza.io' },
+    fetchFn: async () => ({ ok: true, status: 200, json: async () => ({ data: [] }) })
   });
   assert.equal(goodResend.verified, true);
-  assert.equal(goodResend.accountId, 'resend:noreply@operza.io');
+  assert.equal(goodResend.accountId, 'noreply@operza.io');
 
   // SendGrid format verification
   const badSendGrid = await sendgridEmailAdapter.verify({ secret: 'invalid_sendgrid' });
   assert.equal(badSendGrid.verified, false);
-  assert.match(badSendGrid.error, /must start with SG\./);
+  assert.equal(badSendGrid.code, 'INVALID_CREDENTIAL_FORMAT');
 
   const goodSendGrid = await sendgridEmailAdapter.verify({
-    secret: 'SG.mock_test_key_00000000000000000000',
-    config: { senderEmail: 'marketing@operza.io' }
+    secret: 'SG.mock_test_key_00000000000000000000.signature_hash_value',
+    config: { senderEmail: 'marketing@operza.io' },
+    fetchFn: async () => ({ ok: true, status: 200, json: async () => ({ scopes: [] }) })
   });
   assert.equal(goodSendGrid.verified, true);
 });
@@ -130,23 +120,26 @@ test('Meta WhatsApp Cloud API Sandbox Contract', async () => {
     config: { phoneNumberId: '12' } // Too short
   });
   assert.equal(badPhone.verified, false);
+  assert.equal(badPhone.code, 'INVALID_CREDENTIAL_FORMAT');
 
   const goodPhone = await whatsappMetaAdapter.verify({
     secret: 'valid_access_token_12345',
-    config: { phoneNumberId: '109827364510293' }
+    config: { phoneNumberId: '109827364510293' },
+    fetchFn: async () => ({ ok: true, status: 200, json: async () => ({ id: '109827364510293' }) })
   });
   assert.equal(goodPhone.verified, true);
 
   const dispatch = await whatsappMetaAdapter.dispatch({
     secret: 'valid_access_token_12345',
     config: { phoneNumberId: '109827364510293' },
-    payload: { to: '15559876543', templateName: 'order_update' },
-    consent: { status: 'granted' }
+    payload: { contactId: 'c1', to: '15559876543', text: 'Order update notification' },
+    consent: { status: 'granted', channel: 'whatsapp', contactId: 'c1' },
+    fetchFn: async () => ({ ok: true, status: 200, json: async () => ({ messages: [{ id: 'wamid.HBgLMTU1NTk4NzY1NDM=' }] }) })
   });
 
   assert.equal(dispatch.ok, true);
   assert.equal(dispatch.provider, 'whatsapp.meta_cloud');
-  assert.ok(dispatch.messageId.startsWith('wamid.'));
+  assert.ok(dispatch.providerMessageId.startsWith('wamid.'));
 });
 
 test('Live Provider Sandbox Network Gate', (t) => {

@@ -38,20 +38,31 @@ export async function handleSystemRoutes(req, res, ctx) {
   // 2. Readiness probe
   if (pathname === '/ready') {
     let dbStatus = 'disconnected';
+    let tablesCount = 0;
+    const isStagingOrProd = process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging';
+
     if (pgPool) {
       try {
         const testRes = await pgPool.query('SELECT 1');
         if (testRes.rows.length > 0) dbStatus = 'connected';
+        const tablesRes = await pgPool.query("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public'").catch(() => ({ rows: [{ count: 0 }] }));
+        tablesCount = Number(tablesRes.rows[0]?.count || 0);
       } catch {
         dbStatus = 'error';
       }
     } else {
       dbStatus = 'local_file_store';
     }
-    sendJson(res, 200, {
-      ready: true,
+
+    const isReady = isStagingOrProd ? (dbStatus === 'connected') : true;
+    const statusCode = isReady ? 200 : 503;
+
+    sendJson(res, statusCode, {
+      ready: isReady,
+      status: isReady ? 'ready' : 'unhealthy',
       dbEngine: pgPool ? 'postgresql' : 'json_file',
       dbStatus,
+      tablesCount,
       wsReady: !!wss,
       uptime: process.uptime(),
       timestamp: new Date().toISOString()
@@ -86,6 +97,17 @@ export async function handleSystemRoutes(req, res, ctx) {
       timestamp: new Date().toISOString()
     });
     return true;
+  }
+
+  // Guard: Admin routes require an authenticated owner/admin or valid OPERZA_ADMIN_KEY
+  if (pathname.startsWith('/api/admin/')) {
+    const actor = getActor(req);
+    const hasAdminKey = Boolean(process.env.OPERZA_ADMIN_KEY && req.headers['x-admin-key'] === process.env.OPERZA_ADMIN_KEY);
+    const isOwnerOrAdmin = actor && ['owner', 'admin'].includes(actor.membership?.role);
+    if (!hasAdminKey && !isOwnerOrAdmin) {
+      sendJson(res, 403, { error: 'Administrative authorization required', code: 'ADMIN_AUTH_REQUIRED' });
+      return true;
+    }
   }
 
   // 4. Admin Queue Status

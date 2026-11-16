@@ -81,7 +81,8 @@ test('Multi-Process Appointment Booking Concurrency (Two Independent API Instanc
       NODE_ENV: 'test',
       DATABASE_URL: dbUrl,
       MIGRATION_DATABASE_URL: dbUrl,
-      OPERZA_TEST_DATABASE_URL: dbUrl
+      OPERZA_TEST_DATABASE_URL: dbUrl,
+      OPERZA_VAULT_KEY: process.env.OPERZA_VAULT_KEY || 'test-vault-key-for-appointment-concurrency-32'
     };
 
     proc1 = spawn('node', ['apps/api/server.mjs'], {

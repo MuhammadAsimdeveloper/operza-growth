@@ -3,7 +3,32 @@ import {lookup} from 'node:dns/promises';
 import {request as httpsRequest} from 'node:https';
 import {isIP} from 'node:net';
 import {PermanentJobError} from './durable-worker.mjs';
-function publicIp(address){const f=isIP(address);if(f===4){const[a,b,c]=address.split('.').map(Number);if(a===0||a===10||a===127||a>=224||(a===100&&b>=64&&b<=127)||(a===169&&b===254)||(a===172&&b>=16&&b<=31)||(a===192&&(b===168||(b===0&&(c===0||c===2)))||(a===198&&(b===18||b===19||(b===51&&c===100)))||(a===203&&b===0&&c===113))return false;return true;}if(f===6){const ip=address.toLowerCase();return /^2[0-9a-f]{3}:/.test(ip)&&!ip.startsWith('2001:db8:')&&!ip.startsWith('2001:0000:')&&!ip.startsWith('2002:');}return false;}
+function publicIp(address) {
+  const f = isIP(address);
+  if (f === 4) {
+    const [a, b, c] = address.split('.').map(Number);
+    if (
+      a === 0 ||
+      a === 10 ||
+      a === 127 ||
+      a >= 224 ||
+      (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && (b === 168 || (b === 0 && (c === 0 || c === 2)))) ||
+      (a === 198 && (b === 18 || b === 19 || (b === 51 && c === 100))) ||
+      (a === 203 && b === 0 && c === 113)
+    ) {
+      return false;
+    }
+    return true;
+  }
+  if (f === 6) {
+    const ip = address.toLowerCase();
+    return /^2[0-9a-f]{3}:/.test(ip) && !ip.startsWith('2001:db8:') && !ip.startsWith('2001:0000:') && !ip.startsWith('2002:');
+  }
+  return false;
+}
 function parseSafeUrl(v){try{const u=new URL(v);return u.protocol==='https:'&&!u.username&&!u.password&&!!u.hostname&&u.hostname!=='localhost'&&!u.hostname.endsWith('.local')&&!u.hostname.endsWith('.internal')?u:null;}catch{return null;}}
 async function resolvePublicTarget(targetUrl,lookupFn=lookup){const url=parseSafeUrl(targetUrl);if(!url)throw Object.assign(new Error('Public HTTPS URL required'),{code:'WEBHOOK_URL_REJECTED'});let records;try{records=await lookupFn(url.hostname,{all:true,verbatim:true});}catch{throw Object.assign(new Error('Webhook DNS lookup failed'),{code:'WEBHOOK_DNS_FAILED'});}if(!Array.isArray(records)||!records.length||records.some(r=>!publicIp(r.address)))throw Object.assign(new Error('Webhook resolved to a private or reserved address'),{code:'WEBHOOK_PRIVATE_ADDRESS'});return{url,address:records[0]};}
 export async function assertPublicWebhookTarget(targetUrl,{lookupFn=lookup}={}){await resolvePublicTarget(targetUrl,lookupFn);return true;}

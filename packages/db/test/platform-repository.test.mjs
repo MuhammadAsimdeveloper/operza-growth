@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createPlatformRepository } from '../lib/platform-repository.mjs';
 
 const requiredTables = [
-  'provider_connections', 'communication_consents', 'workflow_approvals',
+  'provider_connections', 'provider_secrets', 'communication_consents', 'workflow_approvals',
   'workflow_action_receipts', 'workflow_outbox', 'tenant_entitlements',
   'usage_events', 'copilot_proposals'
 ];
