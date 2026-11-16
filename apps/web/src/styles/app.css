@@ -3711,5 +3711,259 @@ a {
   }
 }
 
+/* ============================================================================
+ * OPERZA HIGH-CONVERTING SALES FUNNEL STYLES (UNSLOPPED & HUMAN-DESIGNED)
+ * ============================================================================ */
+
+.funnel-container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+@media (max-width: 640px) {
+  .funnel-container {
+    padding: 0 16px;
+  }
+}
+
+.funnel-section {
+  padding: 88px 0;
+  position: relative;
+}
+
+@media (max-width: 768px) {
+  .funnel-section {
+    padding: 56px 0;
+  }
+}
+
+.funnel-section-alt {
+  padding: 88px 0;
+  background: var(--surface-2);
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+@media (max-width: 768px) {
+  .funnel-section-alt {
+    padding: 56px 0;
+  }
+}
+
+.funnel-section-header {
+  text-align: center;
+  max-width: 720px;
+  margin: 0 auto 48px;
+}
+
+.funnel-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--r-pill);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background: var(--accent-soft);
+  color: var(--accent);
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  margin-bottom: 14px;
+}
+
+.funnel-heading {
+  font-size: 34px;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.2;
+  letter-spacing: -0.025em;
+  margin: 0 0 14px;
+}
+
+@media (max-width: 768px) {
+  .funnel-heading {
+    font-size: 26px;
+  }
+}
+
+.funnel-subhead {
+  font-size: 16px;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* Grids */
+.funnel-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+}
+
+@media (max-width: 992px) {
+  .funnel-grid-3 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .funnel-grid-3 {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
+.funnel-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 32px;
+  align-items: center;
+}
+
+@media (max-width: 840px) {
+  .funnel-grid-2 {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+}
+
+/* Pricing Grid */
+.funnel-pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 24px;
+  align-items: stretch;
+}
+
+@media (max-width: 960px) {
+  .funnel-pricing-grid {
+    grid-template-columns: 1fr;
+    max-width: 520px;
+    margin: 0 auto;
+  }
+}
+
+/* Comparison Table */
+.funnel-table-wrapper {
+  overflow-x: auto;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  -webkit-overflow-scrolling: touch;
+}
+
+.funnel-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13.5px;
+}
+
+.funnel-table th,
+.funnel-table td {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line-subtle);
+}
+
+.funnel-table th {
+  background: var(--surface-2);
+  font-weight: 700;
+  color: var(--text);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.funnel-table tr:last-child td {
+  border-bottom: none;
+}
+
+.funnel-table tr:hover td {
+  background: rgba(37, 99, 235, 0.02);
+}
+
+/* Lead Capture Form */
+.funnel-lead-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-xl);
+  padding: 36px;
+  box-shadow: var(--shadow-md);
+}
+
+@media (max-width: 640px) {
+  .funnel-lead-card {
+    padding: 24px 18px;
+  }
+}
+
+.funnel-form-group {
+  margin-bottom: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.funnel-form-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.funnel-form-input,
+.funnel-form-select,
+.funnel-form-textarea {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border-base);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.funnel-form-input:focus,
+.funnel-form-select:focus,
+.funnel-form-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.funnel-form-input::placeholder,
+.funnel-form-textarea::placeholder {
+  color: var(--text-faint);
+}
+
+.funnel-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 600px) {
+  .funnel-form-row {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}
+
+/* Range Sliders */
+.funnel-slider {
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--border-base);
+  outline: none;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+
 
 
