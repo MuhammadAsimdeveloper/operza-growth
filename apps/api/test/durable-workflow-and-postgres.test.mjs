@@ -176,7 +176,13 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
         actionType: 'email',
         approved: true,
         approvalEvidence: { approvedBy: 'usr_approver_1' },
-        consent: true,
+        consent: {
+          status: 'granted',
+          channel: 'email',
+          contactId: 'client@example.com',
+          purpose: 'transactional',
+          source: 'web_form'
+        },
         dryRun: false,
         input: { to: 'client@example.com', subject: 'Approved Message' }
       }
@@ -969,14 +975,15 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
     const STORE_APP = './scratch/store_api_appr.json';
     try { rmSync(path.join(root, 'apps/api', STORE_APP), { force: true }); } catch {}
 
+    const appDbUrl = dbUrl.replace('//postgres@', '//operza_app:operza_app_secret@').replace('//postgres:', '//operza_app:operza_app_secret@');
     const appEnv = {
       ...process.env,
       NODE_ENV: 'test',
       PORT: String(PORT_APP),
       DATA_FILE: STORE_APP,
-      DATABASE_URL: dbUrl,
+      DATABASE_URL: appDbUrl,
       MIGRATION_DATABASE_URL: dbUrl,
-      OPERZA_TEST_DATABASE_URL: dbUrl,
+      OPERZA_TEST_DATABASE_URL: appDbUrl,
       OPERZA_VAULT_KEY: 'test-vault-key-for-approvals-32-chars-long',
       OPERZA_ADMIN_KEY: 'operza-admin-telemetry-secret-key-32chars-valid-pass'
     };
@@ -1080,22 +1087,31 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
       assert.ok(foundApproval, 'Pending approval must be returned by API');
       assert.equal(foundApproval.status, 'pending');
 
-      // 6. Approve via HTTP POST /api/workflows/runs/:runId/approve
-      const approveRes = await fetch(`${BASE_APP}/api/workflows/runs/${approvalExecId}/approve`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-operza-csrf': csrfToken,
-          Cookie: sessionCookie
-        },
-        body: JSON.stringify({ decision: 'approved', approvalId: foundApproval.id })
-      });
-      const approveStatus = approveRes.status;
-      const approveText = await approveRes.text();
-      assert.equal(approveStatus, 200, `Approve returned ${approveStatus}: ${approveText}; serverLogs: ${serverLogs}`);
-      const approveBody = JSON.parse(approveText);
-      assert.equal(approveBody.success, true);
-      assert.equal(approveBody.approval.status, 'approved');
+      // 6. Test concurrent approval requests - exactly ONE succeeds and one fails with 409
+      const [approveResA, approveResB] = await Promise.all([
+        fetch(`${BASE_APP}/api/workflows/runs/${approvalExecId}/approve`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-operza-csrf': csrfToken,
+            Cookie: sessionCookie
+          },
+          body: JSON.stringify({ decision: 'approved', approvalId: foundApproval.id })
+        }),
+        fetch(`${BASE_APP}/api/workflows/runs/${approvalExecId}/approve`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-operza-csrf': csrfToken,
+            Cookie: sessionCookie
+          },
+          body: JSON.stringify({ decision: 'approved', approvalId: foundApproval.id })
+        })
+      ]);
+
+      const statuses = [approveResA.status, approveResB.status].sort();
+      assert.equal(statuses[0], 200, 'Exactly one concurrent approval request must succeed with 200');
+      assert.equal(statuses[1], 409, 'Concurrent second approval request must be rejected with 409 Conflict');
 
       // 7. Verify PostgreSQL state after approval:
       const approvalDb = await pool.query(
@@ -1131,6 +1147,112 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
       );
       assert.equal(finalExec.rows[0].status, 'completed');
       assert.ok(finalExec.rows[0].finished_at);
+
+      // 8b. Workflow rejection via POST /api/workflows/runs/:runId/reject
+      const rejectWfId = randomUUID();
+      const rejectExecId = randomUUID();
+      await pool.query(`
+        INSERT INTO workflow_definitions (id, agency_id, location_id, name, status, trigger_type, nodes, version)
+        VALUES ($1, $2, $3, 'API Reject Flow', 'published', 'webhook', $4::jsonb, 1)
+      `, [rejectWfId, appAgencyId, appLocationId, JSON.stringify([
+        { id: 'start_reject', type: 'trigger', next: 'gate_reject' },
+        { id: 'gate_reject', type: 'human_approval', requiresApproval: true, config: { approverRole: 'admin', description: 'Requires Approval' } }
+      ])]);
+
+      await produceWorkflowTriggerEvent({
+        repository: outboxRepo,
+        tenantId: appAgencyId,
+        locationId: appLocationId,
+        workflowId: rejectWfId,
+        triggerType: 'webhook',
+        payload: {
+          executionId: rejectExecId,
+          workflowName: 'API Reject Flow',
+          mode: 'live'
+        }
+      });
+
+      const batchRejectPrep = await runOutboxBatch({
+        repository: outboxRepo,
+        workerId: 'worker_reject_prep',
+        handlers: dbHandlers,
+        limit: 5
+      });
+      assert.equal(batchRejectPrep.claimed, 1);
+
+      const pendingRejectRes = await fetch(`${BASE_APP}/api/workflows/approvals`, {
+        headers: { Cookie: sessionCookie }
+      });
+      const pendingRejectList = await pendingRejectRes.json();
+      const foundRejectApproval = (pendingRejectList.data || pendingRejectList).find(a => a.executionId === rejectExecId);
+      assert.ok(foundRejectApproval);
+
+      const rejectRes = await fetch(`${BASE_APP}/api/workflows/runs/${rejectExecId}/reject`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-operza-csrf': csrfToken,
+          Cookie: sessionCookie
+        },
+        body: JSON.stringify({ decision: 'rejected', approvalId: foundRejectApproval.id })
+      });
+      assert.equal(rejectRes.status, 200);
+      const rejectBody = await rejectRes.json();
+      assert.equal(rejectBody.approval.status, 'rejected');
+      assert.equal(rejectBody.run.status, 'failed');
+
+      // Verify PostgreSQL state for rejection
+      const rejDb = await pool.query('SELECT status FROM workflow_approvals WHERE id = $1', [foundRejectApproval.id]);
+      assert.equal(rejDb.rows[0].status, 'rejected');
+
+      const rejExecDb = await pool.query('SELECT status FROM workflow_executions WHERE agency_id = $1 AND id = $2', [appAgencyId, rejectExecId]);
+      assert.equal(rejExecDb.rows[0].status, 'failed');
+
+      // Ensure NO resume event was created for the rejected run
+      const rejResumeCheck = await pool.query(
+        "SELECT id FROM workflow_outbox WHERE agency_id = $1 AND event_type = 'workflow.step.resume' AND payload->>'executionId' = $2",
+        [appAgencyId, rejectExecId]
+      );
+      assert.equal(rejResumeCheck.rows.length, 0, 'No resume event should be enqueued for rejected approval');
+
+      // 8c. Tenant Isolation: Another agency user cannot access or approve Tenant A's workflows
+      const tenantBEmail = `tenant-b-${Date.now()}@example.com`;
+      const signupB = await fetch(`${BASE_APP}/api/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Tenant B User',
+          email: tenantBEmail,
+          password: 'Password123!',
+          agencyName: 'Tenant B Agency'
+        })
+      });
+      assert.equal(signupB.status, 201);
+      const cookiesB = signupB.headers.getSetCookie ? signupB.headers.getSetCookie() : [signupB.headers.get('set-cookie')].filter(Boolean);
+      const sessionCookieB = cookiesB.map(c => c.split(';')[0]).join('; ');
+      const csrfMatchB = sessionCookieB.match(/operza_csrf=([^;]+)/);
+      const csrfTokenB = csrfMatchB ? decodeURIComponent(csrfMatchB[1]) : '';
+
+      // Tenant B queries approvals -> receives 0 (cannot see Tenant A's pending or past approvals)
+      const listBRes = await fetch(`${BASE_APP}/api/workflows/approvals`, {
+        headers: { Cookie: sessionCookieB }
+      });
+      assert.equal(listBRes.status, 200);
+      const listB = await listBRes.json();
+      const approvalsB = listB.data || listB;
+      assert.equal(approvalsB.some(a => a.executionId === approvalExecId || a.executionId === rejectExecId), false, 'Tenant B must not see Tenant A approvals');
+
+      // Tenant B tries to approve Tenant A's run -> receives 404
+      const rogueApproveRes = await fetch(`${BASE_APP}/api/workflows/runs/${approvalExecId}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-operza-csrf': csrfTokenB,
+          Cookie: sessionCookieB
+        },
+        body: JSON.stringify({ decision: 'approved', approvalId: foundApproval.id })
+      });
+      assert.equal(rogueApproveRes.status, 404, 'Tenant B must receive 404 attempting to approve Tenant A execution');
     } finally {
       serverProc.kill('SIGTERM');
       await sleep(300);
@@ -1273,8 +1395,10 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
         return { ok: true, providerAccepted: true, providerMessageId: 'sms_msg_123', actionHash };
       }
     };
+    const workerDbUrl = dbUrl.replace('//postgres@', '//operza_worker:operza_worker_secret@').replace('//postgres:', '//operza_worker:operza_worker_secret@');
+    const workerPool = new pg.Pool({ connectionString: workerDbUrl, max: 5 });
     const dbHandlers = createTrustedWorkerHandlers({
-      pool,
+      pool: workerPool,
       providerRegistry: createProviderAdapterRegistry([testSmsAdapter])
     });
 
@@ -1376,6 +1500,54 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
     assert.equal(batch2.results[0].status, 'dead_letter');
     assert.equal(adapterCalled, false);
 
+    // 2b. Dispatch with EXPIRED consent in PostgreSQL -> Fails closed
+    const expiredConsentId = randomUUID();
+    const expiredContactId = randomUUID();
+    const clientExp = await pool.connect();
+    try {
+      await clientExp.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await clientExp.query(`
+        INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
+        VALUES ($1, $2, $3, 'contacts', $4::jsonb, now(), now())
+      `, [expiredContactId, tenantId, locationId, JSON.stringify({ id: expiredContactId, phone: '+15559998877' })]);
+      await clientExp.query(`
+        INSERT INTO communication_consents (id, agency_id, location_id, contact_id, channel, purpose, status, source, expires_at)
+        VALUES ($1, $2, $3, $4, 'sms', 'transactional', 'granted', 'web_form', now() - interval '1 hour')
+      `, [expiredConsentId, tenantId, locationId, expiredContactId]);
+    } finally {
+      clientExp.release();
+    }
+
+    const expiredJob = await outboxRepo.enqueue({
+      tenantId,
+      locationId,
+      eventType: 'workflow.action.execute',
+      idempotencyKey: `idem_consent_expired_${randomUUID()}`,
+      payload: {
+        tenantId,
+        locationId,
+        executionId: testExecId,
+        actionId: 'sms',
+        nodeType: 'sms',
+        actionType: 'sms',
+        providerKey: 'twilio',
+        approved: true,
+        approvalEvidence: { approvedBy: 'admin' },
+        consent: true,
+        input: { contactId: expiredContactId, phone: '+15559998877', message: 'Expired Consent SMS' }
+      }
+    });
+
+    const batchExp = await runOutboxBatch({
+      repository: outboxRepo,
+      workerId: 'worker_consent_audit_expired',
+      handlers: dbHandlers,
+      limit: 5
+    });
+    assert.equal(batchExp.claimed, 1);
+    assert.equal(batchExp.results[0].status, 'dead_letter');
+    assert.equal(adapterCalled, false, 'Adapter dispatch must NOT be invoked when consent is expired');
+
     // 3. Grant valid consent in PostgreSQL -> Dispatch succeeds and writes receipt
     const client3 = await pool.connect();
     try {
@@ -1466,5 +1638,161 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
     assert.equal(failDb.rows[0].status, 'pending');
     assert.equal(failDb.rows[0].attempts, 1);
     assert.equal(failDb.rows[0].last_error_code, 'UPSTREAM_CARRIER_TIMEOUT');
+
+    await workerPool.end();
+  });
+
+  await t.test('19. Reliable Calendar External-ID Persistence & Deduplication under PostgreSQL Transaction', async () => {
+    const calId = randomUUID();
+    const apptId1 = randomUUID();
+    const apptId2 = randomUUID();
+    const futureStart1 = new Date(Date.now() + 3600000).toISOString();
+    const futureEnd1 = new Date(Date.now() + 5400000).toISOString();
+    const futureStart2 = new Date(Date.now() + 7200000).toISOString();
+    const futureEnd2 = new Date(Date.now() + 9000000).toISOString();
+
+    const calClient = await pool.connect();
+    try {
+      await calClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await calClient.query(`
+        INSERT INTO calendars (id, agency_id, location_id, name, slug, duration_min, status)
+        VALUES ($1, $2, $3, 'Sync Test Calendar', $4, 30, 'active')
+      `, [calId, tenantId, locationId, `sync-cal-${calId.slice(0, 8)}`]);
+
+      await calClient.query(`
+        INSERT INTO appointments (id, agency_id, location_id, calendar_id, title, status, starts_at, ends_at)
+        VALUES ($1, $2, $3, $4, 'First Appointment', 'confirmed', $5, $6),
+               ($7, $2, $3, $4, 'Second Appointment', 'confirmed', $8, $9)
+      `, [apptId1, tenantId, locationId, calId, futureStart1, futureEnd1, apptId2, futureStart2, futureEnd2]);
+    } finally {
+      calClient.release();
+    }
+
+    // Mock fetch for Google Calendar API
+    let exportedGoogleEvents = [];
+    const mockGoogleSyncFetch = async (url, options = {}) => {
+      if (url.includes('/primary')) {
+        return { ok: true, status: 200, json: async () => ({ id: 'primary' }) };
+      }
+      if (url.includes('/events') && options.method === 'POST') {
+        const body = JSON.parse(options.body);
+        const externalId = `google_ext_${randomUUID()}`;
+        exportedGoogleEvents.push({ summary: body.summary, externalId });
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: externalId, status: 'confirmed', htmlLink: `https://calendar.google.com/event?id=${externalId}` })
+        };
+      }
+      if (url.includes('/events')) {
+        return { ok: true, status: 200, json: async () => ({ items: [] }) };
+      }
+      return { ok: false, status: 404 };
+    };
+
+    // Load appointments from PostgreSQL in tenant context using operza_app role
+    const appDbUrl = dbUrl.replace('//postgres@', '//operza_app:operza_app_secret@').replace('//postgres:', '//operza_app:operza_app_secret@');
+    const appPool = new pg.Pool({ connectionString: appDbUrl, max: 5 });
+
+    try {
+      const syncClient = await appPool.connect();
+      let syncResult;
+      try {
+        await syncClient.query('BEGIN');
+        await syncClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+
+        const dbAppts = await syncClient.query(`
+          SELECT id, agency_id as "agencyId", location_id as "locationId", calendar_id as "calendarId",
+                 title, starts_at as "startsAt", ends_at as "endsAt", status, external_event_id as "externalEventId"
+          FROM appointments
+          WHERE agency_id = $1 AND location_id = $2 AND calendar_id = $3
+          ORDER BY starts_at ASC
+        `, [tenantId, locationId, calId]);
+        assert.equal(dbAppts.rows.length, 2);
+
+        syncResult = await executeCalendarSync({
+          calendar: { id: calId, externalSync: { provider: 'google_calendar', syncDirection: 'two_way' } },
+          appointments: dbAppts.rows,
+          syncDirection: 'two_way',
+          credentials: { accessToken: 'valid_access_token' },
+          fetchFn: mockGoogleSyncFetch
+        });
+
+        assert.equal(syncResult.exportedEvents.length, 2);
+
+        // Persist external_event_id in transaction with composite key check
+        for (const exp of syncResult.exportedEvents) {
+          const updateRes = await syncClient.query(`
+            UPDATE appointments
+            SET external_event_id = $1, updated_at = now()
+            WHERE agency_id = $2 AND location_id = $3 AND calendar_id = $4 AND id = $5
+          `, [exp.externalId, tenantId, locationId, calId, exp.appointmentId]);
+
+          assert.equal(updateRes.rowCount, 1, 'Exactly one row must be updated per exported appointment');
+        }
+
+        await syncClient.query('COMMIT');
+      } catch (err) {
+        await syncClient.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        syncClient.release();
+      }
+
+      // Reload appointments from PostgreSQL: external_event_id must be populated
+      const checkClient = await appPool.connect();
+      try {
+        await checkClient.query('BEGIN');
+        await checkClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+        const reloaded = await checkClient.query(`
+          SELECT id, external_event_id FROM appointments WHERE agency_id = $1 AND calendar_id = $2 ORDER BY starts_at ASC
+        `, [tenantId, calId]);
+        await checkClient.query('COMMIT');
+
+        assert.equal(reloaded.rows.length, 2);
+        assert.ok(reloaded.rows[0].external_event_id);
+        assert.ok(reloaded.rows[1].external_event_id);
+
+        // Run second sync pass with reloaded appointments: must export 0 events (deduplicated)
+        const secondSync = await executeCalendarSync({
+          calendar: { id: calId, externalSync: { provider: 'google_calendar', syncDirection: 'two_way' } },
+          appointments: reloaded.rows.map(r => ({ id: r.id, calendarId: calId, externalEventId: r.external_event_id, startsAt: futureStart1, endsAt: futureEnd1, status: 'confirmed' })),
+          syncDirection: 'two_way',
+          credentials: { accessToken: 'valid_access_token' },
+          fetchFn: mockGoogleSyncFetch
+        });
+        assert.equal(secondSync.exportedEvents.length, 0, 'Subsequent sync must export 0 events');
+      } finally {
+        checkClient.release();
+      }
+
+      // Simulate failed write: attempting to persist with invalid ID throws APPOINTMENT_EXTERNAL_ID_PERSIST_FAILED
+      const failClient = await appPool.connect();
+      try {
+        await failClient.query('BEGIN');
+        await failClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+
+        const fakeApptId = randomUUID();
+        const failUpdate = await failClient.query(`
+          UPDATE appointments
+          SET external_event_id = $1, updated_at = now()
+          WHERE agency_id = $2 AND location_id = $3 AND calendar_id = $4 AND id = $5
+        `, ['ext_nonexistent', tenantId, locationId, calId, fakeApptId]);
+
+        assert.equal(failUpdate.rowCount, 0, 'Nonexistent appointment update returns rowCount 0');
+        if (failUpdate.rowCount !== 1) {
+          const err = Object.assign(new Error(`Failed to persist external event ID for appointment ${fakeApptId}: record not found or tenant mismatch`), {
+            code: 'APPOINTMENT_EXTERNAL_ID_PERSIST_FAILED',
+            appointmentId: fakeApptId
+          });
+          assert.equal(err.code, 'APPOINTMENT_EXTERNAL_ID_PERSIST_FAILED');
+        }
+        await failClient.query('ROLLBACK');
+      } finally {
+        failClient.release();
+      }
+    } finally {
+      await appPool.end();
+    }
   });
 });

@@ -19,15 +19,7 @@ async function verifyAuthoritativeConsent({ pool, tenantId, locationId, contactI
         return suppliedConsent;
       }
     }
-    if (suppliedConsent === true) {
-      return {
-        status: 'granted',
-        channel,
-        contactId,
-        purpose,
-        source: 'in_memory_unpersisted'
-      };
-    }
+    // Boolean consent must never become authoritative evidence
     return null;
   }
 
@@ -38,6 +30,7 @@ async function verifyAuthoritativeConsent({ pool, tenantId, locationId, contactI
   const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const client = await pool.connect();
   try {
+    await client.query('BEGIN');
     await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
 
     let targetContactId = contactId;
@@ -52,6 +45,7 @@ async function verifyAuthoritativeConsent({ pool, tenantId, locationId, contactI
       if (contactLookup.rows.length > 0) {
         targetContactId = contactLookup.rows[0].id;
       } else {
+        await client.query('ROLLBACK');
         return null;
       }
     }
@@ -63,6 +57,8 @@ async function verifyAuthoritativeConsent({ pool, tenantId, locationId, contactI
       ORDER BY captured_at DESC
       LIMIT 1
     `, [tenantId, locationId || null, targetContactId, channel, purpose]);
+
+    await client.query('COMMIT');
 
     if (res.rows.length === 0) return null;
     const row = res.rows[0];
@@ -78,6 +74,9 @@ async function verifyAuthoritativeConsent({ pool, tenantId, locationId, contactI
       source: row.source,
       grantedAt: row.captured_at?.toISOString?.() || row.captured_at
     };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
   } finally {
     client.release();
   }

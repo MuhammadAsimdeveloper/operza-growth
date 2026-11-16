@@ -186,33 +186,40 @@ export async function handleAuthRoutes(req, res, ctx) {
     });
 
     if (pgPool) {
+      const authClient = await pgPool.connect();
       try {
-        await pgPool.query(
+        await authClient.query('BEGIN');
+        await authClient.query(
           'INSERT INTO agencies (id, name, slug, status) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING',
           [agencyId, agency.name, agency.slug, 'active']
         );
-        await pgPool.query(
+        await authClient.query("SELECT set_config('app.agency_id', $1, true)", [agencyId]);
+        await authClient.query(
           'INSERT INTO users (id, name, email, password_hash, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING',
           [userId, user.name, user.email, user.passwordHash, 'active']
         );
-        await pgPool.query(
+        await authClient.query(
           'INSERT INTO agency_memberships (id, agency_id, user_id, role, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (agency_id, user_id) DO NOTHING',
           [membership.id, agencyId, userId, membership.role || 'owner', 'active']
         );
-        await pgPool.query(
+        await authClient.query(
           'INSERT INTO locations (id, agency_id, name, status) VALUES ($1, $2, $3, $4) ON CONFLICT (agency_id, id) DO NOTHING',
           [locationId, agencyId, location.name, 'active']
         );
-        await pgPool.query(
+        await authClient.query(
           'INSERT INTO auth_sessions (id, token_hash, csrf_hash, user_id, agency_id, expires_at) VALUES ($1, $2, $3, $4, $5, to_timestamp($6 / 1000.0)) ON CONFLICT (token_hash) DO NOTHING',
           [sessionId, tokenHash, csrfHash, userId, agencyId, expiresAtMs]
         );
+        await authClient.query('COMMIT');
       } catch (dbErr) {
+        await authClient.query('ROLLBACK').catch(() => {});
         if (isStagingOrProd || platformDbEnabled) {
           sendJson(res, 500, { error: 'Failed to persist session to database: ' + dbErr.message, code: 'DATABASE_SESSION_WRITE_FAILED' });
           return true;
         }
         console.warn('[AUTH-PG-SYNC] Failed to write auth record to PostgreSQL:', dbErr.message);
+      } finally {
+        authClient.release();
       }
     }
 

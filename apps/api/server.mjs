@@ -6885,18 +6885,64 @@ const server = createServer(async (req, res) => {
         cal.externalBusyBlocks = body.busyBlocks;
       } else {
         // Perform initial sync to ingest busy blocks
+        let syncClient = null;
+        let appts = state.records.appointments || [];
+        if (pgPool) {
+          syncClient = await pgPool.connect();
+          await syncClient.query('BEGIN');
+          await syncClient.query(
+            "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)",
+            [agency.id, activeLocation.id]
+          );
+          const pgAppts = await syncClient.query(`
+            SELECT id, agency_id as "agencyId", location_id as "locationId", calendar_id as "calendarId",
+                   title, starts_at as "startsAt", ends_at as "endsAt", status, notes, external_event_id as "externalEventId"
+            FROM appointments
+            WHERE agency_id = $1 AND location_id = $2 AND calendar_id = $3
+            ORDER BY starts_at ASC
+          `, [agency.id, activeLocation.id, cal.id]);
+          appts = pgAppts.rows;
+        }
         try {
           const syncResult = await executeCalendarSync({
             calendar: cal,
-            appointments: state.records.appointments || [],
+            appointments: appts,
             syncDirection: cal.externalSync.syncDirection,
             credentials: { accessToken: verification.freshAccessToken || token, refreshToken },
             fetchFn: globalThis.fetch
           });
+
+          if (syncClient && syncResult.exportedEvents?.length) {
+            for (const exp of syncResult.exportedEvents) {
+              const updateRes = await syncClient.query(`
+                UPDATE appointments
+                SET external_event_id = $1, updated_at = now()
+                WHERE agency_id = $2 AND location_id = $3 AND calendar_id = $4 AND id = $5
+              `, [exp.externalId, agency.id, activeLocation.id, cal.id, exp.appointmentId]);
+
+              if (updateRes.rowCount !== 1) {
+                throw Object.assign(new Error(`Failed to persist external event ID for appointment ${exp.appointmentId}: record not found or tenant mismatch`), {
+                  code: 'APPOINTMENT_EXTERNAL_ID_PERSIST_FAILED',
+                  appointmentId: exp.appointmentId
+                });
+              }
+            }
+          }
+
+          if (syncClient) {
+            await syncClient.query('COMMIT');
+          }
           cal.externalBusyBlocks = syncResult.busyBlocks;
           cal.externalSync.lastSyncAt = syncResult.lastSyncAt;
         } catch (syncErr) {
+          if (syncClient) {
+            await syncClient.query('ROLLBACK').catch(() => {});
+          }
           console.warn('[CALENDAR-SYNC] Initial busy block fetch warning:', syncErr.message);
+        } finally {
+          if (syncClient) {
+            syncClient.release();
+          }
         }
       }
 
@@ -6931,20 +6977,22 @@ const server = createServer(async (req, res) => {
       }
 
       let appts = state.records.appointments || [];
+      let syncClient = null;
       if (pgPool) {
-        try {
-          const pgAppts = await pgPool.query(`
-            SELECT id, agency_id as "agencyId", location_id as "locationId", calendar_id as "calendarId",
-                   title, starts_at as "startsAt", ends_at as "endsAt", status, notes, external_event_id as "externalEventId"
-            FROM appointments
-            WHERE agency_id = $1 AND calendar_id = $2
-          `, [agency.id, cal.id]);
-          if (pgAppts.rows.length > 0) {
-            appts = pgAppts.rows;
-          }
-        } catch (dbErr) {
-          console.warn('[CALENDAR-SYNC] PG appointments lookup warning:', dbErr.message);
-        }
+        syncClient = await pgPool.connect();
+        await syncClient.query('BEGIN');
+        await syncClient.query(
+          "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)",
+          [agency.id, activeLocation.id]
+        );
+        const pgAppts = await syncClient.query(`
+          SELECT id, agency_id as "agencyId", location_id as "locationId", calendar_id as "calendarId",
+                 title, starts_at as "startsAt", ends_at as "endsAt", status, notes, external_event_id as "externalEventId"
+          FROM appointments
+          WHERE agency_id = $1 AND location_id = $2 AND calendar_id = $3
+          ORDER BY starts_at ASC
+        `, [agency.id, activeLocation.id, cal.id]);
+        appts = pgAppts.rows;
       }
 
       try {
@@ -6957,14 +7005,25 @@ const server = createServer(async (req, res) => {
         });
 
         // Persist external_event_id on authoritative PostgreSQL appointment records
-        if (pgPool && syncResult.exportedEvents?.length) {
+        if (syncClient && syncResult.exportedEvents?.length) {
           for (const exp of syncResult.exportedEvents) {
-            await pgPool.query(`
+            const updateRes = await syncClient.query(`
               UPDATE appointments
               SET external_event_id = $1, updated_at = now()
-              WHERE agency_id = $2 AND id = $3
-            `, [exp.externalId, agency.id, exp.appointmentId]).catch(e => console.warn('[CALENDAR-SYNC] PG external_event_id persist warning:', e.message));
+              WHERE agency_id = $2 AND location_id = $3 AND calendar_id = $4 AND id = $5
+            `, [exp.externalId, agency.id, activeLocation.id, cal.id, exp.appointmentId]);
+
+            if (updateRes.rowCount !== 1) {
+              throw Object.assign(new Error(`Failed to persist external event ID for appointment ${exp.appointmentId}: record not found or tenant mismatch`), {
+                code: 'APPOINTMENT_EXTERNAL_ID_PERSIST_FAILED',
+                appointmentId: exp.appointmentId
+              });
+            }
           }
+        }
+
+        if (syncClient) {
+          await syncClient.query('COMMIT');
         }
 
         cal.externalBusyBlocks = syncResult.busyBlocks;
@@ -6981,6 +7040,9 @@ const server = createServer(async (req, res) => {
           lastSyncAt: cal.externalSync.lastSyncAt
         });
       } catch (err) {
+        if (syncClient) {
+          await syncClient.query('ROLLBACK').catch(() => {});
+        }
         if (err.code === 'CALENDAR_AUTH_FAILED' || err.code === 'CALENDAR_UNAUTHORIZED') {
           cal.externalSync.status = 'error';
           cal.updatedAt = new Date().toISOString();
@@ -6988,7 +7050,14 @@ const server = createServer(async (req, res) => {
           await syncRelationalWrite('calendars', 'update', cal, agency.id);
           return sendJson(res, 401, { error: 'Calendar provider authorization expired', code: 'CALENDAR_AUTH_FAILED' });
         }
+        if (err.code === 'APPOINTMENT_EXTERNAL_ID_PERSIST_FAILED') {
+          return sendJson(res, 500, { error: err.message, code: err.code });
+        }
         return sendJson(res, 502, { error: err.message, code: err.code || 'CALENDAR_SYNC_FAILED' });
+      } finally {
+        if (syncClient) {
+          syncClient.release();
+        }
       }
     }
 
@@ -8445,26 +8514,37 @@ const server = createServer(async (req, res) => {
     if (method === 'GET' && pathname === '/api/workflows/approvals') {
       await expirePendingWorkflowApprovals();
       if (pgPool) {
-        const appRes = await pgPool.query(`
-          SELECT id, agency_id, location_id, execution_id, workflow_id, node_id, action_id, action_hash, status, requested_at, expires_at
-          FROM workflow_approvals
-          WHERE agency_id = $1 AND ($2::uuid IS NULL OR location_id = $2) AND status = 'pending'
-          ORDER BY requested_at DESC
-        `, [agency.id, activeLocation?.id || null]);
-        const mapped = appRes.rows.map(row => ({
-          id: row.id,
-          agencyId: row.agency_id,
-          locationId: row.location_id,
-          executionId: row.execution_id,
-          workflowId: row.workflow_id,
-          nodeId: row.node_id,
-          actionId: row.action_id,
-          actionHash: row.action_hash,
-          status: row.status,
-          createdAt: row.requested_at?.toISOString?.() || row.requested_at,
-          expiresAt: row.expires_at?.toISOString?.() || row.expires_at
-        }));
-        return sendJson(res, 200, mapped.map(publicWorkflowApproval));
+        const client = await pgPool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [agency.id, activeLocation?.id || agency.id]);
+          const appRes = await client.query(`
+            SELECT id, agency_id, location_id, execution_id, workflow_id, node_id, action_id, action_hash, status, requested_at, expires_at
+            FROM workflow_approvals
+            WHERE agency_id = $1 AND location_id = $2 AND status = 'pending'
+            ORDER BY requested_at DESC
+          `, [agency.id, activeLocation?.id || agency.id]);
+          await client.query('COMMIT');
+          const mapped = appRes.rows.map(row => ({
+            id: row.id,
+            agencyId: row.agency_id,
+            locationId: row.location_id,
+            executionId: row.execution_id,
+            workflowId: row.workflow_id,
+            nodeId: row.node_id,
+            actionId: row.action_id,
+            actionHash: row.action_hash,
+            status: row.status,
+            createdAt: row.requested_at?.toISOString?.() || row.requested_at,
+            expiresAt: row.expires_at?.toISOString?.() || row.expires_at
+          }));
+          return sendJson(res, 200, mapped.map(publicWorkflowApproval));
+        } catch (dbErr) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw dbErr;
+        } finally {
+          client.release();
+        }
       }
       state.workflowApprovals = state.workflowApprovals || [];
       const approvals = state.workflowApprovals.filter(
@@ -8487,17 +8567,23 @@ const server = createServer(async (req, res) => {
       if (pgPool) {
         const client = await pgPool.connect();
         try {
+          await client.query('BEGIN');
           await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [agency.id, activeLocation.id]);
 
           const execRes = await client.query(`
             SELECT id, agency_id, location_id, workflow_id, status, current_node_id, state, trigger_event
             FROM workflow_executions
             WHERE agency_id = $1 AND location_id = $2 AND id = $3
+            FOR UPDATE
           `, [agency.id, activeLocation.id, runId]);
 
-          if (execRes.rows.length === 0) return sendJson(res, 404, { error: 'Workflow execution not found' });
+          if (execRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return sendJson(res, 404, { error: 'Workflow execution not found' });
+          }
           const dbRun = execRes.rows[0];
           if (dbRun.status !== 'waiting_approval') {
+            await client.query('ROLLBACK');
             return sendJson(res, 409, { error: 'Workflow execution is not awaiting an approval', code: 'EXECUTION_NOT_WAITING' });
           }
 
@@ -8507,10 +8593,24 @@ const server = createServer(async (req, res) => {
             WHERE agency_id = $1 AND location_id = $2 AND execution_id = $3 AND status = 'pending'
             ORDER BY requested_at DESC
             LIMIT 1
+            FOR UPDATE
           `, [agency.id, activeLocation.id, runId]);
 
-          if (appRes.rows.length === 0) return sendJson(res, 404, { error: 'Pending approval not found' });
+          if (appRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return sendJson(res, 404, { error: 'Pending approval not found' });
+          }
           const dbApproval = appRes.rows[0];
+
+          if (new Date(dbApproval.expires_at).getTime() <= Date.now()) {
+            await client.query(`
+              UPDATE workflow_approvals
+              SET status = 'expired', updated_at = now()
+              WHERE agency_id = $1 AND location_id = $2 AND id = $3
+            `, [agency.id, activeLocation.id, dbApproval.id]);
+            await client.query('COMMIT');
+            return sendJson(res, 409, { error: 'Approval request has expired', code: 'APPROVAL_EXPIRED' });
+          }
 
           const actionHash = dbApproval.action_hash;
           const decisionChecksum = sha256({
@@ -8524,100 +8624,34 @@ const server = createServer(async (req, res) => {
             decidedAt: new Date().toISOString()
           });
 
-          await client.query('BEGIN');
-          try {
-            const updateAppRes = await client.query(`
-              UPDATE workflow_approvals
-              SET status = $1, decided_at = now(), decided_by = $2,
-                  decision_checksum = $3, updated_at = now()
-              WHERE agency_id = $4 AND location_id = $5 AND id = $6 AND status = 'pending'
-              RETURNING *
-            `, [
-              pathDecision, actor.user.id, decisionChecksum,
-              agency.id, activeLocation.id, dbApproval.id
-            ]);
+          const updateAppRes = await client.query(`
+            UPDATE workflow_approvals
+            SET status = $1, decided_at = now(), decided_by = $2,
+                decision_checksum = $3, updated_at = now()
+            WHERE agency_id = $4 AND location_id = $5 AND id = $6 AND status = 'pending'
+            RETURNING *
+          `, [
+            pathDecision, actor.user.id, decisionChecksum,
+            agency.id, activeLocation.id, dbApproval.id
+          ]);
 
-            if (updateAppRes.rowCount === 0) {
-              await client.query('ROLLBACK');
-              return sendJson(res, 409, { error: 'Approval was already decided or expired', code: 'APPROVAL_ALREADY_DECIDED' });
-            }
+          if (updateAppRes.rowCount === 0) {
+            await client.query('ROLLBACK');
+            return sendJson(res, 409, { error: 'Approval was already decided or expired', code: 'APPROVAL_ALREADY_DECIDED' });
+          }
 
-            if (pathDecision === 'rejected') {
-              await client.query(`
-                UPDATE workflow_executions
-                SET status = 'failed', last_error_code = 'APPROVAL_REJECTED', finished_at = now(), updated_at = now()
-                WHERE agency_id = $1 AND location_id = $2 AND id = $3
-              `, [agency.id, activeLocation.id, runId]);
-
-              await client.query(`
-                INSERT INTO workflow_execution_steps (
-                  id, agency_id, location_id, execution_id, node_id, attempt, status, error_code, started_at, finished_at
-                ) VALUES ($1, $2, $3, $4, $5, 1, 'failed', 'APPROVAL_REJECTED', now(), now())
-              `, [crypto.randomUUID(), agency.id, activeLocation.id, runId, dbApproval.node_id]);
-
-              await client.query('COMMIT');
-
-              auditLog('workflow.approval.decided', actor, {
-                approvalId: dbApproval.id,
-                executionId: runId,
-                workflowId: dbRun.workflow_id,
-                nodeId: dbApproval.node_id,
-                decision: 'rejected',
-                actionHash
-              });
-
-              return sendJson(res, 200, {
-                success: true,
-                approval: {
-                  id: dbApproval.id,
-                  status: 'rejected',
-                  decidedAt: new Date().toISOString(),
-                  decidedByActorId: actor.user.id
-                },
-                run: {
-                  id: runId,
-                  status: 'failed',
-                  lastErrorCode: 'APPROVAL_REJECTED'
-                }
-              });
-            }
-
-            // pathDecision === 'approved'
+          if (pathDecision === 'rejected') {
             await client.query(`
               UPDATE workflow_executions
-              SET status = 'resuming', updated_at = now()
+              SET status = 'failed', last_error_code = 'APPROVAL_REJECTED', finished_at = now(), updated_at = now()
               WHERE agency_id = $1 AND location_id = $2 AND id = $3
             `, [agency.id, activeLocation.id, runId]);
 
-            const outboxId = crypto.randomUUID();
-            const resumePayload = {
-              tenantId: agency.id,
-              locationId: activeLocation.id,
-              workflowId: dbRun.workflow_id,
-              executionId: runId,
-              nodeId: dbApproval.node_id,
-              actionHash,
-              approvedBy: actor.user.id,
-              evidence: {
-                approverActorId: actor.user.id,
-                approvedAt: new Date().toISOString(),
-                actionHash
-              }
-            };
-            const idempotencyKey = sha256({
-              type: 'workflow.step.resume',
-              tenantId: agency.id,
-              executionId: runId,
-              nodeId: dbApproval.node_id,
-              actionHash
-            });
-
             await client.query(`
-              INSERT INTO workflow_outbox (
-                id, agency_id, location_id, event_type, payload, idempotency_key, status, max_attempts, created_at, updated_at
-              ) VALUES ($1, $2, $3, 'workflow.step.resume', $4::jsonb, $5, 'pending', 5, now(), now())
-              ON CONFLICT (agency_id, location_id, idempotency_key) DO NOTHING
-            `, [outboxId, agency.id, activeLocation.id, JSON.stringify(resumePayload), idempotencyKey]);
+              INSERT INTO workflow_execution_steps (
+                id, agency_id, location_id, execution_id, node_id, attempt, status, error_code, started_at, finished_at
+              ) VALUES ($1, $2, $3, $4, $5, 1, 'failed', 'APPROVAL_REJECTED', now(), now())
+            `, [crypto.randomUUID(), agency.id, activeLocation.id, runId, dbApproval.node_id]);
 
             await client.query('COMMIT');
 
@@ -8626,29 +8660,92 @@ const server = createServer(async (req, res) => {
               executionId: runId,
               workflowId: dbRun.workflow_id,
               nodeId: dbApproval.node_id,
-              decision: 'approved',
+              decision: 'rejected',
               actionHash
             });
 
-            // In PostgreSQL durable worker mode, worker handles execution; never dual execute in API
             return sendJson(res, 200, {
               success: true,
               approval: {
                 id: dbApproval.id,
-                status: 'approved',
+                status: 'rejected',
                 decidedAt: new Date().toISOString(),
                 decidedByActorId: actor.user.id
               },
               run: {
                 id: runId,
-                status: 'resuming',
-                approvedNodeId: dbApproval.node_id
+                status: 'failed',
+                lastErrorCode: 'APPROVAL_REJECTED'
               }
             });
-          } catch (txErr) {
-            await client.query('ROLLBACK');
-            throw txErr;
           }
+
+          // pathDecision === 'approved'
+          await client.query(`
+            UPDATE workflow_executions
+            SET status = 'resuming', updated_at = now()
+            WHERE agency_id = $1 AND location_id = $2 AND id = $3
+          `, [agency.id, activeLocation.id, runId]);
+
+          const outboxId = crypto.randomUUID();
+          const resumePayload = {
+            tenantId: agency.id,
+            locationId: activeLocation.id,
+            workflowId: dbRun.workflow_id,
+            executionId: runId,
+            nodeId: dbApproval.node_id,
+            actionHash,
+            approvedBy: actor.user.id,
+            evidence: {
+              approverActorId: actor.user.id,
+              approvedAt: new Date().toISOString(),
+              actionHash
+            }
+          };
+          const idempotencyKey = sha256({
+            type: 'workflow.step.resume',
+            tenantId: agency.id,
+            executionId: runId,
+            nodeId: dbApproval.node_id,
+            actionHash
+          });
+
+          await client.query(`
+            INSERT INTO workflow_outbox (
+              id, agency_id, location_id, event_type, payload, idempotency_key, status, max_attempts, created_at, updated_at
+            ) VALUES ($1, $2, $3, 'workflow.step.resume', $4::jsonb, $5, 'pending', 5, now(), now())
+            ON CONFLICT (agency_id, location_id, idempotency_key) DO NOTHING
+          `, [outboxId, agency.id, activeLocation.id, JSON.stringify(resumePayload), idempotencyKey]);
+
+          await client.query('COMMIT');
+
+          auditLog('workflow.approval.decided', actor, {
+            approvalId: dbApproval.id,
+            executionId: runId,
+            workflowId: dbRun.workflow_id,
+            nodeId: dbApproval.node_id,
+            decision: 'approved',
+            actionHash
+          });
+
+          // In PostgreSQL durable worker mode, worker handles execution; never dual execute in API
+          return sendJson(res, 200, {
+            success: true,
+            approval: {
+              id: dbApproval.id,
+              status: 'approved',
+              decidedAt: new Date().toISOString(),
+              decidedByActorId: actor.user.id
+            },
+            run: {
+              id: runId,
+              status: 'resuming',
+              approvedNodeId: dbApproval.node_id
+            }
+          });
+        } catch (txErr) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw txErr;
         } finally {
           client.release();
         }
