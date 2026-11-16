@@ -1,5 +1,5 @@
 import { spawn, spawnSync, execSync } from 'node:child_process';
-import { existsSync, rmSync, mkdirSync } from 'node:fs';
+import { existsSync, rmSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,12 +8,14 @@ const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, '../../..');
 
 const DEFAULT_BIN_DIRS = [
+  process.env.PG_BIN_DIR,
+  'D:\\PostgreSQL\\16\\bin',
+  'C:\\Program Files\\PostgreSQL\\16\\bin',
   'C:\\Program Files\\PostgreSQL\\18\\bin',
   'C:\\Program Files\\PostgreSQL\\17\\bin',
-  'C:\\Program Files\\PostgreSQL\\16\\bin',
   '/usr/lib/postgresql/16/bin',
   '/usr/bin'
-];
+].filter(Boolean);
 
 function findPgBin(name) {
   for (const binDir of DEFAULT_BIN_DIRS) {
@@ -45,8 +47,20 @@ export class IsolatedTestPostgres {
 
     mkdirSync(path.dirname(this.dataDir), { recursive: true });
 
-    // 1. Run initdb only if cluster is not yet initialized
-    if (!existsSync(path.join(this.dataDir, 'PG_VERSION'))) {
+    // 1. Run initdb if cluster is not yet initialized or if version mismatch
+    const pgVersionFile = path.join(this.dataDir, 'PG_VERSION');
+    const binVerRes = spawnSync(initdbBin, ['--version'], { encoding: 'utf8' });
+    const match = (binVerRes.stdout || '').match(/(\d+)/);
+    const binMajor = match ? match[1] : '16';
+
+    if (existsSync(pgVersionFile)) {
+      const existingVer = readFileSync(pgVersionFile, 'utf8').trim();
+      if (existingVer !== binMajor) {
+        rmSync(this.dataDir, { recursive: true, force: true });
+      }
+    }
+
+    if (!existsSync(pgVersionFile)) {
       const initRes = spawnSync(initdbBin, ['-D', this.dataDir, '-U', 'postgres', '-A', 'trust', '--encoding=UTF8', '-N'], {
         encoding: 'utf8',
         timeout: 120000

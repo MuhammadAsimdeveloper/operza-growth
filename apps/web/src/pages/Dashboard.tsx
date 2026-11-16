@@ -98,21 +98,21 @@ export default function Dashboard() {
   ];
 
   const kpis = [
-    { label: 'Contacts', value: formatCount(metrics.contacts), note: 'Customer records', icon: 'users', trend: '+14%' },
-    { label: 'Open deals', value: formatCount(metrics.openDeals), note: 'Active pipeline', icon: 'kanban', trend: '+9%' },
-    { label: 'Unread inbox', value: formatCount(metrics.unreadInbox), note: 'Needs response', icon: 'message', trend: metrics.unreadInbox > 0 ? 'Review' : 'Zero' },
-    { label: 'AI runs', value: formatCount(metrics.aiRuns24h), note: 'Last 24 hours', icon: 'sparkles', trend: '+28%' },
-    { label: 'Queue', value: formatCount(metrics.pendingApprovals), note: 'Pending approvals', icon: 'clock', trend: metrics.pendingApprovals && metrics.pendingApprovals > 0 ? 'Waiting' : 'Clear' }
+    { label: 'Contacts', value: formatCount(metrics.contacts), note: 'Customer records', icon: 'users', trend: 'Total' },
+    { label: 'Open deals', value: formatCount(metrics.openDeals), note: 'Active pipeline', icon: 'kanban', trend: 'Active' },
+    { label: 'Unread inbox', value: formatCount(metrics.unreadInbox), note: 'Needs response', icon: 'message', trend: metrics.unreadInbox > 0 ? 'Review' : 'Clear' },
+    { label: 'Automations', value: formatCount(metrics.aiRuns24h), note: 'Runs in 24h', icon: 'zap', trend: '24h' },
+    { label: 'Approval queue', value: formatCount(metrics.pendingApprovals), note: 'Awaiting review', icon: 'clock', trend: metrics.pendingApprovals && metrics.pendingApprovals > 0 ? 'Action' : 'Zero' }
   ];
 
   const stageStats = useMemo(() => {
     const opps = state.opportunities || [];
     const stages = [
-      { name: 'Lead Capture', color: '#6366f1' },
-      { name: 'Qualified', color: '#3b82f6' },
-      { name: 'Proposal Sent', color: '#8b5cf6' },
-      { name: 'Negotiation', color: '#ec4899' },
-      { name: 'Closed Won', color: '#10b981' }
+      { name: 'Lead Capture', color: '#3b82f6' },
+      { name: 'Qualified', color: '#2563eb' },
+      { name: 'Proposal Sent', color: '#4f46e5' },
+      { name: 'Negotiation', color: '#d97706' },
+      { name: 'Closed Won', color: '#059669' }
     ];
     const total = opps.length || 1;
     return stages.map((s) => {
@@ -142,9 +142,9 @@ export default function Dashboard() {
       </header>
 
       <section className="atlas-hero" aria-labelledby="operza-hero-title">
-        <div className="atlas-eyebrow">TODAY</div>
-        <h2 id="operza-hero-title">Run the business from one unified control plane.</h2>
-        <p>CRM, omnichannel conversations, automation, AI swarm, and revenue share one authoritative operational view.</p>
+        <div className="atlas-eyebrow">OVERVIEW</div>
+        <h2 id="operza-hero-title">Operations Command</h2>
+        <p>Live telemetry across pipeline deals, customer communications, scheduled appointments, and automation workflows.</p>
       </section>
 
       <section className="atlas-kpis" aria-label="Workspace metrics">

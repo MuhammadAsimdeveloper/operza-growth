@@ -23,10 +23,10 @@
   --surface-4: var(--layer-04);
   --sidebar: #fafbfc;
 
-  /* Glassmorphism & Materials */
-  --glass-bg: rgba(255, 255, 255, 0.82);
+  /* Subtle Clean Materials */
+  --glass-bg: rgba(255, 255, 255, 0.94);
   --glass-border: rgba(0, 0, 0, 0.08);
-  --glass-blur: blur(20px) saturate(190%);
+  --glass-blur: blur(8px);
 
   /* Typography & Ink (Contrast Floors: 4.5:1 Muted, 3:1 Faint) */
   --text: #161616;
@@ -36,23 +36,23 @@
   --text-3: #808080;
   --text-faint: #808080;
   --text-inverse: #ffffff;
-  --text-accent: #3b82f6;
+  --text-accent: #2563eb;
 
-  /* Rune Low-Alpha Foreground Borders */
+  /* Low-Alpha Foreground Borders */
   --line: rgba(0, 0, 0, 0.09);
   --border-muted: rgba(0, 0, 0, 0.06);
   --border-base: rgba(0, 0, 0, 0.11);
   --border-strong: rgba(0, 0, 0, 0.20);
   --line-strong: var(--border-strong);
   --line-subtle: var(--border-muted);
-  --border-focus: #3b82f6;
+  --border-focus: #2563eb;
 
   /* Accent & Brand Colors */
-  --accent: #4f46e5;
-  --accent-hover: #4338ca;
-  --accent-soft: rgba(79, 70, 229, 0.10);
-  --accent-ink: #3730a3;
-  --accent-glow: 0 0 24px rgba(79, 70, 229, 0.25);
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-soft: rgba(37, 99, 235, 0.08);
+  --accent-ink: #1e40af;
+  --accent-glow: none;
 
   /* Semantic Status Roles */
   --green: #10b981;
@@ -129,10 +129,10 @@
   --surface-4: var(--layer-04);
   --sidebar: #0b0e16;
 
-  /* Glassmorphism & Materials */
-  --glass-bg: rgba(17, 20, 30, 0.85);
+  /* Subtle Clean Materials */
+  --glass-bg: rgba(17, 20, 30, 0.94);
   --glass-border: rgba(255, 255, 255, 0.09);
-  --glass-blur: blur(20px) saturate(200%);
+  --glass-blur: blur(8px);
 
   /* Typography & Ink */
   --text: #f8fafc;
@@ -154,11 +154,11 @@
   --border-focus: #3b82f6;
 
   /* Brand — Luminous Indigo / Cobalt Glow */
-  --accent: #6366f1;
-  --accent-hover: #7b7ef5;
-  --accent-soft: rgba(99, 102, 241, 0.16);
-  --accent-ink: #c7d2fe;
-  --accent-glow: 0 0 28px rgba(99, 102, 241, 0.40);
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-soft: rgba(59, 130, 246, 0.12);
+  --accent-ink: #93c5fd;
+  --accent-glow: none;
 
   /* Semantic Status Roles */
   --green: #10b981;

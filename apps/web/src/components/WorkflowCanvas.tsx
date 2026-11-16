@@ -64,10 +64,10 @@ const ACTION_ICONS: Record<string, string> = {
   math: 'calculator',
   filter: 'filter',
   slack_notify: 'message',
-  ai_agent: 'sparkles',
-  ai_classify: 'sparkles',
-  ai_extract: 'sparkles',
-  ai_generate: 'sparkles',
+  ai_agent: 'zap',
+  ai_classify: 'filter',
+  ai_extract: 'sliders',
+  ai_generate: 'code',
   switch: 'sliders',
   code: 'zap',
   merge: 'share',
@@ -482,13 +482,11 @@ export function WorkflowCanvas({
                 top: `${node.y}px`,
                 width: `${node.width}px`,
                 background: 'var(--surface)',
-                borderRadius: 10,
-                border: node.isTrigger ? '2px solid #6366f1' : '1px solid var(--border)',
-                boxShadow: node.isTrigger
-                  ? '0 0 15px rgba(99, 102, 241, 0.25)'
-                  : '0 8px 16px -4px rgba(0,0,0,0.08)',
+                borderRadius: 6,
+                border: node.isTrigger ? '1.5px solid var(--accent)' : '1px solid var(--border-base)',
+                boxShadow: 'var(--shadow-xs)',
                 cursor: 'pointer',
-                transition: draggingNodeId === node.id ? 'none' : 'box-shadow 0.2s',
+                transition: draggingNodeId === node.id ? 'none' : 'border-color 0.15s ease',
               }}
               onMouseDown={(e) => handleNodeDragStart(e, node.id, node.x, node.y)}
               onClick={() => {

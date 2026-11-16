@@ -145,11 +145,11 @@ export default function Home() {
                       <div style={{ width: 18, height: 18, borderRadius: 4, background: '#4f46e5', color: '#fff', fontSize: 10, fontWeight: 800, display: 'grid', placeItems: 'center' }}>OP</div>
                       <span style={{ fontSize: 11, fontWeight: 700, color: '#f8fafc' }}>Atlas Command</span>
                     </div>
-                    <div style={styles.consoleNavItemActive}>⚡ Visual Nodal Graph</div>
-                    <div style={styles.consoleNavItem}>🤖 Copilot AI Swarm</div>
-                    <div style={styles.consoleNavItem}>📞 WebRTC Softphone</div>
-                    <div style={styles.consoleNavItem}>🔒 RLS Security Guard</div>
-                    <div style={styles.consoleNavItem}>📊 MRR Velocity</div>
+                    <div style={styles.consoleNavItemActive}>Visual Workflow Graph</div>
+                    <div style={styles.consoleNavItem}>Assistant Hub</div>
+                    <div style={styles.consoleNavItem}>WebRTC Telephony</div>
+                    <div style={styles.consoleNavItem}>Multi-Tenant RLS</div>
+                    <div style={styles.consoleNavItem}>Revenue Telemetry</div>
                   </div>
 
                   {/* Main Canvas Simulation */}
@@ -828,31 +828,15 @@ const styles: Record<string, React.CSSProperties> = {
     margin: '48px auto 0',
   },
   hero3dGlow1: {
-    position: 'absolute' as const,
-    width: 480,
-    height: 300,
-    top: '10%',
-    left: '15%',
-    background: 'radial-gradient(circle, rgba(99, 102, 241, 0.25) 0%, transparent 70%)',
-    filter: 'blur(50px)',
-    pointerEvents: 'none' as const,
-    zIndex: 1,
+    display: 'none' as const,
   },
   hero3dGlow2: {
-    position: 'absolute' as const,
-    width: 440,
-    height: 280,
-    top: '30%',
-    right: '15%',
-    background: 'radial-gradient(circle, rgba(6, 182, 212, 0.2) 0%, transparent 70%)',
-    filter: 'blur(50px)',
-    pointerEvents: 'none' as const,
-    zIndex: 1,
+    display: 'none' as const,
   },
   tiltContainer: {
     position: 'relative' as const,
-    transform: 'rotateX(13deg) rotateY(-8deg) rotateZ(2deg)',
-    transformStyle: 'preserve-3d' as const,
+    transform: 'none',
+    transformStyle: 'flat' as const,
     zIndex: 2,
   },
   consoleFrame: {

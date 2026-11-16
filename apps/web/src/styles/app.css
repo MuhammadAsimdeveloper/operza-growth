@@ -3457,10 +3457,10 @@ a {
 
 @keyframes atlasGlowPulse {
   0%, 100% {
-    box-shadow: 0 0 14px rgba(99, 102, 241, 0.25);
+    opacity: 0.8;
   }
   50% {
-    box-shadow: 0 0 26px rgba(99, 102, 241, 0.55);
+    opacity: 1;
   }
 }
 
@@ -3475,54 +3475,48 @@ a {
 
 /* Page Entrance Smoothness */
 .atlas-dashboard {
-  animation: atlasFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+  animation: atlasFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .atlas-hero {
-  animation: atlasFadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
+  animation: atlasFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .atlas-kpis {
-  animation: atlasFadeIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both;
+  animation: atlasFadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 /* Interactive Card Micro-Interactions */
 .card-premium {
-  transition: transform 0.24s cubic-bezier(0.16, 1, 0.3, 1),
-              box-shadow 0.24s cubic-bezier(0.16, 1, 0.3, 1),
-              border-color 0.24s ease;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .card-premium:hover {
-  border-color: rgba(99, 102, 241, 0.35);
+  border-color: var(--border-strong);
 }
 
 .operza-kpi {
-  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1),
-              box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1),
-              border-color 0.22s ease;
+  transition: border-color 0.15s ease;
 }
 
 .operza-kpi:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md), 0 0 20px rgba(99, 102, 241, 0.18);
-  border-color: rgba(99, 102, 241, 0.4);
+  border-color: var(--border-strong);
 }
 
 /* Button & Action Transitions */
 .atlas-quick-action-button,
 .btn {
-  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .atlas-quick-action-button:hover,
 .btn:hover {
-  transform: translateY(-1px);
+  background: var(--accent-hover);
 }
 
 .atlas-quick-action-button:active,
 .btn:active {
-  transform: scale(0.97);
+  transform: none;
 }
 
 /* Pulsing Status Dot */
@@ -3531,8 +3525,6 @@ a {
   height: 8px;
   border-radius: 50%;
   background: var(--green);
-  box-shadow: 0 0 10px var(--green);
-  animation: atlasPulse 2s infinite ease-in-out;
   display: inline-block;
   vertical-align: middle;
 }
@@ -3611,145 +3603,66 @@ a {
 }
 
 /* ============================================================================
- * 3D Perspectives, Floating Keyframes & Luminous Visual Micro-Interactions
+ * Clean Interactive Cards, Restrained Surfaces & Reduced-Motion Accessibility
  * ============================================================================ */
 
-@keyframes floatSlow {
-  0%, 100% {
-    transform: translateY(0px) rotate(0deg);
-  }
-  50% {
-    transform: translateY(-8px) rotate(0.5deg);
-  }
-}
-
-@keyframes floatReverse {
-  0%, 100% {
-    transform: translateY(0px) rotate(0deg);
-  }
-  50% {
-    transform: translateY(8px) rotate(-0.5deg);
-  }
-}
-
-@keyframes glowPulseSlow {
-  0%, 100% {
-    opacity: 0.55;
-    transform: scale(1);
-    filter: blur(48px);
-  }
-  50% {
-    opacity: 0.85;
-    transform: scale(1.08);
-    filter: blur(56px);
-  }
-}
-
-@keyframes radarSweep {
-  0% {
-    transform: rotate(0deg);
-  }
-  100% {
-    transform: rotate(360deg);
-  }
-}
-
-@keyframes shimmerGlow {
-  0% {
-    background-position: -200% center;
-  }
-  100% {
-    background-position: 200% center;
-  }
-}
-
-@keyframes beamScan {
-  0% {
-    transform: translateY(-100%);
-    opacity: 0;
-  }
-  50% {
-    opacity: 0.7;
-  }
-  100% {
-    transform: translateY(100%);
-    opacity: 0;
-  }
-}
-
-/* 3D Stage & Card Physics */
+/* Functional Card Interactions */
 .stage-perspective {
-  perspective: 1200px;
-  perspective-origin: center top;
+  perspective: none;
 }
 
 .card-3d-interactive {
-  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
-              box-shadow 0.35s cubic-bezier(0.16, 1, 0.3, 1),
-              border-color 0.25s ease;
-  transform-style: preserve-3d;
-  will-change: transform, box-shadow;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  background: var(--surface);
+  border: 1px solid var(--border-base);
+  border-radius: var(--r-md);
 }
 
 .card-3d-interactive:hover {
-  transform: translateY(-6px) perspective(1000px) rotateX(2deg) rotateY(-1deg);
-  box-shadow: 0 20px 40px -15px rgba(15, 23, 42, 0.15),
-              0 0 24px rgba(99, 102, 241, 0.2);
-  border-color: rgba(99, 102, 241, 0.45);
+  border-color: var(--border-strong);
 }
 
 [data-theme="dark"] .card-3d-interactive:hover {
-  box-shadow: 0 24px 50px -12px rgba(0, 0, 0, 0.7),
-              0 0 30px rgba(99, 102, 241, 0.35);
-  border-color: rgba(129, 140, 248, 0.5);
+  border-color: var(--border-strong);
 }
 
-.float-slow {
-  animation: floatSlow 6s ease-in-out infinite;
-}
-
-.float-reverse {
-  animation: floatReverse 7s ease-in-out infinite;
-}
-
+.float-slow,
+.float-reverse,
 .pulse-glow {
-  animation: glowPulseSlow 5s ease-in-out infinite;
+  animation: none;
 }
 
-/* Glassmorphism & High-End Visual Mesh */
+/* Restrained Surface Panels */
 .glass-panel-luminous {
-  background: rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 1px solid rgba(226, 232, 240, 0.8);
-  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06),
-              inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  background: var(--surface);
+  border: 1px solid var(--border-base);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-xs);
 }
 
 [data-theme="dark"] .glass-panel-luminous {
-  background: rgba(15, 23, 42, 0.75);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6),
-              inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  background: var(--surface);
+  border: 1px solid var(--border-base);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-xs);
 }
 
-/* Animated Shimmer Text */
+/* High-Legibility Solid Heading Ink */
 .text-shimmer {
-  background: linear-gradient(
-    90deg,
-    #4f46e5 0%,
-    #818cf8 25%,
-    #c084fc 50%,
-    #818cf8 75%,
-    #4f46e5 100%
-  );
-  background-size: 200% auto;
-  color: transparent;
-  -webkit-background-clip: text;
-  background-clip: text;
-  animation: shimmerGlow 6s linear infinite;
+  color: var(--text);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+/* Reduced Motion Support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Animated Radar Sweep Disc */

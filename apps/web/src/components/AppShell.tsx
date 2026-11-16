@@ -67,7 +67,7 @@ function Sidebar({
     { to: '/command-center', label: 'Command Center', icon: 'zap' },
     { to: '/conversations', label: 'Conversations & Inbox', icon: 'message', badge: unreadConversations > 0 ? unreadConversations : undefined },
     { to: '/notifications', label: 'Notification Center', icon: 'bell', badge: unreadNotifications > 0 ? unreadNotifications : undefined },
-    { to: '/apps', label: 'All Apps Directory', icon: 'grid', badge: '50+' },
+    { to: '/apps', label: 'App Directory', icon: 'grid' },
   ];
 
   // ─── Functional Pillar Accordions (Organized Enterprise Suites) ───
@@ -146,7 +146,7 @@ function Sidebar({
       label: 'Agency & Platform',
       icon: 'shield',
       items: [
-        { to: '/integrations', label: 'App Marketplace (50+)', icon: 'plug' },
+        { to: '/integrations', label: 'Integrations & Connectors', icon: 'plug' },
         { to: '/sub-accounts', label: 'Sub-accounts & Locations', icon: 'building' },
         { to: '/snapshots', label: 'Account Snapshots', icon: 'refresh' },
         { to: '/branding', label: 'Custom White-Label Branding', icon: 'sliders' },
@@ -355,18 +355,18 @@ function Sidebar({
                 style={{
                   background: 'none',
                   border: 'none',
-                  fontSize: 9.5,
-                  color: 'var(--accent)',
-                  fontWeight: 650,
+                  fontSize: 10,
+                  color: 'var(--text-2)',
+                  fontWeight: 600,
                   cursor: 'pointer',
                   padding: 0,
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: 3,
+                  gap: 4,
                 }}
-                title="Open 50+ Apps Catalog Modal"
+                title="Open Applications Directory"
               >
-                <Icon name="grid" size={11} /> 50+ Catalog ↗
+                <Icon name="grid" size={11} /> Directory
               </button>
             </div>
             {primaryItems.map((item) => (
@@ -1198,10 +1198,10 @@ function TopBar({ onOpenNav, onOpenAppsLauncher }: { onOpenNav: () => void; onOp
             cursor: 'pointer',
           }}
           onClick={onOpenAppsLauncher}
-          title="Open Operza 50+ Apps Quick Launcher (9-Dots)"
+          title="Open Applications Launcher"
         >
           <Icon name="grid" size={13} />
-          <span>All Apps (50) ▾</span>
+          <span>Applications ▾</span>
         </button>
       </div>
       <SearchBox />
