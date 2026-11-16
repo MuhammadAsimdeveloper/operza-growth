@@ -25,7 +25,9 @@ export async function handleAuthRoutes(req, res, ctx) {
     clearSessionCookies,
     getActor,
     pgPool,
-    cookieSession
+    cookieSession,
+    isStagingOrProd = process.env.NODE_ENV === 'staging' || process.env.NODE_ENV === 'production',
+    platformDbEnabled = process.env.PLATFORM_DB_ENABLED === 'true'
   } = ctx;
 
   // 1. AUTH: Signup
@@ -206,6 +208,10 @@ export async function handleAuthRoutes(req, res, ctx) {
           [sessionId, tokenHash, csrfHash, userId, agencyId, expiresAtMs]
         );
       } catch (dbErr) {
+        if (isStagingOrProd || platformDbEnabled) {
+          sendJson(res, 500, { error: 'Failed to persist session to database: ' + dbErr.message, code: 'DATABASE_SESSION_WRITE_FAILED' });
+          return true;
+        }
         console.warn('[AUTH-PG-SYNC] Failed to write auth record to PostgreSQL:', dbErr.message);
       }
     }
@@ -357,6 +363,10 @@ export async function handleAuthRoutes(req, res, ctx) {
           [sessionId, tokenHash, csrfHash, user.id, agency.id, expiresAtMs]
         );
       } catch (dbErr) {
+        if (isStagingOrProd || platformDbEnabled) {
+          sendJson(res, 500, { error: 'Failed to persist session to database: ' + dbErr.message, code: 'DATABASE_SESSION_WRITE_FAILED' });
+          return true;
+        }
         console.warn('[AUTH-LOGIN-PG] Failed to write session to PostgreSQL:', dbErr.message);
       }
     }
@@ -558,6 +568,10 @@ export async function handleAuthRoutes(req, res, ctx) {
           [sessionId, tokenHash, csrfHash, user.id, agency.id, expiresAtMs]
         );
       } catch (dbErr) {
+        if (isStagingOrProd || platformDbEnabled) {
+          sendJson(res, 500, { error: 'Failed to persist session to database: ' + dbErr.message, code: 'DATABASE_SESSION_WRITE_FAILED' });
+          return true;
+        }
         console.warn('[AUTH-LOGIN-PG] Failed to write session to PostgreSQL:', dbErr.message);
       }
     }
@@ -623,6 +637,10 @@ export async function handleAuthRoutes(req, res, ctx) {
           [sessionId, tokenHash, csrfHash, user.id, agency.id, expiresAtMs]
         );
       } catch (dbErr) {
+        if (isStagingOrProd || platformDbEnabled) {
+          sendJson(res, 500, { error: 'Failed to persist session to database: ' + dbErr.message, code: 'DATABASE_SESSION_WRITE_FAILED' });
+          return true;
+        }
         console.warn('[AUTH-LOGIN-PG] Failed to write session to PostgreSQL:', dbErr.message);
       }
     }

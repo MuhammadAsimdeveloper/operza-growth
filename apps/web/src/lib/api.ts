@@ -111,8 +111,15 @@ export const api = {
       request(`/api/calendars/public/${idOrSlug}${date ? `?date=${encodeURIComponent(date)}` : ''}`),
     bookPublic: (idOrSlug: string, data: { name: string; email: string; phone?: string; date: string; timeSlot: string; notes?: string }) =>
       request(`/api/calendars/book/${idOrSlug}`, { method: 'POST', body: JSON.stringify(data) }),
-    connectSync: (id: string, data: { provider: string; email: string; calendarName?: string; busyBlocks?: any[] }) =>
+    connectSync: (id: string, data: { provider: string; email?: string; calendarName?: string; accessToken?: string; refreshToken?: string; syncDirection?: string; busyBlocks?: any[] }) =>
       request<{ success: boolean; externalSync: any; calendar: any }>(`/api/calendars/${id}/sync/connect`, { method: 'POST', body: JSON.stringify(data) }),
+    getOAuthStartUrl: (id: string, provider: string) => `/api/calendars/${id}/oauth/start?provider=${encodeURIComponent(provider)}`,
+    listCalendars: (id: string) =>
+      request<{ calendars: Array<{ id: string; name: string; primary?: boolean }> }>(`/api/calendars/${id}/sync/calendars`),
+    syncNow: (id: string) =>
+      request<{ success: boolean; calendarId: string; busyBlocksCount: number; lastSyncAt: string }>(`/api/calendars/${id}/sync/now`, { method: 'POST' }),
+    disconnectSync: (id: string) =>
+      request<{ success: boolean; message: string }>(`/api/calendars/${id}/sync/disconnect`, { method: 'POST' }),
     getSyncStatus: (id: string) =>
       request<{ calendarId: string; externalSync: any; busyBlocksCount: number }>(`/api/calendars/${id}/sync/status`),
     syncBusy: (id: string, busyBlocks: Array<{ start: string; end: string; summary?: string }>) =>

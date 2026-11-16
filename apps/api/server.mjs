@@ -46,7 +46,7 @@ import { createPostgresSecretBackend } from '../../packages/db/lib/secret-vault-
 import { createZapierHookRepository } from '../../packages/db/lib/zapier-hook-repository.mjs';
 import { createPostgresOAuthStateStore } from '../../packages/db/lib/outlook-oauth-state-repository.mjs';
 import { createOutlookOAuthService, createMemoryOAuthStateStore } from '../../packages/platform-core/src/outlook-oauth.mjs';
-import { executeCalendarSync, googleCalendarAdapter, microsoftGraphCalendarAdapter } from '../../packages/platform-core/src/calendar-sync.mjs';
+import { executeCalendarSync, googleCalendarAdapter, microsoftGraphCalendarAdapter, signOAuthState, verifyOAuthState } from '../../packages/platform-core/src/calendar-sync.mjs';
 import { workflowQueue } from './queue.mjs';
 import { handleZapierRoute, dispatchZapierEvent } from './zapier-router.mjs';
 import { handleSystemRoutes } from './routes/system.mjs';
@@ -1030,6 +1030,11 @@ async function syncRelationalWrite(collectionName, action, record, agencyId) {
 
 async function loadAuthoritativeCollectionRecords(collectionName, agencyId, locationId) {
   if (!pgPool) {
+    if (isStagingOrProd || platformDbEnabled) {
+      throw Object.assign(new Error(`Authoritative collection '${collectionName}' requires PostgreSQL connection in staging/production`), {
+        code: 'PLATFORM_DB_REQUIRED'
+      });
+    }
     state.records[collectionName] = state.records[collectionName] || [];
     return state.records[collectionName].filter(r => r.agencyId === agencyId && (!r.locationId || !locationId || r.locationId === locationId));
   }
@@ -1157,7 +1162,11 @@ async function loadAuthoritativeCollectionRecords(collectionName, agencyId, loca
       }));
     }
 
-    // Fallback to in-memory records if location_records empty
+    if (isStagingOrProd || platformDbEnabled) {
+      return [];
+    }
+
+    // Fallback to in-memory records only in local non-production development without DB records
     state.records[collectionName] = state.records[collectionName] || [];
     return state.records[collectionName].filter(r => r.agencyId === agencyId && (!r.locationId || !locationId || r.locationId === locationId));
   } finally {
@@ -1437,31 +1446,71 @@ async function executeWorkflowInstance({
     claimExecutionLease({ execution, workerLeaseId, leaseDurationMs: 60_000, now: startedAt });
   } else {
     claimExecutionLease({ execution, workerLeaseId, leaseDurationMs: 60_000, now: startedAt });
-    try {
-      const outboxEntry = await produceWorkflowTriggerEvent({
-        repository: getOutboxRepo(),
-        tenantId: agencyId || 'default_agency',
-        locationId: locationId || 'default_location',
-        workflowId: flow.id,
-        triggerType: triggerType || 'manual',
-        payload: {
-          executionId: execution.id,
-          workflowName: flow.name
-        }
-      });
-      execution.outboxJobId = outboxEntry?.id || `job_${randomUUID().slice(0, 12)}`;
-      execution.outboxStatus = outboxEntry?.status || 'pending';
-      execution.attemptCount = 1;
-    } catch (err) {
-      if (isStagingOrProd || platformDbEnabled) {
-        throw Object.assign(new Error(`Failed to enqueue durable workflow outbox event: ${err.message}`), {
-          code: 'OUTBOX_ENQUEUE_FAILED'
+    if (mode !== 'dry_run') {
+      try {
+        const outboxEntry = await produceWorkflowTriggerEvent({
+          repository: getOutboxRepo(),
+          tenantId: agencyId || 'default_agency',
+          locationId: locationId || 'default_location',
+          workflowId: flow.id,
+          triggerType: triggerType || 'manual',
+          payload: {
+            executionId: execution.id,
+            workflowId: flow.id,
+            workflowName: flow.name,
+            triggerType: triggerType || 'manual',
+            triggerContext: triggerContext || {},
+            mode: 'live',
+            tenantId: agencyId,
+            agencyId,
+            locationId,
+            actorId: execution.actorId,
+            actorName: execution.actorName,
+            consent: execution.consent || triggerContext?.consent,
+            requiredConsentEvidence: triggerContext?.consentEvidence || (execution.consent ? { grantedAt: new Date().toISOString() } : null)
+          }
         });
+        execution.outboxJobId = outboxEntry?.id || `job_${randomUUID().slice(0, 12)}`;
+        execution.outboxStatus = outboxEntry?.status || 'pending';
+        execution.attemptCount = 1;
+        execution.status = (pgPool || platformDbEnabled) ? 'enqueued' : 'running';
+      } catch (err) {
+        if (isStagingOrProd || platformDbEnabled) {
+          throw Object.assign(new Error(`Failed to enqueue durable workflow outbox event: ${err.message}`), {
+            code: 'OUTBOX_ENQUEUE_FAILED'
+          });
+        }
+        execution.outboxJobId = `job_${randomUUID().slice(0, 12)}`;
+        execution.outboxStatus = 'pending';
+        execution.attemptCount = 1;
       }
-      execution.outboxJobId = `job_${randomUUID().slice(0, 12)}`;
-      execution.outboxStatus = 'pending';
-      execution.attemptCount = 1;
+
+      if (pgPool) {
+        const client = await pgPool.connect();
+        try {
+          await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [String(agencyId), String(locationId || agencyId)]);
+          await client.query(`
+            INSERT INTO workflow_executions (
+              id, agency_id, location_id, workflow_id, status, trigger_event,
+              attempts, created_at, updated_at
+            ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, 0, now(), now())
+            ON CONFLICT (agency_id, location_id, id) DO NOTHING
+          `, [execution.id, agencyId, locationId || agencyId, flow.id, execution.status, JSON.stringify(triggerContext || {})]);
+        } catch (dbErr) {
+          if (isStagingOrProd || platformDbEnabled) {
+            throw Object.assign(new Error(`Failed to persist workflow execution to PostgreSQL: ${dbErr.message}`), {
+              code: 'WORKFLOW_EXECUTION_PERSIST_FAILED'
+            });
+          }
+        } finally {
+          client.release();
+        }
+      }
+    } else {
+      // In dry_run mode, never enqueue durable event and never execute live side effects
+      execution.status = 'simulated';
     }
+
     state.workflowExecutions.push(execution);
     state.workflowApprovals = state.workflowApprovals || [];
     await saveState();
@@ -1469,8 +1518,16 @@ async function executeWorkflowInstance({
       executionId: execution.id,
       workflowId: flow.id,
       workflowName: flow.name,
-      outboxJobId: execution.outboxJobId
+      outboxJobId: execution.outboxJobId,
+      status: execution.status
     });
+
+    // P0: SEPARATE API ENQUEUEING FROM WORKFLOW EXECUTION
+    // The API must not execute the graph after it has enqueued the durable event.
+    // In PostgreSQL-backed production mode, execution is handled exclusively by the worker.
+    if ((pgPool || isStagingOrProd || platformDbEnabled) && mode !== 'dry_run') {
+      return execution;
+    }
   }
 
   const crmActions = {
@@ -4970,7 +5027,9 @@ const server = createServer(async (req, res) => {
         clearSessionCookies,
         getActor,
         pgPool,
-        cookieSession
+        cookieSession,
+        isStagingOrProd,
+        platformDbEnabled
       });
       if (handled || res.headersSent) {
         return;
@@ -6431,6 +6490,149 @@ const server = createServer(async (req, res) => {
     // ─── 2-WAY CALENDAR SYNC (Google Calendar & Outlook 365) ───
     // ═════════════════════════════════════════════════════════════
 
+    // GET /api/calendars/:id/oauth/start — Begin Calendar OAuth flow (Google or Outlook)
+    if (method === 'GET' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/oauth/start')) {
+      const calId = pathname.replace('/api/calendars/', '').replace('/oauth/start', '').trim();
+      let calendars = state.records.calendars || [];
+      let cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
+      if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
+
+      const provider = url.searchParams.get('provider') || 'google_calendar';
+      const redirectUri = `${process.env.APP_BASE_URL || url.origin}/api/calendars/oauth/callback`;
+      let authorizationUrl = '';
+
+      if (provider === 'google_calendar' || provider === 'google') {
+        const clientId = process.env.GOOGLE_CLIENT_ID || 'operza-google-calendar-client-id';
+        authorizationUrl = googleCalendarAdapter.getAuthorizationUrl({
+          clientId,
+          redirectUri,
+          stateKey: effectiveVaultKey,
+          tenantId: agency.id,
+          locationId: activeLocation?.id || agency.id,
+          calendarId: cal.id
+        });
+      } else if (provider === 'outlook' || provider === 'microsoft_graph') {
+        const clientId = process.env.MICROSOFT_CLIENT_ID || process.env.AZURE_AD_CLIENT_ID || 'operza-ms-calendar-client-id';
+        authorizationUrl = microsoftGraphCalendarAdapter.getAuthorizationUrl({
+          clientId,
+          redirectUri,
+          stateKey: effectiveVaultKey,
+          tenantId: agency.id,
+          locationId: activeLocation?.id || agency.id,
+          calendarId: cal.id
+        });
+      } else {
+        return sendJson(res, 400, { error: 'Unsupported calendar provider' });
+      }
+
+      if (url.searchParams.get('redirect') === 'false') {
+        return sendJson(res, 200, { authorizationUrl });
+      }
+      res.writeHead(302, { Location: authorizationUrl, 'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
+
+    // GET /api/calendars/oauth/callback — OAuth Callback for Google & Microsoft Calendar
+    if (method === 'GET' && pathname === '/api/calendars/oauth/callback') {
+      const stateParam = url.searchParams.get('state');
+      const code = url.searchParams.get('code');
+      const error = url.searchParams.get('error');
+
+      const destination = new URL('/calendars', process.env.APP_BASE_URL || process.env.FRONTEND_URL || url.origin);
+      if (error || !stateParam || !code) {
+        destination.searchParams.set('sync', 'denied');
+        res.writeHead(302, { Location: destination.toString(), 'Cache-Control': 'no-store' });
+        res.end();
+        return;
+      }
+
+      try {
+        const stateData = verifyOAuthState(stateParam, effectiveVaultKey);
+        if (!stateData?.calendarId) throw new Error('Invalid state payload');
+
+        let calendars = state.records.calendars || [];
+        let cal = calendars.find(c => c.id === stateData.calendarId);
+        if (!cal) throw new Error('Calendar not found');
+
+        let tokenData = {};
+        const redirectUri = `${process.env.APP_BASE_URL || url.origin}/api/calendars/oauth/callback`;
+
+        if (stateData.provider === 'google_calendar') {
+          tokenData = await googleCalendarAdapter.exchangeCode({
+            code,
+            clientId: process.env.GOOGLE_CLIENT_ID,
+            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+            redirectUri,
+            fetchFn: globalThis.fetch
+          });
+        } else {
+          tokenData = await microsoftGraphCalendarAdapter.exchangeCode({
+            code,
+            clientId: process.env.MICROSOFT_CLIENT_ID || process.env.AZURE_AD_CLIENT_ID,
+            clientSecret: process.env.MICROSOFT_CLIENT_SECRET || process.env.AZURE_AD_CLIENT_SECRET,
+            redirectUri,
+            fetchFn: globalThis.fetch
+          });
+        }
+
+        const secretRef = `vault:${cal.agencyId}/${cal.locationId}/calendar_${cal.id}`;
+        if (secretResolver) {
+          await secretResolver.store(secretRef, JSON.stringify({
+            accessToken: tokenData.accessToken,
+            refreshToken: tokenData.refreshToken,
+            provider: stateData.provider,
+            email: tokenData.email || 'operator@operza.io'
+          }));
+        }
+
+        cal.externalSync = {
+          provider: stateData.provider,
+          email: tokenData.email || 'operator@operza.io',
+          calendarName: tokenData.calendarName || `${stateData.provider === 'google_calendar' ? 'Google' : 'Outlook'} Calendar`,
+          syncDirection: 'two_way',
+          status: 'connected',
+          lastSyncAt: new Date().toISOString(),
+          connectedAt: new Date().toISOString(),
+          secretRef
+        };
+        delete cal.externalSync.accessToken;
+        delete cal.externalSync.refreshToken;
+
+        await saveState();
+        await syncRelationalWrite('calendars', 'update', cal, cal.agencyId);
+
+        destination.searchParams.set('calendarId', cal.id);
+        destination.searchParams.set('sync', 'connected');
+        res.writeHead(302, { Location: destination.toString(), 'Cache-Control': 'no-store' });
+        res.end();
+        return;
+      } catch (cbErr) {
+        destination.searchParams.set('sync', 'failed');
+        destination.searchParams.set('reason', cbErr.message);
+        res.writeHead(302, { Location: destination.toString(), 'Cache-Control': 'no-store' });
+        res.end();
+        return;
+      }
+    }
+
+    // GET /api/calendars/:id/sync/calendars — List available calendars for selection
+    if (method === 'GET' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/sync/calendars')) {
+      const calId = pathname.replace('/api/calendars/', '').replace('/sync/calendars', '').trim();
+      let calendars = state.records.calendars || [];
+      let cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
+      if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
+      if (!cal.externalSync?.secretRef || !secretResolver) {
+        return sendJson(res, 400, { error: 'Calendar is not connected with vault secrets' });
+      }
+
+      const raw = await secretResolver.resolve(cal.externalSync.secretRef);
+      const creds = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      const adapter = cal.externalSync.provider === 'google_calendar' ? googleCalendarAdapter : microsoftGraphCalendarAdapter;
+      const list = await adapter.listCalendars({ accessToken: creds?.accessToken, fetchFn: globalThis.fetch });
+      return sendJson(res, 200, { calendars: list });
+    }
+
     // Connect 2-Way External Calendar Sync
     if (method === 'POST' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/sync/connect')) {
       const calId = pathname.replace('/api/calendars/', '').replace('/sync/connect', '').trim();
@@ -6501,6 +6703,16 @@ const server = createServer(async (req, res) => {
       }
 
       const email = verification.email || body.email || actor?.user?.email || 'operator@operza.io';
+      const secretRef = `vault:${cal.agencyId}/${cal.locationId}/calendar_${cal.id}`;
+      if (secretResolver) {
+        await secretResolver.store(secretRef, JSON.stringify({
+          accessToken: verification.freshAccessToken || token,
+          refreshToken: refreshToken || null,
+          provider,
+          email
+        }));
+      }
+
       cal.externalSync = {
         provider,
         email,
@@ -6509,9 +6721,19 @@ const server = createServer(async (req, res) => {
         status: 'connected',
         lastSyncAt: new Date().toISOString(),
         connectedAt: new Date().toISOString(),
-        accessToken: verification.freshAccessToken || token,
-        refreshToken: refreshToken || null
+        secretRef
       };
+
+      // P1: Strip plaintext tokens from application state and calendar availability JSON
+      delete cal.externalSync.accessToken;
+      delete cal.externalSync.refreshToken;
+      delete cal.externalSync.apiKey;
+      delete cal.externalSync.token;
+      if (cal.availability) {
+        cal.availability.externalSync = { ...cal.externalSync };
+        delete cal.availability.externalSync.accessToken;
+        delete cal.availability.externalSync.refreshToken;
+      }
 
       if (Array.isArray(body.busyBlocks)) {
         cal.externalBusyBlocks = body.busyBlocks;
@@ -6522,7 +6744,7 @@ const server = createServer(async (req, res) => {
             calendar: cal,
             appointments: state.records.appointments || [],
             syncDirection: cal.externalSync.syncDirection,
-            credentials: { accessToken: cal.externalSync.accessToken, refreshToken: cal.externalSync.refreshToken },
+            credentials: { accessToken: verification.freshAccessToken || token, refreshToken },
             fetchFn: globalThis.fetch
           });
           cal.externalBusyBlocks = syncResult.busyBlocks;
@@ -6552,12 +6774,22 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 400, { error: 'Calendar is not connected to an external provider', code: 'CALENDAR_NOT_CONNECTED' });
       }
 
+      let credentials = {};
+      if (secretResolver && cal.externalSync.secretRef) {
+        const raw = await secretResolver.resolve(cal.externalSync.secretRef).catch(() => null);
+        if (raw) {
+          try { credentials = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { credentials = { accessToken: raw }; }
+        }
+      } else if (cal.externalSync.accessToken) {
+        credentials = { accessToken: cal.externalSync.accessToken, refreshToken: cal.externalSync.refreshToken };
+      }
+
       try {
         const syncResult = await executeCalendarSync({
           calendar: cal,
           appointments: state.records.appointments || [],
           syncDirection: cal.externalSync.syncDirection || 'two_way',
-          credentials: { accessToken: cal.externalSync.accessToken, refreshToken: cal.externalSync.refreshToken },
+          credentials,
           fetchFn: globalThis.fetch
         });
         cal.externalBusyBlocks = syncResult.busyBlocks;
@@ -6580,7 +6812,7 @@ const server = createServer(async (req, res) => {
           await syncRelationalWrite('calendars', 'update', cal, agency.id);
           return sendJson(res, 401, { error: 'Calendar provider authorization expired', code: 'CALENDAR_AUTH_FAILED' });
         }
-        return sendJson(res, 500, { error: err.message, code: err.code || 'CALENDAR_SYNC_FAILED' });
+        return sendJson(res, 502, { error: err.message, code: err.code || 'CALENDAR_SYNC_FAILED' });
       }
     }
 

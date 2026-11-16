@@ -617,24 +617,39 @@ function CalendarSyncModal({
   const [provider, setProvider] = useState<'google_calendar' | 'outlook'>(
     (calendar.externalSync?.provider as any) || 'google_calendar'
   );
-  const [email, setEmail] = useState(calendar.externalSync?.email || 'operator@growthagency.com');
+  const [email, setEmail] = useState(calendar.externalSync?.email || '');
   const [direction, setDirection] = useState<'two_way' | 'one_way'>(
     (calendar.externalSync?.syncDirection as any) || 'two_way'
   );
+  const [accessToken, setAccessToken] = useState('');
+  const [refreshToken, setRefreshToken] = useState('');
+  const [isManualToken, setIsManualToken] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [availableCalendars, setAvailableCalendars] = useState<Array<{ id: string; name: string; primary?: boolean }>>([]);
+  const [selectedCalendarId, setSelectedCalendarId] = useState<string>('');
 
-  const handleConnect = async (e: React.FormEvent) => {
+  const isConnected = calendar.externalSync?.status === 'active';
+
+  const handleOAuthRedirect = () => {
+    setIsSyncing(true);
+    setStatusMessage('Redirecting to OAuth provider for PKCE authorization...');
+    const url = api.calendars.getOAuthStartUrl(calendar.id, provider);
+    window.location.href = url;
+  };
+
+  const handleManualConnect = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSyncing(true);
     setStatusMessage(null);
     try {
-      // Connect 2-way sync with genuine external calendar configuration
       const res = await api.calendars.connectSync(calendar.id, {
         provider,
-        email: email.trim(),
-        calendarName: `${provider === 'google_calendar' ? 'Google' : 'Outlook 365'} (${email.trim()})`,
-        busyBlocks: calendar.externalBusyBlocks || []
+        email: email.trim() || undefined,
+        calendarName: `${provider === 'google_calendar' ? 'Google' : 'Outlook 365'} (${email.trim() || 'Account'})`,
+        accessToken: accessToken.trim() || undefined,
+        refreshToken: refreshToken.trim() || undefined,
+        syncDirection: direction
       });
 
       if (res?.externalSync) {
@@ -642,21 +657,89 @@ function CalendarSyncModal({
           type: 'calendar/update',
           id: calendar.id,
           patch: {
-            externalSync: res.externalSync,
+            externalSync: {
+              provider: res.externalSync.provider || provider,
+              email: res.externalSync.email || email.trim(),
+              calendarName: res.externalSync.calendarName,
+              syncDirection: res.externalSync.syncDirection || direction,
+              status: 'active',
+              lastSyncAt: res.externalSync.lastSyncAt,
+              connectedAt: res.externalSync.connectedAt
+            },
             externalBusyBlocks: res.calendar?.externalBusyBlocks || []
           }
         });
-        setStatusMessage('✓ Connected & synchronized! External calendar synchronization is active.');
+        setStatusMessage('✓ Connected & stored in encrypted vault! Synchronization active.');
         setTimeout(() => {
           onClose();
         }, 1200);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Calendar sync error:', err);
-      setStatusMessage('Failed to connect external calendar');
+      setStatusMessage(`Error: ${err.message || 'Failed to connect external calendar'}`);
     } finally {
       setIsSyncing(false);
     }
+  };
+
+  const handleSyncNow = async () => {
+    setIsSyncing(true);
+    setStatusMessage('Syncing with external calendar...');
+    try {
+      const res = await api.calendars.syncNow(calendar.id);
+      if (res?.success) {
+        setStatusMessage(`✓ Synced successfully! ${res.busyBlocksCount || 0} busy blocks blocked.`);
+        if (calendar.externalSync) {
+          dispatch({
+            type: 'calendar/update',
+            id: calendar.id,
+            patch: {
+              externalSync: {
+                ...calendar.externalSync,
+                lastSyncAt: res.lastSyncAt || new Date().toISOString()
+              }
+            }
+          });
+        }
+      }
+    } catch (err: any) {
+      setStatusMessage(`Sync failed: ${err.message || 'Provider error'}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    setIsSyncing(true);
+    try {
+      await api.calendars.disconnectSync(calendar.id);
+      dispatch({
+        type: 'calendar/update',
+        id: calendar.id,
+        patch: {
+          externalSync: undefined,
+          externalBusyBlocks: []
+        }
+      });
+      setStatusMessage('✓ Calendar synchronization disconnected.');
+      setTimeout(onClose, 800);
+    } catch (err: any) {
+      setStatusMessage(`Disconnect failed: ${err.message}`);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const loadCalendars = async () => {
+    try {
+      const res = await api.calendars.listCalendars(calendar.id);
+      if (Array.isArray(res?.calendars)) {
+        setAvailableCalendars(res.calendars);
+        if (res.calendars.length > 0) {
+          setSelectedCalendarId(res.calendars[0].id);
+        }
+      }
+    } catch {}
   };
 
   return (
@@ -668,17 +751,31 @@ function CalendarSyncModal({
           <button className="btn btn--ghost" onClick={onClose} disabled={isSyncing}>
             Cancel
           </button>
-          <button className="btn btn--primary" onClick={handleConnect} disabled={isSyncing || !email.trim()}>
-            {isSyncing ? 'Connecting & Syncing...' : 'Connect & Sync'}
-          </button>
+          {isConnected ? (
+            <>
+              <button className="btn btn--secondary" onClick={handleDisconnect} disabled={isSyncing}>
+                Disconnect
+              </button>
+              <button className="btn btn--primary" onClick={handleSyncNow} disabled={isSyncing}>
+                {isSyncing ? 'Syncing...' : 'Sync Now'}
+              </button>
+            </>
+          ) : isManualToken ? (
+            <button className="btn btn--primary" onClick={handleManualConnect} disabled={isSyncing || (!accessToken.trim() && !refreshToken.trim())}>
+              {isSyncing ? 'Verifying & Saving...' : 'Save & Connect'}
+            </button>
+          ) : (
+            <button className="btn btn--primary" onClick={handleOAuthRedirect} disabled={isSyncing}>
+              {isSyncing ? 'Redirecting...' : `Connect with ${provider === 'google_calendar' ? 'Google' : 'Microsoft'} OAuth`}
+            </button>
+          )}
         </>
       }
     >
-      <form onSubmit={handleConnect} className="stack" style={{ gap: 14 }}>
+      <div className="stack" style={{ gap: 14 }}>
         <p className="hint">
-          Connect your external calendar to ensure 2-way real-time slot synchronization.
-          Bookings in Operza are exported to your calendar, and personal busy slots on your calendar
-          are automatically blocked on your public booking link to prevent double-booking.
+          Connect Google Calendar or Microsoft Outlook for real-time 2-way synchronization.
+          Tokens are stored in the encrypted secret vault with PKCE state protection.
         </p>
 
         {statusMessage && (
@@ -687,51 +784,124 @@ function CalendarSyncModal({
           </div>
         )}
 
-        <div className="field">
-          <label>Calendar Provider</label>
-          <select
-            className="select"
-            value={provider}
-            onChange={(e) => setProvider(e.target.value as any)}
-          >
-            <option value="google_calendar">Google Calendar (Google Workspace / Gmail)</option>
-            <option value="outlook">Microsoft 365 / Outlook Calendar</option>
-          </select>
-        </div>
+        {isConnected ? (
+          <div className="stack" style={{ gap: 12 }}>
+            <div style={{ background: '#ecfdf5', border: '1px solid #86efac', borderRadius: 10, padding: '12px 16px', fontSize: 13, color: '#065f46' }}>
+              <div style={{ fontWeight: 700, marginBottom: 4 }}>● Active 2-Way Synchronization</div>
+              <div>Provider: <strong>{calendar.externalSync?.provider === 'google_calendar' ? 'Google Calendar' : 'Outlook 365'}</strong></div>
+              <div>Account: <strong>{calendar.externalSync?.email || 'Connected Account'}</strong></div>
+              <div>Sync Mode: <strong>{calendar.externalSync?.syncDirection || 'two_way'}</strong></div>
+              <div>Last Synced: <strong>{calendar.externalSync?.lastSyncAt ? new Date(calendar.externalSync.lastSyncAt).toLocaleString() : 'Never'}</strong></div>
+              <div>Vault Protected: <strong>Yes (Ciphertext Encrypted)</strong></div>
+            </div>
 
-        <div className="field">
-          <label>Account Email</label>
-          <input
-            className="input"
-            type="email"
-            placeholder="e.g. operator@company.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </div>
-
-        <div className="field">
-          <label>Sync Mode</label>
-          <select
-            className="select"
-            value={direction}
-            onChange={(e) => setDirection(e.target.value as any)}
-          >
-            <option value="two_way">Two-Way Sync (Block external busy times + push Operza bookings)</option>
-            <option value="one_way">One-Way Sync (Push Operza bookings only)</option>
-          </select>
-        </div>
-
-        {calendar.externalSync?.status === 'active' && (
-          <div style={{ background: '#ecfdf5', border: '1px solid #86efac', borderRadius: 10, padding: '12px 16px', fontSize: 13, color: '#065f46' }}>
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>● Active 2-Way Synchronization</div>
-            <div>Provider: <strong>{calendar.externalSync.provider === 'google_calendar' ? 'Google Calendar' : 'Outlook 365'}</strong></div>
-            <div>Account: <strong>{calendar.externalSync.email}</strong></div>
-            <div>Last Synced: <strong>{new Date(calendar.externalSync.lastSyncAt || Date.now()).toLocaleTimeString()}</strong></div>
+            {availableCalendars.length === 0 ? (
+              <button className="btn btn--sm btn--ghost" onClick={loadCalendars} style={{ alignSelf: 'flex-start' }}>
+                Load Available Provider Calendars
+              </button>
+            ) : (
+              <div className="field">
+                <label>Select Calendar</label>
+                <select
+                  className="select"
+                  value={selectedCalendarId}
+                  onChange={(e) => setSelectedCalendarId(e.target.value)}
+                >
+                  {availableCalendars.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name} {c.primary ? '(Primary)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
+        ) : (
+          <form onSubmit={handleManualConnect} className="stack" style={{ gap: 12 }}>
+            <div className="field">
+              <label>Calendar Provider</label>
+              <select
+                className="select"
+                value={provider}
+                onChange={(e) => setProvider(e.target.value as any)}
+              >
+                <option value="google_calendar">Google Calendar (Google Workspace / Gmail)</option>
+                <option value="outlook">Microsoft 365 / Outlook Calendar</option>
+              </select>
+            </div>
+
+            <div className="field">
+              <label>Sync Mode</label>
+              <select
+                className="select"
+                value={direction}
+                onChange={(e) => setDirection(e.target.value as any)}
+              >
+                <option value="two_way">Two-Way Sync (Import busy slots + Export bookings)</option>
+                <option value="one_way">One-Way Sync (Export bookings only)</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 4 }}>
+              <button
+                type="button"
+                className="btn btn--secondary"
+                style={{ flex: 1 }}
+                onClick={handleOAuthRedirect}
+                disabled={isSyncing}
+              >
+                🔑 Connect via {provider === 'google_calendar' ? 'Google' : 'Microsoft'} OAuth
+              </button>
+              <button
+                type="button"
+                className="btn btn--ghost"
+                onClick={() => setIsManualToken(!isManualToken)}
+                style={{ fontSize: 12 }}
+              >
+                {isManualToken ? 'Hide Token Input' : 'Use Token / API Key'}
+              </button>
+            </div>
+
+            {isManualToken && (
+              <div className="stack" style={{ gap: 10, background: '#f8fafc', padding: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}>
+                <div className="field">
+                  <label>Account Email</label>
+                  <input
+                    className="input"
+                    type="email"
+                    placeholder="e.g. operator@company.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label>Access Token</label>
+                  <input
+                    className="input"
+                    type="password"
+                    placeholder="ya29... or eyJ..."
+                    value={accessToken}
+                    onChange={(e) => setAccessToken(e.target.value)}
+                  />
+                </div>
+                <div className="field">
+                  <label>Refresh Token (Optional)</label>
+                  <input
+                    className="input"
+                    type="password"
+                    placeholder="1//... or refresh_token"
+                    value={refreshToken}
+                    onChange={(e) => setRefreshToken(e.target.value)}
+                  />
+                </div>
+                <span className="hint" style={{ fontSize: 11 }}>
+                  Tokens will be encrypted with AES-256-GCM in the secure vault.
+                </span>
+              </div>
+            )}
+          </form>
         )}
-      </form>
+      </div>
     </Modal>
   );
 }

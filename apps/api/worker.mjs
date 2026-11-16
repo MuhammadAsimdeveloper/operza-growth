@@ -25,15 +25,6 @@ export async function startDurableWorker({
     throw new Error('OPERZA_VAULT_KEY is required by the worker.');
   }
 
-  let customHandlers = {};
-  if (handlerModule) {
-    const loaded = await import(pathToFileURL(path.resolve(process.cwd(), handlerModule)).href);
-    customHandlers = loaded.handlers || loaded.default?.handlers || {};
-    if (!customHandlers || typeof customHandlers !== 'object') {
-      throw new Error('Trusted worker module must export a handlers object.');
-    }
-  }
-
   const pool = new Pool({
     connectionString: databaseUrl,
     max: Number(process.env.WORKER_DB_POOL_MAX || 4),
@@ -59,6 +50,24 @@ export async function startDurableWorker({
     const zapierRepository = createZapierHookRepository(pool);
     const providerRegistry = createProviderAdapterRegistry();
 
+    let customHandlers = {};
+    if (handlerModule) {
+      const resolvedPath = path.resolve(process.cwd(), handlerModule);
+      // P0: Never let default no-pool handlers overwrite PostgreSQL-backed handlers
+      if (!resolvedPath.replace(/\\/g, '/').endsWith('packages/platform-core/src/trusted-handlers.mjs')) {
+        const loaded = await import(pathToFileURL(resolvedPath).href);
+        if (typeof loaded.createTrustedWorkerHandlers === 'function' || typeof loaded.createHandlers === 'function') {
+          const factory = loaded.createTrustedWorkerHandlers || loaded.createHandlers;
+          customHandlers = factory({ pool, secretResolver, providerRegistry }) || {};
+        } else {
+          customHandlers = loaded.handlers || loaded.default?.handlers || {};
+        }
+        if (!customHandlers || typeof customHandlers !== 'object') {
+          throw new Error('Trusted worker module must export a handlers object.');
+        }
+      }
+    }
+
     const trustedHandlers = createTrustedWorkerHandlers({
       pool,
       secretResolver,
@@ -66,9 +75,11 @@ export async function startDurableWorker({
       customHandlers
     });
 
+    // P0: PostgreSQL-backed trustedHandlers MUST take precedence over customHandlers.
+    // Default no-pool handlers must NEVER overwrite PostgreSQL-backed handlers.
     const handlers = {
-      ...trustedHandlers,
       ...customHandlers,
+      ...trustedHandlers,
       'zapier.webhook.deliver': createZapierWebhookHandler({ repository: zapierRepository, secretResolver })
     };
 

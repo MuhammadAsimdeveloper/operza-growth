@@ -38,6 +38,23 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
   const executionId = randomUUID();
 
   await t.test('1. Setup schema migrations on isolated PostgreSQL', async () => {
+    // Setup least-privilege roles for migrator, app and worker
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_migrator') THEN
+          CREATE ROLE operza_migrator LOGIN PASSWORD 'operza_migrator_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_app') THEN
+          CREATE ROLE operza_app LOGIN PASSWORD 'operza_app_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_worker') THEN
+          CREATE ROLE operza_worker LOGIN PASSWORD 'operza_worker_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+        END IF;
+      END $$;
+      GRANT USAGE, CREATE ON SCHEMA public TO operza_migrator;
+      GRANT USAGE ON SCHEMA public TO operza_app, operza_worker;
+    `);
+
     const files = (await readdir(migrationsDir))
       .filter(f => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
       .sort();
@@ -59,6 +76,12 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
         client.release();
       }
     }
+
+    // Grant default privileges on all newly created tables to operza_app and operza_worker
+    await pool.query(`
+      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO operza_app, operza_worker;
+      GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO operza_app, operza_worker;
+    `);
 
     // Seed test agency and location
     await pool.query('INSERT INTO agencies (id, name, slug) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [tenantId, 'Durable Agency', `agency-${tenantId.slice(0, 8)}`]);
@@ -158,10 +181,21 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
       }
     });
 
+    const testEmailAdapter = {
+      providerKey: 'email',
+      channel: 'email',
+      async dispatch({ actionHash }) {
+        return { ok: true, providerAccepted: true, providerMessageId: `msg_${randomUUID()}`, actionHash };
+      }
+    };
+    const testHandlers = createTrustedWorkerHandlers({
+      providerRegistry: createProviderAdapterRegistry([testEmailAdapter])
+    });
+
     const batchRes = await runOutboxBatch({
       repository: outboxRepo,
       workerId: 'worker_governance_test_2',
-      handlers: trustedWorkerHandlers,
+      handlers: testHandlers,
       limit: 5
     });
 
@@ -736,5 +770,185 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
       try { rmSync(path.join(root, 'apps/api', STORE_P1), { force: true }); } catch {}
       try { rmSync(path.join(root, 'apps/api', STORE_P2), { force: true }); } catch {}
     }
+  });
+
+  await t.test('14. Production Docker Worker: starts with compose config, heartbeats & executes workflow graph', async () => {
+    const workerUrl = new URL(dbUrl);
+    workerUrl.username = 'operza_worker';
+    workerUrl.password = 'operza_worker_secret';
+    const workerDbUrl = workerUrl.toString();
+
+    const PROD_WORKER_ID = 'operza-prod-durable-worker';
+    const workerProc = spawn('node', ['apps/api/worker.mjs'], {
+      cwd: root,
+      stdio: 'pipe',
+      env: {
+        ...process.env,
+        NODE_ENV: 'production',
+        WORKER_DATABASE_URL: workerDbUrl,
+        WORKFLOW_JOB_MODULE: 'packages/platform-core/src/trusted-handlers.mjs',
+        WORKER_ID: PROD_WORKER_ID,
+        OPERZA_VAULT_KEY: 'test-vault-key-for-worker-32chars-prod'
+      }
+    });
+
+    let workerOutput = '';
+    workerProc.stdout.on('data', d => { workerOutput += d.toString(); });
+    workerProc.stderr.on('data', d => { workerOutput += d.toString(); });
+
+    try {
+      // 1. Wait for worker to write initial alive heartbeat
+      let workerAlive = false;
+      for (let i = 0; i < 40; i++) {
+        const hb = await pool.query(
+          "SELECT worker_id, status FROM worker_heartbeats WHERE worker_id = $1 AND status = 'alive'",
+          [PROD_WORKER_ID]
+        );
+        if (hb.rows.length > 0) {
+          workerAlive = true;
+          break;
+        }
+        await sleep(250);
+      }
+      assert.equal(workerAlive, true, `Worker must register heartbeat; logs: ${workerOutput}`);
+
+      // 2. Insert workflow definition into PostgreSQL
+      const composeWfId = randomUUID();
+      const composeExecId = randomUUID();
+      await pool.query(`
+        INSERT INTO workflow_definitions (id, agency_id, location_id, name, status, trigger_type, nodes, version)
+        VALUES ($1, $2, $3, 'Docker Worker Compose Flow', 'published', 'webhook', $4::jsonb, 1)
+      `, [composeWfId, tenantId, locationId, JSON.stringify([
+        { id: 'start_compose', type: 'trigger', next: 'tag_compose_node' },
+        { id: 'tag_compose_node', type: 'action', config: { actionType: 'tag_contact', tag: 'ComposeWorkerVerified' } }
+      ])]);
+
+      // 3. Enqueue trigger event into workflow_outbox
+      const outboxEntry = await produceWorkflowTriggerEvent({
+        repository: outboxRepo,
+        tenantId,
+        locationId,
+        workflowId: composeWfId,
+        triggerType: 'webhook',
+        payload: {
+          executionId: composeExecId,
+          workflowName: 'Docker Worker Compose Flow',
+          mode: 'live'
+        }
+      });
+      assert.equal(outboxEntry.status, 'pending');
+
+      // 4. Worker process automatically claims and executes the workflow
+      let jobDelivered = false;
+      for (let i = 0; i < 40; i++) {
+        const res = await pool.query('SELECT status, delivered_at FROM workflow_outbox WHERE id = $1', [outboxEntry.id]);
+        if (res.rows[0]?.status === 'delivered') {
+          jobDelivered = true;
+          break;
+        }
+        await sleep(250);
+      }
+      assert.equal(jobDelivered, true, `Worker must execute outbox job to delivered; logs: ${workerOutput}`);
+
+      // 5. Verify PostgreSQL workflow_executions table has completed record
+      const execRow = await pool.query(
+        'SELECT status, finished_at FROM workflow_executions WHERE agency_id = $1 AND id = $2',
+        [tenantId, composeExecId]
+      );
+      assert.equal(execRow.rows.length, 1);
+      assert.equal(execRow.rows[0].status, 'completed');
+      assert.ok(execRow.rows[0].finished_at);
+
+      // 6. Verify workflow_execution_steps records both nodes traversed
+      const stepsRows = await pool.query(
+        'SELECT node_id, status FROM workflow_execution_steps WHERE agency_id = $1 AND execution_id = $2 ORDER BY started_at ASC',
+        [tenantId, composeExecId]
+      );
+      assert.ok(stepsRows.rows.length >= 2, 'Worker must record executed steps in workflow_execution_steps');
+      assert.equal(stepsRows.rows.some(r => r.node_id === 'start_compose'), true);
+      assert.equal(stepsRows.rows.some(r => r.node_id === 'tag_compose_node'), true);
+    } finally {
+      workerProc.kill('SIGTERM');
+      await sleep(300);
+    }
+  });
+
+  await t.test('15. Calendar sync deduplication: repeated synchronization does not duplicate events', async () => {
+    const calId = randomUUID();
+    const apptId1 = randomUUID();
+    const apptId2 = randomUUID();
+
+    const calData = {
+      id: calId,
+      agencyId: tenantId,
+      locationId,
+      name: 'Dedup Test Calendar',
+      externalSync: {
+        provider: 'google',
+        status: 'active',
+        externalCalendarId: 'primary'
+      },
+      availability: []
+    };
+
+    const appts = [
+      { id: apptId1, calendarId: calId, startsAt: '2026-11-20T10:00:00Z', endsAt: '2026-11-20T10:30:00Z', title: 'Consultation' },
+      { id: apptId2, calendarId: calId, startsAt: '2026-11-20T11:00:00Z', endsAt: '2026-11-20T11:30:00Z', title: 'Follow-up' }
+    ];
+
+    // Mock fetch that returns calendar verification and events from provider
+    const mockFetch = async (url, options = {}) => {
+      const method = options.method || 'GET';
+      if (url.includes('/users/me/calendarList/primary')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'primary', summary: 'Google Primary Calendar' })
+        };
+      }
+      if (url.includes('/calendars/primary/events') && method === 'GET') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            items: [
+              { id: 'ext_busy_1', summary: 'Busy 1', start: { dateTime: '2026-11-20T14:00:00Z' }, end: { dateTime: '2026-11-20T15:00:00Z' } },
+              { id: 'ext_busy_2', summary: 'Busy 2', start: { dateTime: '2026-11-20T16:00:00Z' }, end: { dateTime: '2026-11-20T17:00:00Z' } }
+            ]
+          })
+        };
+      }
+      if (method === 'POST') {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: `ext_evt_${Date.now()}_${Math.random()}` })
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({}) };
+    };
+
+    // First synchronization pass
+    const sync1 = await executeCalendarSync({
+      calendar: calData,
+      credentials: { accessToken: 'valid_test_token' },
+      appointments: appts,
+      fetchFn: mockFetch
+    });
+
+    assert.equal(sync1.busyBlocks.length, 2, 'Initial sync must import 2 busy blocks');
+    assert.equal(sync1.exportedEvents.length, 2, 'Initial sync must export 2 appointments');
+
+    // Second synchronization pass on the same calendar with existing busy blocks and appointments
+    const sync2 = await executeCalendarSync({
+      calendar: { ...calData, externalBusyBlocks: sync1.busyBlocks },
+      credentials: { accessToken: 'valid_test_token' },
+      appointments: appts,
+      fetchFn: mockFetch
+    });
+
+    // Busy blocks must NOT duplicate (length must remain 2)
+    assert.equal(sync2.busyBlocks.length, 2, 'Repeated sync must not duplicate busy blocks');
+    assert.equal(sync2.exportedEvents.length, 0, 'Already exported appointments must not be exported again');
   });
 });

@@ -522,13 +522,25 @@ export async function executeCalendarSync({
       fetchFn
     });
 
-    importedBusyBlocks = externalEvents.map(e => ({
+    const newlyImported = externalEvents.map(e => ({
       startsAt: e.startsAt,
       endsAt: e.endsAt,
       title: e.title,
       externalId: e.externalId,
       provider: providerKey
     }));
+
+    // Deduplicate against existing calendar busy blocks so repeated sync does not duplicate
+    const blockMap = new Map();
+    for (const b of (calendar.externalBusyBlocks || [])) {
+      const key = b.externalId || `${b.startsAt}_${b.endsAt}`;
+      blockMap.set(key, b);
+    }
+    for (const b of newlyImported) {
+      const key = b.externalId || `${b.startsAt}_${b.endsAt}`;
+      blockMap.set(key, b);
+    }
+    importedBusyBlocks = Array.from(blockMap.values());
   }
 
   // 3. Export Local Appointments (if syncDirection is 'export' or 'two_way')
@@ -554,8 +566,9 @@ export async function executeCalendarSync({
           externalId: created.externalId
         });
       } catch (err) {
-        // Log individual export failure without aborting entire sync
-        console.warn(`[CALENDAR-SYNC] Failed to export appointment ${appt.id}:`, err.message);
+        throw Object.assign(new Error(`Failed to export appointment ${appt.id} to external calendar: ${err.message}`), {
+          code: 'CALENDAR_EXPORT_FAILED'
+        });
       }
     }
   }

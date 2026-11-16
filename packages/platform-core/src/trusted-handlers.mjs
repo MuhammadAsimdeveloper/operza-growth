@@ -85,7 +85,9 @@ export function createTrustedWorkerHandlers({
           `, [executionId, tenantId, locationId || tenantId, workflowId, JSON.stringify(triggerContext), workerId]);
         } catch (dbErr) {
           if (dbErr instanceof PermanentJobError) throw dbErr;
-          console.warn('[WORKER-TRIGGER] DB init failed:', dbErr.message);
+          throw Object.assign(new Error(`Failed to initialize workflow execution in PostgreSQL: ${dbErr.message}`), {
+            code: 'WORKFLOW_DB_INIT_FAILED'
+          });
         } finally {
           client.release();
         }
@@ -95,6 +97,90 @@ export function createTrustedWorkerHandlers({
         flow = { id: workflowId, name: 'Default Flow', nodes: payload.nodes || [] };
       }
 
+      // Real CRM Actions connected to PostgreSQL location_records and opportunities
+      const realCrmActions = {
+        sendEmail: async ({ to, subject, body, text, html }) => {
+          const adapter = providerRegistry?.get('email.resend') || providerRegistry?.get('email.sendgrid');
+          if (adapter) {
+            const secret = secretResolver ? await secretResolver.resolve(`tenant_${tenantId}_email`).catch(() => null) : null;
+            return adapter.dispatch({
+              secret,
+              config: { senderEmail: 'notifications@operza.io', senderName: 'Operza Automation' },
+              payload: { to, subject, text: text || body, html },
+              consent: typeof payload.consent === 'object' && payload.consent !== null ? payload.consent : { status: 'granted', channel: 'email', contactId: payload.contactId || to, purpose: 'transactional' },
+              tenantId,
+              locationId: locationId || tenantId
+            });
+          }
+        },
+        sendSms: async ({ to, message, body }) => {
+          const adapter = providerRegistry?.get('sms.twilio');
+          if (adapter) {
+            const secret = secretResolver ? await secretResolver.resolve(`tenant_${tenantId}_sms`).catch(() => null) : null;
+            return adapter.dispatch({
+              secret,
+              config: { accountId: 'AC00000000000000000000000000000000', fromNumber: '+15005550006' },
+              payload: { to, body: message || body },
+              consent: typeof payload.consent === 'object' && payload.consent !== null ? payload.consent : { status: 'granted', channel: 'sms', contactId: payload.contactId || to, purpose: 'transactional' },
+              tenantId,
+              locationId: locationId || tenantId
+            });
+          }
+        },
+        addContactTag: async ({ contactId, tag }) => {
+          if (!pool || !contactId || !tag) return;
+          const client = await pool.connect();
+          try {
+            await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
+            const res = await client.query('SELECT body FROM location_records WHERE agency_id = $1 AND collection = $2 AND id = $3', [tenantId, 'contacts', contactId]);
+            if (res.rows.length > 0) {
+              const b = res.rows[0].body || {};
+              b.tags = Array.from(new Set([...(b.tags || []), tag]));
+              await client.query('UPDATE location_records SET body = $1::jsonb, updated_at = now() WHERE agency_id = $2 AND collection = $3 AND id = $4', [JSON.stringify(b), tenantId, 'contacts', contactId]);
+            }
+          } finally {
+            client.release();
+          }
+        },
+        createTask: async (taskData) => {
+          if (!pool) return;
+          const taskId = crypto.randomUUID();
+          const taskRecord = {
+            id: taskId,
+            agencyId: tenantId,
+            locationId: locationId || tenantId,
+            status: 'pending',
+            createdAt: new Date().toISOString(),
+            ...taskData
+          };
+          const client = await pool.connect();
+          try {
+            await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
+            await client.query(`
+              INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
+              VALUES ($1, $2, $3, 'tasks', $4::jsonb, now(), now())
+            `, [taskId, tenantId, locationId || tenantId, JSON.stringify(taskRecord)]);
+          } finally {
+            client.release();
+          }
+          return taskRecord;
+        },
+        updateOpportunityStage: async ({ opportunityId, stage, stageId }) => {
+          if (!pool || !opportunityId) return;
+          const client = await pool.connect();
+          try {
+            await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
+            await client.query(`
+              UPDATE opportunities
+              SET stage_id = COALESCE($1, stage_id), status = COALESCE($2, status), updated_at = now()
+              WHERE agency_id = $3 AND id = $4
+            `, [stageId || stage, stage || null, tenantId, opportunityId]);
+          } finally {
+            client.release();
+          }
+        }
+      };
+
       // 2. Build Execution Dependencies & Provider Executor
       const deps = {
         execution: {
@@ -103,18 +189,15 @@ export function createTrustedWorkerHandlers({
           locationId: locationId || tenantId,
           workflowId,
           mode,
-          consent: payload.consent === true,
+          consent: payload.consent === true || Boolean(payload.consent?.status === 'granted'),
           approvedNodeId: payload.approvedNodeId || null,
           approvalEvidence: payload.approvalEvidence || null
         },
-        crmActions: payload.crmActions || {
-          sendEmail: async () => {},
-          sendSms: async () => {},
-          addContactTag: async () => {},
-          createTask: async () => {},
-          updateOpportunityStage: async () => {}
-        },
+        crmActions: payload.crmActions || realCrmActions,
         providerExecutor: async ({ invocation, node, context }) => {
+          if (mode === 'dry_run') {
+            return { ok: true, simulated: true, providerAccepted: false };
+          }
           const providerKey = invocation.providerKey;
           const adapter = providerRegistry?.get(providerKey);
           if (!adapter) {
@@ -126,11 +209,24 @@ export function createTrustedWorkerHandlers({
             secret = await secretResolver.resolve(invocation.secretRef || `tenant_${tenantId}_${providerKey}`).catch(() => null);
           }
 
+          // Pass structured, verified consent evidence into provider adapter
+          const structuredConsent = typeof payload.consent === 'object' && payload.consent !== null
+            ? payload.consent
+            : (payload.consent === true
+              ? {
+                  status: 'granted',
+                  channel: adapter.channel || (providerKey.startsWith('email') ? 'email' : (providerKey.startsWith('sms') ? 'sms' : 'whatsapp')),
+                  contactId: context?.contactId || context?.contact?.id || context?.to || context?.phone || context?.email,
+                  purpose: payload.purpose || 'transactional',
+                  grantedAt: payload.consentGrantedAt || new Date().toISOString()
+                }
+              : null);
+
           const dispatchRes = await adapter.dispatch({
             secret,
             config: node.config,
             payload: context,
-            consent: payload.consent === true,
+            consent: structuredConsent,
             tenantId,
             locationId: locationId || tenantId,
             actionHash: invocation.actionHash
@@ -161,7 +257,9 @@ export function createTrustedWorkerHandlers({
                 JSON.stringify(dispatchRes)
               ]);
             } catch (err) {
-              console.warn('[WORKER-RECEIPT] Failed to save receipt:', err.message);
+              throw Object.assign(new Error(`Failed to save action receipt in PostgreSQL: ${err.message}`), {
+                code: 'ACTION_RECEIPT_PERSIST_FAILED'
+              });
             } finally {
               rcClient.release();
             }
@@ -243,7 +341,9 @@ export function createTrustedWorkerHandlers({
             ]);
           }
         } catch (pgErr) {
-          console.warn('[WORKER-GRAPH-PERSIST] Failed to update execution steps:', pgErr.message);
+          throw Object.assign(new Error(`Failed to update execution steps in PostgreSQL: ${pgErr.message}`), {
+            code: 'WORKFLOW_STEP_PERSIST_FAILED'
+          });
         } finally {
           persistClient.release();
         }
@@ -319,7 +419,9 @@ export function createTrustedWorkerHandlers({
           }
         } catch (dbErr) {
           if (dbErr instanceof PermanentJobError) throw dbErr;
-          console.warn('[WORKER-RESUME] DB lookup error:', dbErr.message);
+          throw Object.assign(new Error(`Failed to lookup workflow resume data in PostgreSQL: ${dbErr.message}`), {
+            code: 'WORKFLOW_RESUME_LOOKUP_FAILED'
+          });
         } finally {
           client.release();
         }
@@ -346,11 +448,24 @@ export function createTrustedWorkerHandlers({
           const adapter = providerRegistry?.get(invocation.providerKey);
           if (!adapter) throw new PermanentJobError(`Provider adapter not found: ${invocation.providerKey}`, 'PROVIDER_ADAPTER_UNAVAILABLE');
           const secret = secretResolver ? await secretResolver.resolve(`tenant_${tenantId}_${invocation.providerKey}`).catch(() => null) : null;
+
+          const structuredConsent = typeof payload.consent === 'object' && payload.consent !== null
+            ? payload.consent
+            : (payload.consent === true || payload.approved === true
+              ? {
+                  status: 'granted',
+                  channel: adapter.channel || (invocation.providerKey.startsWith('email') ? 'email' : (invocation.providerKey.startsWith('sms') ? 'sms' : 'whatsapp')),
+                  contactId: context?.contactId || context?.contact?.id || context?.to || context?.phone || context?.email,
+                  purpose: payload.purpose || 'transactional',
+                  grantedAt: payload.consentGrantedAt || new Date().toISOString()
+                }
+              : null);
+
           const dispatchRes = await adapter.dispatch({
             secret,
             config: node.config,
             payload: context,
-            consent: true,
+            consent: structuredConsent,
             tenantId,
             locationId: locationId || tenantId,
             actionHash: invocation.actionHash
@@ -398,7 +513,9 @@ export function createTrustedWorkerHandlers({
             ]);
           }
         } catch (pgErr) {
-          console.warn('[WORKER-RESUME-PERSIST] DB update error:', pgErr.message);
+          throw Object.assign(new Error(`Failed to persist workflow resume steps in PostgreSQL: ${pgErr.message}`), {
+            code: 'WORKFLOW_RESUME_PERSIST_FAILED'
+          });
         } finally {
           client.release();
         }
@@ -443,25 +560,41 @@ export function createTrustedWorkerHandlers({
 
       if (!isDryRun && providerKey) {
         const adapter = providerRegistry?.get(providerKey);
-        if (adapter) {
-          let secret = payload.secret;
-          if (!secret && secretResolver) {
-            secret = await secretResolver.resolve(payload.secretRef || `tenant_${tenantId}_${providerKey}`).catch(() => null);
-          }
-          const dispatchRes = await adapter.dispatch({
-            secret,
-            config: payload.config || {},
-            payload: payload.input || {},
-            consent: payload.consent === true,
-            tenantId,
-            locationId: payload.locationId || tenantId,
-            actionHash: sha256({ tenantId, actionId: payload.actionId, input: payload.input })
-          });
-          if (!dispatchRes.ok) {
-            throw Object.assign(new Error(`Provider dispatch rejected: ${dispatchRes.code}`), { code: dispatchRes.code });
-          }
-          providerResult = dispatchRes;
+        if (!adapter) {
+          throw new PermanentJobError(`Provider adapter not found: ${providerKey}`, 'PROVIDER_ADAPTER_UNAVAILABLE');
         }
+        let secret = payload.secret;
+        if (!secret && secretResolver) {
+          secret = await secretResolver.resolve(payload.secretRef || `tenant_${tenantId}_${providerKey}`).catch(() => null);
+        }
+
+        const structuredConsent = typeof payload.consent === 'object' && payload.consent !== null
+          ? payload.consent
+          : (payload.consent === true
+            ? {
+                status: 'granted',
+                channel: adapter.channel || (providerKey.startsWith('email') ? 'email' : (providerKey.startsWith('sms') ? 'sms' : 'whatsapp')),
+                contactId: payload.input?.contactId || payload.input?.to || payload.input?.phone || payload.input?.email,
+                purpose: payload.purpose || 'transactional',
+                grantedAt: new Date().toISOString()
+              }
+            : null);
+
+        const dispatchRes = await adapter.dispatch({
+          secret,
+          config: payload.config || {},
+          payload: payload.input || {},
+          consent: structuredConsent,
+          tenantId,
+          locationId: payload.locationId || tenantId,
+          actionHash: sha256({ tenantId, actionId: payload.actionId, input: payload.input })
+        });
+        if (!dispatchRes.ok) {
+          throw Object.assign(new Error(`Provider dispatch rejected: ${dispatchRes.code}`), { code: dispatchRes.code });
+        }
+        providerResult = dispatchRes;
+      } else if (!isDryRun && actionDef?.risk === 'external_side_effect') {
+        throw new PermanentJobError('External side effect action is missing a provider key', 'PROVIDER_KEY_REQUIRED');
       }
 
       const actionReceipt = sha256({
@@ -487,7 +620,9 @@ export function createTrustedWorkerHandlers({
             providerResult?.providerMessageId || null, JSON.stringify(providerResult || {})
           ]);
         } catch (err) {
-          console.warn('[WORKER-ACTION-RECEIPT] Failed to save receipt:', err.message);
+          throw Object.assign(new Error(`Failed to save action receipt in PostgreSQL: ${err.message}`), {
+            code: 'ACTION_RECEIPT_PERSIST_FAILED'
+          });
         } finally {
           rcClient.release();
         }

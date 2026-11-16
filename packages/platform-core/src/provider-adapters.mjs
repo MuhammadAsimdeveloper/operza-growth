@@ -183,8 +183,17 @@ export function createProviderAdapterRegistry(customAdapters = []) {
   ]);
   for (const adapter of customAdapters) if (adapter?.providerKey) map.set(adapter.providerKey, adapter);
   return {
-    get(key) { return map.get(key) || null; },
-    has(key) { return map.has(key); },
+    get(key) {
+      if (!key) return null;
+      if (map.has(key)) return map.get(key);
+      if (key === 'email' || key === 'resend') return map.get('email.resend') || null;
+      if (key === 'sendgrid') return map.get('email.sendgrid') || null;
+      if (key === 'sms' || key === 'twilio') return map.get('sms.twilio') || null;
+      if (key === 'whatsapp' || key === 'meta') return map.get('whatsapp.meta_cloud') || null;
+      if (key === 'stripe' || key === 'payments') return map.get('payments.stripe') || null;
+      return null;
+    },
+    has(key) { return this.get(key) !== null; },
     list() { return [...map.values()]; }
   };
 }
