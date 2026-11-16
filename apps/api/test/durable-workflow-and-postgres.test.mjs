@@ -1,13 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import crypto, { randomUUID } from 'node:crypto';
 import { createWorkflowOutboxRepository } from '../../../packages/db/lib/outbox-repository.mjs';
 import { produceWorkflowTriggerEvent, produceWorkflowResumeEvent, produceConnectorActionEvent } from '../../../packages/platform-core/src/outbox-producer.mjs';
 import { trustedWorkerHandlers, createTrustedWorkerHandlers } from '../../../packages/platform-core/src/trusted-handlers.mjs';
 import { createProviderAdapterRegistry } from '../../../packages/platform-core/src/provider-adapters.mjs';
 import { runOutboxBatch } from '../../../packages/platform-core/src/durable-worker.mjs';
 import { IsolatedTestPostgres } from '../../../packages/db/lib/test-postgres-server.mjs';
-import { executeCalendarSync } from '../../../packages/platform-core/src/calendar-sync.mjs';
+import { executeCalendarSync, generatePKCE, googleCalendarAdapter, microsoftGraphCalendarAdapter } from '../../../packages/platform-core/src/calendar-sync.mjs';
+import { createPostgresOAuthStateStore } from '../../../packages/db/lib/outlook-oauth-state-repository.mjs';
 import { readdir, readFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { rmSync } from 'node:fs';
@@ -452,6 +453,7 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
     const provWfId = randomUUID();
     const testAdapter = {
       providerKey: 'twilio',
+      channel: 'sms',
       name: 'twilio_test_adapter',
       category: 'communication',
       async dispatch({ actionHash }) {
@@ -478,6 +480,7 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
     `, [provWfId, tenantId, locationId]);
 
     const execId = randomUUID();
+    const smsContactId = randomUUID();
     // First create execution row with tenant scope so foreign key is satisfied
     const provClient = await pool.connect();
     try {
@@ -486,6 +489,14 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
         INSERT INTO workflow_executions (id, agency_id, location_id, workflow_id, status, created_at, updated_at)
         VALUES ($1, $2, $3, $4, 'running', now(), now())
       `, [execId, tenantId, locationId, provWfId]);
+      await provClient.query(`
+        INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
+        VALUES ($1, $2, $3, 'contacts', $4::jsonb, now(), now())
+      `, [smsContactId, tenantId, locationId, JSON.stringify({ id: smsContactId, phone: '+15551234567' })]);
+      await provClient.query(`
+        INSERT INTO communication_consents (id, agency_id, location_id, contact_id, channel, purpose, status, source)
+        VALUES ($1, $2, $3, $4, 'sms', 'transactional', 'granted', 'web_form')
+      `, [randomUUID(), tenantId, locationId, smsContactId]);
     } finally {
       provClient.release();
     }
@@ -950,5 +961,510 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
     // Busy blocks must NOT duplicate (length must remain 2)
     assert.equal(sync2.busyBlocks.length, 2, 'Repeated sync must not duplicate busy blocks');
     assert.equal(sync2.exportedEvents.length, 0, 'Already exported appointments must not be exported again');
+  });
+
+  await t.test('16. Human approval via HTTP API backed by PostgreSQL: pause, approve and exactly-once resumption', async () => {
+    const PORT_APP = 4307;
+    const BASE_APP = `http://127.0.0.1:${PORT_APP}`;
+    const STORE_APP = './scratch/store_api_appr.json';
+    try { rmSync(path.join(root, 'apps/api', STORE_APP), { force: true }); } catch {}
+
+    const appEnv = {
+      ...process.env,
+      NODE_ENV: 'test',
+      PORT: String(PORT_APP),
+      DATA_FILE: STORE_APP,
+      DATABASE_URL: dbUrl,
+      MIGRATION_DATABASE_URL: dbUrl,
+      OPERZA_TEST_DATABASE_URL: dbUrl,
+      OPERZA_VAULT_KEY: 'test-vault-key-for-approvals-32-chars-long',
+      OPERZA_ADMIN_KEY: 'operza-admin-telemetry-secret-key-32chars-valid-pass'
+    };
+
+    const serverProc = spawn('node', ['apps/api/server.mjs'], {
+      cwd: root,
+      stdio: 'pipe',
+      env: appEnv
+    });
+
+    let serverLogs = '';
+    serverProc.stdout.on('data', d => { serverLogs += d.toString(); });
+    serverProc.stderr.on('data', d => { serverLogs += d.toString(); });
+
+    try {
+      // Wait for server health
+      let serverUp = false;
+      for (let i = 0; i < 40; i++) {
+        try {
+          const r = await fetch(`${BASE_APP}/health`);
+          if (r.ok) { serverUp = true; break; }
+        } catch {}
+        await sleep(250);
+      }
+      assert.equal(serverUp, true, 'Approval API server must become healthy');
+
+      // 1. Sign up Agency User
+      const email = `approval-ceo-${Date.now()}@example.com`;
+      const signupRes = await fetch(`${BASE_APP}/api/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Executive Approver',
+          email,
+          password: 'Password123!',
+          agencyName: 'Approval Test Agency'
+        })
+      });
+      assert.equal(signupRes.status, 201);
+      const signupData = await signupRes.json();
+      const appAgencyId = signupData.agency?.id;
+      const appLocationId = signupData.activeLocationId || signupData.locations?.[0]?.id || appAgencyId;
+
+      const cookies = signupRes.headers.getSetCookie ? signupRes.headers.getSetCookie() : [signupRes.headers.get('set-cookie')].filter(Boolean);
+      const sessionCookie = cookies.map(c => c.split(';')[0]).join('; ');
+      const csrfMatch = sessionCookie.match(/operza_csrf=([^;]+)/);
+      const csrfToken = csrfMatch ? decodeURIComponent(csrfMatch[1]) : '';
+
+      // 2. Create workflow definition with human_approval in PostgreSQL
+      const approvalWfId = randomUUID();
+      const approvalExecId = randomUUID();
+      await pool.query(`
+        INSERT INTO workflow_definitions (id, agency_id, location_id, name, status, trigger_type, nodes, version)
+        VALUES ($1, $2, $3, 'API Approval Test Flow', 'published', 'webhook', $4::jsonb, 1)
+      `, [approvalWfId, appAgencyId, appLocationId, JSON.stringify([
+        { id: 'start_approval', type: 'trigger', next: 'gate_node' },
+        { id: 'gate_node', type: 'human_approval', requiresApproval: true, next: 'tag_approved_node', config: { approverRole: 'admin', description: 'Requires Approval' } },
+        { id: 'tag_approved_node', type: 'action', config: { actionType: 'tag_contact', tag: 'PassedApproval' } }
+      ])]);
+
+      // 3. Enqueue trigger event
+      const dbHandlers = createTrustedWorkerHandlers({ pool });
+      await produceWorkflowTriggerEvent({
+        repository: outboxRepo,
+        tenantId: appAgencyId,
+        locationId: appLocationId,
+        workflowId: approvalWfId,
+        triggerType: 'webhook',
+        payload: {
+          executionId: approvalExecId,
+          workflowName: 'API Approval Test Flow',
+          mode: 'live'
+        }
+      });
+
+      // 4. Run worker batch - execution should stop at gate_node with status waiting_approval
+      const batch1 = await runOutboxBatch({
+        repository: outboxRepo,
+        workerId: 'worker_approval_test_run',
+        handlers: dbHandlers,
+        limit: 5
+      });
+      assert.equal(batch1.claimed, 1);
+      assert.equal(batch1.results[0].status, 'delivered');
+
+      // Check PostgreSQL execution status
+      const execCheck = await pool.query(
+        'SELECT status, current_node_id FROM workflow_executions WHERE agency_id = $1 AND id = $2',
+        [appAgencyId, approvalExecId]
+      );
+      assert.equal(execCheck.rows[0].status, 'waiting_approval');
+      assert.equal(execCheck.rows[0].current_node_id, 'gate_node');
+
+      // 5. Query pending approvals via API endpoint GET /api/workflows/approvals
+      const pendingRes = await fetch(`${BASE_APP}/api/workflows/approvals`, {
+        headers: { Cookie: sessionCookie }
+      });
+      assert.equal(pendingRes.status, 200);
+      const pendingList = await pendingRes.json();
+      const foundApproval = (pendingList.data || pendingList).find(a => a.executionId === approvalExecId);
+      assert.ok(foundApproval, 'Pending approval must be returned by API');
+      assert.equal(foundApproval.status, 'pending');
+
+      // 6. Approve via HTTP POST /api/workflows/runs/:runId/approve
+      const approveRes = await fetch(`${BASE_APP}/api/workflows/runs/${approvalExecId}/approve`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-operza-csrf': csrfToken,
+          Cookie: sessionCookie
+        },
+        body: JSON.stringify({ decision: 'approved', approvalId: foundApproval.id })
+      });
+      const approveStatus = approveRes.status;
+      const approveText = await approveRes.text();
+      assert.equal(approveStatus, 200, `Approve returned ${approveStatus}: ${approveText}; serverLogs: ${serverLogs}`);
+      const approveBody = JSON.parse(approveText);
+      assert.equal(approveBody.success, true);
+      assert.equal(approveBody.approval.status, 'approved');
+
+      // 7. Verify PostgreSQL state after approval:
+      const approvalDb = await pool.query(
+        'SELECT status, decided_by, decision_checksum FROM workflow_approvals WHERE id = $1',
+        [foundApproval.id]
+      );
+      assert.equal(approvalDb.rows[0].status, 'approved');
+      assert.ok(approvalDb.rows[0].decided_by);
+      assert.ok(approvalDb.rows[0].decision_checksum);
+
+      // workflow_outbox has exactly one workflow.step.resume event
+      const resumeOutbox = await pool.query(
+        "SELECT id, status, payload FROM workflow_outbox WHERE agency_id = $1 AND event_type = 'workflow.step.resume' AND payload->>'executionId' = $2",
+        [appAgencyId, approvalExecId]
+      );
+      assert.equal(resumeOutbox.rows.length, 1, 'Exactly one resume event must be enqueued');
+      assert.equal(resumeOutbox.rows[0].status, 'pending');
+
+      // 8. Worker claims resume event and continues execution to completion
+      const batchResume = await runOutboxBatch({
+        repository: outboxRepo,
+        workerId: 'worker_approval_resumer',
+        handlers: dbHandlers,
+        limit: 5
+      });
+      assert.equal(batchResume.claimed, 1);
+      assert.equal(batchResume.results[0].status, 'delivered');
+
+      // Final check: workflow_executions is completed
+      const finalExec = await pool.query(
+        'SELECT status, finished_at FROM workflow_executions WHERE agency_id = $1 AND id = $2',
+        [appAgencyId, approvalExecId]
+      );
+      assert.equal(finalExec.rows[0].status, 'completed');
+      assert.ok(finalExec.rows[0].finished_at);
+    } finally {
+      serverProc.kill('SIGTERM');
+      await sleep(300);
+    }
+  });
+
+  await t.test('17. Calendar OAuth: PKCE S256, atomic state consumption, listCalendars, and external_event_id persistence', async () => {
+    // 1. PKCE generation generates cryptographically random verifier and S256 challenge
+    const pkce1 = generatePKCE();
+    assert.ok(pkce1.verifier && pkce1.verifier.length >= 43);
+    assert.ok(pkce1.challenge && pkce1.challenge.length >= 43);
+    assert.equal(pkce1.method, 'S256');
+
+    // Verify S256 challenge calculation matches RFC 7636
+    const expectedChallenge = crypto.createHash('sha256').update(pkce1.verifier).digest('base64url');
+    assert.equal(pkce1.challenge, expectedChallenge, 'PKCE challenge must match RFC 7636 S256');
+
+    // 2. PostgreSQL OAuth state store handles single-use consumption and expiration
+    const masterKey = 'test-oauth-vault-key-32chars-ok!';
+    const oauthStore = createPostgresOAuthStateStore(pool, { masterKey });
+    const stateHash = crypto.createHash('sha256').update(randomUUID()).digest('hex');
+
+    await oauthStore.create({
+      stateHash,
+      tenantId,
+      locationId,
+      actorId: 'usr_oauth_test_1',
+      codeVerifier: pkce1.verifier,
+      expiresAt: Date.now() + 60_000
+    });
+
+    // Verify row in database
+    const storeRow = await pool.query('SELECT state_hash, agency_id, location_id, expires_at FROM provider_oauth_states WHERE state_hash = $1', [stateHash]);
+    assert.equal(storeRow.rows.length, 1);
+    assert.equal(storeRow.rows[0].agency_id, tenantId);
+    assert.ok(storeRow.rows[0].expires_at);
+
+    // Consume once: succeeds and retrieves decrypted codeVerifier
+    const consumed = await oauthStore.consume({
+      stateHash,
+      tenantId,
+      locationId
+    });
+    assert.ok(consumed);
+    assert.equal(consumed.codeVerifier, pkce1.verifier);
+
+    // Verify row deleted upon single-use consumption
+    const checkDeleted = await pool.query('SELECT * FROM provider_oauth_states WHERE state_hash = $1', [stateHash]);
+    assert.equal(checkDeleted.rows.length, 0, 'OAuth state row must be deleted upon consumption');
+
+    // Replay attack: attempting to consume the same state again fails
+    const replayed = await oauthStore.consume({
+      stateHash,
+      tenantId,
+      locationId
+    });
+    assert.equal(replayed, null, 'Consumed OAuth state must not be replayable');
+
+    // 3. listCalendars implementation for Google and Microsoft
+    const mockGoogleFetch = async (url) => {
+      if (url.includes('/users/me/calendarList')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            items: [
+              { id: 'primary', summary: 'Personal Calendar', primary: true, accessRole: 'owner' },
+              { id: 'team_cal_123', summary: 'Agency Sales', primary: false, accessRole: 'writer' }
+            ]
+          })
+        };
+      }
+      return { ok: false, status: 404 };
+    };
+
+    const googleCalendars = await googleCalendarAdapter.listCalendars({
+      accessToken: 'test_token',
+      fetchFn: mockGoogleFetch
+    });
+    assert.equal(googleCalendars.length, 2);
+    assert.equal(googleCalendars[0].id, 'primary');
+    assert.equal(googleCalendars[0].name, 'Personal Calendar');
+    assert.equal(googleCalendars[0].isPrimary, true);
+
+    const mockMsFetch = async (url) => {
+      if (url.includes('/me/calendars')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            value: [
+              { id: 'ms_cal_default', name: 'Outlook Calendar', isDefaultCalendar: true, canEdit: true }
+            ]
+          })
+        };
+      }
+      return { ok: false, status: 404 };
+    };
+
+    const msCalendars = await microsoftGraphCalendarAdapter.listCalendars({
+      accessToken: 'test_ms_token',
+      fetchFn: mockMsFetch
+    });
+    assert.equal(msCalendars.length, 1);
+    assert.equal(msCalendars[0].id, 'ms_cal_default');
+    assert.equal(msCalendars[0].name, 'Outlook Calendar');
+    assert.equal(msCalendars[0].isPrimary, true);
+
+    // 4. Persistence of external_event_id in PostgreSQL appointments table
+    const apptId = randomUUID();
+    const calId = randomUUID();
+    const externalEventId = `ext_google_${Date.now()}`;
+    const client = await pool.connect();
+    try {
+      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await client.query(`
+        INSERT INTO appointments (id, agency_id, location_id, calendar_id, title, status, starts_at, ends_at, external_event_id)
+        VALUES ($1, $2, $3, $4, 'Sync Deduplication Appointment', 'confirmed', now(), now() + interval '30 minutes', $5)
+      `, [apptId, tenantId, locationId, calId, externalEventId]);
+
+      const apptRow = await client.query('SELECT id, external_event_id FROM appointments WHERE id = $1', [apptId]);
+      assert.equal(apptRow.rows[0].external_event_id, externalEventId, 'external_event_id must be stored in PostgreSQL');
+    } finally {
+      client.release();
+    }
+  });
+
+  await t.test('18. Authoritative PostgreSQL Communication Consent and Error Propagation', async () => {
+    const contactId = randomUUID();
+    const testWfId = randomUUID();
+    const testExecId = randomUUID();
+
+    let adapterCalled = false;
+    const testSmsAdapter = {
+      providerKey: 'twilio',
+      channel: 'sms',
+      category: 'communication',
+      async dispatch({ actionHash }) {
+        adapterCalled = true;
+        return { ok: true, providerAccepted: true, providerMessageId: 'sms_msg_123', actionHash };
+      }
+    };
+    const dbHandlers = createTrustedWorkerHandlers({
+      pool,
+      providerRegistry: createProviderAdapterRegistry([testSmsAdapter])
+    });
+
+    const client = await pool.connect();
+    try {
+      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await client.query(`
+        INSERT INTO workflow_definitions (id, agency_id, location_id, name, status, trigger_type, nodes, version)
+        VALUES ($1, $2, $3, 'Consent Enforcement Flow', 'published', 'webhook', '[]'::jsonb, 1)
+      `, [testWfId, tenantId, locationId]);
+      await client.query(`
+        INSERT INTO workflow_executions (id, agency_id, location_id, workflow_id, status, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, 'running', now(), now())
+      `, [testExecId, tenantId, locationId, testWfId]);
+      await client.query(`
+        INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
+        VALUES ($1, $2, $3, 'contacts', $4::jsonb, now(), now())
+      `, [contactId, tenantId, locationId, JSON.stringify({ id: contactId, phone: '+15554443322' })]);
+    } finally {
+      client.release();
+    }
+
+    // 1. Dispatch WITHOUT consent in PostgreSQL -> Worker fails with CONSENT_REQUIRED (dead_letter)
+    adapterCalled = false;
+    const unconsentedJob = await outboxRepo.enqueue({
+      tenantId,
+      locationId,
+      eventType: 'workflow.action.execute',
+      idempotencyKey: `idem_consent_missing_${randomUUID()}`,
+      payload: {
+        tenantId,
+        locationId,
+        executionId: testExecId,
+        actionId: 'sms',
+        nodeType: 'sms',
+        actionType: 'sms',
+        providerKey: 'twilio',
+        approved: true,
+        approvalEvidence: { approvedBy: 'admin' },
+        consent: true, // boolean flag must NOT be converted to fabricated consent
+        input: { contactId, phone: '+15554443322', message: 'Unconsented SMS' }
+      }
+    });
+
+    const batch1 = await runOutboxBatch({
+      repository: outboxRepo,
+      workerId: 'worker_consent_audit',
+      handlers: dbHandlers,
+      limit: 5
+    });
+    assert.equal(batch1.claimed, 1);
+    assert.equal(batch1.results[0].status, 'dead_letter');
+    assert.equal(adapterCalled, false, 'Adapter dispatch must NOT be invoked when consent record is missing');
+
+    const dbRow1 = await pool.query('SELECT status, last_error_code FROM workflow_outbox WHERE id = $1', [unconsentedJob.id]);
+    assert.equal(dbRow1.rows[0].status, 'dead_letter');
+    assert.equal(dbRow1.rows[0].last_error_code, 'CONSENT_REQUIRED');
+
+    // 2. Dispatch with REVOKED consent in PostgreSQL -> Fails closed
+    const consentId = randomUUID();
+    const client2 = await pool.connect();
+    try {
+      await client2.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await client2.query(`
+        INSERT INTO communication_consents (id, agency_id, location_id, contact_id, channel, purpose, status, source)
+        VALUES ($1, $2, $3, $4, 'sms', 'transactional', 'revoked', 'keyword_opt_out')
+      `, [consentId, tenantId, locationId, contactId]);
+    } finally {
+      client2.release();
+    }
+
+    const revokedJob = await outboxRepo.enqueue({
+      tenantId,
+      locationId,
+      eventType: 'workflow.action.execute',
+      idempotencyKey: `idem_consent_revoked_${randomUUID()}`,
+      payload: {
+        tenantId,
+        locationId,
+        executionId: testExecId,
+        actionId: 'sms',
+        nodeType: 'sms',
+        actionType: 'sms',
+        providerKey: 'twilio',
+        approved: true,
+        approvalEvidence: { approvedBy: 'admin' },
+        consent: true,
+        input: { contactId, phone: '+15554443322', message: 'Revoked Consent SMS' }
+      }
+    });
+
+    const batch2 = await runOutboxBatch({
+      repository: outboxRepo,
+      workerId: 'worker_consent_audit_2',
+      handlers: dbHandlers,
+      limit: 5
+    });
+    assert.equal(batch2.claimed, 1);
+    assert.equal(batch2.results[0].status, 'dead_letter');
+    assert.equal(adapterCalled, false);
+
+    // 3. Grant valid consent in PostgreSQL -> Dispatch succeeds and writes receipt
+    const client3 = await pool.connect();
+    try {
+      await client3.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await client3.query(`
+        UPDATE communication_consents
+        SET status = 'granted'
+        WHERE id = $1
+      `, [consentId]);
+    } finally {
+      client3.release();
+    }
+
+    const grantedJob = await outboxRepo.enqueue({
+      tenantId,
+      locationId,
+      eventType: 'workflow.action.execute',
+      idempotencyKey: `idem_consent_granted_${randomUUID()}`,
+      payload: {
+        tenantId,
+        locationId,
+        executionId: testExecId,
+        actionId: 'sms',
+        nodeType: 'sms',
+        actionType: 'sms',
+        providerKey: 'twilio',
+        approved: true,
+        approvalEvidence: { approvedBy: 'admin' },
+        consent: true,
+        input: { contactId, phone: '+15554443322', message: 'Legitimate SMS' }
+      }
+    });
+
+    const batch3 = await runOutboxBatch({
+      repository: outboxRepo,
+      workerId: 'worker_consent_audit_3',
+      handlers: dbHandlers,
+      limit: 5
+    });
+    assert.equal(batch3.claimed, 1);
+    assert.equal(batch3.results[0].status, 'delivered');
+    assert.equal(adapterCalled, true, 'Adapter dispatch MUST be invoked when consent is granted in PostgreSQL');
+
+    // 4. Provider failure propagates as retryable step
+    const failingAdapter = {
+      providerKey: 'twilio_fail',
+      channel: 'sms',
+      category: 'communication',
+      async dispatch() {
+        return { ok: false, code: 'UPSTREAM_CARRIER_TIMEOUT', error: 'Carrier timed out' };
+      }
+    };
+    const failHandlers = createTrustedWorkerHandlers({
+      pool,
+      providerRegistry: createProviderAdapterRegistry([failingAdapter])
+    });
+
+    const failingJob = await outboxRepo.enqueue({
+      tenantId,
+      locationId,
+      eventType: 'workflow.action.execute',
+      idempotencyKey: `idem_provider_fail_${randomUUID()}`,
+      payload: {
+        tenantId,
+        locationId,
+        executionId: testExecId,
+        actionId: 'sms',
+        nodeType: 'sms',
+        actionType: 'sms',
+        providerKey: 'twilio_fail',
+        approved: true,
+        approvalEvidence: { approvedBy: 'admin' },
+        consent: true,
+        input: { contactId, phone: '+15554443322', message: 'Will fail' }
+      }
+    });
+
+    const batch4 = await runOutboxBatch({
+      repository: outboxRepo,
+      workerId: 'worker_provider_fail_audit',
+      handlers: failHandlers,
+      limit: 5
+    });
+    assert.equal(batch4.claimed, 1);
+    assert.equal(batch4.results[0].status, 'pending', 'Retryable failure resets status to pending for backoff retry');
+
+    const failDb = await pool.query('SELECT status, attempts, last_error_code FROM workflow_outbox WHERE id = $1', [failingJob.id]);
+    assert.equal(failDb.rows[0].status, 'pending');
+    assert.equal(failDb.rows[0].attempts, 1);
+    assert.equal(failDb.rows[0].last_error_code, 'UPSTREAM_CARRIER_TIMEOUT');
   });
 });

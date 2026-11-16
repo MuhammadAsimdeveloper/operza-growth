@@ -19,7 +19,7 @@
  */
 
 import { createServer } from 'node:http';
-import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual, randomUUID, createHmac } from 'node:crypto';
+import crypto, { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual, randomUUID, createHmac } from 'node:crypto';
 import { promisify } from 'node:util';
 import { readFile, mkdir, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -46,7 +46,7 @@ import { createPostgresSecretBackend } from '../../packages/db/lib/secret-vault-
 import { createZapierHookRepository } from '../../packages/db/lib/zapier-hook-repository.mjs';
 import { createPostgresOAuthStateStore } from '../../packages/db/lib/outlook-oauth-state-repository.mjs';
 import { createOutlookOAuthService, createMemoryOAuthStateStore } from '../../packages/platform-core/src/outlook-oauth.mjs';
-import { executeCalendarSync, googleCalendarAdapter, microsoftGraphCalendarAdapter, signOAuthState, verifyOAuthState } from '../../packages/platform-core/src/calendar-sync.mjs';
+import { executeCalendarSync, generatePKCE, googleCalendarAdapter, microsoftGraphCalendarAdapter, signOAuthState, verifyOAuthState } from '../../packages/platform-core/src/calendar-sync.mjs';
 import { workflowQueue } from './queue.mjs';
 import { handleZapierRoute, dispatchZapierEvent } from './zapier-router.mjs';
 import { handleSystemRoutes } from './routes/system.mjs';
@@ -646,6 +646,7 @@ async function storeCopilotProposal(toolName, params, actor) {
 }
 
 function hash(val) { return createHash('sha256').update(String(val)).digest('hex'); }
+function sha256(data) { return createHash('sha256').update(typeof data === 'string' ? data : JSON.stringify(data)).digest('hex'); }
 function safeEqual(a, b) {
   const aa = Buffer.from(String(a));
   const bb = Buffer.from(String(b));
@@ -1072,7 +1073,7 @@ async function loadAuthoritativeCollectionRecords(collectionName, agencyId, loca
 
     if (collectionName === 'appointments') {
       const res = await client.query(`
-        SELECT id, agency_id, location_id, calendar_id, contact_id, title, starts_at, ends_at, status, assigned_to, notes, created_at, updated_at
+        SELECT id, agency_id, location_id, calendar_id, contact_id, title, starts_at, ends_at, status, assigned_to, notes, external_event_id, created_at, updated_at
         FROM appointments
         WHERE agency_id = $1 AND ($2::uuid IS NULL OR location_id = $2)
         ORDER BY starts_at ASC
@@ -1089,6 +1090,7 @@ async function loadAuthoritativeCollectionRecords(collectionName, agencyId, loca
         status: row.status,
         assignedTo: row.assigned_to,
         notes: row.notes,
+        externalEventId: row.external_event_id || null,
         createdAt: row.created_at?.toISOString?.() || row.created_at,
         updatedAt: row.updated_at?.toISOString?.() || row.updated_at
       }));
@@ -1149,7 +1151,7 @@ async function loadAuthoritativeCollectionRecords(collectionName, agencyId, loca
       FROM location_records
       WHERE agency_id = $1 AND ($2::uuid IS NULL OR location_id = $2) AND collection = $3
       ORDER BY updated_at DESC
-    `, [agencyId, locationId || null, collectionName]).catch(() => ({ rows: [] }));
+    `, [agencyId, locationId || null, collectionName]);
 
     if (res.rows.length > 0) {
       return res.rows.map(row => ({
@@ -6495,38 +6497,102 @@ const server = createServer(async (req, res) => {
       const calId = pathname.replace('/api/calendars/', '').replace('/oauth/start', '').trim();
       let calendars = state.records.calendars || [];
       let cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
+      if (!cal && pgPool) {
+        const calRes = await pgPool.query('SELECT * FROM calendars WHERE agency_id = $1 AND id = $2', [agency.id, calId]);
+        if (calRes.rows.length > 0) {
+          const row = calRes.rows[0];
+          cal = {
+            id: row.id,
+            agencyId: row.agency_id,
+            locationId: row.location_id,
+            name: row.name,
+            slug: row.slug,
+            durationMin: row.duration_min,
+            status: row.status,
+            availability: row.availability || {},
+            externalSync: row.availability?.externalSync || null,
+            externalBusyBlocks: row.availability?.externalBusyBlocks || []
+          };
+          calendars.push(cal);
+        }
+      }
       if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
 
       const provider = url.searchParams.get('provider') || 'google_calendar';
       const redirectUri = `${process.env.APP_BASE_URL || url.origin}/api/calendars/oauth/callback`;
       let authorizationUrl = '';
 
+      const pkce = generatePKCE();
+      const stateNonce = crypto.randomUUID();
+      const expiresAt = Date.now() + 600_000;
+      const statePayload = {
+        tenantId: agency.id,
+        locationId: activeLocation?.id || agency.id,
+        actorId: actor?.user?.id || 'system',
+        calendarId: cal.id,
+        provider,
+        nonce: stateNonce,
+        expiresAt,
+        createdAt: Date.now()
+      };
+      const signedState = signOAuthState(statePayload, effectiveVaultKey);
+      const stateHash = crypto.createHash('sha256').update(signedState).digest('hex');
+
+      const oauthStore = pgPool
+        ? createPostgresOAuthStateStore(pgPool, { masterKey: effectiveVaultKey })
+        : (globalThis.__calendarOAuthMemoryStore = globalThis.__calendarOAuthMemoryStore || createMemoryOAuthStateStore());
+
+      await oauthStore.create({
+        stateHash,
+        tenantId: agency.id,
+        locationId: activeLocation?.id || agency.id,
+        actorId: actor?.user?.id || 'system',
+        codeVerifier: pkce.verifier,
+        expiresAt
+      });
+
       if (provider === 'google_calendar' || provider === 'google') {
-        const clientId = process.env.GOOGLE_CLIENT_ID || 'operza-google-calendar-client-id';
+        const clientId = process.env.GOOGLE_CLIENT_ID;
+        if (!clientId) {
+          return sendJson(res, 400, {
+            error: 'Google Calendar credentials are not configured on this server',
+            code: 'GOOGLE_CONFIG_MISSING'
+          });
+        }
         authorizationUrl = googleCalendarAdapter.getAuthorizationUrl({
           clientId,
           redirectUri,
           stateKey: effectiveVaultKey,
           tenantId: agency.id,
           locationId: activeLocation?.id || agency.id,
-          calendarId: cal.id
+          calendarId: cal.id,
+          codeChallenge: pkce.challenge,
+          state: signedState
         });
       } else if (provider === 'outlook' || provider === 'microsoft_graph') {
-        const clientId = process.env.MICROSOFT_CLIENT_ID || process.env.AZURE_AD_CLIENT_ID || 'operza-ms-calendar-client-id';
+        const clientId = process.env.MICROSOFT_CLIENT_ID || process.env.AZURE_AD_CLIENT_ID;
+        if (!clientId) {
+          return sendJson(res, 400, {
+            error: 'Microsoft Calendar credentials are not configured on this server',
+            code: 'MICROSOFT_CONFIG_MISSING'
+          });
+        }
         authorizationUrl = microsoftGraphCalendarAdapter.getAuthorizationUrl({
           clientId,
           redirectUri,
           stateKey: effectiveVaultKey,
           tenantId: agency.id,
           locationId: activeLocation?.id || agency.id,
-          calendarId: cal.id
+          calendarId: cal.id,
+          codeChallenge: pkce.challenge,
+          state: signedState
         });
       } else {
-        return sendJson(res, 400, { error: 'Unsupported calendar provider' });
+        return sendJson(res, 400, { error: 'Unsupported calendar provider', code: 'UNSUPPORTED_PROVIDER' });
       }
 
       if (url.searchParams.get('redirect') === 'false') {
-        return sendJson(res, 200, { authorizationUrl });
+        return sendJson(res, 200, { authorizationUrl, state: signedState });
       }
       res.writeHead(302, { Location: authorizationUrl, 'Cache-Control': 'no-store' });
       res.end();
@@ -6542,6 +6608,7 @@ const server = createServer(async (req, res) => {
       const destination = new URL('/calendars', process.env.APP_BASE_URL || process.env.FRONTEND_URL || url.origin);
       if (error || !stateParam || !code) {
         destination.searchParams.set('sync', 'denied');
+        if (error) destination.searchParams.set('reason', error);
         res.writeHead(302, { Location: destination.toString(), 'Cache-Control': 'no-store' });
         res.end();
         return;
@@ -6549,10 +6616,54 @@ const server = createServer(async (req, res) => {
 
       try {
         const stateData = verifyOAuthState(stateParam, effectiveVaultKey);
-        if (!stateData?.calendarId) throw new Error('Invalid state payload');
+        if (!stateData?.calendarId || !stateData?.tenantId || !stateData?.locationId) {
+          throw Object.assign(new Error('Invalid state payload'), { code: 'OAUTH_STATE_INVALID' });
+        }
+        if (stateData.expiresAt && stateData.expiresAt <= Date.now()) {
+          throw Object.assign(new Error('OAuth state expired'), { code: 'OAUTH_STATE_EXPIRED' });
+        }
+
+        const stateHash = crypto.createHash('sha256').update(stateParam).digest('hex');
+        const oauthStore = pgPool
+          ? createPostgresOAuthStateStore(pgPool, { masterKey: effectiveVaultKey })
+          : (globalThis.__calendarOAuthMemoryStore = globalThis.__calendarOAuthMemoryStore || createMemoryOAuthStateStore());
+
+        const consumed = await oauthStore.consume({
+          stateHash,
+          tenantId: stateData.tenantId,
+          locationId: stateData.locationId
+        });
+
+        if (!consumed || !consumed.codeVerifier) {
+          throw Object.assign(new Error('OAuth state was already consumed or not found'), { code: 'OAUTH_STATE_CONSUMED' });
+        }
+        if (consumed.expiresAt && consumed.expiresAt <= Date.now()) {
+          throw Object.assign(new Error('OAuth state expired before token exchange'), { code: 'OAUTH_STATE_EXPIRED' });
+        }
+
+        const codeVerifier = consumed.codeVerifier;
 
         let calendars = state.records.calendars || [];
-        let cal = calendars.find(c => c.id === stateData.calendarId);
+        let cal = calendars.find(c => c.id === stateData.calendarId && c.agencyId === stateData.tenantId);
+        if (!cal && pgPool) {
+          const calRes = await pgPool.query('SELECT * FROM calendars WHERE agency_id = $1 AND id = $2', [stateData.tenantId, stateData.calendarId]);
+          if (calRes.rows.length > 0) {
+            const row = calRes.rows[0];
+            cal = {
+              id: row.id,
+              agencyId: row.agency_id,
+              locationId: row.location_id,
+              name: row.name,
+              slug: row.slug,
+              durationMin: row.duration_min,
+              status: row.status,
+              availability: row.availability || {},
+              externalSync: row.availability?.externalSync || null,
+              externalBusyBlocks: row.availability?.externalBusyBlocks || []
+            };
+            calendars.push(cal);
+          }
+        }
         if (!cal) throw new Error('Calendar not found');
 
         let tokenData = {};
@@ -6564,6 +6675,7 @@ const server = createServer(async (req, res) => {
             clientId: process.env.GOOGLE_CLIENT_ID,
             clientSecret: process.env.GOOGLE_CLIENT_SECRET,
             redirectUri,
+            codeVerifier,
             fetchFn: globalThis.fetch
           });
         } else {
@@ -6572,6 +6684,7 @@ const server = createServer(async (req, res) => {
             clientId: process.env.MICROSOFT_CLIENT_ID || process.env.AZURE_AD_CLIENT_ID,
             clientSecret: process.env.MICROSOFT_CLIENT_SECRET || process.env.AZURE_AD_CLIENT_SECRET,
             redirectUri,
+            codeVerifier,
             fetchFn: globalThis.fetch
           });
         }
@@ -6591,13 +6704,17 @@ const server = createServer(async (req, res) => {
           email: tokenData.email || 'operator@operza.io',
           calendarName: tokenData.calendarName || `${stateData.provider === 'google_calendar' ? 'Google' : 'Outlook'} Calendar`,
           syncDirection: 'two_way',
-          status: 'connected',
+          status: 'active',
           lastSyncAt: new Date().toISOString(),
           connectedAt: new Date().toISOString(),
           secretRef
         };
         delete cal.externalSync.accessToken;
         delete cal.externalSync.refreshToken;
+
+        if (cal.availability) {
+          cal.availability.externalSync = { ...cal.externalSync };
+        }
 
         await saveState();
         await syncRelationalWrite('calendars', 'update', cal, cal.agencyId);
@@ -6621,15 +6738,44 @@ const server = createServer(async (req, res) => {
       const calId = pathname.replace('/api/calendars/', '').replace('/sync/calendars', '').trim();
       let calendars = state.records.calendars || [];
       let cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
+      if (!cal && pgPool) {
+        const calRes = await pgPool.query('SELECT * FROM calendars WHERE agency_id = $1 AND id = $2', [agency.id, calId]);
+        if (calRes.rows.length > 0) {
+          const row = calRes.rows[0];
+          cal = {
+            id: row.id,
+            agencyId: row.agency_id,
+            locationId: row.location_id,
+            name: row.name,
+            slug: row.slug,
+            durationMin: row.duration_min,
+            status: row.status,
+            availability: row.availability || {},
+            externalSync: row.availability?.externalSync || null,
+            externalBusyBlocks: row.availability?.externalBusyBlocks || []
+          };
+          calendars.push(cal);
+        }
+      }
       if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
       if (!cal.externalSync?.secretRef || !secretResolver) {
-        return sendJson(res, 400, { error: 'Calendar is not connected with vault secrets' });
+        return sendJson(res, 400, { error: 'Calendar is not connected with vault secrets', code: 'CALENDAR_NOT_CONNECTED' });
       }
 
       const raw = await secretResolver.resolve(cal.externalSync.secretRef);
       const creds = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      const adapter = cal.externalSync.provider === 'google_calendar' ? googleCalendarAdapter : microsoftGraphCalendarAdapter;
-      const list = await adapter.listCalendars({ accessToken: creds?.accessToken, fetchFn: globalThis.fetch });
+      const isGoogle = cal.externalSync.provider === 'google_calendar' || cal.externalSync.provider === 'google';
+      const adapter = isGoogle ? googleCalendarAdapter : microsoftGraphCalendarAdapter;
+      const clientId = isGoogle ? process.env.GOOGLE_CLIENT_ID : (process.env.MICROSOFT_CLIENT_ID || process.env.AZURE_AD_CLIENT_ID);
+      const clientSecret = isGoogle ? process.env.GOOGLE_CLIENT_SECRET : (process.env.MICROSOFT_CLIENT_SECRET || process.env.AZURE_AD_CLIENT_SECRET);
+
+      const list = await adapter.listCalendars({
+        accessToken: creds?.accessToken,
+        refreshToken: creds?.refreshToken,
+        clientId,
+        clientSecret,
+        fetchFn: globalThis.fetch
+      });
       return sendJson(res, 200, { calendars: list });
     }
 
@@ -6718,7 +6864,7 @@ const server = createServer(async (req, res) => {
         email,
         calendarName: verification.calendarName || body.calendarName || `${provider === 'google_calendar' ? 'Google' : 'Outlook'} Calendar (${email})`,
         syncDirection: body.syncDirection || 'two_way',
-        status: 'connected',
+        status: 'active',
         lastSyncAt: new Date().toISOString(),
         connectedAt: new Date().toISOString(),
         secretRef
@@ -6770,7 +6916,7 @@ const server = createServer(async (req, res) => {
       const calendars = state.records.calendars || [];
       const cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
       if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
-      if (!cal.externalSync || cal.externalSync.status !== 'connected') {
+      if (!cal.externalSync || !['active', 'connected'].includes(cal.externalSync.status)) {
         return sendJson(res, 400, { error: 'Calendar is not connected to an external provider', code: 'CALENDAR_NOT_CONNECTED' });
       }
 
@@ -6784,16 +6930,46 @@ const server = createServer(async (req, res) => {
         credentials = { accessToken: cal.externalSync.accessToken, refreshToken: cal.externalSync.refreshToken };
       }
 
+      let appts = state.records.appointments || [];
+      if (pgPool) {
+        try {
+          const pgAppts = await pgPool.query(`
+            SELECT id, agency_id as "agencyId", location_id as "locationId", calendar_id as "calendarId",
+                   title, starts_at as "startsAt", ends_at as "endsAt", status, notes, external_event_id as "externalEventId"
+            FROM appointments
+            WHERE agency_id = $1 AND calendar_id = $2
+          `, [agency.id, cal.id]);
+          if (pgAppts.rows.length > 0) {
+            appts = pgAppts.rows;
+          }
+        } catch (dbErr) {
+          console.warn('[CALENDAR-SYNC] PG appointments lookup warning:', dbErr.message);
+        }
+      }
+
       try {
         const syncResult = await executeCalendarSync({
           calendar: cal,
-          appointments: state.records.appointments || [],
+          appointments: appts,
           syncDirection: cal.externalSync.syncDirection || 'two_way',
           credentials,
           fetchFn: globalThis.fetch
         });
+
+        // Persist external_event_id on authoritative PostgreSQL appointment records
+        if (pgPool && syncResult.exportedEvents?.length) {
+          for (const exp of syncResult.exportedEvents) {
+            await pgPool.query(`
+              UPDATE appointments
+              SET external_event_id = $1, updated_at = now()
+              WHERE agency_id = $2 AND id = $3
+            `, [exp.externalId, agency.id, exp.appointmentId]).catch(e => console.warn('[CALENDAR-SYNC] PG external_event_id persist warning:', e.message));
+          }
+        }
+
         cal.externalBusyBlocks = syncResult.busyBlocks;
         cal.externalSync.lastSyncAt = syncResult.lastSyncAt;
+        cal.externalSync.status = 'active';
         cal.updatedAt = new Date().toISOString();
         await saveState();
         await syncRelationalWrite('calendars', 'update', cal, agency.id);
@@ -8269,32 +8445,26 @@ const server = createServer(async (req, res) => {
     if (method === 'GET' && pathname === '/api/workflows/approvals') {
       await expirePendingWorkflowApprovals();
       if (pgPool) {
-        try {
-          const appRes = await pgPool.query(`
-            SELECT id, agency_id, location_id, execution_id, workflow_id, node_id, action_id, action_hash, status, requested_at, expires_at
-            FROM workflow_approvals
-            WHERE agency_id = $1 AND ($2::uuid IS NULL OR location_id = $2) AND status = 'pending'
-            ORDER BY requested_at DESC
-          `, [agency.id, activeLocation?.id || null]);
-          if (appRes.rows.length > 0) {
-            const mapped = appRes.rows.map(row => ({
-              id: row.id,
-              agencyId: row.agency_id,
-              locationId: row.location_id,
-              executionId: row.execution_id,
-              workflowId: row.workflow_id,
-              nodeId: row.node_id,
-              actionId: row.action_id,
-              actionHash: row.action_hash,
-              status: row.status,
-              createdAt: row.requested_at?.toISOString?.() || row.requested_at,
-              expiresAt: row.expires_at?.toISOString?.() || row.expires_at
-            }));
-            return sendJson(res, 200, mapped.map(publicWorkflowApproval));
-          }
-        } catch (pgErr) {
-          console.warn('[WORKFLOW-APPROVALS] PG query warning:', pgErr.message);
-        }
+        const appRes = await pgPool.query(`
+          SELECT id, agency_id, location_id, execution_id, workflow_id, node_id, action_id, action_hash, status, requested_at, expires_at
+          FROM workflow_approvals
+          WHERE agency_id = $1 AND ($2::uuid IS NULL OR location_id = $2) AND status = 'pending'
+          ORDER BY requested_at DESC
+        `, [agency.id, activeLocation?.id || null]);
+        const mapped = appRes.rows.map(row => ({
+          id: row.id,
+          agencyId: row.agency_id,
+          locationId: row.location_id,
+          executionId: row.execution_id,
+          workflowId: row.workflow_id,
+          nodeId: row.node_id,
+          actionId: row.action_id,
+          actionHash: row.action_hash,
+          status: row.status,
+          createdAt: row.requested_at?.toISOString?.() || row.requested_at,
+          expiresAt: row.expires_at?.toISOString?.() || row.expires_at
+        }));
+        return sendJson(res, 200, mapped.map(publicWorkflowApproval));
       }
       state.workflowApprovals = state.workflowApprovals || [];
       const approvals = state.workflowApprovals.filter(
@@ -8313,6 +8483,181 @@ const server = createServer(async (req, res) => {
       if (body.decision && body.decision !== pathDecision) {
         return sendJson(res, 400, { error: 'Decision does not match the requested approval route' });
       }
+
+      if (pgPool) {
+        const client = await pgPool.connect();
+        try {
+          await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [agency.id, activeLocation.id]);
+
+          const execRes = await client.query(`
+            SELECT id, agency_id, location_id, workflow_id, status, current_node_id, state, trigger_event
+            FROM workflow_executions
+            WHERE agency_id = $1 AND location_id = $2 AND id = $3
+          `, [agency.id, activeLocation.id, runId]);
+
+          if (execRes.rows.length === 0) return sendJson(res, 404, { error: 'Workflow execution not found' });
+          const dbRun = execRes.rows[0];
+          if (dbRun.status !== 'waiting_approval') {
+            return sendJson(res, 409, { error: 'Workflow execution is not awaiting an approval', code: 'EXECUTION_NOT_WAITING' });
+          }
+
+          const appRes = await client.query(`
+            SELECT id, agency_id, location_id, execution_id, workflow_id, node_id, action_id, action_hash, status, requested_at, expires_at
+            FROM workflow_approvals
+            WHERE agency_id = $1 AND location_id = $2 AND execution_id = $3 AND status = 'pending'
+            ORDER BY requested_at DESC
+            LIMIT 1
+          `, [agency.id, activeLocation.id, runId]);
+
+          if (appRes.rows.length === 0) return sendJson(res, 404, { error: 'Pending approval not found' });
+          const dbApproval = appRes.rows[0];
+
+          const actionHash = dbApproval.action_hash;
+          const decisionChecksum = sha256({
+            agencyId: agency.id,
+            locationId: activeLocation.id,
+            executionId: runId,
+            nodeId: dbApproval.node_id,
+            actionHash,
+            decision: pathDecision,
+            decidedBy: actor.user.id,
+            decidedAt: new Date().toISOString()
+          });
+
+          await client.query('BEGIN');
+          try {
+            const updateAppRes = await client.query(`
+              UPDATE workflow_approvals
+              SET status = $1, decided_at = now(), decided_by = $2,
+                  decision_checksum = $3, updated_at = now()
+              WHERE agency_id = $4 AND location_id = $5 AND id = $6 AND status = 'pending'
+              RETURNING *
+            `, [
+              pathDecision, actor.user.id, decisionChecksum,
+              agency.id, activeLocation.id, dbApproval.id
+            ]);
+
+            if (updateAppRes.rowCount === 0) {
+              await client.query('ROLLBACK');
+              return sendJson(res, 409, { error: 'Approval was already decided or expired', code: 'APPROVAL_ALREADY_DECIDED' });
+            }
+
+            if (pathDecision === 'rejected') {
+              await client.query(`
+                UPDATE workflow_executions
+                SET status = 'failed', last_error_code = 'APPROVAL_REJECTED', finished_at = now(), updated_at = now()
+                WHERE agency_id = $1 AND location_id = $2 AND id = $3
+              `, [agency.id, activeLocation.id, runId]);
+
+              await client.query(`
+                INSERT INTO workflow_execution_steps (
+                  id, agency_id, location_id, execution_id, node_id, attempt, status, error_code, started_at, finished_at
+                ) VALUES ($1, $2, $3, $4, $5, 1, 'failed', 'APPROVAL_REJECTED', now(), now())
+              `, [crypto.randomUUID(), agency.id, activeLocation.id, runId, dbApproval.node_id]);
+
+              await client.query('COMMIT');
+
+              auditLog('workflow.approval.decided', actor, {
+                approvalId: dbApproval.id,
+                executionId: runId,
+                workflowId: dbRun.workflow_id,
+                nodeId: dbApproval.node_id,
+                decision: 'rejected',
+                actionHash
+              });
+
+              return sendJson(res, 200, {
+                success: true,
+                approval: {
+                  id: dbApproval.id,
+                  status: 'rejected',
+                  decidedAt: new Date().toISOString(),
+                  decidedByActorId: actor.user.id
+                },
+                run: {
+                  id: runId,
+                  status: 'failed',
+                  lastErrorCode: 'APPROVAL_REJECTED'
+                }
+              });
+            }
+
+            // pathDecision === 'approved'
+            await client.query(`
+              UPDATE workflow_executions
+              SET status = 'resuming', updated_at = now()
+              WHERE agency_id = $1 AND location_id = $2 AND id = $3
+            `, [agency.id, activeLocation.id, runId]);
+
+            const outboxId = crypto.randomUUID();
+            const resumePayload = {
+              tenantId: agency.id,
+              locationId: activeLocation.id,
+              workflowId: dbRun.workflow_id,
+              executionId: runId,
+              nodeId: dbApproval.node_id,
+              actionHash,
+              approvedBy: actor.user.id,
+              evidence: {
+                approverActorId: actor.user.id,
+                approvedAt: new Date().toISOString(),
+                actionHash
+              }
+            };
+            const idempotencyKey = sha256({
+              type: 'workflow.step.resume',
+              tenantId: agency.id,
+              executionId: runId,
+              nodeId: dbApproval.node_id,
+              actionHash
+            });
+
+            await client.query(`
+              INSERT INTO workflow_outbox (
+                id, agency_id, location_id, event_type, payload, idempotency_key, status, max_attempts, created_at, updated_at
+              ) VALUES ($1, $2, $3, 'workflow.step.resume', $4::jsonb, $5, 'pending', 5, now(), now())
+              ON CONFLICT (agency_id, location_id, idempotency_key) DO NOTHING
+            `, [outboxId, agency.id, activeLocation.id, JSON.stringify(resumePayload), idempotencyKey]);
+
+            await client.query('COMMIT');
+
+            auditLog('workflow.approval.decided', actor, {
+              approvalId: dbApproval.id,
+              executionId: runId,
+              workflowId: dbRun.workflow_id,
+              nodeId: dbApproval.node_id,
+              decision: 'approved',
+              actionHash
+            });
+
+            // In PostgreSQL durable worker mode, worker handles execution; never dual execute in API
+            return sendJson(res, 200, {
+              success: true,
+              approval: {
+                id: dbApproval.id,
+                status: 'approved',
+                decidedAt: new Date().toISOString(),
+                decidedByActorId: actor.user.id
+              },
+              run: {
+                id: runId,
+                status: 'resuming',
+                approvedNodeId: dbApproval.node_id
+              }
+            });
+          } catch (txErr) {
+            await client.query('ROLLBACK');
+            throw txErr;
+          }
+        } finally {
+          client.release();
+        }
+      }
+
+      if (isStagingOrProd || platformDbEnabled) {
+        return sendJson(res, 500, { error: 'PostgreSQL database connection required for workflow approval' });
+      }
+
       const run = (state.workflowExecutions || []).find(
         item => item.id === runId && item.agencyId === agency.id && item.locationId === activeLocation.id
       );

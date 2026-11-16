@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual, randomUUID } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual, randomUUID, randomBytes } from 'node:crypto';
 
 const GOOGLE_AUTH_ENDPOINT = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
@@ -24,6 +24,15 @@ export const MS_CALENDAR_SCOPES = [
 
 function sha256(val) {
   return createHash('sha256').update(String(val)).digest('hex');
+}
+
+/**
+ * Generates cryptographically secure PKCE code verifier and challenge (RFC 7636).
+ */
+export function generatePKCE() {
+  const verifier = randomBytes(48).toString('base64url');
+  const challenge = createHash('sha256').update(verifier).digest('base64url');
+  return { verifier, challenge, method: 'S256' };
 }
 
 export function signOAuthState(payload, secretKey) {
@@ -63,9 +72,9 @@ export const googleCalendarAdapter = {
   providerKey: 'calendar.google',
   name: 'Google Calendar',
 
-  getAuthorizationUrl({ clientId, redirectUri, stateKey, tenantId, locationId, calendarId }) {
+  getAuthorizationUrl({ clientId, redirectUri, stateKey, tenantId, locationId, calendarId, codeChallenge, state: customState }) {
     if (!clientId) throw Object.assign(new Error('Google Client ID is not configured'), { code: 'GOOGLE_CONFIG_MISSING' });
-    const state = signOAuthState({
+    const state = customState || signOAuthState({
       tenantId,
       locationId,
       calendarId,
@@ -82,10 +91,14 @@ export const googleCalendarAdapter = {
       prompt: 'consent',
       state
     });
+    if (codeChallenge) {
+      params.set('code_challenge', codeChallenge);
+      params.set('code_challenge_method', 'S256');
+    }
     return `${GOOGLE_AUTH_ENDPOINT}?${params.toString()}`;
   },
 
-  async exchangeCode({ code, clientId, clientSecret, redirectUri, fetchFn = globalThis.fetch }) {
+  async exchangeCode({ code, clientId, clientSecret, redirectUri, codeVerifier, fetchFn = globalThis.fetch }) {
     const params = new URLSearchParams({
       code,
       client_id: clientId,
@@ -93,6 +106,9 @@ export const googleCalendarAdapter = {
       redirect_uri: redirectUri,
       grant_type: 'authorization_code'
     });
+    if (codeVerifier) {
+      params.set('code_verifier', codeVerifier);
+    }
 
     const res = await fetchFn(GOOGLE_TOKEN_ENDPOINT, {
       method: 'POST',
@@ -186,6 +202,34 @@ export const googleCalendarAdapter = {
     };
   },
 
+  async listCalendars({ accessToken, refreshToken, clientId, clientSecret, fetchFn = globalThis.fetch }) {
+    let token = accessToken;
+    if (!token && refreshToken && clientId && clientSecret) {
+      const refreshed = await this.refreshToken({ refreshToken, clientId, clientSecret, fetchFn });
+      token = refreshed.accessToken;
+    }
+    if (!token) throw Object.assign(new Error('Access token is required to list Google calendars'), { code: 'CALENDAR_AUTH_FAILED' });
+    let res = await fetchFn(`${GOOGLE_CALENDAR_API}/users/me/calendarList`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (res.status === 401 && refreshToken && clientId && clientSecret) {
+      const refreshed = await this.refreshToken({ refreshToken, clientId, clientSecret, fetchFn });
+      token = refreshed.accessToken;
+      res = await fetchFn(`${GOOGLE_CALENDAR_API}/users/me/calendarList`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    }
+    if (!res.ok) throw Object.assign(new Error(`Failed to list Google calendars (${res.status})`), { code: 'CALENDAR_FETCH_FAILED', httpStatus: res.status });
+    const data = await res.json().catch(() => ({}));
+    return (data.items || []).map(item => ({
+      id: item.id,
+      name: item.summary || item.id,
+      primary: Boolean(item.primary),
+      isPrimary: Boolean(item.primary),
+      timeZone: item.timeZone || null
+    }));
+  },
+
   async fetchEvents({ accessToken, timeMin, timeMax, fetchFn = globalThis.fetch }) {
     const url = new URL(`${GOOGLE_CALENDAR_API}/calendars/primary/events`);
     if (timeMin) url.searchParams.set('timeMin', new Date(timeMin).toISOString());
@@ -261,9 +305,9 @@ export const microsoftGraphCalendarAdapter = {
   providerKey: 'calendar.microsoft_graph',
   name: 'Microsoft Outlook 365 Calendar',
 
-  getAuthorizationUrl({ clientId, redirectUri, stateKey, tenantId, locationId, calendarId, tenant = 'common' }) {
+  getAuthorizationUrl({ clientId, redirectUri, stateKey, tenantId, locationId, calendarId, tenant = 'common', codeChallenge, state: customState }) {
     if (!clientId) throw Object.assign(new Error('Microsoft Client ID is not configured'), { code: 'MICROSOFT_CONFIG_MISSING' });
-    const state = signOAuthState({
+    const state = customState || signOAuthState({
       tenantId,
       locationId,
       calendarId,
@@ -279,10 +323,14 @@ export const microsoftGraphCalendarAdapter = {
       response_mode: 'query',
       state
     });
+    if (codeChallenge) {
+      params.set('code_challenge', codeChallenge);
+      params.set('code_challenge_method', 'S256');
+    }
     return `${MS_AUTHORITY}/${encodeURIComponent(tenant)}/oauth2/v2.0/authorize?${params.toString()}`;
   },
 
-  async exchangeCode({ code, clientId, clientSecret, redirectUri, tenant = 'common', fetchFn = globalThis.fetch }) {
+  async exchangeCode({ code, clientId, clientSecret, redirectUri, tenant = 'common', codeVerifier, fetchFn = globalThis.fetch }) {
     const params = new URLSearchParams({
       client_id: clientId,
       client_secret: clientSecret,
@@ -291,6 +339,9 @@ export const microsoftGraphCalendarAdapter = {
       grant_type: 'authorization_code',
       scope: MS_CALENDAR_SCOPES.join(' ')
     });
+    if (codeVerifier) {
+      params.set('code_verifier', codeVerifier);
+    }
 
     const res = await fetchFn(`${MS_AUTHORITY}/${encodeURIComponent(tenant)}/oauth2/v2.0/token`, {
       method: 'POST',
@@ -383,6 +434,34 @@ export const microsoftGraphCalendarAdapter = {
       owner: data.owner?.name || data.owner?.address || null,
       freshAccessToken: token
     };
+  },
+
+  async listCalendars({ accessToken, refreshToken, clientId, clientSecret, fetchFn = globalThis.fetch }) {
+    let token = accessToken;
+    if (!token && refreshToken && clientId && clientSecret) {
+      const refreshed = await this.refreshToken({ refreshToken, clientId, clientSecret, fetchFn });
+      token = refreshed.accessToken;
+    }
+    if (!token) throw Object.assign(new Error('Access token is required to list Microsoft calendars'), { code: 'CALENDAR_AUTH_FAILED' });
+    let res = await fetchFn(`${MS_GRAPH_API}/me/calendars`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (res.status === 401 && refreshToken && clientId && clientSecret) {
+      const refreshed = await this.refreshToken({ refreshToken, clientId, clientSecret, fetchFn });
+      token = refreshed.accessToken;
+      res = await fetchFn(`${MS_GRAPH_API}/me/calendars`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+    }
+    if (!res.ok) throw Object.assign(new Error(`Failed to list Microsoft calendars (${res.status})`), { code: 'CALENDAR_FETCH_FAILED', httpStatus: res.status });
+    const data = await res.json().catch(() => ({}));
+    return (data.value || []).map(item => ({
+      id: item.id,
+      name: item.name || item.id,
+      isDefault: Boolean(item.isDefaultCalendar),
+      isPrimary: Boolean(item.isDefaultCalendar),
+      canEdit: Boolean(item.canEdit)
+    }));
   },
 
   async fetchEvents({ accessToken, timeMin, timeMax, fetchFn = globalThis.fetch }) {
