@@ -16,6 +16,8 @@
  */
 
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { authorizeZapierRequest } from './zapier-authz.mjs';
+import { assertPublicWebhookTarget, postWebhookWithPinnedDns } from '../../packages/platform-core/src/zapier-worker-handler.mjs';
 
 /**
  * Validates whether a target webhook URL is safe for outbound dispatch.
@@ -559,8 +561,15 @@ export function getZapierSamples(event, existingRecords = {}) {
  * @param {object} params
  * @returns {Promise<Array<object>>}
  */
-export async function dispatchZapierEvent({ agencyId, locationId, event, data, state, fetchFn = globalThis.fetch }) {
-  if (!state || !agencyId || !event) return [];
+export async function dispatchZapierEvent({ agencyId, locationId, event, data, state, zapierRepository, fetchFn = globalThis.fetch }) {
+  if (!agencyId || !event) return [];
+  if (zapierRepository) {
+    const subscriptions = await zapierRepository.listSubscriptions({ tenantId: agencyId, locationId });
+    return Promise.all(subscriptions.filter(sub => sub.event === event && sub.status === 'active').map(sub =>
+      zapierRepository.enqueueEvent({ tenantId: agencyId, locationId, subscriptionId: sub.id, event, data })
+    ));
+  }
+  if (!state) return [];
   state.zapierHookSubscriptions = state.zapierHookSubscriptions || [];
   state.zapierHookDeliveries = state.zapierHookDeliveries || [];
 
@@ -598,11 +607,13 @@ export async function dispatchZapierEvent({ agencyId, locationId, event, data, s
           'X-Operza-Event': event,
           'X-Operza-Delivery-Id': deliveryId
         },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        redirect: 'error',
+        signal: AbortSignal.timeout(10_000)
       });
       httpStatus = res.status;
       success = res.ok;
-      responseBody = await res.text().catch(() => '');
+      // Do not persist arbitrary third-party response text; it may contain secrets or PII.
       if (res.status === 410 || res.status === 404) {
         sub.status = 'deactivated';
         sub.deactivationReason = 'TARGET_GONE_OR_NOT_FOUND';
@@ -617,7 +628,7 @@ export async function dispatchZapierEvent({ agencyId, locationId, event, data, s
       }
     } catch (err) {
       httpStatus = 500;
-      responseBody = err.message;
+      responseBody = 'Webhook delivery request failed';
       sub.consecutiveFailures = (sub.consecutiveFailures || 0) + 1;
       if (sub.consecutiveFailures >= 5) {
         sub.status = 'deactivated';
@@ -633,7 +644,7 @@ export async function dispatchZapierEvent({ agencyId, locationId, event, data, s
       event,
       payload,
       httpStatus,
-      responseBody: responseBody.slice(0, 500),
+      responseBody: '',
       delivered: success,
       deliveredAt: new Date().toISOString()
     };
@@ -663,9 +674,22 @@ export async function handleZapierRoute(req, res, {
   sendJson,
   readBody,
   executeWorkflowInstance,
-  broadcast
+  broadcast,
+  zapierRepository,
+  secretResolver,
+  sendWebhook = postWebhookWithPinnedDns,
+  fetchFn = globalThis.fetch
 }) {
   if (!pathname.startsWith('/api/v1/zapier/')) return false;
+
+  const authorization = authorizeZapierRequest({ method, pathname, actor });
+  if (!authorization.allowed) {
+    return sendJson(res, 403, {
+      error: 'The API key does not have permission to perform this Zapier operation',
+      code: 'API_KEY_SCOPE_REQUIRED',
+      requiredScope: authorization.requiredScope
+    });
+  }
 
   // 1. Authentication Check (/api/v1/zapier/auth/me)
   if (method === 'GET' && pathname === '/api/v1/zapier/auth/me') {
@@ -675,19 +699,11 @@ export async function handleZapierRoute(req, res, {
       locationId: activeLocation.id,
       agencyName: agency.name,
       userEmail: actor.user.email,
-      scopes: [
-        'contacts:read',
-        'contacts:write',
-        'opportunities:read',
-        'opportunities:write',
-        'calendars:read',
-        'calendars:write',
-        'tasks:read',
-        'tasks:write',
-        'workflows:execute',
-        'communications:dispatch',
-        'webhooks:manage'
-      ]
+      // Report the grants actually attached to this developer key. Never advertise
+      // permissions that the token does not possess.
+      scopes: actor.isApiKey && Array.isArray(actor.apiKey?.scopes)
+        ? [...new Set(actor.apiKey.scopes.filter(scope => typeof scope === 'string'))]
+        : []
     });
   }
 
@@ -708,84 +724,59 @@ export async function handleZapierRoute(req, res, {
     return sendJson(res, 200, getZapierAppDefinition().searches);
   }
 
-  // 4. REST Hook Subscriptions List (/api/v1/zapier/hooks)
+  // 4. REST Hook Subscriptions List
   if (method === 'GET' && pathname === '/api/v1/zapier/hooks') {
-    state.zapierHookSubscriptions = state.zapierHookSubscriptions || [];
-    const subs = state.zapierHookSubscriptions.filter(s => s.agencyId === agency.id);
-    return sendJson(res, 200, {
-      success: true,
-      subscriptions: subs.map(s => ({
-        id: s.id,
-        event: s.event,
-        targetUrl: s.targetUrl,
-        status: s.status,
-        createdAt: s.createdAt,
-        consecutiveFailures: s.consecutiveFailures || 0
-      }))
-    });
+    if (zapierRepository) {
+      const subscriptions = await zapierRepository.listSubscriptions({ tenantId: agency.id, locationId: activeLocation.id });
+      return sendJson(res, 200, { success: true, subscriptions: subscriptions.map(s => ({
+        id:s.id,event:s.event,targetUrl:s.target_url,status:s.status,createdAt:s.created_at,
+        consecutiveFailures:s.consecutive_failures||0
+      })) });
+    }
+    state.zapierHookSubscriptions=state.zapierHookSubscriptions||[];
+    const subscriptions=state.zapierHookSubscriptions.filter(s=>s.agencyId===agency.id&&s.locationId===activeLocation.id);
+    return sendJson(res,200,{success:true,subscriptions:subscriptions.map(s=>({
+      id:s.id,event:s.event,targetUrl:s.targetUrl,status:s.status,createdAt:s.createdAt,
+      consecutiveFailures:s.consecutiveFailures||0
+    }))});
   }
 
-  // 5. REST Hook Subscribe (/api/v1/zapier/hooks/subscribe)
+  // 5. REST Hook Subscribe
   if (method === 'POST' && pathname === '/api/v1/zapier/hooks/subscribe') {
-    const body = await readBody(req);
-    const targetUrl = (body.target_url || body.targetUrl || '').trim();
-    const event = (body.event || '').trim();
-
-    if (!targetUrl) return sendJson(res, 400, { error: 'target_url is required' });
-    if (!event) return sendJson(res, 400, { error: 'event is required' });
-
-    if (!isSafeWebhookUrl(targetUrl)) {
-      return sendJson(res, 400, {
-        error: 'target_url must be a valid public HTTPS endpoint (RFC SSRF protection)',
-        code: 'INVALID_WEBHOOK_URL'
-      });
+    const body=await readBody(req),targetUrl=(body.target_url||body.targetUrl||'').trim(),event=(body.event||'').trim();
+    if(!targetUrl||!event)return sendJson(res,400,{error:'target_url and event are required'});
+    if(!isSafeWebhookUrl(targetUrl))return sendJson(res,400,{error:'A valid public HTTPS endpoint is required',code:'INVALID_WEBHOOK_URL'});
+    try{await assertPublicWebhookTarget(targetUrl);}catch(error){return sendJson(res,400,{error:'Webhook destination failed public-address validation',code:error.code||'INVALID_WEBHOOK_URL'});}
+    if(zapierRepository){
+      if(typeof secretResolver?.store!=='function')return sendJson(res,503,{error:'Encrypted secret storage unavailable',code:'SECRET_RESOLVER_UNAVAILABLE'});
+      const id=randomUUID(),secret=randomBytes(32).toString('base64url'),secretRef=`vault:${agency.id}/${activeLocation.id}/zapier-hook-${id}`;
+      try{
+        await secretResolver.store(secretRef,secret);
+        const created=await zapierRepository.createSubscription({tenantId:agency.id,locationId:activeLocation.id,event,targetUrl,signingSecretRef:secretRef});
+        return sendJson(res,201,{id:created.id,target_url:created.target_url,event:created.event,status:created.status,createdAt:created.created_at});
+      }catch(error){await secretResolver.delete(secretRef).catch(()=>{});return sendJson(res,400,{error:'Could not create webhook subscription',code:error.code||'ZAPIER_SUBSCRIPTION_CREATE_FAILED'});}
     }
-
-    state.zapierHookSubscriptions = state.zapierHookSubscriptions || [];
-    const subscriptionId = `zhk_${randomBytes(8).toString('hex')}`;
-    const signingSecret = process.env.ZAPIER_SIGNING_SECRET || `sec_${randomBytes(24).toString('hex')}`;
-
-    const newSub = {
-      id: subscriptionId,
-      agencyId: agency.id,
-      locationId: activeLocation.id,
-      event,
-      targetUrl,
-      signingSecret,
-      status: 'active',
-      consecutiveFailures: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-
-    state.zapierHookSubscriptions.push(newSub);
-    await saveState();
-
-    return sendJson(res, 201, {
-      id: newSub.id,
-      target_url: newSub.targetUrl,
-      event: newSub.event,
-      status: newSub.status,
-      createdAt: newSub.createdAt
-    });
+    state.zapierHookSubscriptions=state.zapierHookSubscriptions||[];
+    const sub={id:`zhk_${randomBytes(8).toString('hex')}`,agencyId:agency.id,locationId:activeLocation.id,event,targetUrl,
+      signingSecret:randomBytes(32).toString('base64url'),status:'active',consecutiveFailures:0,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+    state.zapierHookSubscriptions.push(sub);await saveState();
+    return sendJson(res,201,{id:sub.id,target_url:sub.targetUrl,event:sub.event,status:sub.status,createdAt:sub.createdAt});
   }
 
-  // 6. REST Hook Unsubscribe (/api/v1/zapier/hooks/unsubscribe/:id or DELETE /api/v1/zapier/hooks/unsubscribe)
-  if (method === 'DELETE' && pathname.startsWith('/api/v1/zapier/hooks/unsubscribe')) {
-    let subId = pathname.replace('/api/v1/zapier/hooks/unsubscribe', '').replace(/^\//, '').trim();
-    if (!subId) {
-      const body = await readBody(req).catch(() => ({}));
-      subId = body.subscription_id || body.subscriptionId || body.id;
+  // 6. REST Hook Unsubscribe
+  if(method==='DELETE'&&pathname.startsWith('/api/v1/zapier/hooks/unsubscribe')){
+    let subId=pathname.replace('/api/v1/zapier/hooks/unsubscribe','').replace(/^\\//,'').trim();
+    if(!subId){const body=await readBody(req).catch(()=>({}));subId=body.subscription_id||body.subscriptionId||body.id;}
+    if(zapierRepository){
+      const cancelled=await zapierRepository.cancelSubscription({tenantId:agency.id,locationId:activeLocation.id,subscriptionId:subId});
+      if(!cancelled)return sendJson(res,404,{error:'Webhook subscription not found'});
+      return sendJson(res,200,{success:true,id:cancelled.id,status:cancelled.status,unsubscribed:true});
     }
-    state.zapierHookSubscriptions = state.zapierHookSubscriptions || [];
-    const sub = state.zapierHookSubscriptions.find(s => s.id === subId && s.agencyId === agency.id);
-    if (!sub) return sendJson(res, 404, { error: 'Webhook subscription not found' });
-
-    sub.status = 'cancelled';
-    sub.updatedAt = new Date().toISOString();
-    await saveState();
-
-    return sendJson(res, 200, { success: true, id: sub.id, status: 'cancelled', unsubscribed: true });
+    state.zapierHookSubscriptions=state.zapierHookSubscriptions||[];
+    const sub=state.zapierHookSubscriptions.find(s=>s.id===subId&&s.agencyId===agency.id&&s.locationId===activeLocation.id);
+    if(!sub)return sendJson(res,404,{error:'Webhook subscription not found'});
+    sub.status='cancelled';sub.updatedAt=new Date().toISOString();await saveState();
+    return sendJson(res,200,{success:true,id:sub.id,status:'cancelled',unsubscribed:true});
   }
 
   // 7. REST Hook Instant Test Ping (/api/v1/zapier/hooks/test)
@@ -803,41 +794,73 @@ export async function handleZapierRoute(req, res, {
     const deliveryId = `test_deliv_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
     const timestamp = Math.floor(Date.now() / 1000);
     const testSecret = `sec_test_${randomBytes(16).toString('hex')}`;
+    const payload = { event, deliveryId, timestamp, data: samplePayload };
     const signature = createHmac('sha256', testSecret)
-      .update(`${timestamp}.${JSON.stringify(samplePayload)}`)
+      .update(`${timestamp}.${JSON.stringify(payload)}`)
       .digest('hex');
 
+    let httpStatus = 0;
+    let delivered = false;
+    try {
+      const response = await sendWebhook(targetUrl, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Operza-Signature': `t=${timestamp},v1=${signature}`,
+          'X-Operza-Event': event,
+          'X-Operza-Delivery-Id': deliveryId
+        },
+        body: JSON.stringify(payload),
+        timeoutMs: 10_000
+      });
+      httpStatus = response.status;
+      delivered = Boolean(response.ok);
+    } catch {
+      httpStatus = 502;
+    }
+
     state.zapierHookDeliveries = state.zapierHookDeliveries || [];
-    const deliveryRecord = {
+    state.zapierHookDeliveries.unshift({
       id: deliveryId,
       agencyId: agency.id,
       locationId: activeLocation.id,
       event,
       targetUrl,
-      payload: samplePayload,
-      httpStatus: 200,
-      delivered: true,
+      httpStatus,
+      delivered,
       deliveredAt: new Date().toISOString()
-    };
-    state.zapierHookDeliveries.unshift(deliveryRecord);
+    });
     if (state.zapierHookDeliveries.length > 200) state.zapierHookDeliveries.length = 200;
     await saveState();
 
+    if (!delivered) {
+      return sendJson(res, 502, {
+        success: false,
+        code: 'WEBHOOK_TEST_FAILED',
+        deliveryId,
+        httpStatus
+      });
+    }
     return sendJson(res, 200, {
       success: true,
+      delivered: true,
       deliveryId,
       targetUrl,
       event,
+      httpStatus,
       sampleSent: samplePayload,
       signatureHeader: `t=${timestamp},v1=${signature}`
     });
   }
 
-  // 8. Delivery Logs (/api/v1/zapier/deliveries)
+  // 8. Delivery Logs
   if (method === 'GET' && pathname === '/api/v1/zapier/deliveries') {
-    state.zapierHookDeliveries = state.zapierHookDeliveries || [];
-    const deliveries = state.zapierHookDeliveries.filter(d => d.agencyId === agency.id).slice(0, 50);
-    return sendJson(res, 200, { success: true, deliveries });
+    if (zapierRepository) {
+      const deliveries=await zapierRepository.listDeliveries({tenantId:agency.id,locationId:activeLocation.id,limit:50});
+      return sendJson(res,200,{success:true,deliveries});
+    }
+    state.zapierHookDeliveries=state.zapierHookDeliveries||[];
+    const deliveries=state.zapierHookDeliveries.filter(d=>d.agencyId===agency.id&&d.locationId===activeLocation.id).slice(0,50);
+    return sendJson(res,200,{success:true,deliveries});
   }
 
   // 9. Samples Catalog (/api/v1/zapier/samples/:event)
@@ -1290,22 +1313,13 @@ export async function handleZapierRoute(req, res, {
       }
 
       case 'send_communication': {
-        const recipient = data.recipient || data.to;
-        const channel = data.channel || 'email';
-        const message = data.message || data.text || '';
-        const subject = data.subject || 'Automated Update via Zapier';
-
-        if (!recipient) return sendJson(res, 400, { error: 'recipient is required' });
-        if (!message) return sendJson(res, 400, { error: 'message is required' });
-
-        const dispatchId = `disp_${randomUUID().replace(/-/g, '').slice(0, 16)}`;
-        return sendJson(res, 200, {
-          success: true,
-          dispatchId,
-          channel,
-          recipient,
-          status: 'dispatched',
-          sentAt: new Date().toISOString()
+        // This action must not claim success until a verified provider adapter,
+        // consent re-check and durable dispatch receipt are wired into this route.
+        return sendJson(res, 501, {
+          success: false,
+          status: 'not_configured',
+          code: 'PROVIDER_DISPATCH_NOT_IMPLEMENTED',
+          message: 'Communication dispatch is not enabled for this Zapier action yet.'
         });
       }
 

@@ -49,7 +49,7 @@ interface MarketplaceApp {
   description: string;
   icon: string;
   connected: boolean;
-  status: 'connected' | 'disconnected' | 'error';
+  status: 'connected' | 'disconnected' | 'error' | 'unconfigured' | 'available';
   accountName?: string;
   accentColor?: string;
   authMethod?: string;
@@ -81,12 +81,13 @@ const UNIVERSAL_CONNECTORS = [
 ];
 
 const DEFAULT_MARKETPLACE_APPS: MarketplaceApp[] = [
-  { id: 'google_calendar', name: 'Google Calendar', category: 'Productivity', description: 'Two-way appointment synchronization, busy slot filtering, and team calendar access.', icon: 'calendar', connected: true, status: 'connected', accountName: 'team@operza.io', accentColor: '#4285f4', authMethod: 'OAuth 2.0' },
-  { id: 'stripe', name: 'Stripe Payments & Subscriptions', category: 'Commerce', description: 'Accept credit card payments, tokenized 1-click upsells, recurring memberships, and customer portal.', icon: 'wallet', connected: true, status: 'connected', accountName: 'acct_1Opz8849201', accentColor: '#6366f1', authMethod: 'Rest API Key' },
-  { id: 'twilio', name: 'Twilio Voice & SMS', category: 'Communications', description: 'Powers browser WebRTC softphone voice tokens, outbound SMS, A2P 10DLC, and call recording.', icon: 'phone', connected: true, status: 'connected', accountName: 'AC84920481029', accentColor: '#ef4444', authMethod: 'Account SID / Auth Token' },
-  { id: 'sendgrid', name: 'SendGrid Email Delivery', category: 'Communications', description: 'Enterprise transactional email delivery with custom domain DKIM/SPF alignment and open rate tracking.', icon: 'mail', connected: true, status: 'connected', accountName: 'Operza Production Relay', accentColor: '#0ea5e9', authMethod: 'API Key' },
-  { id: 'meta_whatsapp', name: 'WhatsApp Cloud API', category: 'Communications', description: 'Direct Meta Cloud API integration for interactive WhatsApp templates and 2-way chat sessions.', icon: 'whatsapp', connected: true, status: 'connected', accountName: 'Operza Verified Business', accentColor: '#22c55e', authMethod: 'Permanent System Token' },
-  { id: 'openai', name: 'OpenAI & Gemini AI Models', category: 'AI', description: 'Powers the 10-Agent Copilot Swarm, smart lead classification, and automated reply generation.', icon: 'sparkles', connected: true, status: 'connected', accountName: 'org-operza-enterprise', accentColor: '#10b981', authMethod: 'API Key' },
+  { id: 'microsoft_outlook', name: 'Microsoft Outlook', category: 'Communications', description: 'Connect a Microsoft 365 or Outlook mailbox with delegated OAuth access to send email from Operza.', icon: 'mail', connected: false, status: 'unconfigured', accentColor: '#0078d4', authMethod: 'OAuth 2.0' },
+  { id: 'google_calendar', name: 'Google Calendar', category: 'Productivity', description: 'Two-way appointment synchronization, busy slot filtering, and team calendar access.', icon: 'calendar', connected: false, status: 'disconnected', accentColor: '#4285f4', authMethod: 'OAuth 2.0' },
+  { id: 'stripe', name: 'Stripe Payments & Subscriptions', category: 'Commerce', description: 'Payment processing stays disabled until reconciliation, refunds and compliance controls are complete.', icon: 'wallet', connected: false, status: 'unconfigured', accentColor: '#6366f1', authMethod: 'API Key' },
+  { id: 'twilio', name: 'Twilio Voice & SMS', category: 'Communications', description: 'Connect and verify a real Twilio account before enabling external messaging.', icon: 'phone', connected: false, status: 'disconnected', accentColor: '#ef4444', authMethod: 'Account SID / Auth Token' },
+  { id: 'sendgrid', name: 'SendGrid Email Delivery', category: 'Communications', description: 'Connect and verify a SendGrid sender identity before sending email.', icon: 'mail', connected: false, status: 'disconnected', accentColor: '#0ea5e9', authMethod: 'API Key' },
+  { id: 'meta_whatsapp', name: 'WhatsApp Cloud API', category: 'Communications', description: 'Connect and verify a Meta WhatsApp Business account before messaging.', icon: 'whatsapp', connected: false, status: 'disconnected', accentColor: '#22c55e', authMethod: 'System User Token' },
+  { id: 'openai', name: 'OpenAI & Gemini AI Models', category: 'AI', description: 'Configure AI model credentials in the AI settings and deployment environment.', icon: 'sparkles', connected: false, status: 'disconnected', accentColor: '#10b981', authMethod: 'API Key' },
   { id: 'slack', name: 'Slack Team Collaboration', category: 'Communications', description: 'Real-time alert dispatches for booked appointments, new high-value deals, and system events.', icon: 'message', connected: false, status: 'disconnected', accentColor: '#e01e5a', authMethod: 'OAuth 2.0 / Bot Token' },
   { id: 'shopify', name: 'Shopify Storefront Sync', category: 'Commerce', description: 'Bi-directional e-commerce store sync: orders, abandoned checkouts, inventory, and customer tags.', icon: 'store', connected: false, status: 'disconnected', accentColor: '#96bf48', authMethod: 'OAuth 2.0' },
   { id: 'google_sheets', name: 'Google Sheets Live Sync', category: 'Productivity', description: 'Stream new leads, form submissions, and deals directly into cloud spreadsheets in real time.', icon: 'clipboard', connected: false, status: 'disconnected', accentColor: '#0f9d58', authMethod: 'OAuth 2.0' },
@@ -98,7 +99,7 @@ const DEFAULT_MARKETPLACE_APPS: MarketplaceApp[] = [
   { id: 'mailchimp', name: 'Mailchimp Newsletter Sync', category: 'Marketing', description: 'Bi-directional list sync, segment tagging, and automated unsubscribe reconciliation.', icon: 'megaphone', connected: false, status: 'disconnected', accentColor: '#ffe01b', authMethod: 'API Key' },
   { id: 'zoom', name: 'Zoom Video Conferencing', category: 'Communications', description: 'Automatically generate unique video meeting links for booked appointments and strategy sessions.', icon: 'phone', connected: false, status: 'disconnected', accentColor: '#2d8cff', authMethod: 'Server-to-Server OAuth' },
   { id: 'github', name: 'GitHub Developer Webhooks', category: 'Developer', description: 'Trigger workflow automation runs on code pushes, issue updates, and pull request events.', icon: 'code', connected: false, status: 'disconnected', accentColor: '#24292e', authMethod: 'Fine-grained Token' },
-  { id: 'zapier', name: 'Zapier REST Hooks Engine', category: 'Developer', description: 'Connect Operza to 6,000+ external SaaS apps with 14 real-time triggers and HMAC-SHA256 verification.', icon: 'zap', connected: true, status: 'connected', accountName: 'Operza Certified Universal App', accentColor: '#ff4a00', authMethod: 'Tenant Bearer API Key' },
+  { id: 'zapier', name: 'Zapier REST Hooks API', category: 'Developer', description: 'Connect Zapier to Operza using a tenant API key with the minimum required scopes.', icon: 'zap', connected: false, status: 'available', accentColor: '#ff4a00', authMethod: 'Tenant Bearer API Key' },
 ];
 
 export default function Integrations() {
@@ -875,12 +876,16 @@ export default function Integrations() {
                     <button
                       type="button"
                       onClick={() => {
+                        if (cat.providerKey === 'email.microsoft_graph') {
+                          window.location.assign('/api/platform/oauth/outlook/start');
+                          return;
+                        }
                         setSelectedProviderKey(cat.providerKey);
                         setShowConnectModal(true);
                       }}
                       className="btn btn--sm btn--primary"
                     >
-                      Connect →
+                      {cat.providerKey === 'email.microsoft_graph' ? 'Connect Outlook →' : 'Connect →'}
                     </button>
                   </div>
                 </div>

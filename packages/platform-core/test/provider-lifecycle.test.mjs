@@ -46,3 +46,12 @@ test('revocation is terminal and prevents dispatch', () => {
   assert.equal(revoked.status, 'revoked');
   assert.equal(providerMayDispatch(revoked), false);
 });
+
+test('Outlook connection passes tenant vault reference to its adapter', async () => {
+  const connection=createProviderConnection({tenantId:'tenant_001',locationId:'location_001',providerKey:'email.microsoft_graph',secretRef:'vault:tenant_001/location_001/microsoft-outlook-1',config:{senderEmail:'user@outlook.com'}});
+  let seen;
+  const result=await verifyProviderConnection(connection,{secretResolver:{resolve:async()=>'{"accessToken":"a","refreshToken":"r","expiresAt":9999999999999}'},adapter:{
+    id:'outlook-test',providerKey:'email.microsoft_graph',verify:async args=>{seen=args;return{verified:true,accountId:'graph-user'};}
+  }});
+  assert.equal(result.ok,true);assert.equal(seen.secretRef,connection.secretRef);
+});
