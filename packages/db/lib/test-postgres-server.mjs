@@ -9,9 +9,8 @@ const root = path.resolve(__dirname, '../../..');
 
 const DEFAULT_BIN_DIRS = [
   process.env.PG_BIN_DIR,
-  'D:\\PostgreSQL\\16\\bin',
-  'C:\\Program Files\\PostgreSQL\\16\\bin',
   'C:\\Program Files\\PostgreSQL\\18\\bin',
+  'C:\\Program Files\\PostgreSQL\\16\\bin',
   'C:\\Program Files\\PostgreSQL\\17\\bin',
   '/usr/lib/postgresql/16/bin',
   '/usr/bin'
@@ -29,7 +28,7 @@ export class IsolatedTestPostgres {
   constructor(options = {}) {
     this.port = options.port || 5433;
     this.dbName = options.dbName || 'operza_test';
-    this.dataDir = options.dataDir || path.join(root, 'scratch', 'test-shared-pg-cluster');
+    this.dataDir = options.dataDir || path.join(root, 'scratch', `test-shared-pg-cluster-${this.port}`);
     this.started = false;
     this.isExternal = false;
   }

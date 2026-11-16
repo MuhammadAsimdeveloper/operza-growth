@@ -10,12 +10,12 @@ Every subsystem in the Operza platform has been verified through exhaustive, rep
 | `@operza/workflow-engine` | `node --test` | 66 | 66 | 0 | 0 | **PASS** |
 | `@operza/platform-core` | `node --test` | 98 | 97 | 0 | 1* | **PASS** |
 | `@operza/db` | `node --test` | 40 | 39 | 0 | 1** | **PASS** |
-| `@operza/api` | `node --test` | 80 | 80 | 0 | 0 | **PASS** |
+| `@operza/api` | `node --test` | 88 | 88 | 0 | 0 | **PASS** |
 | SEO & Public Metadata Audit | Node audit script | 106 | 106 | 0 | 0 | **PASS** |
 | End-to-End System Verification | `node scripts/test-e2e.mjs` | 116 | 116 | 0 | 0 | **PASS** |
 | Frontend Typecheck (`tsc -b`) | `tsc -b --noEmit` | N/A | 0 errors | 0 | 0 | **PASS** |
-| Frontend Production Build | `vite build` | 136 modules | Built in 3.23s | 0 | 0 | **PASS** |
-| **Consolidated Total** | | **512** | **510** | **0** | **2** | **100% GREEN** |
+| Frontend Production Build | `vite build` | 136 modules | Built in 4.22s | 0 | 0 | **PASS** |
+| **Consolidated Total** | | **520** | **518** | **0** | **2** | **100% GREEN** |
 
 *\* Live Provider Sandbox Network Gate requires live vendor sandbox keys; skipped by design when offline.*  
 *\*\* Real PostgreSQL Integration Harness requires external staging CI service container; executed locally via IsolatedTestPostgres.*
@@ -49,13 +49,14 @@ Every subsystem in the Operza platform has been verified through exhaustive, rep
 - Row-Level Security isolation verification across multiple tenant contexts.
 - Durable outbox job enqueueing, claiming with row locks, and dead-letter queueing.
 
-### E. API Security & Concurrency (80/80 Passed)
+### E. API Security, Persistence & Concurrency (88/88 Passed)
 - Multi-process appointment booking concurrency across two independent Node.js API processes.
 - Complete BDF-01 unauthenticated session crash regression suite.
 - JWT signature validation and algorithm confusion defense.
 - Server-side session revocation on logout.
 - Client IP extraction from reverse-proxy headers without spoofing vulnerabilities.
 - Zapier scope-based route authorization.
+- Durable PostgreSQL outbox workflow enqueuing, worker execution, action governance approval gating, human approval resume, and multi-process horizontal PostgreSQL consistency.
 
 ### F. SEO & Open Graph Compliance (106/106 Passed)
 - Verification of XML sitemap, robots.txt directives, Open Graph, and Twitter Cards across all marketing pages.

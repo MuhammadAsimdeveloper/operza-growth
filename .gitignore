@@ -39,6 +39,7 @@ apps/api/data/*.json
 apps/api/data/*.tmp
 *.tmp
 *.bak
+scratch/
 
 # IDE & Editor Files
 .idea/

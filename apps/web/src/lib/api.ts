@@ -533,7 +533,7 @@ export const api = {
   },
   integrations: {
     list: () => request<{ integrations: any[] }>('/api/integrations'),
-    connect: (id: string, data: any) =>
+    connect: (id: string, data: any = {}) =>
       request<{ success: boolean; integration: any }>(`/api/integrations/${id}/connect`, { method: 'POST', body: JSON.stringify(data) }),
     disconnect: (id: string) =>
       request<{ success: boolean; integration: any }>(`/api/integrations/${id}/disconnect`, { method: 'POST' }),

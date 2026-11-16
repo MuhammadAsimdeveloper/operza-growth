@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import { PermanentJobError } from './durable-worker.mjs';
+import { getWorkflowActionDefinition } from '../../workflow-engine/src/action-governance.mjs';
 
 function sha256(data) {
   return crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex');
@@ -75,7 +76,18 @@ export const handlers = {
     }
     if (lease?.lost) return { status: 'lease_lost' };
 
-    // Governed safety: if provider is not verified, fail closed or simulate
+    // Action governance gating: verify approvals and consent on external side-effect actions
+    const actionDef = getWorkflowActionDefinition(payload.actionType || payload.nodeType || payload.actionId);
+    if (actionDef) {
+      const isExternal = actionDef.risk === 'external_side_effect';
+      if (isExternal && actionDef.approval === 'human' && !payload.approved && !payload.approvalEvidence) {
+        throw new PermanentJobError('Action requires human approval before worker execution', 'APPROVAL_REQUIRED');
+      }
+      if (isExternal && payload.consent !== true && payload.dryRun === false) {
+        throw new PermanentJobError('Action requires explicit consent before live execution', 'CONSENT_REQUIRED');
+      }
+    }
+
     const isDryRun = payload.dryRun !== false;
     const actionReceipt = sha256({
       tenantId: payload.tenantId,

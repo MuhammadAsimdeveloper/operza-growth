@@ -629,19 +629,12 @@ function CalendarSyncModal({
     setIsSyncing(true);
     setStatusMessage(null);
     try {
-      // Connect 2-way sync with realistic busy blocks to prevent double-booking
-      const now = new Date();
-      const tomorrow = new Date(now.getTime() + 86400000).toISOString().split('T')[0];
-      const sampleBusyBlocks = [
-        { start: `${tomorrow}T11:00:00.000Z`, end: `${tomorrow}T12:00:00.000Z`, summary: 'Internal Team Standup (Google)' },
-        { start: `${tomorrow}T15:00:00.000Z`, end: `${tomorrow}T16:00:00.000Z`, summary: 'Dentist Appointment (Outlook)' }
-      ];
-
+      // Connect 2-way sync with genuine external calendar configuration
       const res = await api.calendars.connectSync(calendar.id, {
         provider,
         email: email.trim(),
         calendarName: `${provider === 'google_calendar' ? 'Google' : 'Outlook 365'} (${email.trim()})`,
-        busyBlocks: sampleBusyBlocks
+        busyBlocks: calendar.externalBusyBlocks || []
       });
 
       if (res?.externalSync) {
@@ -650,10 +643,10 @@ function CalendarSyncModal({
           id: calendar.id,
           patch: {
             externalSync: res.externalSync,
-            externalBusyBlocks: sampleBusyBlocks
+            externalBusyBlocks: res.calendar?.externalBusyBlocks || []
           }
         });
-        setStatusMessage('✓ Connected & synchronized! External busy blocks are now active.');
+        setStatusMessage('✓ Connected & synchronized! External calendar synchronization is active.');
         setTimeout(() => {
           onClose();
         }, 1200);

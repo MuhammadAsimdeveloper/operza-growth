@@ -47,3 +47,24 @@ The objective of this completion milestone is to bring existing platform capabil
 
 5. **Readiness Probe Observability**:
    - Enhanced `/ready` endpoint to inspect database connection pool health, count registered schema tables, and return HTTP 503 if database connectivity fails in production mode.
+
+6. **Durable Workflow Execution & Action Governance**:
+   - Connected `executeWorkflowInstance` and approval resume directly to PostgreSQL-backed transactional outbox (`workflow_outbox`) and outbox worker.
+   - Enforced Action Governance on `workflow.action.execute` to fail closed with `APPROVAL_REQUIRED` if side-effect actions lack human approval, and `CONSENT_REQUIRED` if live actions lack explicit consent.
+   - Replaced memory status simulation so that API outbox state reflects genuine worker execution lifecycle.
+
+7. **Database Relational Truth & Fail-Loud Behavior**:
+   - Updated `saveState()`, `loadState()`, and `syncRelationalWrite()` in `server.mjs` to fail loudly with explicit error codes (`RELATIONAL_WRITE_FAILED`, `DATABASE_WRITE_FAILED`, `DATABASE_LOAD_FAILED`) in staging/production.
+   - Proved horizontal multi-process consistency across independent database client connections.
+
+8. **Administrative Tenant Isolation & Credential Hardening**:
+   - Enforced strict platform superadmin separation: tenant agency owners and administrators receive HTTP 403 `PLATFORM_ADMIN_REQUIRED` on platform administrative endpoints (`/api/admin/*`).
+   - Disallowed predictable sample admin keys in staging and production.
+   - Connected `/api/admin/worker/status` to query live PostgreSQL `workflow_outbox` metrics.
+
+9. **Calendar Synchronization & Integration Hygiene**:
+   - Removed artificial hardcoded busy blocks from 2-way calendar sync.
+   - Replaced fake client-side marketplace app toggles in `Integrations.tsx` with real backend API connectivity checks.
+
+10. **Zapier REST Hook Loopback Verification**:
+    - Enhanced Zapier test ping to support genuine HTTP 200 delivery with HMAC-SHA256 signature verification alongside clean HTTP 502 negative test handling.

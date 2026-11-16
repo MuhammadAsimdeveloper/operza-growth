@@ -1,6 +1,7 @@
 // Operza End-to-End System Smoke Test
 
 import assert from 'node:assert';
+import http from 'node:http';
 import { spawn } from 'node:child_process';
 import { rmSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -17,6 +18,8 @@ console.log('=====================================================');
 console.log('🧪 Starting Operza End-to-End System Verification');
 console.log('=====================================================');
 
+const E2E_ADMIN_KEY = 'operza-e2e-suite-admin-secret-key-32chars-min-len';
+
 const api = spawn('node', ['apps/api/server.mjs'], {
   cwd: root,
   stdio: 'pipe',
@@ -24,7 +27,8 @@ const api = spawn('node', ['apps/api/server.mjs'], {
     ...process.env,
     PORT: '4005',
     NODE_ENV: 'test',
-    DATA_FILE: './data/test_store.json'
+    DATA_FILE: './data/test_store.json',
+    OPERZA_ADMIN_KEY: E2E_ADMIN_KEY
   }
 });
 
@@ -48,6 +52,9 @@ async function request(urlPath, options = {}) {
   }
   if (csrfToken) {
     headers.set('x-operza-csrf', csrfToken);
+  }
+  if (urlPath.startsWith('/api/admin/') && !options.noAdminKey && !headers.has('x-admin-key')) {
+    headers.set('x-admin-key', E2E_ADMIN_KEY);
   }
 
   const res = await fetch(`http://localhost:4005${urlPath}`, {
@@ -2375,6 +2382,13 @@ async function runTests() {
 
     // ─── TEST 68: Relational Query Cutover & Durable Queue Telemetry ───────
     console.log('\n[TEST 68] Durable Queue & Relational Database Telemetry: GET /api/admin/queue/status & POST /api/admin/queue/test-job');
+    
+    // Verify tenant isolation on platform admin endpoints (Priority 4)
+    const t68_unauthRes = await request('/api/admin/queue/status', { noAdminKey: true });
+    assert.strictEqual(t68_unauthRes.status, 403);
+    assert.strictEqual(t68_unauthRes.data.code, 'PLATFORM_ADMIN_REQUIRED');
+    console.log('✅ Tenant agency user correctly denied access to platform admin endpoints without platform authorization (HTTP 403)');
+
     const t68_queueStatusRes = await request('/api/admin/queue/status');
     console.log(`Queue Status: ${t68_queueStatusRes.status}`, `Engine: ${t68_queueStatusRes.data.queue?.engine}`, `Connected: ${t68_queueStatusRes.data.queue?.connected}`);
     if (t68_queueStatusRes.status !== 200 || !t68_queueStatusRes.data.queue?.engine) {
@@ -4717,29 +4731,61 @@ async function runTests() {
     console.log(`✅ Zapier create_note action verified: Note ID=${zapNoteData.note.id}`);
 
     // ─────────────────────────────────────────────────────────────────
-    // [TEST 113] Zapier REST Hook Live Test Ping & Outbound Delivery Observability
+    // [TEST 113] Zapier REST Hook Live Test Ping & Outbound Delivery Observability (HTTP 200)
     // ─────────────────────────────────────────────────────────────────
-    console.log('\n[TEST 113] Zapier REST Hook Live Test Ping & Outbound Delivery Observability');
+    console.log('\n[TEST 113] Zapier REST Hook Live Test Ping & Outbound Delivery Observability (HTTP 200)');
 
-    const testPingRes = await request('/api/v1/zapier/hooks/test', {
+    let receivedSignatureHeader = '';
+    const localWebhookReceiver = http.createServer((hookReq, hookRes) => {
+      receivedSignatureHeader = hookReq.headers['x-operza-signature'] || '';
+      hookRes.writeHead(200, { 'Content-Type': 'application/json' });
+      hookRes.end(JSON.stringify({ received: true }));
+    });
+
+    await new Promise((resolve) => localWebhookReceiver.listen(0, '127.0.0.1', resolve));
+    const receiverPort = localWebhookReceiver.address().port;
+    const localReceiverUrl = `http://127.0.0.1:${receiverPort}/zapier-webhook`;
+
+    try {
+      const testPingRes = await request('/api/v1/zapier/hooks/test', {
+        method: 'POST',
+        body: JSON.stringify({
+          targetUrl: localReceiverUrl,
+          event: 'contact.created'
+        })
+      });
+      const testPingData = testPingRes.data;
+      assert.strictEqual(testPingRes.status, 200);
+      assert.strictEqual(testPingData.delivered, true);
+      assert.strictEqual(testPingData.httpStatus, 200);
+      assert.ok(testPingData.deliveryId && testPingData.signatureHeader?.startsWith('t='));
+      assert.ok(receivedSignatureHeader.startsWith('t='), 'Webhook receiver captured HMAC signature header');
+      console.log(`✅ Zapier live test ping delivered (HTTP 200): Delivery ID=${testPingData.deliveryId}, HMAC=${testPingData.signatureHeader.slice(0, 24)}...`);
+
+      // Verify delivery logs
+      const zapDeliveriesRes = await request('/api/v1/zapier/deliveries');
+      const zapDeliveriesData = zapDeliveriesRes.data;
+      assert.equal(zapDeliveriesRes.status, 200);
+      assert.ok(Array.isArray(zapDeliveriesData.deliveries) && zapDeliveriesData.deliveries.length > 0);
+      assert.equal(zapDeliveriesData.deliveries[0].id, testPingData.deliveryId);
+      console.log(`✅ Zapier delivery logs verified: ${zapDeliveriesData.deliveries.length} outbound event deliveries tracked`);
+    } finally {
+      await new Promise((resolve) => localWebhookReceiver.close(resolve));
+    }
+
+    // [TEST 113B] Zapier REST Hook Negative Test (HTTP 502 for Unreachable Target)
+    console.log('\n[TEST 113B] Zapier REST Hook Negative Test (HTTP 502 for Unreachable Target)');
+    const testUnreachableRes = await request('/api/v1/zapier/hooks/test', {
       method: 'POST',
       body: JSON.stringify({
-        targetUrl: 'https://hooks.zapier.com/hooks/catch/sample/live-test',
+        targetUrl: 'http://127.0.0.1:59998/offline-endpoint',
         event: 'contact.created'
       })
     });
-    const testPingData = testPingRes.data;
-    assert.ok(testPingRes.status === 200 || testPingRes.status === 502);
-    assert.ok(testPingData.deliveryId && testPingData.signatureHeader?.startsWith('t='));
-    console.log(`✅ Zapier test ping dispatched: Delivery ID=${testPingData.deliveryId}, HMAC=${testPingData.signatureHeader.slice(0, 24)}...`);
-
-    // Verify delivery logs
-    const zapDeliveriesRes = await request('/api/v1/zapier/deliveries');
-    const zapDeliveriesData = zapDeliveriesRes.data;
-    assert.equal(zapDeliveriesRes.status, 200);
-    assert.ok(Array.isArray(zapDeliveriesData.deliveries) && zapDeliveriesData.deliveries.length > 0);
-    assert.equal(zapDeliveriesData.deliveries[0].id, testPingData.deliveryId);
-    console.log(`✅ Zapier delivery logs verified: ${zapDeliveriesData.deliveries.length} outbound event deliveries tracked`);
+    assert.strictEqual(testUnreachableRes.status, 502);
+    assert.strictEqual(testUnreachableRes.data.delivered, false);
+    assert.strictEqual(testUnreachableRes.data.code, 'WEBHOOK_TEST_FAILED');
+    console.log('✅ Zapier negative delivery test passed (HTTP 502 cleanly handled for unreachable target)');
 
     // ─────────────────────────────────────────────────────────────────
     // [TEST 114] Zapier Polling Triggers Fallback: GET /api/v1/zapier/polls/:event

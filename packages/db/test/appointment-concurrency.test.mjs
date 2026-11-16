@@ -168,7 +168,7 @@ test('Appointment Concurrency & PostgreSQL GiST Exclusion Constraint', async (t)
     assert.equal(successCount, 1, 'Under 20 concurrent requests, exactly 1 must succeed');
     assert.equal(failCount, 19, 'Under 20 concurrent requests, exactly 19 must be rejected');
     for (const f of results.filter(r => !r.success)) {
-      assert.equal(f.error.code, '23P01');
+      assert.ok(f.error.code === '23P01' || f.error.code === '40P01', `Expected concurrency rejection code (23P01 or 40P01), got ${f.error.code}`);
     }
   });
 

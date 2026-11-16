@@ -451,21 +451,29 @@ export default function Integrations() {
     }
   };
 
-  const handleToggleMarketplaceApp = (app: MarketplaceApp) => {
-    setMarketplaceApps((prev) =>
-      prev.map((a) =>
-        a.id === app.id
-          ? {
-              ...a,
-              connected: !a.connected,
-              status: !a.connected ? 'connected' : 'disconnected',
-              accountName: !a.connected ? (a.accountName || 'Active Connected Session') : undefined,
-            }
-          : a
-      )
-    );
-    if (selectedAppForConfig?.id === app.id) {
-      setSelectedAppForConfig(null);
+  const handleToggleMarketplaceApp = async (app: MarketplaceApp) => {
+    try {
+      if (app.connected) {
+        const res = await api.integrations.disconnect(app.id);
+        if (res?.success) {
+          setMarketplaceApps((prev) =>
+            prev.map((a) => (a.id === app.id ? { ...a, connected: false, status: 'disconnected', accountName: undefined } : a))
+          );
+        }
+      } else {
+        const res = await api.integrations.connect(app.id, {});
+        if (res?.success) {
+          setMarketplaceApps((prev) =>
+            prev.map((a) => (a.id === app.id ? { ...a, connected: true, status: 'connected', accountName: res.integration?.accountName } : a))
+          );
+        }
+      }
+    } catch (err: any) {
+      alert(err.message || 'Connecting this app requires a verified provider-specific OAuth or API credential flow.');
+    } finally {
+      if (selectedAppForConfig?.id === app.id) {
+        setSelectedAppForConfig(null);
+      }
     }
   };
 

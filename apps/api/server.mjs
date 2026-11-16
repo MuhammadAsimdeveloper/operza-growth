@@ -35,7 +35,8 @@ import { createProviderAdapterRegistry } from '../../packages/platform-core/src/
 import { createBillingLedgerStore, createImmutableAuditStore, gateAiToolExecution } from '../../packages/platform-core/src/billing-ledger.mjs';
 import { executeCopilotProposal } from '../../packages/platform-core/src/proposal-executor.mjs';
 import { createMemoryOutboxRepository, executeWorkerTick } from '../../packages/platform-core/src/outbox-worker.mjs';
-import { produceWorkflowTriggerEvent } from '../../packages/platform-core/src/outbox-producer.mjs';
+import { produceWorkflowTriggerEvent, produceWorkflowResumeEvent } from '../../packages/platform-core/src/outbox-producer.mjs';
+import { createWorkflowOutboxRepository } from '../../packages/db/lib/outbox-repository.mjs';
 import { trustedWorkerHandlers } from '../../packages/platform-core/src/trusted-handlers.mjs';
 import { recordConsent } from '../../packages/platform-core/src/consent-policy.mjs';
 import { authorizeCopilotTool, createCopilotProposal, getCopilotToolDefinition } from '../../packages/platform-core/src/tool-permissions.mjs';
@@ -61,6 +62,8 @@ let secretResolver = null;
 let providerAdapterRegistry = createProviderAdapterRegistry();
 let outlookOAuthService = null;
 const memoryOutboxRepo = createMemoryOutboxRepository();
+let pgOutboxRepo = null;
+const getOutboxRepo = () => pgOutboxRepo || memoryOutboxRepo;
 const billingLedgerStore = createBillingLedgerStore({ defaultCreditBalance: 10000 });
 const immutableAuditStore = createImmutableAuditStore();
 const defaultLLMRuntime = createDefaultLLMRuntime({
@@ -172,6 +175,9 @@ const platformDbEnabled = process.env.PLATFORM_DB_ENABLED === 'true' || isStagin
 if (platformDbEnabled && !pgPool) throw new Error('PLATFORM_DB_ENABLED requires a working DATABASE_URL and the pg module.');
 const platformRepository = platformDbEnabled ? createPlatformRepository(pgPool) : null;
 const zapierRepository = platformDbEnabled ? createZapierHookRepository(pgPool) : null;
+if (pgPool) {
+  pgOutboxRepo = createWorkflowOutboxRepository(pgPool);
+}
 
 if (isStagingOrProd) {
   if (!pgPool) throw new Error('Secure provider secret storage requires DATABASE_URL in staging/production.');
@@ -931,6 +937,11 @@ async function syncRelationalWrite(collectionName, action, record, agencyId) {
     }
   } catch (err) {
     console.warn(`[OPERZA-RELATIONAL] Sync notice for ${collectionName}:`, err.message);
+    if (isStagingOrProd || platformDbEnabled) {
+      throw Object.assign(new Error(`Relational database write failed for ${collectionName}: ${err.message}`), {
+        code: 'RELATIONAL_WRITE_FAILED'
+      });
+    }
   }
 }
 
@@ -948,6 +959,11 @@ async function loadState() {
       }
     } catch (err) {
       console.warn('[OPERZA-DB] Failed to read state from PostgreSQL, falling back to local file:', err.message);
+      if (isStagingOrProd || platformDbEnabled) {
+        throw Object.assign(new Error(`Database state load failed in staging/production: ${err.message}`), {
+          code: 'DATABASE_LOAD_FAILED'
+        });
+      }
     }
   }
 
@@ -992,6 +1008,11 @@ async function saveState() {
         );
       } catch (pgErr) {
         console.error('[OPERZA-DB] Failed to persist state to PostgreSQL:', pgErr.message);
+        if (isStagingOrProd || platformDbEnabled) {
+          throw Object.assign(new Error(`Database state persistence failed in staging/production: ${pgErr.message}`), {
+            code: 'DATABASE_WRITE_FAILED'
+          });
+        }
       }
     }
   });
@@ -1138,7 +1159,7 @@ async function executeWorkflowInstance({
     claimExecutionLease({ execution, workerLeaseId, leaseDurationMs: 60_000, now: startedAt });
     try {
       const outboxEntry = await produceWorkflowTriggerEvent({
-        repository: memoryOutboxRepo,
+        repository: getOutboxRepo(),
         tenantId: agencyId || 'default_agency',
         locationId: locationId || 'default_location',
         workflowId: flow.id,
@@ -1149,11 +1170,16 @@ async function executeWorkflowInstance({
         }
       });
       execution.outboxJobId = outboxEntry?.id || `job_${randomUUID().slice(0, 12)}`;
-      execution.outboxStatus = outboxEntry?.status || 'delivered';
+      execution.outboxStatus = outboxEntry?.status || 'pending';
       execution.attemptCount = 1;
-    } catch {
+    } catch (err) {
+      if (isStagingOrProd || platformDbEnabled) {
+        throw Object.assign(new Error(`Failed to enqueue durable workflow outbox event: ${err.message}`), {
+          code: 'OUTBOX_ENQUEUE_FAILED'
+        });
+      }
       execution.outboxJobId = `job_${randomUUID().slice(0, 12)}`;
-      execution.outboxStatus = 'delivered';
+      execution.outboxStatus = 'pending';
       execution.attemptCount = 1;
     }
     state.workflowExecutions.push(execution);
@@ -2260,6 +2286,7 @@ const server = createServer(async (req, res) => {
       wsClients,
       workflowQueue,
       memoryOutboxRepo,
+      outboxRepo: getOutboxRepo(),
       trustedWorkerHandlers,
       executeWorkerTick,
       randomUUID,
@@ -7662,6 +7689,25 @@ const server = createServer(async (req, res) => {
       run.pendingApproval = null;
       await saveState();
       broadcast('workflow.execution.resuming', { executionId: run.id, approvalId: approval.id });
+
+      try {
+        await produceWorkflowResumeEvent({
+          repository: getOutboxRepo(),
+          tenantId: run.agencyId,
+          locationId: run.locationId,
+          workflowId: run.workflowId,
+          executionId: run.id,
+          nodeId: approval.nodeId,
+          actionHash: approval.actionHash,
+          approvedBy: actor.user.id
+        });
+      } catch (err) {
+        if (isStagingOrProd || platformDbEnabled) {
+          throw Object.assign(new Error(`Failed to enqueue durable workflow resume event: ${err.message}`), {
+            code: 'OUTBOX_RESUME_FAILED'
+          });
+        }
+      }
 
       const resumed = await executeWorkflowInstance({
         flow: structuredClone(pinnedFlow),

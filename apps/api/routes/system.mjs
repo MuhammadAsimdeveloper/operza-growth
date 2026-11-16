@@ -16,6 +16,7 @@ export async function handleSystemRoutes(req, res, ctx) {
     wsClients,
     workflowQueue,
     memoryOutboxRepo,
+    outboxRepo,
     trustedWorkerHandlers,
     executeWorkerTick,
     randomUUID,
@@ -99,13 +100,43 @@ export async function handleSystemRoutes(req, res, ctx) {
     return true;
   }
 
-  // Guard: Admin routes require an authenticated owner/admin or valid OPERZA_ADMIN_KEY
+  // Guard: Admin routes require an authenticated platform superadmin or valid OPERZA_ADMIN_KEY.
+  // Standard tenant agency owners/admins are NOT permitted to invoke platform-level operations.
   if (pathname.startsWith('/api/admin/')) {
     const actor = getActor(req);
-    const hasAdminKey = Boolean(process.env.OPERZA_ADMIN_KEY && req.headers['x-admin-key'] === process.env.OPERZA_ADMIN_KEY);
-    const isOwnerOrAdmin = actor && ['owner', 'admin'].includes(actor.membership?.role);
-    if (!hasAdminKey && !isOwnerOrAdmin) {
-      sendJson(res, 403, { error: 'Administrative authorization required', code: 'ADMIN_AUTH_REQUIRED' });
+    const isStagingOrProd = process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging';
+    const disallowedKeys = new Set([
+      'operza-internal-admin-telemetry-key-min-32-chars',
+      'operza-admin-telemetry-secret-key-32chars',
+      'admin-key',
+      '12345678901234567890123456789012'
+    ]);
+
+    const configuredAdminKey = process.env.OPERZA_ADMIN_KEY;
+    const isConfiguredKeyDisallowed = isStagingOrProd && (
+      !configuredAdminKey ||
+      configuredAdminKey.length < 32 ||
+      disallowedKeys.has(configuredAdminKey)
+    );
+
+    const providedKey = req.headers['x-admin-key'];
+    const hasValidAdminKey = Boolean(
+      configuredAdminKey &&
+      !isConfiguredKeyDisallowed &&
+      providedKey &&
+      providedKey === configuredAdminKey
+    );
+
+    const isPlatformAdmin = Boolean(
+      actor?.user?.isPlatformAdmin === true ||
+      (process.env.OPERZA_ADMIN_EMAIL && actor?.user?.email && actor.user.email.toLowerCase() === process.env.OPERZA_ADMIN_EMAIL.toLowerCase())
+    );
+
+    if (!hasValidAdminKey && !isPlatformAdmin) {
+      sendJson(res, 403, {
+        error: 'Platform administrative authorization required. Agency tenant credentials cannot access platform operations.',
+        code: 'PLATFORM_ADMIN_REQUIRED'
+      });
       return true;
     }
   }
@@ -121,6 +152,36 @@ export async function handleSystemRoutes(req, res, ctx) {
 
   // 5. Admin Worker Status
   if (pathname === '/api/admin/worker/status') {
+    if (pgPool) {
+      try {
+        const statsRes = await pgPool.query(`
+          SELECT
+            COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+            COUNT(*) FILTER (WHERE status = 'leased') AS leased,
+            COUNT(*) FILTER (WHERE status = 'delivered') AS delivered,
+            COUNT(*) FILTER (WHERE status = 'dead_letter') AS dead_letter,
+            COUNT(*) AS total
+          FROM workflow_outbox
+        `);
+        const row = statsRes.rows[0] || {};
+        sendJson(res, 200, {
+          status: 'active',
+          workerId: 'operza-worker-pg-pool',
+          stats: {
+            pending: Number(row.pending || 0),
+            leased: Number(row.leased || 0),
+            delivered: Number(row.delivered || 0),
+            dead_letter: Number(row.dead_letter || 0),
+            total: Number(row.total || 0)
+          },
+          engine: 'postgresql'
+        });
+        return true;
+      } catch (err) {
+        console.warn('[OPERZA-ADMIN] Failed to query PostgreSQL outbox stats:', err.message);
+      }
+    }
+
     sendJson(res, 200, {
       status: 'active',
       workerId: 'operza-worker-tick-daemon',
@@ -132,15 +193,40 @@ export async function handleSystemRoutes(req, res, ctx) {
 
   // 6. Admin Worker Tick
   if (method === 'POST' && pathname === '/api/admin/worker/tick') {
+    const activeRepo = outboxRepo || memoryOutboxRepo;
     const tickResult = await executeWorkerTick({
-      repository: memoryOutboxRepo,
+      repository: activeRepo,
       handlers: trustedWorkerHandlers,
       workerId: `admin-tick-${randomUUID().slice(0, 8)}`
     });
+
+    let currentStats = memoryOutboxRepo.getStats();
+    if (pgPool) {
+      try {
+        const statsRes = await pgPool.query(`
+          SELECT
+            COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+            COUNT(*) FILTER (WHERE status = 'leased') AS leased,
+            COUNT(*) FILTER (WHERE status = 'delivered') AS delivered,
+            COUNT(*) FILTER (WHERE status = 'dead_letter') AS dead_letter,
+            COUNT(*) AS total
+          FROM workflow_outbox
+        `);
+        const row = statsRes.rows[0] || {};
+        currentStats = {
+          pending: Number(row.pending || 0),
+          leased: Number(row.leased || 0),
+          delivered: Number(row.delivered || 0),
+          dead_letter: Number(row.dead_letter || 0),
+          total: Number(row.total || 0)
+        };
+      } catch {}
+    }
+
     sendJson(res, 200, {
       success: true,
       tick: tickResult,
-      stats: memoryOutboxRepo.getStats()
+      stats: currentStats
     });
     return true;
   }
@@ -151,7 +237,8 @@ export async function handleSystemRoutes(req, res, ctx) {
     const tenantId = actor?.agency?.id || 'admin-tenant';
     const locationId = actor?.activeLocation?.id || 'default';
     const body = await readBody(req);
-    const enq = await memoryOutboxRepo.enqueue({
+    const activeRepo = outboxRepo || memoryOutboxRepo;
+    const enq = await activeRepo.enqueue({
       tenantId,
       locationId,
       eventType: body.eventType || 'audit.event.record',

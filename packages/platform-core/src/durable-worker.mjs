@@ -33,7 +33,8 @@ export async function runOutboxBatch({
       const index = cursor++;
       if (index >= jobs.length) return;
       const job = jobs[index];
-      const handler = handlers[job.eventType];
+      const eventType = job.eventType || job.event_type;
+      const handler = handlers[eventType];
       let leaseLost = false;
       let heartbeatBusy = false;
       const heartbeatTimer = typeof repository.renewLease === 'function'
