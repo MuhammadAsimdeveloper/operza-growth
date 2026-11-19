@@ -1,0 +1,502 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import crypto, { randomUUID } from 'node:crypto';
+import { IsolatedTestPostgres } from '../lib/test-postgres-server.mjs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const root = path.resolve(__dirname, '../../..');
+const migrationsDir = path.join(root, 'packages/db/migrations');
+
+test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', async (t) => {
+  const pgServer = new IsolatedTestPostgres({ port: 5437, dbName: 'operza_rls_test' });
+  const dbUrl = await pgServer.start();
+
+  const { default: pg } = await import('pg');
+  const superuserPool = new pg.Pool({ connectionString: dbUrl, max: 5 });
+
+  t.after(async () => {
+    await superuserPool.end();
+    await pgServer.stop();
+  });
+
+  const parsedUrl = new URL(dbUrl);
+  const host = parsedUrl.hostname;
+  const port = parsedUrl.port;
+  const dbName = parsedUrl.pathname.replace(/^\//, '');
+
+  const appPassword = 'app_secure_password_test_123';
+  const workerPassword = 'worker_secure_password_test_123';
+  const migratorPassword = 'migrator_secure_password_test_123';
+
+  // 1. Provision least-privilege roles with NOBYPASSRLS
+  await t.test('1. Provision least-privilege roles (NOBYPASSRLS, NOSUPERUSER)', async () => {
+    await superuserPool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_migrator') THEN
+          CREATE ROLE operza_migrator LOGIN PASSWORD '${migratorPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_app') THEN
+          CREATE ROLE operza_app LOGIN PASSWORD '${appPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_worker') THEN
+          CREATE ROLE operza_worker LOGIN PASSWORD '${workerPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+        END IF;
+      END $$;
+
+      GRANT ALL ON SCHEMA public TO operza_migrator;
+      GRANT USAGE ON SCHEMA public TO operza_app, operza_worker;
+    `);
+
+    // Verify role attributes
+    const roleRes = await superuserPool.query(`
+      SELECT rolname, rolsuper, rolbypassrls, rolinherit
+      FROM pg_roles
+      WHERE rolname IN ('operza_app', 'operza_worker', 'operza_migrator')
+      ORDER BY rolname
+    `);
+
+    for (const row of roleRes.rows) {
+      assert.equal(row.rolsuper, false, `Role ${row.rolname} must NOT be a superuser`);
+      assert.equal(row.rolbypassrls, false, `Role ${row.rolname} must NOT have BYPASSRLS`);
+    }
+  });
+
+  // 2. Apply all migrations sequentially (001 through 023)
+  await t.test('2. Execute full migration suite (001 through 023)', async () => {
+    const files = (await readdir(migrationsDir))
+      .filter(f => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
+      .sort();
+
+    assert.ok(files.length >= 23, `Expected at least 23 migrations, found ${files.length}`);
+
+    await superuserPool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz DEFAULT now());');
+
+    for (const file of files) {
+      const client = await superuserPool.connect();
+      try {
+        await client.query('BEGIN');
+        const sql = await readFile(path.join(migrationsDir, file), 'utf8');
+        await client.query(sql);
+        await client.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT DO NOTHING;', [file]);
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw new Error(`Migration ${file} failed: ${err.message}`);
+      } finally {
+        client.release();
+      }
+    }
+
+    // Grant default privileges on all created tables & sequences to operza_app and operza_worker
+    await superuserPool.query(`
+      GRANT USAGE ON SCHEMA public TO operza_app, operza_worker;
+      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO operza_app;
+      GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO operza_app;
+    `);
+  });
+
+  // 3. Verify FORCE ROW LEVEL SECURITY on all critical tenant tables
+  await t.test('3. Verify Row-Level Security is ENABLED and FORCED on all tenant tables', async () => {
+    const tables = [
+      'agencies', 'users', 'agency_memberships', 'locations', 'location_records',
+      'workflow_definitions', 'workflow_executions', 'workflow_execution_steps',
+      'workflow_approvals', 'calendars', 'appointments', 'pipelines', 'pipeline_stages',
+      'opportunities', 'communication_consents', 'provider_secrets', 'workflow_action_receipts'
+    ];
+
+    const rlsRes = await superuserPool.query(`
+      SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname = ANY($1::text[])
+    `, [tables]);
+
+    const foundTables = new Set(rlsRes.rows.map(r => r.relname));
+    for (const table of tables) {
+      assert.ok(foundTables.has(table), `Table ${table} must exist in public schema`);
+      const row = rlsRes.rows.find(r => r.relname === table);
+      assert.equal(row.relrowsecurity, true, `Table ${table} must have RLS enabled (relrowsecurity)`);
+      assert.equal(row.relforcerowsecurity, true, `Table ${table} must have FORCE RLS enabled (relforcerowsecurity)`);
+    }
+  });
+
+  // Create isolated connections for operza_app and operza_worker
+  const appPool = new pg.Pool({
+    connectionString: `postgresql://operza_app:${appPassword}@${host}:${port}/${dbName}`,
+    max: 5
+  });
+  const workerPool = new pg.Pool({
+    connectionString: `postgresql://operza_worker:${workerPassword}@${host}:${port}/${dbName}`,
+    max: 5
+  });
+
+  t.after(async () => {
+    await appPool.end();
+    await workerPool.end();
+  });
+
+  // Seed two distinct tenants using superuser pool
+  const tenantA = randomUUID();
+  const locationA1 = randomUUID();
+  const locationA2 = randomUUID();
+  const userA = randomUUID();
+  const tokenA = crypto.randomBytes(32).toString('hex');
+  const tokenHashA = crypto.createHash('sha256').update(tokenA).digest('hex');
+
+  const tenantB = randomUUID();
+  const locationB1 = randomUUID();
+  const userB = randomUUID();
+  const tokenB = crypto.randomBytes(32).toString('hex');
+  const tokenHashB = crypto.createHash('sha256').update(tokenB).digest('hex');
+
+  await t.test('4. Seed test fixtures across Tenant A and Tenant B', async () => {
+    // Seed Tenant A
+    await superuserPool.query('INSERT INTO agencies (id, name, slug) VALUES ($1, $2, $3)', [tenantA, 'Agency Alpha', 'agency-alpha']);
+    await superuserPool.query('INSERT INTO locations (id, agency_id, name) VALUES ($1, $2, $3)', [locationA1, tenantA, 'Alpha HQ']);
+    await superuserPool.query('INSERT INTO locations (id, agency_id, name) VALUES ($1, $2, $3)', [locationA2, tenantA, 'Alpha Branch']);
+    await superuserPool.query('INSERT INTO users (id, name, email, password_hash) VALUES ($1, $2, $3, $4)', [userA, 'Alice Alpha', 'alice@alpha.com', 'hashA']);
+    await superuserPool.query('INSERT INTO agency_memberships (id, agency_id, user_id, role) VALUES ($1, $2, $3, $4)', [randomUUID(), tenantA, userA, 'owner']);
+    await superuserPool.query('INSERT INTO auth_sessions (id, token_hash, csrf_hash, user_id, agency_id, expires_at) VALUES ($1, $2, $3, $4, $5, now() + interval \'1 day\')', [randomUUID(), tokenHashA, 'csrfA', userA, tenantA]);
+
+    // Seed Tenant B
+    await superuserPool.query('INSERT INTO agencies (id, name, slug) VALUES ($1, $2, $3)', [tenantB, 'Agency Beta', 'agency-beta']);
+    await superuserPool.query('INSERT INTO locations (id, agency_id, name) VALUES ($1, $2, $3)', [locationB1, tenantB, 'Beta HQ']);
+    await superuserPool.query('INSERT INTO users (id, name, email, password_hash) VALUES ($1, $2, $3, $4)', [userB, 'Bob Beta', 'bob@beta.com', 'hashB']);
+    await superuserPool.query('INSERT INTO agency_memberships (id, agency_id, user_id, role) VALUES ($1, $2, $3, $4)', [randomUUID(), tenantB, userB, 'owner']);
+    await superuserPool.query('INSERT INTO auth_sessions (id, token_hash, csrf_hash, user_id, agency_id, expires_at) VALUES ($1, $2, $3, $4, $5, now() + interval \'1 day\')', [randomUUID(), tokenHashB, 'csrfB', userB, tenantB]);
+
+    // Seed CRM and workflow records for Tenant A
+    await superuserPool.query('INSERT INTO calendars (id, agency_id, location_id, name, slug, duration_min) VALUES ($1, $2, $3, $4, $5, $6)', [randomUUID(), tenantA, locationA1, 'Alpha Cal 1', 'alpha-cal-1', 30]);
+    await superuserPool.query('INSERT INTO calendars (id, agency_id, location_id, name, slug, duration_min) VALUES ($1, $2, $3, $4, $5, $6)', [randomUUID(), tenantB, locationB1, 'Beta Cal 1', 'beta-cal-1', 30]);
+
+    await superuserPool.query(`
+      INSERT INTO appointments (id, agency_id, location_id, calendar_id, title, starts_at, ends_at, status)
+      VALUES ($1, $2, $3, (SELECT id FROM calendars WHERE agency_id = $2 LIMIT 1), 'Alpha Meeting 1', '2026-12-01T10:00:00Z', '2026-12-01T10:30:00Z', 'confirmed')
+    `, [randomUUID(), tenantA, locationA1]);
+
+    await superuserPool.query(`
+      INSERT INTO appointments (id, agency_id, location_id, calendar_id, title, starts_at, ends_at, status)
+      VALUES ($1, $2, $3, (SELECT id FROM calendars WHERE agency_id = $2 LIMIT 1), 'Alpha Branch Meeting', '2026-12-01T11:00:00Z', '2026-12-01T11:30:00Z', 'confirmed')
+    `, [randomUUID(), tenantA, locationA2]);
+
+    await superuserPool.query(`
+      INSERT INTO appointments (id, agency_id, location_id, calendar_id, title, starts_at, ends_at, status)
+      VALUES ($1, $2, $3, (SELECT id FROM calendars WHERE agency_id = $2 LIMIT 1), 'Beta Meeting 1', '2026-12-01T10:00:00Z', '2026-12-01T10:30:00Z', 'confirmed')
+    `, [randomUUID(), tenantB, locationB1]);
+  });
+
+  // 5. TEST: operza_app role least-privilege & fail-closed security
+  await t.test('5. operza_app: Fails closed with zero rows when tenant context is missing', async () => {
+    const client = await appPool.connect();
+    try {
+      // No set_config applied on this connection
+      const agencies = await client.query('SELECT * FROM agencies');
+      assert.equal(agencies.rows.length, 0, 'agencies must return 0 rows when tenant context is missing');
+
+      const locations = await client.query('SELECT * FROM locations');
+      assert.equal(locations.rows.length, 0, 'locations must return 0 rows when tenant context is missing');
+
+      const users = await client.query('SELECT * FROM users');
+      assert.equal(users.rows.length, 0, 'users must return 0 rows when tenant context is missing');
+
+      const memberships = await client.query('SELECT * FROM agency_memberships');
+      assert.equal(memberships.rows.length, 0, 'agency_memberships must return 0 rows when tenant context is missing');
+
+      const calendars = await client.query('SELECT * FROM calendars');
+      assert.equal(calendars.rows.length, 0, 'calendars must return 0 rows when tenant context is missing');
+
+      const appointments = await client.query('SELECT * FROM appointments');
+      assert.equal(appointments.rows.length, 0, 'appointments must return 0 rows when tenant context is missing');
+    } finally {
+      client.release();
+    }
+  });
+
+  await t.test('6. operza_app: Strict isolation between Tenant A and Tenant B', async () => {
+    const client = await appPool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
+
+      // 6.1 Tenant A sees only Tenant A agency
+      const agencies = await client.query('SELECT * FROM agencies');
+      assert.equal(agencies.rows.length, 1);
+      assert.equal(agencies.rows[0].id, tenantA);
+
+      // 6.2 Cannot read Tenant B agency by explicit ID
+      const bLookup = await client.query('SELECT * FROM agencies WHERE id = $1', [tenantB]);
+      assert.equal(bLookup.rows.length, 0, 'Cross-tenant lookup on agencies must return 0 rows');
+
+      // 6.3 Cannot read Tenant B locations
+      const locB = await client.query('SELECT * FROM locations WHERE agency_id = $1', [tenantB]);
+      assert.equal(locB.rows.length, 0, 'Cross-tenant lookup on locations must return 0 rows');
+
+      // 6.4 Cannot read Tenant B appointments
+      const apptB = await client.query('SELECT * FROM appointments WHERE agency_id = $1', [tenantB]);
+      assert.equal(apptB.rows.length, 0, 'Cross-tenant lookup on appointments must return 0 rows');
+
+      // 6.5 Cross-tenant UPDATE is blocked (0 rows affected)
+      const updateRes = await client.query("UPDATE agencies SET name = 'Hacked' WHERE id = $1", [tenantB]);
+      assert.equal(updateRes.rowCount, 0, 'Cross-tenant UPDATE must affect 0 rows');
+
+      // 6.6 Cross-tenant DELETE is blocked (0 rows affected)
+      const deleteRes = await client.query('DELETE FROM agencies WHERE id = $1', [tenantB]);
+      assert.equal(deleteRes.rowCount, 0, 'Cross-tenant DELETE must affect 0 rows');
+
+      // 6.7 Cross-tenant INSERT is rejected by WITH CHECK policy
+      await assert.rejects(
+        () => client.query('INSERT INTO agencies (id, name, slug) VALUES ($1, $2, $3)', [tenantB, 'Spoofed Agency', 'spoofed-agency']),
+        /violates row-level security policy/i,
+        'Cross-tenant INSERT must fail RLS WITH CHECK policy'
+      );
+
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
+  });
+
+  await t.test('7. operza_app: Same-agency cross-location isolation', async () => {
+    const client = await appPool.connect();
+    try {
+      await client.query('BEGIN');
+      // Bound to Tenant A and Location A1
+      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
+
+      // Can see Location A1 appointment
+      const appts = await client.query('SELECT * FROM appointments');
+      assert.equal(appts.rows.length, 1);
+      assert.equal(appts.rows[0].location_id, locationA1);
+
+      // Cannot see Location A2 appointment even though same agency
+      const a2Lookup = await client.query('SELECT * FROM appointments WHERE location_id = $1', [locationA2]);
+      assert.equal(a2Lookup.rows.length, 0, 'Cross-location appointment query must return 0 rows');
+
+      // Attempting to insert an appointment for Location A2 while bound to Location A1 fails RLS
+      await assert.rejects(
+        () => client.query(`
+          INSERT INTO appointments (id, agency_id, location_id, calendar_id, title, starts_at, ends_at, status)
+          VALUES ($1, $2, $3, (SELECT id FROM calendars WHERE agency_id = $2 LIMIT 1), 'Spoofed Loc', '2026-12-01T15:00:00Z', '2026-12-01T15:30:00Z', 'confirmed')
+        `, [randomUUID(), tenantA, locationA2]),
+        /violates row-level security policy/i,
+        'Cross-location INSERT must fail RLS WITH CHECK policy'
+      );
+
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
+  });
+
+  await t.test('8. operza_app: Session resolution & Auth helper functions', async () => {
+    const client = await appPool.connect();
+    try {
+      // 8.1 Valid session token resolves cleanly via security-definer helper
+      const validSess = await client.query('SELECT * FROM resolve_auth_session($1)', [tokenHashA]);
+      assert.equal(validSess.rows.length, 1);
+      assert.equal(validSess.rows[0].user_id, userA);
+      assert.equal(validSess.rows[0].agency_id, tenantA);
+      assert.equal(validSess.rows[0].user_email, 'alice@alpha.com');
+      assert.equal(validSess.rows[0].agency_slug, 'agency-alpha');
+
+      // 8.2 Unknown or expired token returns 0 rows
+      const invalidSess = await client.query('SELECT * FROM resolve_auth_session($1)', ['unknown_hash_1234567890']);
+      assert.equal(invalidSess.rows.length, 0);
+
+      // 8.3 User lookup by email returns expected row
+      const userLookup = await client.query('SELECT * FROM lookup_user_for_auth($1)', ['alice@alpha.com']);
+      assert.equal(userLookup.rows.length, 1);
+      assert.equal(userLookup.rows[0].id, userA);
+      assert.equal(userLookup.rows[0].password_hash, 'hashA');
+
+      // 8.4 Non-existent user lookup returns 0 rows
+      const nonUser = await client.query('SELECT * FROM lookup_user_for_auth($1)', ['nobody@nowhere.com']);
+      assert.equal(nonUser.rows.length, 0);
+
+      // 8.5 Public calendar lookup by slug returns exact single calendar
+      const pubCal = await client.query('SELECT * FROM lookup_public_calendar($1)', ['alpha-cal-1']);
+      assert.equal(pubCal.rows.length, 1);
+      assert.equal(pubCal.rows[0].agency_id, tenantA);
+      assert.equal(pubCal.rows[0].slug, 'alpha-cal-1');
+
+      // 8.6 Non-existent slug returns 0 rows
+      const nonCal = await client.query('SELECT * FROM lookup_public_calendar($1)', ['non-existent-cal']);
+      assert.equal(nonCal.rows.length, 0);
+    } finally {
+      client.release();
+    }
+  });
+
+  // 9. TEST: operza_worker role least-privilege & tenant scoping
+  await t.test('9. operza_worker: Fails closed when tenant context is missing', async () => {
+    const client = await workerPool.connect();
+    try {
+      // No set_config applied
+      const defs = await client.query('SELECT * FROM workflow_definitions');
+      assert.equal(defs.rows.length, 0, 'workflow_definitions must return 0 rows without tenant context');
+
+      const execs = await client.query('SELECT * FROM workflow_executions');
+      assert.equal(execs.rows.length, 0, 'workflow_executions must return 0 rows without tenant context');
+
+      const approvals = await client.query('SELECT * FROM workflow_approvals');
+      assert.equal(approvals.rows.length, 0, 'workflow_approvals must return 0 rows without tenant context');
+
+      const crmRecords = await client.query('SELECT * FROM location_records');
+      assert.equal(crmRecords.rows.length, 0, 'location_records must return 0 rows without tenant context');
+
+      const consents = await client.query('SELECT * FROM communication_consents');
+      assert.equal(consents.rows.length, 0, 'communication_consents must return 0 rows without tenant context');
+    } finally {
+      client.release();
+    }
+  });
+
+  await t.test('10. operza_worker: Strict tenant isolation during job execution', async () => {
+    // Seed workflow definitions and executions for Tenant A and Tenant B
+    const flowIdA = randomUUID();
+    const flowIdB = randomUUID();
+    const execIdA = randomUUID();
+    const execIdB = randomUUID();
+
+    await superuserPool.query(`
+      INSERT INTO workflow_definitions (id, agency_id, location_id, name, trigger_type, nodes)
+      VALUES ($1, $2, $3, 'Alpha Workflow', 'webhook', '[]'::jsonb)
+    `, [flowIdA, tenantA, locationA1]);
+
+    await superuserPool.query(`
+      INSERT INTO workflow_definitions (id, agency_id, location_id, name, trigger_type, nodes)
+      VALUES ($1, $2, $3, 'Beta Workflow', 'webhook', '[]'::jsonb)
+    `, [flowIdB, tenantB, locationB1]);
+
+    await superuserPool.query(`
+      INSERT INTO workflow_executions (id, agency_id, location_id, workflow_id, status)
+      VALUES ($1, $2, $3, $4, 'running')
+    `, [execIdA, tenantA, locationA1, flowIdA]);
+
+    await superuserPool.query(`
+      INSERT INTO workflow_executions (id, agency_id, location_id, workflow_id, status)
+      VALUES ($1, $2, $3, $4, 'running')
+    `, [execIdB, tenantB, locationB1, flowIdB]);
+
+    const client = await workerPool.connect();
+    try {
+      await client.query('BEGIN');
+      // Worker binds to Tenant A context when executing a Tenant A job
+      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
+
+      // Can see Tenant A workflow definition
+      const defsA = await client.query('SELECT * FROM workflow_definitions');
+      assert.equal(defsA.rows.length, 1);
+      assert.equal(defsA.rows[0].id, flowIdA);
+
+      // Cannot see Tenant B workflow definition
+      const defsBLookup = await client.query('SELECT * FROM workflow_definitions WHERE id = $1', [flowIdB]);
+      assert.equal(defsBLookup.rows.length, 0, 'Worker must not see other tenant definitions');
+
+      // Can see Tenant A execution
+      const execsA = await client.query('SELECT * FROM workflow_executions');
+      assert.equal(execsA.rows.length, 1);
+      assert.equal(execsA.rows[0].id, execIdA);
+
+      // Cannot see Tenant B execution
+      const execsBLookup = await client.query('SELECT * FROM workflow_executions WHERE id = $1', [execIdB]);
+      assert.equal(execsBLookup.rows.length, 0, 'Worker must not see other tenant executions');
+
+      // Cannot update Tenant B execution
+      const updRes = await client.query("UPDATE workflow_executions SET status = 'completed' WHERE id = $1", [execIdB]);
+      assert.equal(updRes.rowCount, 0, 'Worker cannot update other tenant executions');
+
+      // Cannot insert execution for Tenant B
+      await assert.rejects(
+        () => client.query(`
+          INSERT INTO workflow_executions (id, agency_id, location_id, workflow_id, status)
+          VALUES ($1, $2, $3, $4, 'pending')
+        `, [randomUUID(), tenantB, locationB1, flowIdB]),
+        /violates row-level security policy/i,
+        'Worker cannot insert executions for another tenant'
+      );
+
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
+  });
+
+  await t.test('11. Authoritative PostgreSQL Approval Expiration', async () => {
+    // Seed an expired approval and a non-expired approval for Tenant A
+    const expiredApprId = randomUUID();
+    const activeApprId = randomUUID();
+    const expiredExecId = randomUUID();
+    const activeExecId = randomUUID();
+    const flowId = randomUUID();
+
+    await superuserPool.query(`
+      INSERT INTO workflow_definitions (id, agency_id, location_id, name, trigger_type, nodes)
+      VALUES ($1, $2, $3, 'Approval Flow', 'form', '[]'::jsonb)
+    `, [flowId, tenantA, locationA1]);
+
+    await superuserPool.query(`
+      INSERT INTO workflow_executions (id, agency_id, location_id, workflow_id, status)
+      VALUES ($1, $2, $3, $4, 'waiting_approval')
+    `, [expiredExecId, tenantA, locationA1, flowId]);
+
+    await superuserPool.query(`
+      INSERT INTO workflow_execution_steps (id, agency_id, location_id, execution_id, node_id, status)
+      VALUES ($1, $2, $3, $4, 'gate_node', 'waiting_approval')
+    `, [randomUUID(), tenantA, locationA1, expiredExecId]);
+
+    await superuserPool.query(`
+      INSERT INTO workflow_approvals (id, agency_id, location_id, execution_id, workflow_id, node_id, action_id, action_hash, status, requested_at, expires_at, request_checksum)
+      VALUES ($1, $2, $3, $4, $5, 'gate_node', 'action_crm', '${'0'.repeat(64)}', 'pending', now() - interval '2 hours', now() - interval '1 hour', '${'1'.repeat(64)}')
+    `, [expiredApprId, tenantA, locationA1, expiredExecId, flowId]);
+
+    // Active approval (expires in 24 hours)
+    await superuserPool.query(`
+      INSERT INTO workflow_executions (id, agency_id, location_id, workflow_id, status)
+      VALUES ($1, $2, $3, $4, 'waiting_approval')
+    `, [activeExecId, tenantA, locationA1, flowId]);
+
+    await superuserPool.query(`
+      INSERT INTO workflow_approvals (id, agency_id, location_id, execution_id, workflow_id, node_id, action_id, action_hash, status, requested_at, expires_at, request_checksum)
+      VALUES ($1, $2, $3, $4, $5, 'gate_node', 'action_crm', '${'0'.repeat(64)}', 'pending', now(), now() + interval '24 hours', '${'2'.repeat(64)}')
+    `, [activeApprId, tenantA, locationA1, activeExecId, flowId]);
+
+    // Run authoritative expiration logic against PostgreSQL via security definer function
+    const client = await appPool.connect();
+    try {
+      const expiredRes = await client.query('SELECT * FROM expire_pending_workflow_approvals()');
+
+      assert.equal(expiredRes.rows.length, 1, 'Exactly one approval should be expired');
+      assert.equal(expiredRes.rows[0].expired_approval_id, expiredApprId);
+      assert.equal(expiredRes.rows[0].agency_id, tenantA);
+      assert.equal(expiredRes.rows[0].execution_id, expiredExecId);
+      assert.equal(expiredRes.rows[0].node_id, 'gate_node');
+    } finally {
+      client.release();
+    }
+
+    // Verify final states in PostgreSQL
+    const checkAppr = await superuserPool.query('SELECT status, decided_at FROM workflow_approvals WHERE id = $1', [expiredApprId]);
+    assert.equal(checkAppr.rows[0].status, 'expired', 'Expired approval status must be expired');
+    assert.ok(checkAppr.rows[0].decided_at, 'decided_at must be set');
+
+    const checkExec = await superuserPool.query('SELECT status, last_error_code FROM workflow_executions WHERE id = $1', [expiredExecId]);
+    assert.equal(checkExec.rows[0].status, 'failed', 'Execution status must be failed');
+    assert.equal(checkExec.rows[0].last_error_code, 'APPROVAL_EXPIRED');
+
+    const checkStep = await superuserPool.query('SELECT status, error_code FROM workflow_execution_steps WHERE execution_id = $1 AND node_id = $2', [expiredExecId, 'gate_node']);
+    assert.equal(checkStep.rows[0].status, 'failed', 'Step status must be failed');
+    assert.equal(checkStep.rows[0].error_code, 'APPROVAL_EXPIRED');
+
+    // Verify active approval remained pending and unchanged
+    const checkActive = await superuserPool.query('SELECT status FROM workflow_approvals WHERE id = $1', [activeApprId]);
+    assert.equal(checkActive.rows[0].status, 'pending', 'Non-expired approval must remain pending');
+
+    const checkActiveExec = await superuserPool.query('SELECT status FROM workflow_executions WHERE id = $1', [activeExecId]);
+    assert.equal(checkActiveExec.rows[0].status, 'waiting_approval', 'Non-expired execution must remain waiting_approval');
+  });
+});

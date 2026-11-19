@@ -119,6 +119,7 @@ export function createTrustedWorkerHandlers({
       if (pool) {
         const client = await pool.connect();
         try {
+          await client.query('BEGIN');
           await client.query(
             "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)",
             [tenantId, locationId || tenantId]
@@ -144,6 +145,7 @@ export function createTrustedWorkerHandlers({
           }
 
           if (!flow) {
+            await client.query('ROLLBACK').catch(() => {});
             throw new PermanentJobError(`Workflow definition ${workflowId} not found in database`, 'WORKFLOW_NOT_FOUND');
           }
 
@@ -157,7 +159,9 @@ export function createTrustedWorkerHandlers({
               status = 'running', worker_lease_id = EXCLUDED.worker_lease_id,
               heartbeat_at = now(), updated_at = now()
           `, [executionId, tenantId, locationId || tenantId, workflowId, JSON.stringify(triggerContext), workerId]);
+          await client.query('COMMIT');
         } catch (dbErr) {
+          await client.query('ROLLBACK').catch(() => {});
           if (dbErr instanceof PermanentJobError) throw dbErr;
           throw Object.assign(new Error(`Failed to initialize workflow execution in PostgreSQL: ${dbErr.message}`), {
             code: 'WORKFLOW_DB_INIT_FAILED'
@@ -230,17 +234,24 @@ export function createTrustedWorkerHandlers({
           if (!contactId || !tag) throw Object.assign(new Error('contactId and tag are required'), { code: 'INVALID_TAG_PARAMS' });
           const client = await pool.connect();
           try {
+            await client.query('BEGIN');
             await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
             const res = await client.query('SELECT body FROM location_records WHERE agency_id = $1 AND collection = $2 AND id = $3', [tenantId, 'contacts', contactId]);
             if (res.rows.length === 0) {
+              await client.query('ROLLBACK');
               throw Object.assign(new Error(`Contact ${contactId} not found in PostgreSQL`), { code: 'CONTACT_NOT_FOUND' });
             }
             const b = res.rows[0].body || {};
             b.tags = Array.from(new Set([...(b.tags || []), tag]));
             const updateRes = await client.query('UPDATE location_records SET body = $1::jsonb, updated_at = now() WHERE agency_id = $2 AND collection = $3 AND id = $4', [JSON.stringify(b), tenantId, 'contacts', contactId]);
             if (updateRes.rowCount === 0) {
+              await client.query('ROLLBACK');
               throw Object.assign(new Error(`Failed to update tags for contact ${contactId}`), { code: 'CONTACT_UPDATE_FAILED' });
             }
+            await client.query('COMMIT');
+          } catch (err) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw err;
           } finally {
             client.release();
           }
@@ -258,14 +269,20 @@ export function createTrustedWorkerHandlers({
           };
           const client = await pool.connect();
           try {
+            await client.query('BEGIN');
             await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
             const insertRes = await client.query(`
               INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
               VALUES ($1, $2, $3, 'tasks', $4::jsonb, now(), now())
             `, [taskId, tenantId, locationId || tenantId, JSON.stringify(taskRecord)]);
             if (insertRes.rowCount === 0) {
+              await client.query('ROLLBACK');
               throw Object.assign(new Error('Failed to insert task record in PostgreSQL'), { code: 'TASK_INSERT_FAILED' });
             }
+            await client.query('COMMIT');
+          } catch (err) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw err;
           } finally {
             client.release();
           }
@@ -276,6 +293,7 @@ export function createTrustedWorkerHandlers({
           if (!opportunityId) throw Object.assign(new Error('opportunityId is required'), { code: 'OPPORTUNITY_ID_REQUIRED' });
           const client = await pool.connect();
           try {
+            await client.query('BEGIN');
             await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
             const updateRes = await client.query(`
               UPDATE opportunities
@@ -283,8 +301,13 @@ export function createTrustedWorkerHandlers({
               WHERE agency_id = $3 AND id = $4
             `, [stageId || stage, stage || null, tenantId, opportunityId]);
             if (updateRes.rowCount === 0) {
+              await client.query('ROLLBACK');
               throw Object.assign(new Error(`Opportunity ${opportunityId} not found in PostgreSQL`), { code: 'OPPORTUNITY_NOT_FOUND' });
             }
+            await client.query('COMMIT');
+          } catch (err) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw err;
           } finally {
             client.release();
           }
@@ -360,6 +383,7 @@ export function createTrustedWorkerHandlers({
               : sha256({ tenantId, executionId, node: node.id, ts: Date.now() });
             const rcClient = await pool.connect();
             try {
+              await rcClient.query('BEGIN');
               await rcClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
               await rcClient.query(`
                 INSERT INTO workflow_action_receipts (
@@ -372,7 +396,9 @@ export function createTrustedWorkerHandlers({
                 node.id, validHash, providerKey, dispatchRes.providerMessageId || null,
                 JSON.stringify(dispatchRes)
               ]);
+              await rcClient.query('COMMIT');
             } catch (err) {
+              await rcClient.query('ROLLBACK').catch(() => {});
               throw Object.assign(new Error(`Failed to save action receipt in PostgreSQL: ${err.message}`), {
                 code: 'ACTION_RECEIPT_PERSIST_FAILED'
               });
@@ -392,6 +418,7 @@ export function createTrustedWorkerHandlers({
       if (pool) {
         const persistClient = await pool.connect();
         try {
+          await persistClient.query('BEGIN');
           await persistClient.query(
             "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)",
             [tenantId, locationId || tenantId]
@@ -456,7 +483,9 @@ export function createTrustedWorkerHandlers({
               step.error || null, step.startedAt, step.finishedAt
             ]);
           }
+          await persistClient.query('COMMIT');
         } catch (pgErr) {
+          await persistClient.query('ROLLBACK').catch(() => {});
           throw Object.assign(new Error(`Failed to update execution steps in PostgreSQL: ${pgErr.message}`), {
             code: 'WORKFLOW_STEP_PERSIST_FAILED'
           });
@@ -503,6 +532,7 @@ export function createTrustedWorkerHandlers({
       if (pool) {
         const client = await pool.connect();
         try {
+          await client.query('BEGIN');
           await client.query(
             "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)",
             [tenantId, locationId || tenantId]
@@ -514,6 +544,7 @@ export function createTrustedWorkerHandlers({
             [tenantId, executionId, nodeId]
           );
           if (appRes.rows.length === 0 || appRes.rows[0].status !== 'approved') {
+            await client.query('ROLLBACK').catch(() => {});
             throw new PermanentJobError('Execution node has not been approved in workflow_approvals', 'RESUME_NOT_APPROVED');
           }
 
@@ -523,6 +554,7 @@ export function createTrustedWorkerHandlers({
             [tenantId, executionId]
           );
           if (execRes.rows.length === 0) {
+            await client.query('ROLLBACK').catch(() => {});
             throw new PermanentJobError(`Execution ${executionId} not found`, 'EXECUTION_NOT_FOUND');
           }
           existingExecution = execRes.rows[0];
@@ -541,7 +573,9 @@ export function createTrustedWorkerHandlers({
               };
             }
           }
+          await client.query('COMMIT');
         } catch (dbErr) {
+          await client.query('ROLLBACK').catch(() => {});
           if (dbErr instanceof PermanentJobError) throw dbErr;
           throw Object.assign(new Error(`Failed to lookup workflow resume data in PostgreSQL: ${dbErr.message}`), {
             code: 'WORKFLOW_RESUME_LOOKUP_FAILED'
@@ -621,6 +655,7 @@ export function createTrustedWorkerHandlers({
       if (pool) {
         const client = await pool.connect();
         try {
+          await client.query('BEGIN');
           await client.query(
             "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)",
             [tenantId, locationId || tenantId]
@@ -650,7 +685,9 @@ export function createTrustedWorkerHandlers({
               step.error || null, step.startedAt, step.finishedAt
             ]);
           }
+          await client.query('COMMIT');
         } catch (pgErr) {
+          await client.query('ROLLBACK').catch(() => {});
           throw Object.assign(new Error(`Failed to persist workflow resume steps in PostgreSQL: ${pgErr.message}`), {
             code: 'WORKFLOW_RESUME_PERSIST_FAILED'
           });
@@ -751,7 +788,18 @@ export function createTrustedWorkerHandlers({
       if (pool && !isDryRun && providerResult && payload.executionId) {
         const rcClient = await pool.connect();
         try {
-          await rcClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, payload.locationId || tenantId]);
+          await rcClient.query('BEGIN');
+          let targetLocationId = payload.locationId;
+          if (!targetLocationId) {
+            const execLookup = await rcClient.query(
+              'SELECT location_id FROM workflow_executions WHERE agency_id = $1 AND id = $2',
+              [tenantId, payload.executionId]
+            );
+            if (execLookup.rows.length > 0) {
+              targetLocationId = execLookup.rows[0].location_id;
+            }
+          }
+          await rcClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, targetLocationId || tenantId]);
           await rcClient.query(`
             INSERT INTO workflow_action_receipts (
               id, agency_id, location_id, execution_id, node_id, action_hash,
@@ -759,11 +807,13 @@ export function createTrustedWorkerHandlers({
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'succeeded', $9::jsonb, now(), now())
             ON CONFLICT (agency_id, location_id, action_hash) DO NOTHING
           `, [
-            crypto.randomUUID(), tenantId, payload.locationId || tenantId, payload.executionId || crypto.randomUUID(),
+            crypto.randomUUID(), tenantId, targetLocationId || tenantId, payload.executionId,
             payload.actionId, actionReceipt, providerKey || 'generic',
             providerResult?.providerMessageId || null, JSON.stringify(providerResult || {})
           ]);
+          await rcClient.query('COMMIT');
         } catch (err) {
+          await rcClient.query('ROLLBACK').catch(() => {});
           throw Object.assign(new Error(`Failed to save action receipt in PostgreSQL: ${err.message}`), {
             code: 'ACTION_RECEIPT_PERSIST_FAILED'
           });

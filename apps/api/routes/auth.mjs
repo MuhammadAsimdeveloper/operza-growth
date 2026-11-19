@@ -189,11 +189,11 @@ export async function handleAuthRoutes(req, res, ctx) {
       const authClient = await pgPool.connect();
       try {
         await authClient.query('BEGIN');
+        await authClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.user_id', $2, true)", [agencyId, userId]);
         await authClient.query(
           'INSERT INTO agencies (id, name, slug, status) VALUES ($1, $2, $3, $4) ON CONFLICT (id) DO NOTHING',
           [agencyId, agency.name, agency.slug, 'active']
         );
-        await authClient.query("SELECT set_config('app.agency_id', $1, true)", [agencyId]);
         await authClient.query(
           'INSERT INTO users (id, name, email, password_hash, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO NOTHING',
           [userId, user.name, user.email, user.passwordHash, 'active']
