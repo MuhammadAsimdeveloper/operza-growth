@@ -54,15 +54,15 @@ test('PostgreSQL Safety Guard: rejects non-test and production database URLs', (
   assert.equal(assertSafeTestDatabaseUrl('postgresql://postgres:postgres@localhost:5432/test_db'), true);
 });
 
-test('Migrations Inventory: all 23 migrations exist in sequential order', async () => {
+test('Migrations Inventory: all 24 migrations exist in sequential order', async () => {
   const files = (await readdir(migrationsDir))
     .filter(f => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
     .sort();
 
-  assert.equal(files.length >= 23, true, `Expected at least 23 migrations, found ${files.length}`);
+  assert.equal(files.length >= 24, true, `Expected at least 24 migrations, found ${files.length}`);
   
-  // Verify sequential numbering 001 through 023
-  for (let i = 1; i <= 23; i++) {
+  // Verify sequential numbering 001 through 024
+  for (let i = 1; i <= 24; i++) {
     const prefix = String(i).padStart(3, '0');
     const matched = files.find(f => f.startsWith(`${prefix}_`));
     assert.ok(matched, `Missing migration with prefix ${prefix}_`);

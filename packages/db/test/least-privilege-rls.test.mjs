@@ -65,13 +65,13 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
     }
   });
 
-  // 2. Apply all migrations sequentially (001 through 023)
-  await t.test('2. Execute full migration suite (001 through 023)', async () => {
+  // 2. Apply all migrations sequentially (001 through 024)
+  await t.test('2. Execute full migration suite (001 through 024)', async () => {
     const files = (await readdir(migrationsDir))
       .filter(f => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
       .sort();
 
-    assert.ok(files.length >= 23, `Expected at least 23 migrations, found ${files.length}`);
+    assert.ok(files.length >= 24, `Expected at least 24 migrations, found ${files.length}`);
 
     await superuserPool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz DEFAULT now());');
 
@@ -90,13 +90,6 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
         client.release();
       }
     }
-
-    // Grant default privileges on all created tables & sequences to operza_app and operza_worker
-    await superuserPool.query(`
-      GRANT USAGE ON SCHEMA public TO operza_app, operza_worker;
-      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO operza_app;
-      GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO operza_app;
-    `);
   });
 
   // 3. Verify FORCE ROW LEVEL SECURITY on all critical tenant tables
@@ -355,6 +348,34 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
     }
   });
 
+  await t.test('9b. operza_worker: Fails closed on location-scoped tables when location context is missing', async () => {
+    const client = await workerPool.connect();
+    try {
+      await client.query('BEGIN');
+      // Set only agency_id, omitting location_id
+      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', '', true)", [tenantA]);
+      const crmRecords = await client.query('SELECT * FROM location_records');
+      assert.equal(crmRecords.rows.length, 0, 'location_records must return 0 rows without location context');
+      const opps = await client.query('SELECT * FROM opportunities');
+      assert.equal(opps.rows.length, 0, 'opportunities must return 0 rows without location context');
+      const appts = await client.query('SELECT * FROM appointments');
+      assert.equal(appts.rows.length, 0, 'appointments must return 0 rows without location context');
+      const execs = await client.query('SELECT * FROM workflow_executions');
+      assert.equal(execs.rows.length, 0, 'workflow_executions must return 0 rows without location context');
+      const steps = await client.query('SELECT * FROM workflow_execution_steps');
+      assert.equal(steps.rows.length, 0, 'workflow_execution_steps must return 0 rows without location context');
+      const approvals = await client.query('SELECT * FROM workflow_approvals');
+      assert.equal(approvals.rows.length, 0, 'workflow_approvals must return 0 rows without location context');
+      const receipts = await client.query('SELECT * FROM workflow_action_receipts');
+      assert.equal(receipts.rows.length, 0, 'workflow_action_receipts must return 0 rows without location context');
+      const consents = await client.query('SELECT * FROM communication_consents');
+      assert.equal(consents.rows.length, 0, 'communication_consents must return 0 rows without location context');
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
+  });
+
   await t.test('10. operza_worker: Strict tenant isolation during job execution', async () => {
     // Seed workflow definitions and executions for Tenant A and Tenant B
     const flowIdA = randomUUID();
@@ -420,6 +441,49 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
         'Worker cannot insert executions for another tenant'
       );
 
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
+  });
+
+  await t.test('10b. operza_worker: Strict cross-location isolation within the same agency', async () => {
+    // Seed location_records for Location A1 and Location A2 in Tenant A
+    const recIdA1 = randomUUID();
+    const recIdA2 = randomUUID();
+    await superuserPool.query(`
+      INSERT INTO location_records (id, agency_id, location_id, collection, body)
+      VALUES ($1, $2, $3, 'contacts', '{"name":"A1"}'::jsonb),
+             ($4, $2, $5, 'contacts', '{"name":"A2"}'::jsonb)
+    `, [recIdA1, tenantA, locationA1, recIdA2, locationA2]);
+
+    const client = await workerPool.connect();
+    try {
+      await client.query('BEGIN');
+      // Worker operates strictly within Location A1
+      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
+
+      // Can see Location A1 record
+      const rowsA1 = await client.query('SELECT * FROM location_records WHERE id = $1', [recIdA1]);
+      assert.equal(rowsA1.rows.length, 1);
+
+      // Cannot see Location A2 record
+      const rowsA2 = await client.query('SELECT * FROM location_records WHERE id = $1', [recIdA2]);
+      assert.equal(rowsA2.rows.length, 0, 'Worker must not see other location records in same agency');
+
+      // Cannot update Location A2 record
+      const upd = await client.query("UPDATE location_records SET body = '{\"name\":\"hacked\"}'::jsonb WHERE id = $1", [recIdA2]);
+      assert.equal(upd.rowCount, 0, 'Worker must not update other location records');
+
+      // Cannot insert record for Location A2
+      await assert.rejects(
+        () => client.query(`
+          INSERT INTO location_records (id, agency_id, location_id, collection, body)
+          VALUES ($1, $2, $3, 'contacts', '{"name":"invalid"}'::jsonb)
+        `, [randomUUID(), tenantA, locationA2]),
+        /violates row-level security policy/i,
+        'Worker cannot insert records for other locations'
+      );
       await client.query('ROLLBACK');
     } finally {
       client.release();
@@ -498,5 +562,44 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
 
     const checkActiveExec = await superuserPool.query('SELECT status FROM workflow_executions WHERE id = $1', [activeExecId]);
     assert.equal(checkActiveExec.rows[0].status, 'waiting_approval', 'Non-expired execution must remain waiting_approval');
+  });
+
+  await t.test('12. Function Execution Privileges (PUBLIC revoked, least-privilege enforced)', async () => {
+    // PUBLIC pseudo-role must NOT have execute on any security definer functions
+    const publicChecks = await superuserPool.query(`
+      SELECT
+        has_function_privilege('public', 'resolve_auth_session(text)', 'execute') AS resolve_auth,
+        has_function_privilege('public', 'lookup_user_for_auth(text)', 'execute') AS lookup_user,
+        has_function_privilege('public', 'lookup_public_calendar(text)', 'execute') AS lookup_cal,
+        has_function_privilege('public', 'expire_pending_workflow_approvals()', 'execute') AS expire_appr
+    `);
+    assert.equal(publicChecks.rows[0].resolve_auth, false, 'PUBLIC must not execute resolve_auth_session');
+    assert.equal(publicChecks.rows[0].lookup_user, false, 'PUBLIC must not execute lookup_user_for_auth');
+    assert.equal(publicChecks.rows[0].lookup_cal, false, 'PUBLIC must not execute lookup_public_calendar');
+    assert.equal(publicChecks.rows[0].expire_appr, false, 'PUBLIC must not execute expire_pending_workflow_approvals');
+
+    // operza_worker must NOT have execute on auth functions
+    const workerChecks = await superuserPool.query(`
+      SELECT
+        has_function_privilege('operza_worker', 'lookup_user_for_auth(text)', 'execute') AS lookup_user,
+        has_function_privilege('operza_worker', 'resolve_auth_session(text)', 'execute') AS resolve_auth,
+        has_function_privilege('operza_worker', 'expire_pending_workflow_approvals()', 'execute') AS expire_appr
+    `);
+    assert.equal(workerChecks.rows[0].lookup_user, false, 'operza_worker must not execute lookup_user_for_auth');
+    assert.equal(workerChecks.rows[0].resolve_auth, false, 'operza_worker must not execute resolve_auth_session');
+    assert.equal(workerChecks.rows[0].expire_appr, true, 'operza_worker must execute expire_pending_workflow_approvals');
+
+    // operza_app must have execute on all helper functions
+    const appChecks = await superuserPool.query(`
+      SELECT
+        has_function_privilege('operza_app', 'resolve_auth_session(text)', 'execute') AS resolve_auth,
+        has_function_privilege('operza_app', 'lookup_user_for_auth(text)', 'execute') AS lookup_user,
+        has_function_privilege('operza_app', 'lookup_public_calendar(text)', 'execute') AS lookup_cal,
+        has_function_privilege('operza_app', 'expire_pending_workflow_approvals()', 'execute') AS expire_appr
+    `);
+    assert.equal(appChecks.rows[0].resolve_auth, true, 'operza_app must execute resolve_auth_session');
+    assert.equal(appChecks.rows[0].lookup_user, true, 'operza_app must execute lookup_user_for_auth');
+    assert.equal(appChecks.rows[0].lookup_cal, true, 'operza_app must execute lookup_public_calendar');
+    assert.equal(appChecks.rows[0].expire_appr, true, 'operza_app must execute expire_pending_workflow_approvals');
   });
 });

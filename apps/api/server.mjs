@@ -1265,26 +1265,12 @@ async function getActor(req) {
   // If session is not in local memory, check authoritative PostgreSQL auth_sessions table
   if (!session && pgPool) {
     try {
-      let sessRes;
-      try {
-        sessRes = await pgPool.query(`
-          SELECT id, token_hash, csrf_hash, user_id, agency_id,
-                 expires_at_ms, user_name, user_email, user_status,
-                 agency_name, agency_slug, agency_status
-          FROM resolve_auth_session($1)
-        `, [tokenHash]);
-      } catch {
-        sessRes = await pgPool.query(`
-          SELECT s.id, s.token_hash, s.csrf_hash, s.user_id, s.agency_id,
-                 extract(epoch from s.expires_at) * 1000 AS expires_at_ms,
-                 u.name as user_name, u.email as user_email, u.status as user_status,
-                 a.name as agency_name, a.slug as agency_slug, a.status as agency_status
-          FROM auth_sessions s
-          JOIN users u ON u.id = s.user_id
-          JOIN agencies a ON a.id = s.agency_id
-          WHERE s.token_hash = $1 AND s.expires_at > now()
-        `, [tokenHash]);
-      }
+      const sessRes = await pgPool.query(`
+        SELECT id, token_hash, csrf_hash, user_id, agency_id,
+               expires_at_ms, user_name, user_email, user_status,
+               agency_name, agency_slug, agency_status
+        FROM resolve_auth_session($1)
+      `, [tokenHash]);
 
       if (sessRes.rows.length > 0) {
         const row = sessRes.rows[0];
@@ -1310,26 +1296,47 @@ async function getActor(req) {
         }
 
         let locations = state.locations.filter(l => l.agencyId === row.agency_id && l.status === 'active');
-        if (locations.length === 0) {
+        let membership = state.memberships.find(m => m.agencyId === row.agency_id && m.userId === row.user_id && m.status === 'active');
+
+        if (locations.length === 0 || !membership) {
           const locClient = await pgPool.connect();
           try {
-            await locClient.query("SELECT set_config('app.agency_id', $1, true)", [row.agency_id]);
-            const locRes = await locClient.query('SELECT id, agency_id, name FROM locations WHERE agency_id = $1', [row.agency_id]);
-            locations = locRes.rows.map(l => ({ id: l.id, agencyId: l.agency_id, name: l.name, status: 'active' }));
-            state.locations.push(...locations);
+            await locClient.query('BEGIN');
+            await locClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.user_id', $2, true)", [row.agency_id, row.user_id]);
+
+            if (locations.length === 0) {
+              const locRes = await locClient.query('SELECT id, agency_id, name FROM locations WHERE agency_id = $1 AND status = \'active\'', [row.agency_id]);
+              locations = locRes.rows.map(l => ({ id: l.id, agencyId: l.agency_id, name: l.name, status: 'active' }));
+              state.locations.push(...locations);
+            }
+
+            if (!membership) {
+              const memRes = await locClient.query(
+                'SELECT id, agency_id, user_id, role, status FROM agency_memberships WHERE agency_id = $1 AND user_id = $2 AND status = \'active\' LIMIT 1',
+                [row.agency_id, row.user_id]
+              );
+              if (memRes.rows.length > 0) {
+                const mRow = memRes.rows[0];
+                membership = { id: mRow.id, agencyId: mRow.agency_id, userId: mRow.user_id, role: mRow.role, status: mRow.status };
+                state.memberships.push(membership);
+              }
+            }
+            await locClient.query('COMMIT');
+          } catch (dbErr) {
+            await locClient.query('ROLLBACK').catch(() => {});
+            console.warn('[AUTH-ACTOR-PG] Failed to load actor context:', dbErr.message);
           } finally {
             locClient.release();
           }
         }
 
-        let membership = state.memberships.find(m => m.agencyId === row.agency_id && m.userId === row.user_id);
-        if (!membership) {
-          membership = { id: randomUUID(), agencyId: row.agency_id, userId: row.user_id, role: 'owner', status: 'active' };
-          state.memberships.push(membership);
+        // Strict: user must have an active membership and at least one active location
+        if (!membership || locations.length === 0) {
+          return null;
         }
 
         const requestedLoc = req.headers['x-operza-location'];
-        const activeLocation = locations.find(l => l.id === requestedLoc) || locations[0] || { id: 'default', agencyId: row.agency_id, name: 'Main Location' };
+        const activeLocation = locations.find(l => l.id === requestedLoc) || locations[0];
 
         return { user, agency, membership, locations, activeLocation, csrfHash: session.csrfHash, isBearer };
       }
@@ -2129,7 +2136,13 @@ async function expirePendingWorkflowApprovals() {
         }, { approvalId: row.expired_approval_id, executionId: row.execution_id, nodeId: row.node_id });
       }
     } catch (pgErr) {
-      console.warn('[WORKFLOW-APPROVALS-EXPIRE] PostgreSQL expiration warning:', pgErr.message);
+      console.error('[WORKFLOW-APPROVALS-EXPIRE] PostgreSQL expiration failed:', pgErr.message);
+      if (isStagingOrProd || platformDbEnabled) {
+        throw new Error('Database approval expiration failed: ' + pgErr.message);
+      }
+    }
+    if (isStagingOrProd || platformDbEnabled) {
+      return;
     }
   }
 

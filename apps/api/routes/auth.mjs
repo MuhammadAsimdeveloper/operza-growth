@@ -600,8 +600,29 @@ export async function handleAuthRoutes(req, res, ctx) {
   if (method === 'POST' && pathname === '/api/auth/login') {
     const body = await readBody(req);
     const { email, password } = body;
-    const user = state.users.find(u => u.email === String(email).toLowerCase().trim() && u.status === 'active');
-    if (!user) {
+    const emailKey = String(email || '').toLowerCase().trim();
+
+    let user = state.users.find(u => u.email === emailKey && u.status === 'active');
+
+    // Authoritative user credential lookup via security-definer function in PostgreSQL
+    if (pgPool) {
+      try {
+        const uRes = await pgPool.query('SELECT id, name, email, password_hash, status FROM lookup_user_for_auth($1)', [emailKey]);
+        if (uRes.rows.length > 0) {
+          const dbUser = uRes.rows[0];
+          if (!user) {
+            user = { id: dbUser.id, name: dbUser.name, email: dbUser.email, passwordHash: dbUser.password_hash, status: dbUser.status };
+            state.users.push(user);
+          } else {
+            user.passwordHash = dbUser.password_hash;
+          }
+        }
+      } catch (err) {
+        console.warn('[AUTH-LOGIN-PG] lookup_user_for_auth failed:', err.message);
+      }
+    }
+
+    if (!user || !user.passwordHash) {
       sendJson(res, 401, { error: 'Invalid email or password' });
       return true;
     }
@@ -613,14 +634,50 @@ export async function handleAuthRoutes(req, res, ctx) {
       return true;
     }
 
-    const membership = state.memberships.find(m => m.userId === user.id && m.status === 'active');
-    if (!membership) {
+    let membership = state.memberships.find(m => m.userId === user.id && m.status === 'active');
+    let agency = membership ? state.agencies.find(a => a.id === membership.agencyId && a.status === 'active') : null;
+    let locations = agency ? state.locations.filter(l => l.agencyId === agency.id && l.status === 'active') : [];
+
+    // If membership, agency, or locations are not cached in local memory, resolve authoritatively from PostgreSQL
+    if ((!membership || !agency || locations.length === 0) && pgPool) {
+      const client = await pgPool.connect();
+      try {
+        await client.query('BEGIN');
+        const memRes = await client.query(
+          'SELECT id, agency_id, user_id, role, status FROM agency_memberships WHERE user_id = $1 AND status = \'active\' LIMIT 1',
+          [user.id]
+        );
+        if (memRes.rows.length > 0) {
+          const mRow = memRes.rows[0];
+          membership = { id: mRow.id, agencyId: mRow.agency_id, userId: mRow.user_id, role: mRow.role, status: mRow.status };
+          state.memberships.push(membership);
+
+          await client.query("SELECT set_config('app.agency_id', $1, true)", [mRow.agency_id]);
+
+          const agRes = await client.query('SELECT id, name, slug, status FROM agencies WHERE id = $1', [mRow.agency_id]);
+          if (agRes.rows.length > 0) {
+            const aRow = agRes.rows[0];
+            agency = { id: aRow.id, name: aRow.name, slug: aRow.slug, status: aRow.status };
+            state.agencies.push(agency);
+          }
+
+          const locRes = await client.query('SELECT id, agency_id, name, status FROM locations WHERE agency_id = $1 AND status = \'active\'', [mRow.agency_id]);
+          locations = locRes.rows.map(l => ({ id: l.id, agencyId: l.agency_id, name: l.name, status: l.status }));
+          state.locations.push(...locations);
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.warn('[AUTH-LOGIN-PG] Membership resolution failed:', err.message);
+      } finally {
+        client.release();
+      }
+    }
+
+    if (!membership || !agency || locations.length === 0) {
       sendJson(res, 403, { error: 'No active agency found for user' });
       return true;
     }
-
-    const agency = state.agencies.find(a => a.id === membership.agencyId && a.status === 'active');
-    const locations = state.locations.filter(l => l.agencyId === agency.id && l.status === 'active');
 
     const token = randomBytes(32).toString('hex');
     const csrf = randomBytes(24).toString('hex');
@@ -638,17 +695,24 @@ export async function handleAuthRoutes(req, res, ctx) {
     });
 
     if (pgPool) {
+      const sessClient = await pgPool.connect();
       try {
-        await pgPool.query(
+        await sessClient.query('BEGIN');
+        await sessClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.user_id', $2, true)", [agency.id, user.id]);
+        await sessClient.query(
           'INSERT INTO auth_sessions (id, token_hash, csrf_hash, user_id, agency_id, expires_at) VALUES ($1, $2, $3, $4, $5, to_timestamp($6 / 1000.0)) ON CONFLICT (token_hash) DO NOTHING',
           [sessionId, tokenHash, csrfHash, user.id, agency.id, expiresAtMs]
         );
+        await sessClient.query('COMMIT');
       } catch (dbErr) {
+        await sessClient.query('ROLLBACK').catch(() => {});
         if (isStagingOrProd || platformDbEnabled) {
           sendJson(res, 500, { error: 'Failed to persist session to database: ' + dbErr.message, code: 'DATABASE_SESSION_WRITE_FAILED' });
           return true;
         }
         console.warn('[AUTH-LOGIN-PG] Failed to write session to PostgreSQL:', dbErr.message);
+      } finally {
+        sessClient.release();
       }
     }
 

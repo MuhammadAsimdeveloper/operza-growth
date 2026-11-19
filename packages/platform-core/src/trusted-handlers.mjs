@@ -10,20 +10,11 @@ function sha256(data) {
 
 /**
  * Authoritatively verifies consent records from PostgreSQL communication_consents table.
- * Never fabricates consent evidence from a Boolean flag.
+ * Strictly fails closed: never fabricates consent evidence from a Boolean flag
+ * or accepts caller-supplied unpersisted objects without database verification.
  */
-async function verifyAuthoritativeConsent({ pool, tenantId, locationId, contactId, channel, purpose = 'transactional', suppliedConsent = null }) {
-  if (!pool) {
-    if (typeof suppliedConsent === 'object' && suppliedConsent !== null && suppliedConsent.status === 'granted') {
-      if (suppliedConsent.channel === channel && (!contactId || suppliedConsent.contactId === contactId)) {
-        return suppliedConsent;
-      }
-    }
-    // Boolean consent must never become authoritative evidence
-    return null;
-  }
-
-  if (!contactId || !channel) {
+export async function verifyAuthoritativeConsent({ pool, tenantId, locationId, contactId, channel, purpose = 'transactional', suppliedConsent = null }) {
+  if (!pool || !tenantId || !locationId || !contactId || !channel) {
     return null;
   }
 
@@ -31,7 +22,7 @@ async function verifyAuthoritativeConsent({ pool, tenantId, locationId, contactI
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
+    await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
 
     let targetContactId = contactId;
     if (!UUID_REGEX.test(contactId)) {
@@ -41,7 +32,7 @@ async function verifyAuthoritativeConsent({ pool, tenantId, locationId, contactI
         WHERE agency_id = $1 AND location_id = $2 AND collection = 'contacts'
           AND (body->>'email' = $3 OR body->>'phone' = $3 OR id::text = $3)
         LIMIT 1
-      `, [tenantId, locationId || tenantId, contactId]);
+      `, [tenantId, locationId, contactId]);
       if (contactLookup.rows.length > 0) {
         targetContactId = contactLookup.rows[0].id;
       } else {
@@ -53,10 +44,10 @@ async function verifyAuthoritativeConsent({ pool, tenantId, locationId, contactI
     const res = await client.query(`
       SELECT id, agency_id, location_id, contact_id, channel, purpose, status, source, expires_at, captured_at
       FROM communication_consents
-      WHERE agency_id = $1 AND ($2::uuid IS NULL OR location_id = $2) AND contact_id = $3::uuid AND channel = $4 AND purpose = $5
+      WHERE agency_id = $1 AND location_id = $2 AND contact_id = $3::uuid AND channel = $4 AND purpose = $5
       ORDER BY captured_at DESC
       LIMIT 1
-    `, [tenantId, locationId || null, targetContactId, channel, purpose]);
+    `, [tenantId, locationId, targetContactId, channel, purpose]);
 
     await client.query('COMMIT');
 

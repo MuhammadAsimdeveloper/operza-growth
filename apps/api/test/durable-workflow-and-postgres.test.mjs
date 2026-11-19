@@ -162,6 +162,23 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
   });
 
   await t.test('5. Approved and consented external action executes successfully with receipt', async () => {
+    const contactId = randomUUID();
+    // Seed contact in location_records and authoritative consent in communication_consents
+    const seedClient = await pool.connect();
+    try {
+      await seedClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await seedClient.query(`
+        INSERT INTO location_records (id, agency_id, location_id, collection, body)
+        VALUES ($1, $2, $3, 'contacts', $4::jsonb)
+      `, [contactId, tenantId, locationId, JSON.stringify({ email: 'client@example.com', name: 'Client' })]);
+      await seedClient.query(`
+        INSERT INTO communication_consents (id, agency_id, location_id, contact_id, channel, purpose, status, source)
+        VALUES ($1, $2, $3, $4, 'email', 'transactional', 'granted', 'web_form')
+      `, [randomUUID(), tenantId, locationId, contactId]);
+    } finally {
+      seedClient.release();
+    }
+
     const actionId = `act_${randomUUID().slice(0, 8)}`;
     const approvedAction = await outboxRepo.enqueue({
       tenantId,
@@ -179,12 +196,12 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
         consent: {
           status: 'granted',
           channel: 'email',
-          contactId: 'client@example.com',
+          contactId,
           purpose: 'transactional',
           source: 'web_form'
         },
         dryRun: false,
-        input: { to: 'client@example.com', subject: 'Approved Message' }
+        input: { to: 'client@example.com', subject: 'Approved Message', contactId }
       }
     });
 
@@ -196,6 +213,7 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
       }
     };
     const testHandlers = createTrustedWorkerHandlers({
+      pool,
       providerRegistry: createProviderAdapterRegistry([testEmailAdapter])
     });
 
