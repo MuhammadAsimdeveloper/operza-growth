@@ -1260,10 +1260,9 @@ async function getActor(req) {
   if (!token) return null;
 
   const tokenHash = hash(token);
-  let session = state.sessions.find(s => s.tokenHash === tokenHash && s.expiresAt > Date.now());
 
-  // If session is not in local memory, check authoritative PostgreSQL auth_sessions table
-  if (!session && pgPool) {
+  // If pgPool is configured, resolve session authorization directly from PostgreSQL
+  if (pgPool) {
     try {
       const sessRes = await pgPool.query(`
         SELECT id, token_hash, csrf_hash, user_id, agency_id,
@@ -1274,60 +1273,43 @@ async function getActor(req) {
 
       if (sessRes.rows.length > 0) {
         const row = sessRes.rows[0];
-        session = {
-          id: row.id,
-          tokenHash: row.token_hash,
-          csrfHash: row.csrf_hash,
-          userId: row.user_id,
-          agencyId: row.agency_id,
-          expiresAt: Number(row.expires_at_ms)
-        };
-        state.sessions.push(session);
 
-        let user = state.users.find(u => u.id === row.user_id);
-        if (!user) {
-          user = { id: row.user_id, name: row.user_name, email: row.user_email, status: row.user_status || 'active' };
-          state.users.push(user);
-        }
-        let agency = state.agencies.find(a => a.id === row.agency_id);
-        if (!agency) {
-          agency = { id: row.agency_id, name: row.agency_name, slug: row.agency_slug, status: row.agency_status || 'active' };
-          state.agencies.push(agency);
+        // Validate user and agency are both active
+        if (row.user_status !== 'active' || row.agency_status !== 'active') {
+          return null;
         }
 
-        let locations = state.locations.filter(l => l.agencyId === row.agency_id && l.status === 'active');
-        let membership = state.memberships.find(m => m.agencyId === row.agency_id && m.userId === row.user_id && m.status === 'active');
+        const locClient = await pgPool.connect();
+        let membership = null;
+        let locations = [];
+        try {
+          await locClient.query('BEGIN');
+          await locClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.user_id', $2, true)", [row.agency_id, row.user_id]);
 
-        if (locations.length === 0 || !membership) {
-          const locClient = await pgPool.connect();
-          try {
-            await locClient.query('BEGIN');
-            await locClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.user_id', $2, true)", [row.agency_id, row.user_id]);
-
-            if (locations.length === 0) {
-              const locRes = await locClient.query('SELECT id, agency_id, name FROM locations WHERE agency_id = $1 AND status = \'active\'', [row.agency_id]);
-              locations = locRes.rows.map(l => ({ id: l.id, agencyId: l.agency_id, name: l.name, status: 'active' }));
-              state.locations.push(...locations);
-            }
-
-            if (!membership) {
-              const memRes = await locClient.query(
-                'SELECT id, agency_id, user_id, role, status FROM agency_memberships WHERE agency_id = $1 AND user_id = $2 AND status = \'active\' LIMIT 1',
-                [row.agency_id, row.user_id]
-              );
-              if (memRes.rows.length > 0) {
-                const mRow = memRes.rows[0];
-                membership = { id: mRow.id, agencyId: mRow.agency_id, userId: mRow.user_id, role: mRow.role, status: mRow.status };
-                state.memberships.push(membership);
-              }
-            }
-            await locClient.query('COMMIT');
-          } catch (dbErr) {
-            await locClient.query('ROLLBACK').catch(() => {});
-            console.warn('[AUTH-ACTOR-PG] Failed to load actor context:', dbErr.message);
-          } finally {
-            locClient.release();
+          const memRes = await locClient.query(
+            "SELECT id, agency_id, user_id, role, status FROM agency_memberships WHERE agency_id = $1 AND user_id = $2 AND status = 'active' LIMIT 1",
+            [row.agency_id, row.user_id]
+          );
+          if (memRes.rows.length > 0) {
+            const mRow = memRes.rows[0];
+            membership = { id: mRow.id, agencyId: mRow.agency_id, userId: mRow.user_id, role: mRow.role, status: mRow.status };
           }
+
+          const locRes = await locClient.query(
+            "SELECT id, agency_id, name, status FROM locations WHERE agency_id = $1 AND status = 'active'",
+            [row.agency_id]
+          );
+          locations = locRes.rows.map(l => ({ id: l.id, agencyId: l.agency_id, name: l.name, status: l.status }));
+
+          await locClient.query('COMMIT');
+        } catch (dbErr) {
+          await locClient.query('ROLLBACK').catch(() => {});
+          console.warn('[AUTH-ACTOR-PG] Failed to load actor context:', dbErr.message);
+          if (isStagingOrProd || platformDbEnabled) {
+            return null;
+          }
+        } finally {
+          locClient.release();
         }
 
         // Strict: user must have an active membership and at least one active location
@@ -1336,25 +1318,81 @@ async function getActor(req) {
         }
 
         const requestedLoc = req.headers['x-operza-location'];
-        const activeLocation = locations.find(l => l.id === requestedLoc) || locations[0];
+        let activeLocation = null;
+        if (requestedLoc) {
+          activeLocation = locations.find(l => l.id === requestedLoc && l.status === 'active');
+          if (!activeLocation) {
+            // Reject unauthorized location
+            return null;
+          }
+        } else {
+          activeLocation = locations[0];
+        }
 
-        return { user, agency, membership, locations, activeLocation, csrfHash: session.csrfHash, isBearer };
+        const user = { id: row.user_id, name: row.user_name, email: row.user_email, status: row.user_status };
+        const agency = { id: row.agency_id, name: row.agency_name, slug: row.agency_slug, status: row.agency_status };
+
+        // Keep state caches synchronized
+        const sIdx = state.sessions.findIndex(s => s.tokenHash === tokenHash);
+        const sessionObj = {
+          id: row.id,
+          tokenHash: row.token_hash,
+          csrfHash: row.csrf_hash,
+          userId: row.user_id,
+          agencyId: row.agency_id,
+          expiresAt: Number(row.expires_at_ms)
+        };
+        if (sIdx !== -1) state.sessions[sIdx] = sessionObj; else state.sessions.push(sessionObj);
+
+        let uIdx = state.users.findIndex(u => u.id === user.id);
+        if (uIdx !== -1) state.users[uIdx] = user; else state.users.push(user);
+        let aIdx = state.agencies.findIndex(a => a.id === agency.id);
+        if (aIdx !== -1) state.agencies[aIdx] = agency; else state.agencies.push(agency);
+        let mIdx = state.memberships.findIndex(m => m.id === membership.id);
+        if (mIdx !== -1) state.memberships[mIdx] = membership; else state.memberships.push(membership);
+        for (const loc of locations) {
+          let lIdx = state.locations.findIndex(l => l.id === loc.id);
+          if (lIdx !== -1) state.locations[lIdx] = loc; else state.locations.push(loc);
+        }
+
+        return { user, agency, membership, locations, activeLocation, csrfHash: row.csrf_hash, isBearer };
+      } else {
+        // PostgreSQL returned 0 rows: session is invalid, expired, or revoked in DB.
+        // Evict any stale cached session from state.sessions
+        const staleIdx = state.sessions.findIndex(s => s.tokenHash === tokenHash);
+        if (staleIdx !== -1) {
+          state.sessions.splice(staleIdx, 1);
+        }
       }
     } catch (pgErr) {
       console.warn('[AUTH-ACTOR-PG] Failed to load session from PostgreSQL:', pgErr.message);
+      if (isStagingOrProd || platformDbEnabled) {
+        return null;
+      }
     }
   }
-  if (session) {
-    const user = state.users.find(u => u.id === session.userId && u.status === 'active');
-    const agency = state.agencies.find(a => a.id === session.agencyId && a.status === 'active');
-    const membership = state.memberships.find(m => m.agencyId === session.agencyId && m.userId === session.userId && m.status === 'active');
-    const locations = state.locations.filter(l => l.agencyId === session.agencyId && l.status === 'active');
-    if (!user || !agency || !membership || locations.length === 0) return null;
 
-    const requestedLoc = req.headers['x-operza-location'];
-    const activeLocation = locations.find(l => l.id === requestedLoc) || locations[0];
+  // Memory fallback only when PostgreSQL is not configured
+  if (!pgPool) {
+    let session = state.sessions.find(s => s.tokenHash === tokenHash && s.expiresAt > Date.now());
+    if (session) {
+      const user = state.users.find(u => u.id === session.userId && u.status === 'active');
+      const agency = state.agencies.find(a => a.id === session.agencyId && a.status === 'active');
+      const membership = state.memberships.find(m => m.agencyId === session.agencyId && m.userId === session.userId && m.status === 'active');
+      const locations = state.locations.filter(l => l.agencyId === session.agencyId && l.status === 'active');
+      if (!user || !agency || !membership || locations.length === 0) return null;
 
-    return { user, agency, membership, locations, activeLocation, csrfHash: session.csrfHash, isBearer };
+      const requestedLoc = req.headers['x-operza-location'];
+      let activeLocation = null;
+      if (requestedLoc) {
+        activeLocation = locations.find(l => l.id === requestedLoc && l.status === 'active');
+        if (!activeLocation) return null;
+      } else {
+        activeLocation = locations[0];
+      }
+
+      return { user, agency, membership, locations, activeLocation, csrfHash: session.csrfHash, isBearer };
+    }
   }
 
   // Developer API Key check
@@ -1375,7 +1413,13 @@ async function getActor(req) {
       status: 'active'
     };
     const requestedLoc = req.headers['x-operza-location'];
-    const activeLocation = locations.find(l => l.id === requestedLoc) || locations[0];
+    let activeLocation = null;
+    if (requestedLoc) {
+      activeLocation = locations.find(l => l.id === requestedLoc && l.status === 'active');
+      if (!activeLocation) return null;
+    } else {
+      activeLocation = locations[0];
+    }
 
     apiKey.lastUsedAt = new Date().toISOString();
 

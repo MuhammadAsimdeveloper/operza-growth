@@ -602,24 +602,46 @@ export async function handleAuthRoutes(req, res, ctx) {
     const { email, password } = body;
     const emailKey = String(email || '').toLowerCase().trim();
 
-    let user = state.users.find(u => u.email === emailKey && u.status === 'active');
+    if (!emailKey || !password) {
+      sendJson(res, 400, { error: 'Email and password required' });
+      return true;
+    }
 
-    // Authoritative user credential lookup via security-definer function in PostgreSQL
+    let user = null;
+
+    // PostgreSQL is the sole authority for user credential lookup when configured
     if (pgPool) {
+      let uRes;
       try {
-        const uRes = await pgPool.query('SELECT id, name, email, password_hash, status FROM lookup_user_for_auth($1)', [emailKey]);
-        if (uRes.rows.length > 0) {
-          const dbUser = uRes.rows[0];
-          if (!user) {
-            user = { id: dbUser.id, name: dbUser.name, email: dbUser.email, passwordHash: dbUser.password_hash, status: dbUser.status };
-            state.users.push(user);
-          } else {
-            user.passwordHash = dbUser.password_hash;
-          }
-        }
+        uRes = await pgPool.query('SELECT id, name, email, password_hash, status FROM lookup_user_for_auth($1)', [emailKey]);
       } catch (err) {
+        if (isStagingOrProd || platformDbEnabled) {
+          sendJson(res, 500, { error: 'Database authentication query failed: ' + err.message, code: 'DATABASE_AUTH_LOOKUP_FAILED' });
+          return true;
+        }
         console.warn('[AUTH-LOGIN-PG] lookup_user_for_auth failed:', err.message);
       }
+
+      if (uRes) {
+        if (uRes.rows.length === 0) {
+          if (isStagingOrProd || platformDbEnabled || pgPool) {
+            sendJson(res, 401, { error: 'Invalid email or password' });
+            return true;
+          }
+        } else {
+          const dbUser = uRes.rows[0];
+          if (dbUser.status !== 'active') {
+            sendJson(res, 401, { error: 'Account is inactive or suspended', code: 'USER_INACTIVE' });
+            return true;
+          }
+          user = { id: dbUser.id, name: dbUser.name, email: dbUser.email, passwordHash: dbUser.password_hash, status: dbUser.status };
+        }
+      }
+    }
+
+    // In-memory user lookup permitted ONLY in local dev mode when database is not configured
+    if (!user && !isStagingOrProd && !platformDbEnabled && !pgPool) {
+      user = state.users.find(u => u.email === emailKey && u.status === 'active');
     }
 
     if (!user || !user.passwordHash) {
@@ -634,86 +656,169 @@ export async function handleAuthRoutes(req, res, ctx) {
       return true;
     }
 
-    let membership = state.memberships.find(m => m.userId === user.id && m.status === 'active');
-    let agency = membership ? state.agencies.find(a => a.id === membership.agencyId && a.status === 'active') : null;
-    let locations = agency ? state.locations.filter(l => l.agencyId === agency.id && l.status === 'active') : [];
+    let membership = null;
+    let agency = null;
+    let locations = [];
 
-    // If membership, agency, or locations are not cached in local memory, resolve authoritatively from PostgreSQL
-    if ((!membership || !agency || locations.length === 0) && pgPool) {
+    if (pgPool) {
       const client = await pgPool.connect();
       try {
         await client.query('BEGIN');
+        // RLS context order: set app.user_id FIRST so membership query passes RLS
+        await client.query("SELECT set_config('app.user_id', $1, true)", [user.id]);
+
         const memRes = await client.query(
-          'SELECT id, agency_id, user_id, role, status FROM agency_memberships WHERE user_id = $1 AND status = \'active\' LIMIT 1',
+          'SELECT id, agency_id, user_id, role, status FROM agency_memberships WHERE user_id = $1 AND status = \'active\'',
           [user.id]
         );
-        if (memRes.rows.length > 0) {
-          const mRow = memRes.rows[0];
-          membership = { id: mRow.id, agencyId: mRow.agency_id, userId: mRow.user_id, role: mRow.role, status: mRow.status };
-          state.memberships.push(membership);
 
-          await client.query("SELECT set_config('app.agency_id', $1, true)", [mRow.agency_id]);
-
-          const agRes = await client.query('SELECT id, name, slug, status FROM agencies WHERE id = $1', [mRow.agency_id]);
-          if (agRes.rows.length > 0) {
-            const aRow = agRes.rows[0];
-            agency = { id: aRow.id, name: aRow.name, slug: aRow.slug, status: aRow.status };
-            state.agencies.push(agency);
-          }
-
-          const locRes = await client.query('SELECT id, agency_id, name, status FROM locations WHERE agency_id = $1 AND status = \'active\'', [mRow.agency_id]);
-          locations = locRes.rows.map(l => ({ id: l.id, agencyId: l.agency_id, name: l.name, status: l.status }));
-          state.locations.push(...locations);
+        if (memRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          sendJson(res, 403, { error: 'No active agency membership found for user', code: 'NO_ACTIVE_MEMBERSHIP' });
+          return true;
         }
+
+        // Agency selection: match requested agency header/body if present, or prefer owner/admin, or first active
+        const requestedAgencyId = req.headers['x-operza-agency'] || body.agencyId;
+        const matchingMembership = requestedAgencyId
+          ? memRes.rows.find(m => m.agency_id === requestedAgencyId)
+          : (memRes.rows.find(m => m.role === 'owner') || memRes.rows.find(m => m.role === 'admin') || memRes.rows[0]);
+
+        if (!matchingMembership) {
+          await client.query('ROLLBACK');
+          sendJson(res, 403, { error: 'Requested agency membership not found or inactive', code: 'MEMBERSHIP_NOT_FOUND' });
+          return true;
+        }
+
+        membership = {
+          id: matchingMembership.id,
+          agencyId: matchingMembership.agency_id,
+          userId: matchingMembership.user_id,
+          role: matchingMembership.role,
+          status: matchingMembership.status
+        };
+
+        // Set app.agency_id now that agency is resolved
+        await client.query("SELECT set_config('app.agency_id', $1, true)", [membership.agencyId]);
+
+        // Query agency and verify active
+        const agRes = await client.query(
+          'SELECT id, name, slug, status FROM agencies WHERE id = $1 AND status = \'active\'',
+          [membership.agencyId]
+        );
+        if (agRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          sendJson(res, 403, { error: 'Agency is suspended or inactive', code: 'AGENCY_INACTIVE' });
+          return true;
+        }
+        const aRow = agRes.rows[0];
+        agency = { id: aRow.id, name: aRow.name, slug: aRow.slug, status: aRow.status };
+
+        // Query active locations
+        const locRes = await client.query(
+          'SELECT id, agency_id, name, status FROM locations WHERE agency_id = $1 AND status = \'active\'',
+          [membership.agencyId]
+        );
+        if (locRes.rows.length === 0) {
+          await client.query('ROLLBACK');
+          sendJson(res, 403, { error: 'No active locations found for agency', code: 'NO_ACTIVE_LOCATIONS' });
+          return true;
+        }
+        locations = locRes.rows.map(l => ({ id: l.id, agencyId: l.agency_id, name: l.name, status: l.status }));
+
+        // Generate and persist session within the same database transaction!
+        const token = randomBytes(32).toString('hex');
+        const csrf = randomBytes(24).toString('hex');
+        const sessionId = randomUUID();
+        const tokenHash = hash(token);
+        const csrfHash = hash(csrf);
+        const expiresAtMs = Date.now() + 12 * 3600 * 1000;
+
+        await client.query(
+          'INSERT INTO auth_sessions (id, token_hash, csrf_hash, user_id, agency_id, expires_at) VALUES ($1, $2, $3, $4, $5, to_timestamp($6 / 1000.0))',
+          [sessionId, tokenHash, csrfHash, user.id, agency.id, expiresAtMs]
+        );
+
         await client.query('COMMIT');
+
+        // Sync local memory state only after transaction commits
+        state.users = (state.users || []).filter(u => u.id !== user.id).concat(user);
+        state.memberships = (state.memberships || []).filter(m => m.id !== membership.id).concat(membership);
+        state.agencies = (state.agencies || []).filter(a => a.id !== agency.id).concat(agency);
+        state.locations = (state.locations || []).filter(l => l.agencyId !== agency.id).concat(locations);
+        state.sessions = state.sessions || [];
+        state.sessions.push({
+          id: sessionId,
+          tokenHash,
+          csrfHash,
+          userId: user.id,
+          agencyId: agency.id,
+          expiresAt: expiresAtMs
+        });
+
+        setSessionCookies(res, token, csrf);
+        await saveState();
+        auditLog('auth.login', { user, agency, membership, locations, activeLocation: locations[0] }, {});
+
+        sendJson(res, 200, {
+          user: { id: user.id, name: user.name, email: user.email },
+          agency: { id: agency.id, name: agency.name },
+          locations,
+          activeLocationId: locations[0]?.id
+        });
+        return true;
       } catch (err) {
         await client.query('ROLLBACK').catch(() => {});
-        console.warn('[AUTH-LOGIN-PG] Membership resolution failed:', err.message);
+        if (isStagingOrProd || platformDbEnabled) {
+          sendJson(res, 500, { error: 'Authentication transaction failed: ' + err.message, code: 'DATABASE_AUTH_TRANSACTION_FAILED' });
+          return true;
+        }
+        console.warn('[AUTH-LOGIN-PG] Transaction failed:', err.message);
       } finally {
         client.release();
       }
     }
 
-    if (!membership || !agency || locations.length === 0) {
-      sendJson(res, 403, { error: 'No active agency found for user' });
-      return true;
-    }
-
-    const token = randomBytes(32).toString('hex');
-    const csrf = randomBytes(24).toString('hex');
-    const sessionId = randomUUID();
-    const tokenHash = hash(token);
-    const csrfHash = hash(csrf);
-    const expiresAtMs = Date.now() + 12 * 3600 * 1000;
-    state.sessions.push({
-      id: sessionId,
-      tokenHash,
-      csrfHash,
-      userId: user.id,
-      agencyId: agency.id,
-      expiresAt: expiresAtMs
-    });
-
-    if (pgPool) {
-      const sessClient = await pgPool.connect();
-      try {
-        await sessClient.query('BEGIN');
-        await sessClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.user_id', $2, true)", [agency.id, user.id]);
-        await sessClient.query(
-          'INSERT INTO auth_sessions (id, token_hash, csrf_hash, user_id, agency_id, expires_at) VALUES ($1, $2, $3, $4, $5, to_timestamp($6 / 1000.0)) ON CONFLICT (token_hash) DO NOTHING',
-          [sessionId, tokenHash, csrfHash, user.id, agency.id, expiresAtMs]
-        );
-        await sessClient.query('COMMIT');
-      } catch (dbErr) {
-        await sessClient.query('ROLLBACK').catch(() => {});
-        if (isStagingOrProd || platformDbEnabled) {
-          sendJson(res, 500, { error: 'Failed to persist session to database: ' + dbErr.message, code: 'DATABASE_SESSION_WRITE_FAILED' });
-          return true;
-        }
-        console.warn('[AUTH-LOGIN-PG] Failed to write session to PostgreSQL:', dbErr.message);
-      } finally {
-        sessClient.release();
+    // In-memory dev-only path:
+    if (!isStagingOrProd && !platformDbEnabled) {
+      membership = state.memberships.find(m => m.userId === user.id && m.status === 'active');
+      if (!membership) {
+        sendJson(res, 403, { error: 'No active agency found for user' });
+        return true;
       }
+      agency = state.agencies.find(a => a.id === membership.agencyId && a.status === 'active');
+      locations = agency ? state.locations.filter(l => l.agencyId === agency.id && l.status === 'active') : [];
+      if (!agency || locations.length === 0) {
+        sendJson(res, 403, { error: 'No active agency or locations found for user' });
+        return true;
+      }
+
+      const token = randomBytes(32).toString('hex');
+      const csrf = randomBytes(24).toString('hex');
+      const sessionId = randomUUID();
+      const tokenHash = hash(token);
+      const csrfHash = hash(csrf);
+      const expiresAtMs = Date.now() + 12 * 3600 * 1000;
+      state.sessions = state.sessions || [];
+      state.sessions.push({
+        id: sessionId,
+        tokenHash,
+        csrfHash,
+        userId: user.id,
+        agencyId: agency.id,
+        expiresAt: expiresAtMs
+      });
+      setSessionCookies(res, token, csrf);
+      await saveState();
+      auditLog('auth.login', { user, agency, membership, locations, activeLocation: locations[0] }, {});
+
+      sendJson(res, 200, {
+        user: { id: user.id, name: user.name, email: user.email },
+        agency: { id: agency.id, name: agency.name },
+        locations,
+        activeLocationId: locations[0]?.id
+      });
+      return true;
     }
 
     setSessionCookies(res, token, csrf);

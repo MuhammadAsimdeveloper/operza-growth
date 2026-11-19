@@ -65,13 +65,13 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
     }
   });
 
-  // 2. Apply all migrations sequentially (001 through 024)
-  await t.test('2. Execute full migration suite (001 through 024)', async () => {
+  // 2. Apply all migrations sequentially (001 through 025)
+  await t.test('2. Execute full migration suite (001 through 025)', async () => {
     const files = (await readdir(migrationsDir))
       .filter(f => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
       .sort();
 
-    assert.ok(files.length >= 24, `Expected at least 24 migrations, found ${files.length}`);
+    assert.ok(files.length >= 25, `Expected at least 25 migrations, found ${files.length}`);
 
     await superuserPool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz DEFAULT now());');
 
@@ -601,5 +601,148 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
     assert.equal(appChecks.rows[0].lookup_user, true, 'operza_app must execute lookup_user_for_auth');
     assert.equal(appChecks.rows[0].lookup_cal, true, 'operza_app must execute lookup_public_calendar');
     assert.equal(appChecks.rows[0].expire_appr, true, 'operza_app must execute expire_pending_workflow_approvals');
+  });
+
+  await t.test('13. Security Definer Function Ownership & Definer Role Isolation', async () => {
+    const fnOwnerRes = await superuserPool.query(`
+      SELECT p.proname, r.rolname
+      FROM pg_proc p
+      JOIN pg_roles r ON r.oid = p.proowner
+      WHERE p.proname IN ('resolve_auth_session', 'lookup_user_for_auth', 'lookup_public_calendar', 'expire_pending_workflow_approvals')
+    `);
+    assert.equal(fnOwnerRes.rows.length, 4, 'Must find all 4 security definer functions');
+    for (const row of fnOwnerRes.rows) {
+      assert.equal(row.rolname, 'operza_auth_definer', `Function ${row.proname} must be owned by operza_auth_definer`);
+    }
+
+    // Role operza_auth_definer attributes
+    const definerRoleRes = await superuserPool.query(`
+      SELECT rolname, rolsuper, rolcanlogin, rolbypassrls, rolinherit
+      FROM pg_roles
+      WHERE rolname = 'operza_auth_definer'
+    `);
+    assert.equal(definerRoleRes.rows.length, 1);
+    const defRow = definerRoleRes.rows[0];
+    assert.equal(defRow.rolsuper, false, 'operza_auth_definer must NOT be superuser');
+    assert.equal(defRow.rolcanlogin, false, 'operza_auth_definer must NOT be able to login');
+    assert.equal(defRow.rolbypassrls, true, 'operza_auth_definer must have BYPASSRLS');
+  });
+
+  await t.test('14. Table Matrix Least-Privilege & Append-Only Verification', async () => {
+    // 14.1 operza_app cannot UPDATE or DELETE on agency_audit_events
+    {
+      const client = await appPool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
+
+        // INSERT is permitted
+        await client.query(`
+          INSERT INTO agency_audit_events (id, agency_id, location_id, action, resource, details)
+          VALUES ($1, $2, $3, 'test.event', 'test_resource', '{}'::jsonb)
+        `, [randomUUID(), tenantA, locationA1]);
+        await client.query('COMMIT');
+      } finally {
+        client.release();
+      }
+    }
+
+    {
+      const client = await appPool.connect();
+      try {
+        await client.query("SELECT set_config('app.agency_id', $1, false), set_config('app.location_id', $2, false)", [tenantA, locationA1]);
+        await assert.rejects(
+          () => client.query("UPDATE agency_audit_events SET action = 'tampered'"),
+          /permission denied for table agency_audit_events/i,
+          'operza_app must not be able to UPDATE agency_audit_events'
+        );
+      } finally {
+        client.release();
+      }
+    }
+
+    {
+      const client = await appPool.connect();
+      try {
+        await client.query("SELECT set_config('app.agency_id', $1, false), set_config('app.location_id', $2, false)", [tenantA, locationA1]);
+        await assert.rejects(
+          () => client.query('DELETE FROM agency_audit_events'),
+          /permission denied for table agency_audit_events/i,
+          'operza_app must not be able to DELETE agency_audit_events'
+        );
+      } finally {
+        client.release();
+      }
+    }
+
+    // 14.2 operza_worker has NO DELETE privileges on any tenant tables
+    for (const table of ['workflow_definitions', 'workflow_executions', 'appointments']) {
+      const client = await workerPool.connect();
+      try {
+        await client.query("SELECT set_config('app.agency_id', $1, false), set_config('app.location_id', $2, false)", [tenantA, locationA1]);
+        await assert.rejects(
+          () => client.query(`DELETE FROM ${table}`),
+          new RegExp(`permission denied for table ${table}`, 'i'),
+          `operza_worker must not have DELETE on ${table}`
+        );
+      } finally {
+        client.release();
+      }
+    }
+  });
+
+  await t.test('15. Location Isolation on workflow_definitions and calendars for app & worker', async () => {
+    const flowLoc1 = randomUUID();
+    const flowLoc2 = randomUUID();
+    await superuserPool.query(`
+      INSERT INTO workflow_definitions (id, agency_id, location_id, name, trigger_type, nodes)
+      VALUES ($1, $2, $3, 'Flow Loc 1', 'webhook', '[]'::jsonb)
+    `, [flowLoc1, tenantA, locationA1]);
+    await superuserPool.query(`
+      INSERT INTO workflow_definitions (id, agency_id, location_id, name, trigger_type, nodes)
+      VALUES ($1, $2, $3, 'Flow Loc 2', 'webhook', '[]'::jsonb)
+    `, [flowLoc2, tenantA, locationA2]);
+
+    // operza_app: when scoped to locationA1, cannot see locationA2 workflow_definitions or calendars
+    const appClient = await appPool.connect();
+    try {
+      await appClient.query('BEGIN');
+      await appClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
+
+      const flows = await appClient.query('SELECT id FROM workflow_definitions WHERE agency_id = $1', [tenantA]);
+      const flowIds = flows.rows.map(r => r.id);
+      assert.ok(flowIds.includes(flowLoc1), 'Must see Flow Loc 1');
+      assert.equal(flowIds.includes(flowLoc2), false, 'Must NOT see Flow Loc 2 under locationA1');
+
+      const cals = await appClient.query('SELECT id, location_id FROM calendars WHERE agency_id = $1', [tenantA]);
+      for (const cal of cals.rows) {
+        assert.equal(cal.location_id, locationA1, 'operza_app must only see calendars matching active location_id');
+      }
+
+      await appClient.query('ROLLBACK');
+    } finally {
+      appClient.release();
+    }
+
+    // operza_worker: when scoped to locationA1, cannot see locationA2 workflow_definitions or calendars
+    const workerClient = await workerPool.connect();
+    try {
+      await workerClient.query('BEGIN');
+      await workerClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
+
+      const flows = await workerClient.query('SELECT id FROM workflow_definitions WHERE agency_id = $1', [tenantA]);
+      const flowIds = flows.rows.map(r => r.id);
+      assert.ok(flowIds.includes(flowLoc1), 'Worker must see Flow Loc 1');
+      assert.equal(flowIds.includes(flowLoc2), false, 'Worker must NOT see Flow Loc 2 under locationA1');
+
+      const cals = await workerClient.query('SELECT id, location_id FROM calendars WHERE agency_id = $1', [tenantA]);
+      for (const cal of cals.rows) {
+        assert.equal(cal.location_id, locationA1, 'operza_worker must only see calendars matching active location_id');
+      }
+
+      await workerClient.query('ROLLBACK');
+    } finally {
+      workerClient.release();
+    }
   });
 });

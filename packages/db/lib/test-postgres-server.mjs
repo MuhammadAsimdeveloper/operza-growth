@@ -113,7 +113,11 @@ export class IsolatedTestPostgres {
           IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_worker') THEN
             CREATE ROLE operza_worker LOGIN PASSWORD 'operza_worker_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
           END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_auth_definer') THEN
+            CREATE ROLE operza_auth_definer NOLOGIN BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+          END IF;
         END $$;
+        GRANT operza_auth_definer TO operza_migrator;
       `);
       await pool.query('GRANT ALL ON DATABASE ' + this.dbName + ' TO postgres, operza_migrator, operza_app;');
       await pool.query('GRANT USAGE, CREATE ON SCHEMA public TO postgres, operza_migrator, operza_app;');

@@ -168,3 +168,52 @@ All seven issues are systematically detailed below with verified evidence, root 
 3. **Database Test Suite:** Remove blanket table grant from `packages/db/test/least-privilege-rls.test.mjs` and add negative security assertions.
 4. **API Layer:** Fix `apps/api/routes/auth.mjs` and `apps/api/server.mjs` for authoritative auth, explicit transactions, and strict role inheritance.
 5. **Verification & Audit:** Re-run the full multi-package test suite and record results in `docs/PHASE_20_VERIFICATION_REPORT.md`.
+
+---
+
+## 4. Phase 20.1 Extension & Complete Defect Resolution
+
+### Finding 8 (P0): Security-Definer Function Ownership & Definer Role Isolation
+* **Severity:** P0 — Privilege Boundary & Schema Integrity
+* **Resolution:** 
+  - Provisioned dedicated unprivileged role `operza_auth_definer` (`NOLOGIN`, `BYPASSRLS`, `NOSUPERUSER`, `NOINHERIT`).
+  - Granted minimal SELECT table privileges (`users`, `auth_sessions`, `agencies`, `calendars`) and minimal UPDATE privileges (`workflow_approvals`, `workflow_executions`, `workflow_execution_steps`).
+  - Reassigned ownership of all 4 security definer helper functions (`resolve_auth_session`, `lookup_user_for_auth`, `lookup_public_calendar`, `expire_pending_workflow_approvals`) to `operza_auth_definer` in migration `025_workflow_definition_and_calendar_location_hardening.sql`.
+  - Proved in `packages/db/test/least-privilege-rls.test.mjs` (Test 13).
+
+### Finding 9 (P0): Location Isolation on Workflow Definitions & Calendars
+* **Severity:** P0 — Cross-Location Tenant Leak
+* **Resolution:**
+  - Replaced agency-only worker policies and wildcard `IS NULL` policies on `workflow_definitions` and `calendars` with strict `(agency_id, location_id)` boundaries.
+  - Eliminated `IS NULL` wildcard from `workflow_action_receipts_app_scope`.
+  - Proved in `packages/db/test/least-privilege-rls.test.mjs` (Test 15).
+
+### Finding 10 (P1): Table-Operation Least-Privilege Matrix
+* **Severity:** P1 — Principle of Least Privilege
+* **Resolution:**
+  - `agency_audit_events`: Enforced append-only (`SELECT, INSERT` only for `operza_app`; `UPDATE` and `DELETE` revoked).
+  - `operza_worker`: Revoked all `DELETE` privileges across all tables.
+  - Proved in `packages/db/test/least-privilege-rls.test.mjs` (Test 14).
+
+### Finding 11 (P0): Comprehensive 15-Scenario PostgreSQL Auth Regression Suite
+* **Severity:** P0 — Authentication Integrity
+* **Resolution:**
+  - Created `apps/api/test/auth-postgresql-authority.test.mjs` testing all 15 scenarios: cold login, valid user, incorrect password, user not in DB, database throw (500 DATABASE_AUTH_LOOKUP_FAILED), RLS context ordering, missing membership (403), inactive membership (403), inactive user (401), suspended agency (403), inactive location (403), session revoked in DB (401), cold restart session restoration (200), DB throw on resolve_auth_session fails closed (401), and cross-location header rejection (401).
+  - All 18 tests (15 scenarios + setup) passed 100% green.
+
+### Summary Table of Findings & Status
+
+| Finding ID | Severity | Description | Resolution Status |
+| :--- | :--- | :--- | :--- |
+| **Finding 1** | P0 | Security-Definer Function Permissions to `PUBLIC` | **RESOLVED & VERIFIED** (Migration 024) |
+| **Finding 2** | P0 | Worker Location Isolation Wildcard in RLS Policies | **RESOLVED & VERIFIED** (Migration 024) |
+| **Finding 3** | P0 | Communication Consent Fallback to Caller Evidence | **RESOLVED & VERIFIED** (Fail-closed in `trusted-handlers.mjs`) |
+| **Finding 4** | P0 | Test Privilege Masking via Superuser `GRANT ALL` | **RESOLVED & VERIFIED** (Blanket grants removed from tests) |
+| **Finding 5** | P0 | Authentication & Session Resolution Authority Flaws | **RESOLVED & VERIFIED** (Authoritative login & `getActor` session resolution) |
+| **Finding 6** | P0 | Non-Atomic Updates in Approval Expiration | **RESOLVED & VERIFIED** (Composite key updates in Migration 024) |
+| **Finding 7** | P1 | Remote GitHub Actions CI Runner Minute Quota | **INVESTIGATED & DOCUMENTED** (Runner Name: `""`, 0 steps executed) |
+| **Finding 8** | P0 | Security-Definer Function Ownership & Definer Role Isolation | **RESOLVED & VERIFIED** (Migration 025 `operza_auth_definer`) |
+| **Finding 9** | P0 | Location Isolation on Workflow Definitions & Calendars | **RESOLVED & VERIFIED** (Migration 025 strict location policies) |
+| **Finding 10** | P1 | Table-Operation Least-Privilege Matrix | **RESOLVED & VERIFIED** (Append-only audit, worker no-delete) |
+| **Finding 11** | P0 | 15-Scenario PostgreSQL Auth Authority Suite | **RESOLVED & VERIFIED** (`auth-postgresql-authority.test.mjs`) |
+

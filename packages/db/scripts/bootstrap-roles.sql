@@ -18,7 +18,13 @@ DO $$ BEGIN
   ELSE
     ALTER ROLE operza_worker WITH LOGIN PASSWORD 'operza_worker_secret';
   END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_auth_definer') THEN
+    CREATE ROLE operza_auth_definer NOLOGIN BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+  END IF;
 END $$;
+
+GRANT operza_auth_definer TO operza_migrator;
 
 SELECT format('GRANT CONNECT ON DATABASE %I TO operza_migrator, operza_app, operza_worker', current_database()) \gexec
 GRANT USAGE, CREATE ON SCHEMA public TO operza_migrator;
