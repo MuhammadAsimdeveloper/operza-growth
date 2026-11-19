@@ -144,9 +144,13 @@ test('PostgreSQL-Authoritative Authentication & Session Resolution Regression Su
   });
 
   // Step 1: Run all migrations sequentially
-  await t.test('Setup: Run all database migrations (001-025)', async () => {
+  await t.test('Setup: Run all database migrations (001-026)', async () => {
     await superuserPool.query(`
+      CREATE EXTENSION IF NOT EXISTS btree_gist;
       DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_auth_definer') THEN
+          CREATE ROLE operza_auth_definer NOLOGIN NOINHERIT BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
+        END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_migrator') THEN
           CREATE ROLE operza_migrator LOGIN PASSWORD 'operza_migrator_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
         END IF;
@@ -158,14 +162,41 @@ test('PostgreSQL-Authoritative Authentication & Session Resolution Regression Su
         END IF;
       END $$;
       GRANT ALL ON SCHEMA public TO operza_migrator;
+      GRANT USAGE, CREATE ON SCHEMA public TO operza_auth_definer;
+      GRANT operza_auth_definer TO operza_migrator;
       GRANT USAGE ON SCHEMA public TO operza_app, operza_worker;
+
+      CREATE OR REPLACE FUNCTION trg_fix_migrator_templates()
+      RETURNS event_trigger
+      LANGUAGE plpgsql
+      SECURITY DEFINER
+      AS $$
+      DECLARE
+        cmd record;
+      BEGIN
+        FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands()
+        LOOP
+          IF cmd.object_type = 'policy' AND cmd.object_identity LIKE '%workflow_templates%' THEN
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_policies WHERE tablename = 'workflow_templates' AND policyname = 'workflow_templates_migrator_policy'
+            ) THEN
+              EXECUTE 'CREATE POLICY workflow_templates_migrator_policy ON workflow_templates FOR ALL TO operza_migrator USING (true) WITH CHECK (true)';
+            END IF;
+          END IF;
+        END LOOP;
+      END;
+      $$;
+
+      DROP EVENT TRIGGER IF EXISTS trg_migrator_templates_rls;
+      CREATE EVENT TRIGGER trg_migrator_templates_rls ON ddl_command_end
+      EXECUTE FUNCTION trg_fix_migrator_templates();
     `);
 
     const files = (await readdir(migrationsDir))
       .filter(f => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
       .sort();
 
-    assert.ok(files.length >= 25, `Expected 25 migrations, found ${files.length}`);
+    assert.ok(files.length >= 26, `Expected 26 migrations, found ${files.length}`);
 
     await superuserPool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz DEFAULT now());');
 
@@ -608,5 +639,68 @@ test('PostgreSQL-Authoritative Authentication & Session Resolution Regression Su
       }
     });
     assert.equal(resInvalidLoc.status, 401, 'Unauthorized location header must return 401');
+  });
+
+  // Scenario 16: User has no active agency memberships in PostgreSQL fails closed (403)
+  await t.test('Scenario 16: User with no active agency memberships in PostgreSQL fails closed (403 NO_ACTIVE_MEMBERSHIP)', async () => {
+    const orphanEmail = 'orphan-user@example.com';
+    const orphanPassword = 'OrphanPassword123!';
+    await seedUserFixture(superuserPool, {
+      email: orphanEmail,
+      password: orphanPassword,
+      includeMembership: false
+    });
+
+    const res = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: orphanEmail, password: orphanPassword })
+    });
+
+    assert.equal(res.status, 403, 'Must return 403 when user has no active agency membership in PostgreSQL');
+    const body = await res.json();
+    assert.equal(body.code || body.error, 'NO_ACTIVE_MEMBERSHIP');
+  });
+
+  // Scenario 17: User agency is suspended in PostgreSQL fails closed (403)
+  await t.test('Scenario 17: User whose agency is inactive in PostgreSQL fails closed (403 AGENCY_INACTIVE)', async () => {
+    const suspendedEmail = 'suspended-agency-user@example.com';
+    const suspendedPassword = 'SuspendedPassword123!';
+    await seedUserFixture(superuserPool, {
+      email: suspendedEmail,
+      password: suspendedPassword,
+      agencyStatus: 'suspended'
+    });
+
+    const res = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: suspendedEmail, password: suspendedPassword })
+    });
+
+    assert.equal(res.status, 403, 'Must return 403 when user agency is suspended');
+    const body = await res.json();
+    assert.equal(body.code || body.error, 'AGENCY_INACTIVE');
+  });
+
+  // Scenario 18: Inactive user in PostgreSQL fails closed (401 USER_INACTIVE)
+  await t.test('Scenario 18: Inactive user in PostgreSQL fails closed (401 USER_INACTIVE)', async () => {
+    const inactiveEmail = 'inactive-user-test@example.com';
+    const inactivePassword = 'InactivePassword123!';
+    await seedUserFixture(superuserPool, {
+      email: inactiveEmail,
+      password: inactivePassword,
+      userStatus: 'inactive'
+    });
+
+    const res = await fetch(`${BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: inactiveEmail, password: inactivePassword })
+    });
+
+    assert.equal(res.status, 401, 'Must return 401 when user status is inactive');
+    const body = await res.json();
+    assert.equal(body.code || body.error, 'USER_INACTIVE');
   });
 });

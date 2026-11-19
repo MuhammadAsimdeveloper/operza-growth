@@ -615,31 +615,24 @@ export async function handleAuthRoutes(req, res, ctx) {
       try {
         uRes = await pgPool.query('SELECT id, name, email, password_hash, status FROM lookup_user_for_auth($1)', [emailKey]);
       } catch (err) {
-        if (isStagingOrProd || platformDbEnabled) {
-          sendJson(res, 500, { error: 'Database authentication query failed: ' + err.message, code: 'DATABASE_AUTH_LOOKUP_FAILED' });
-          return true;
-        }
-        console.warn('[AUTH-LOGIN-PG] lookup_user_for_auth failed:', err.message);
+        sendJson(res, 500, { error: 'Database authentication query failed: ' + err.message, code: 'DATABASE_AUTH_LOOKUP_FAILED' });
+        return true;
       }
 
-      if (uRes) {
-        if (uRes.rows.length === 0) {
-          if (isStagingOrProd || platformDbEnabled || pgPool) {
-            sendJson(res, 401, { error: 'Invalid email or password' });
-            return true;
-          }
-        } else {
-          const dbUser = uRes.rows[0];
-          if (dbUser.status !== 'active') {
-            sendJson(res, 401, { error: 'Account is inactive or suspended', code: 'USER_INACTIVE' });
-            return true;
-          }
-          user = { id: dbUser.id, name: dbUser.name, email: dbUser.email, passwordHash: dbUser.password_hash, status: dbUser.status };
-        }
+      if (!uRes || uRes.rows.length === 0) {
+        sendJson(res, 401, { error: 'Invalid email or password' });
+        return true;
       }
+
+      const dbUser = uRes.rows[0];
+      if (dbUser.status !== 'active') {
+        sendJson(res, 401, { error: 'Account is inactive or suspended', code: 'USER_INACTIVE' });
+        return true;
+      }
+      user = { id: dbUser.id, name: dbUser.name, email: dbUser.email, passwordHash: dbUser.password_hash, status: dbUser.status };
     }
 
-    // In-memory user lookup permitted ONLY in local dev mode when database is not configured
+    // In-memory user lookup permitted ONLY in local dev mode when database is genuinely not configured
     if (!user && !isStagingOrProd && !platformDbEnabled && !pgPool) {
       user = state.users.find(u => u.email === emailKey && u.status === 'active');
     }
@@ -769,11 +762,8 @@ export async function handleAuthRoutes(req, res, ctx) {
         return true;
       } catch (err) {
         await client.query('ROLLBACK').catch(() => {});
-        if (isStagingOrProd || platformDbEnabled) {
-          sendJson(res, 500, { error: 'Authentication transaction failed: ' + err.message, code: 'DATABASE_AUTH_TRANSACTION_FAILED' });
-          return true;
-        }
-        console.warn('[AUTH-LOGIN-PG] Transaction failed:', err.message);
+        sendJson(res, 500, { error: 'Authentication transaction failed: ' + err.message, code: 'DATABASE_AUTH_TRANSACTION_FAILED' });
+        return true;
       } finally {
         client.release();
       }

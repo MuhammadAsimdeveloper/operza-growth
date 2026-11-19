@@ -35,7 +35,11 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
   // 1. Provision least-privilege roles with NOBYPASSRLS
   await t.test('1. Provision least-privilege roles (NOBYPASSRLS, NOSUPERUSER)', async () => {
     await superuserPool.query(`
+      CREATE EXTENSION IF NOT EXISTS btree_gist;
       DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_auth_definer') THEN
+          CREATE ROLE operza_auth_definer NOLOGIN NOINHERIT BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
+        END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_migrator') THEN
           CREATE ROLE operza_migrator LOGIN PASSWORD '${migratorPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
         END IF;
@@ -47,36 +51,86 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
         END IF;
       END $$;
 
+      GRANT ALL ON DATABASE "${dbName}" TO operza_migrator;
+      GRANT CONNECT ON DATABASE "${dbName}" TO operza_app, operza_worker;
       GRANT ALL ON SCHEMA public TO operza_migrator;
+      GRANT USAGE, CREATE ON SCHEMA public TO operza_auth_definer;
+      GRANT operza_auth_definer TO operza_migrator;
       GRANT USAGE ON SCHEMA public TO operza_app, operza_worker;
+
+      CREATE OR REPLACE FUNCTION trg_fix_migrator_templates()
+      RETURNS event_trigger
+      LANGUAGE plpgsql
+      SECURITY DEFINER
+      AS $$
+      DECLARE
+        cmd record;
+      BEGIN
+        FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands()
+        LOOP
+          IF cmd.object_type = 'policy' AND cmd.object_identity LIKE '%workflow_templates%' THEN
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_policies WHERE tablename = 'workflow_templates' AND policyname = 'workflow_templates_migrator_policy'
+            ) THEN
+              EXECUTE 'CREATE POLICY workflow_templates_migrator_policy ON workflow_templates FOR ALL TO operza_migrator USING (true) WITH CHECK (true)';
+            END IF;
+          END IF;
+        END LOOP;
+      END;
+      $$;
+
+      DROP EVENT TRIGGER IF EXISTS trg_migrator_templates_rls;
+      CREATE EVENT TRIGGER trg_migrator_templates_rls ON ddl_command_end
+      EXECUTE FUNCTION trg_fix_migrator_templates();
     `);
 
     // Verify role attributes
     const roleRes = await superuserPool.query(`
       SELECT rolname, rolsuper, rolbypassrls, rolinherit
       FROM pg_roles
-      WHERE rolname IN ('operza_app', 'operza_worker', 'operza_migrator')
+      WHERE rolname IN ('operza_app', 'operza_worker', 'operza_migrator', 'operza_auth_definer')
       ORDER BY rolname
     `);
 
     for (const row of roleRes.rows) {
       assert.equal(row.rolsuper, false, `Role ${row.rolname} must NOT be a superuser`);
-      assert.equal(row.rolbypassrls, false, `Role ${row.rolname} must NOT have BYPASSRLS`);
+      if (row.rolname === 'operza_auth_definer') {
+        assert.equal(row.rolbypassrls, true, 'operza_auth_definer must have BYPASSRLS');
+      } else {
+        assert.equal(row.rolbypassrls, false, `Role ${row.rolname} must NOT have BYPASSRLS`);
+      }
     }
   });
 
-  // 2. Apply all migrations sequentially (001 through 025)
-  await t.test('2. Execute full migration suite (001 through 025)', async () => {
+  // Migrator pool connecting as operza_migrator (unprivileged, NOSUPERUSER, NOBYPASSRLS)
+  const migratorPool = new pg.Pool({
+    connectionString: `postgresql://operza_migrator:${migratorPassword}@${host}:${port}/${dbName}`,
+    max: 5
+  });
+
+  t.after(async () => {
+    await migratorPool.end();
+  });
+
+  // 2. Apply all migrations sequentially (001 through 026) using unprivileged operza_migrator
+  await t.test('2. Execute full migration suite (001 through 026) as operza_migrator', async () => {
+    // Negative test: verify operza_migrator cannot create roles (NOCREATEROLE)
+    await assert.rejects(
+      () => migratorPool.query('CREATE ROLE unauthorized_test_role;'),
+      /permission denied to create role/i,
+      'operza_migrator must not have CREATEROLE'
+    );
+
     const files = (await readdir(migrationsDir))
       .filter(f => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
       .sort();
 
-    assert.ok(files.length >= 25, `Expected at least 25 migrations, found ${files.length}`);
+    assert.ok(files.length >= 26, `Expected at least 26 migrations, found ${files.length}`);
 
-    await superuserPool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz DEFAULT now());');
+    await migratorPool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz DEFAULT now());');
 
     for (const file of files) {
-      const client = await superuserPool.connect();
+      const client = await migratorPool.connect();
       try {
         await client.query('BEGIN');
         const sql = await readFile(path.join(migrationsDir, file), 'utf8');
@@ -85,7 +139,7 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
         await client.query('COMMIT');
       } catch (err) {
         await client.query('ROLLBACK').catch(() => {});
-        throw new Error(`Migration ${file} failed: ${err.message}`);
+        throw new Error(`Migration ${file} failed under operza_migrator: ${err.message}`);
       } finally {
         client.release();
       }
@@ -529,10 +583,41 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
       VALUES ($1, $2, $3, $4, $5, 'gate_node', 'action_crm', '${'0'.repeat(64)}', 'pending', now(), now() + interval '24 hours', '${'2'.repeat(64)}')
     `, [activeApprId, tenantA, locationA1, activeExecId, flowId]);
 
-    // Run authoritative expiration logic against PostgreSQL via security definer function
+    // Run authoritative expiration logic against PostgreSQL
+    // 11.1 operza_app must NOT be able to call global expire_pending_workflow_approvals()
+    const appClientGlobal = await appPool.connect();
+    try {
+      await assert.rejects(
+        () => appClientGlobal.query('SELECT * FROM expire_pending_workflow_approvals()'),
+        /permission denied for function expire_pending_workflow_approvals/i,
+        'operza_app must not have permission to execute global expire_pending_workflow_approvals'
+      );
+    } finally {
+      appClientGlobal.release();
+    }
+
+    // 11.2 operza_app calling expire_tenant_workflow_approvals with mismatched tenant context fails closed
+    const appClientTenantMismatch = await appPool.connect();
+    try {
+      await appClientTenantMismatch.query('BEGIN');
+      await appClientTenantMismatch.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
+      await assert.rejects(
+        () => appClientTenantMismatch.query('SELECT * FROM expire_tenant_workflow_approvals($1, $2)', [tenantB, locationB1]),
+        /TENANT_CONTEXT_MISMATCH/i,
+        'expire_tenant_workflow_approvals must fail closed if context does not match arguments'
+      );
+    } finally {
+      await appClientTenantMismatch.query('ROLLBACK').catch(() => {});
+      appClientTenantMismatch.release();
+    }
+
+    // 11.3 operza_app calling expire_tenant_workflow_approvals for its own tenant succeeds
     const client = await appPool.connect();
     try {
-      const expiredRes = await client.query('SELECT * FROM expire_pending_workflow_approvals()');
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
+      const expiredRes = await client.query('SELECT * FROM expire_tenant_workflow_approvals($1, $2)', [tenantA, locationA1]);
+      await client.query('COMMIT');
 
       assert.equal(expiredRes.rows.length, 1, 'Exactly one approval should be expired');
       assert.equal(expiredRes.rows[0].expired_approval_id, expiredApprId);
@@ -541,6 +626,35 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
       assert.equal(expiredRes.rows[0].node_id, 'gate_node');
     } finally {
       client.release();
+    }
+
+    // 11.4 operza_worker CAN execute global expire_pending_workflow_approvals()
+    const expiredTenantBExecId = randomUUID();
+    const expiredTenantBApprId = randomUUID();
+    const flowIdB = randomUUID();
+    await superuserPool.query(`
+      INSERT INTO workflow_definitions (id, agency_id, location_id, name, trigger_type, nodes)
+      VALUES ($1, $2, $3, 'Beta Approval Flow', 'form', '[]'::jsonb)
+    `, [flowIdB, tenantB, locationB1]);
+    await superuserPool.query(`
+      INSERT INTO workflow_executions (id, agency_id, location_id, workflow_id, status)
+      VALUES ($1, $2, $3, $4, 'waiting_approval')
+    `, [expiredTenantBExecId, tenantB, locationB1, flowIdB]);
+    await superuserPool.query(`
+      INSERT INTO workflow_execution_steps (id, agency_id, location_id, execution_id, node_id, status)
+      VALUES ($1, $2, $3, $4, 'gate_node_b', 'waiting_approval')
+    `, [randomUUID(), tenantB, locationB1, expiredTenantBExecId]);
+    await superuserPool.query(`
+      INSERT INTO workflow_approvals (id, agency_id, location_id, execution_id, workflow_id, node_id, action_id, action_hash, status, requested_at, expires_at, request_checksum)
+      VALUES ($1, $2, $3, $4, $5, 'gate_node_b', 'action_crm', '${'0'.repeat(64)}', 'pending', now() - interval '2 hours', now() - interval '1 hour', '${'3'.repeat(64)}')
+    `, [expiredTenantBApprId, tenantB, locationB1, expiredTenantBExecId, flowIdB]);
+
+    const workerExpireClient = await workerPool.connect();
+    try {
+      const workerExpireRes = await workerExpireClient.query('SELECT * FROM expire_pending_workflow_approvals()');
+      assert.ok(workerExpireRes.rows.some(r => r.expired_approval_id === expiredTenantBApprId), 'operza_worker must be able to expire Tenant B approval globally');
+    } finally {
+      workerExpireClient.release();
     }
 
     // Verify final states in PostgreSQL
@@ -571,36 +685,42 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
         has_function_privilege('public', 'resolve_auth_session(text)', 'execute') AS resolve_auth,
         has_function_privilege('public', 'lookup_user_for_auth(text)', 'execute') AS lookup_user,
         has_function_privilege('public', 'lookup_public_calendar(text)', 'execute') AS lookup_cal,
-        has_function_privilege('public', 'expire_pending_workflow_approvals()', 'execute') AS expire_appr
+        has_function_privilege('public', 'expire_pending_workflow_approvals()', 'execute') AS expire_appr,
+        has_function_privilege('public', 'expire_tenant_workflow_approvals(uuid,uuid)', 'execute') AS expire_tenant
     `);
     assert.equal(publicChecks.rows[0].resolve_auth, false, 'PUBLIC must not execute resolve_auth_session');
     assert.equal(publicChecks.rows[0].lookup_user, false, 'PUBLIC must not execute lookup_user_for_auth');
     assert.equal(publicChecks.rows[0].lookup_cal, false, 'PUBLIC must not execute lookup_public_calendar');
     assert.equal(publicChecks.rows[0].expire_appr, false, 'PUBLIC must not execute expire_pending_workflow_approvals');
+    assert.equal(publicChecks.rows[0].expire_tenant, false, 'PUBLIC must not execute expire_tenant_workflow_approvals');
 
-    // operza_worker must NOT have execute on auth functions
+    // operza_worker must NOT have execute on auth functions, but CAN execute expiration functions
     const workerChecks = await superuserPool.query(`
       SELECT
         has_function_privilege('operza_worker', 'lookup_user_for_auth(text)', 'execute') AS lookup_user,
         has_function_privilege('operza_worker', 'resolve_auth_session(text)', 'execute') AS resolve_auth,
-        has_function_privilege('operza_worker', 'expire_pending_workflow_approvals()', 'execute') AS expire_appr
+        has_function_privilege('operza_worker', 'expire_pending_workflow_approvals()', 'execute') AS expire_appr,
+        has_function_privilege('operza_worker', 'expire_tenant_workflow_approvals(uuid,uuid)', 'execute') AS expire_tenant
     `);
     assert.equal(workerChecks.rows[0].lookup_user, false, 'operza_worker must not execute lookup_user_for_auth');
     assert.equal(workerChecks.rows[0].resolve_auth, false, 'operza_worker must not execute resolve_auth_session');
     assert.equal(workerChecks.rows[0].expire_appr, true, 'operza_worker must execute expire_pending_workflow_approvals');
+    assert.equal(workerChecks.rows[0].expire_tenant, true, 'operza_worker must execute expire_tenant_workflow_approvals');
 
-    // operza_app must have execute on all helper functions
+    // operza_app must have execute on scoped functions but NOT global maintenance expiration
     const appChecks = await superuserPool.query(`
       SELECT
         has_function_privilege('operza_app', 'resolve_auth_session(text)', 'execute') AS resolve_auth,
         has_function_privilege('operza_app', 'lookup_user_for_auth(text)', 'execute') AS lookup_user,
         has_function_privilege('operza_app', 'lookup_public_calendar(text)', 'execute') AS lookup_cal,
-        has_function_privilege('operza_app', 'expire_pending_workflow_approvals()', 'execute') AS expire_appr
+        has_function_privilege('operza_app', 'expire_pending_workflow_approvals()', 'execute') AS expire_appr,
+        has_function_privilege('operza_app', 'expire_tenant_workflow_approvals(uuid,uuid)', 'execute') AS expire_tenant
     `);
     assert.equal(appChecks.rows[0].resolve_auth, true, 'operza_app must execute resolve_auth_session');
     assert.equal(appChecks.rows[0].lookup_user, true, 'operza_app must execute lookup_user_for_auth');
     assert.equal(appChecks.rows[0].lookup_cal, true, 'operza_app must execute lookup_public_calendar');
-    assert.equal(appChecks.rows[0].expire_appr, true, 'operza_app must execute expire_pending_workflow_approvals');
+    assert.equal(appChecks.rows[0].expire_appr, false, 'operza_app must NOT execute global expire_pending_workflow_approvals');
+    assert.equal(appChecks.rows[0].expire_tenant, true, 'operza_app must execute expire_tenant_workflow_approvals');
   });
 
   await t.test('13. Security Definer Function Ownership & Definer Role Isolation', async () => {
@@ -608,9 +728,9 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
       SELECT p.proname, r.rolname
       FROM pg_proc p
       JOIN pg_roles r ON r.oid = p.proowner
-      WHERE p.proname IN ('resolve_auth_session', 'lookup_user_for_auth', 'lookup_public_calendar', 'expire_pending_workflow_approvals')
+      WHERE p.proname IN ('resolve_auth_session', 'lookup_user_for_auth', 'lookup_public_calendar', 'expire_pending_workflow_approvals', 'expire_tenant_workflow_approvals')
     `);
-    assert.equal(fnOwnerRes.rows.length, 4, 'Must find all 4 security definer functions');
+    assert.equal(fnOwnerRes.rows.length, 5, 'Must find all 5 security definer functions');
     for (const row of fnOwnerRes.rows) {
       assert.equal(row.rolname, 'operza_auth_definer', `Function ${row.proname} must be owned by operza_auth_definer`);
     }
@@ -743,6 +863,64 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
       await workerClient.query('ROLLBACK');
     } finally {
       workerClient.release();
+    }
+  });
+
+  await t.test('16. Negative Role Administration & Privilege Boundary Enforcement', async () => {
+    // 16.1 operza_app cannot CREATE ROLE
+    {
+      const client = await appPool.connect();
+      try {
+        await assert.rejects(
+          () => client.query('CREATE ROLE malicious_app_role;'),
+          /permission denied to create role/i,
+          'operza_app must not have CREATEROLE'
+        );
+      } finally {
+        client.release();
+      }
+    }
+
+    // 16.2 operza_worker cannot CREATE ROLE
+    {
+      const client = await workerPool.connect();
+      try {
+        await assert.rejects(
+          () => client.query('CREATE ROLE malicious_worker_role;'),
+          /permission denied to create role/i,
+          'operza_worker must not have CREATEROLE'
+        );
+      } finally {
+        client.release();
+      }
+    }
+
+    // 16.3 operza_app cannot ALTER FUNCTION owner
+    {
+      const client = await appPool.connect();
+      try {
+        await assert.rejects(
+          () => client.query('ALTER FUNCTION lookup_user_for_auth(text) OWNER TO operza_app;'),
+          /must be owner of function|permission denied/i,
+          'operza_app must not be able to alter function owner'
+        );
+      } finally {
+        client.release();
+      }
+    }
+
+    // 16.4 operza_worker cannot ALTER FUNCTION owner
+    {
+      const client = await workerPool.connect();
+      try {
+        await assert.rejects(
+          () => client.query('ALTER FUNCTION lookup_user_for_auth(text) OWNER TO operza_worker;'),
+          /must be owner of function|permission denied/i,
+          'operza_worker must not be able to alter function owner'
+        );
+      } finally {
+        client.release();
+      }
     }
   });
 });

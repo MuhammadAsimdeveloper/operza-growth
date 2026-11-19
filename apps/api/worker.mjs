@@ -134,10 +134,23 @@ export async function startDurableWorker({
     }, Math.min(10000, Number(process.env.WORKER_HEARTBEAT_INTERVAL_MS || 5000)));
     heartbeatInterval.unref();
 
+    // Periodic global approval expiration loop executed by the authorized operza_worker role
+    const expirationInterval = setInterval(async () => {
+      if (!closing) {
+        try {
+          await pool.query('SELECT * FROM expire_pending_workflow_approvals()');
+        } catch (expErr) {
+          console.warn('[WORKER-EXPIRATION] Background approval expiration error:', expErr.message);
+        }
+      }
+    }, Math.min(30000, Number(process.env.WORKER_APPROVAL_EXPIRY_INTERVAL_MS || 10000)));
+    expirationInterval.unref();
+
     const shutdown = async () => {
       if (!closing) {
         closing = true;
         clearInterval(heartbeatInterval);
+        clearInterval(expirationInterval);
         await sendHeartbeat('stopped').catch(() => {});
         abort.abort();
       }

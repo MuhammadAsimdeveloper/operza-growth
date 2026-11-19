@@ -758,21 +758,30 @@ async function initDatabase() {
   try {
     const client = await pgPool.connect();
     try {
-      await client.query(`
-        CREATE TABLE IF NOT EXISTS operza_app_state (
-          id text PRIMARY KEY,
-          payload jsonb NOT NULL,
-          updated_at timestamptz NOT NULL DEFAULT now()
-        );
-        CREATE TABLE IF NOT EXISTS worker_heartbeats (
-          worker_id text PRIMARY KEY,
-          hostname text,
-          pid integer,
-          last_heartbeat_at timestamptz NOT NULL DEFAULT now(),
-          status text NOT NULL DEFAULT 'alive' CHECK (status IN ('alive', 'stopped', 'degraded')),
-          metadata jsonb NOT NULL DEFAULT '{}'::jsonb
-        );
-      `);
+      // Probe existing tables without attempting DDL if already provisioned (operza_app has USAGE, not CREATE)
+      try {
+        await client.query('SELECT 1 FROM operza_app_state LIMIT 1;');
+      } catch (tblErr) {
+        if (/does not exist/i.test(tblErr.message)) {
+          await client.query(`
+            CREATE TABLE IF NOT EXISTS operza_app_state (
+              id text PRIMARY KEY,
+              payload jsonb NOT NULL,
+              updated_at timestamptz NOT NULL DEFAULT now()
+            );
+            CREATE TABLE IF NOT EXISTS worker_heartbeats (
+              worker_id text PRIMARY KEY,
+              hostname text,
+              pid integer,
+              last_heartbeat_at timestamptz NOT NULL DEFAULT now(),
+              status text NOT NULL DEFAULT 'alive' CHECK (status IN ('alive', 'stopped', 'degraded')),
+              metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+            );
+          `);
+        } else {
+          throw tblErr;
+        }
+      }
       console.log('🐘 [OPERZA-DB] Connected to PostgreSQL. Initialized tables: operza_app_state, worker_heartbeats');
     } finally {
       client.release();
@@ -2168,10 +2177,14 @@ function publicWorkflowApproval(approval) {
   };
 }
 
-async function expirePendingWorkflowApprovals() {
-  if (pgPool) {
+async function expirePendingWorkflowApprovals(agencyId, locationId) {
+  if (pgPool && agencyId && locationId) {
+    const client = await pgPool.connect();
     try {
-      const expiredRes = await pgPool.query('SELECT * FROM expire_pending_workflow_approvals()');
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [agencyId, locationId]);
+      const expiredRes = await client.query('SELECT * FROM expire_tenant_workflow_approvals($1, $2)', [agencyId, locationId]);
+      await client.query('COMMIT');
       for (const row of expiredRes.rows) {
         auditLog('workflow.approval.expired', {
           user: { id: 'system_workflow', name: 'Workflow system' },
@@ -2180,10 +2193,13 @@ async function expirePendingWorkflowApprovals() {
         }, { approvalId: row.expired_approval_id, executionId: row.execution_id, nodeId: row.node_id });
       }
     } catch (pgErr) {
-      console.error('[WORKFLOW-APPROVALS-EXPIRE] PostgreSQL expiration failed:', pgErr.message);
+      await client.query('ROLLBACK').catch(() => {});
+      console.error('[WORKFLOW-APPROVALS-EXPIRE] PostgreSQL tenant expiration failed:', pgErr.message);
       if (isStagingOrProd || platformDbEnabled) {
         throw new Error('Database approval expiration failed: ' + pgErr.message);
       }
+    } finally {
+      client.release();
     }
     if (isStagingOrProd || platformDbEnabled) {
       return;
@@ -2194,6 +2210,8 @@ async function expirePendingWorkflowApprovals() {
   let changed = false;
   const now = Date.now();
   for (const approval of state.workflowApprovals) {
+    if (agencyId && approval.agencyId !== agencyId) continue;
+    if (locationId && approval.locationId !== locationId) continue;
     if (approval.status !== 'pending' || Date.parse(approval.request?.expiresAt || '') > now) continue;
     approval.status = 'expired';
     approval.decidedAt = new Date(now).toISOString();
@@ -8583,7 +8601,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'GET' && pathname === '/api/workflows/runs') {
-      await expirePendingWorkflowApprovals();
+      await expirePendingWorkflowApprovals(agency.id, activeLocation?.id || agency.id);
       if (pgPool) {
         try {
           const resExec = await pgPool.query(`
@@ -8621,7 +8639,7 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'GET' && pathname === '/api/workflows/approvals') {
-      await expirePendingWorkflowApprovals();
+      await expirePendingWorkflowApprovals(agency.id, activeLocation?.id || agency.id);
       if (pgPool) {
         const client = await pgPool.connect();
         try {
@@ -8665,7 +8683,7 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' &&
         pathname.startsWith('/api/workflows/runs/') &&
         (pathname.endsWith('/approve') || pathname.endsWith('/reject'))) {
-      await expirePendingWorkflowApprovals();
+      await expirePendingWorkflowApprovals(agency.id, activeLocation.id);
       const runId = pathname.split('/')[4];
       const pathDecision = pathname.endsWith('/reject') ? 'rejected' : 'approved';
       const body = await readBody(req);
