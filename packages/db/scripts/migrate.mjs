@@ -23,15 +23,31 @@ AS $fn$
 DECLARE
   v_normalized_options text;
 BEGIN
-  -- Constrain role names strictly to approved Operza runtime and migrator identities
+  -- 1. Explicit NULL and empty/whitespace checks (fail closed with 42501)
+  IF p_role IS NULL OR trim(p_role) = '' THEN
+    RAISE EXCEPTION 'Role name cannot be NULL or empty'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF p_password IS NULL OR trim(p_password) = '' THEN
+    RAISE EXCEPTION 'Password cannot be NULL or empty'
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF p_options IS NULL OR trim(p_options) = '' THEN
+    RAISE EXCEPTION 'Role options cannot be NULL or empty'
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- 2. Constrain role names strictly to approved Operza runtime and migrator identities
   IF p_role NOT IN ('operza_migrator', 'operza_app', 'operza_worker') THEN
     RAISE EXCEPTION 'Disallowed role name "%": pg_temp.provision_security_role only provisions predefined Operza roles', p_role
       USING ERRCODE = '42501';
   END IF;
 
-  -- Constrain role options strictly to exact predefined least-privilege configurations
+  -- 3. Constrain role options strictly to exact predefined least-privilege configurations
   v_normalized_options := upper(trim(regexp_replace(p_options, '\\s+', ' ', 'g')));
-  IF v_normalized_options <> 'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS' THEN
+  IF v_normalized_options IS NULL OR v_normalized_options <> 'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS' THEN
     RAISE EXCEPTION 'Disallowed role options "%": options must be strictly "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"', p_options
       USING ERRCODE = '42501';
   END IF;
@@ -151,9 +167,26 @@ export async function runPrivilegedBootstrap(adminPool, options = {}) {
     // Install production role provisioner temporary function on this exact session
     await client.query(PROVISION_SECURITY_ROLE_FUNCTION_SQL);
 
-    // If caller provided an instrumentation probe, execute it against this exact session client
-    if (typeof options.stageAProbe === 'function') {
-      await options.stageAProbe(client, sessionPid);
+    // Narrowly scoped, capability-based test seam for validating role-provisioning constraints.
+    // Preserves the backend session without exposing an unrestricted administrative client.
+    if (typeof options.roleProvisioningProbe === 'function') {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('[STAGE-A] SECURITY_ERROR: roleProvisioningProbe is prohibited in production environment.');
+      }
+      const restrictedInvoker = {
+        getBackendPid: async () => {
+          const res = await client.query('SELECT pg_backend_pid() AS pid;');
+          return res.rows[0].pid;
+        },
+        invoke: async (role, password, roleOptions) => {
+          return client.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
+            role,
+            password,
+            roleOptions
+          ]);
+        }
+      };
+      await options.roleProvisioningProbe(restrictedInvoker, sessionPid);
     }
 
     await client.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [

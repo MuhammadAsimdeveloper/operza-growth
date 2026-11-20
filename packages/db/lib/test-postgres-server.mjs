@@ -34,10 +34,12 @@ export class IsolatedTestPostgres {
     this.dataDir = options.dataDir || path.join(root, 'scratch', `test-shared-pg-cluster-${this.port}`);
     this.started = false;
     this.isExternal = false;
+    this.skipRoleBootstrap = options.skipRoleBootstrap || false;
+    this.forceIsolatedCluster = options.forceIsolatedCluster || false;
   }
 
   async start() {
-    if (process.env.OPERZA_TEST_DATABASE_URL) {
+    if (process.env.OPERZA_TEST_DATABASE_URL && !this.forceIsolatedCluster) {
       this.isExternal = true;
       const parsed = new URL(process.env.OPERZA_TEST_DATABASE_URL);
       const suppliedDb = parsed.pathname.replace(/^\//, '');
@@ -85,32 +87,34 @@ export class IsolatedTestPostgres {
         });
         try {
           await dbPool.query('CREATE EXTENSION IF NOT EXISTS btree_gist;');
-          await dbPool.query(`
-            DO $$ BEGIN
-              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_migrator') THEN
-                CREATE ROLE operza_migrator LOGIN PASSWORD 'operza_migrator_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-              END IF;
-              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_app') THEN
-                CREATE ROLE operza_app LOGIN PASSWORD 'operza_app_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-              END IF;
-              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_worker') THEN
-                CREATE ROLE operza_worker LOGIN PASSWORD 'operza_worker_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-              END IF;
-              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_auth_definer') THEN
-                CREATE ROLE operza_auth_definer NOLOGIN BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
-              END IF;
-            END $$;
-            DO $$ BEGIN
-              IF NOT pg_has_role(current_user, 'operza_auth_definer', 'MEMBER') THEN
-                EXECUTE format('GRANT operza_auth_definer TO %I', current_user);
-              END IF;
-            END $$;
-            GRANT operza_auth_definer TO operza_migrator;
-          `);
-          await dbPool.query(`GRANT ALL ON DATABASE "${targetDb}" TO operza_migrator;`);
-          await dbPool.query(`GRANT CONNECT ON DATABASE "${targetDb}" TO operza_app, operza_worker;`);
-          await dbPool.query('GRANT USAGE, CREATE ON SCHEMA public TO operza_migrator, operza_auth_definer;');
-          await dbPool.query('GRANT USAGE ON SCHEMA public TO operza_app, operza_worker;');
+          if (!this.skipRoleBootstrap) {
+            await dbPool.query(`
+              DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_migrator') THEN
+                  CREATE ROLE operza_migrator LOGIN PASSWORD 'operza_migrator_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_app') THEN
+                  CREATE ROLE operza_app LOGIN PASSWORD 'operza_app_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_worker') THEN
+                  CREATE ROLE operza_worker LOGIN PASSWORD 'operza_worker_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+                END IF;
+                IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_auth_definer') THEN
+                  CREATE ROLE operza_auth_definer NOLOGIN BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+                END IF;
+              END $$;
+              DO $$ BEGIN
+                IF NOT pg_has_role(current_user, 'operza_auth_definer', 'MEMBER') THEN
+                  EXECUTE format('GRANT operza_auth_definer TO %I', current_user);
+                END IF;
+              END $$;
+              GRANT operza_auth_definer TO operza_migrator;
+            `);
+            await dbPool.query(`GRANT ALL ON DATABASE "${targetDb}" TO operza_migrator;`);
+            await dbPool.query(`GRANT CONNECT ON DATABASE "${targetDb}" TO operza_app, operza_worker;`);
+            await dbPool.query('GRANT USAGE, CREATE ON SCHEMA public TO operza_migrator, operza_auth_definer;');
+            await dbPool.query('GRANT USAGE ON SCHEMA public TO operza_app, operza_worker;');
+          }
         } finally {
           await dbPool.end();
         }
@@ -177,61 +181,63 @@ export class IsolatedTestPostgres {
 
     this.connectionUrl = `postgresql://postgres@127.0.0.1:${this.port}/${this.dbName}`;
 
-    // 4. Bootstrap extensions and roles
-    const { default: pg } = await import('pg');
-    const pool = new pg.Pool({ connectionString: this.connectionUrl, max: 1 });
-    try {
-      await pool.query('CREATE EXTENSION IF NOT EXISTS btree_gist;');
-      await pool.query(`
-        DO $$ BEGIN
-          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_migrator') THEN
-            CREATE ROLE operza_migrator LOGIN PASSWORD 'operza_migrator_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-          END IF;
-          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_app') THEN
-            CREATE ROLE operza_app LOGIN PASSWORD 'operza_app_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-          END IF;
-          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_worker') THEN
-            CREATE ROLE operza_worker LOGIN PASSWORD 'operza_worker_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-          END IF;
-          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_auth_definer') THEN
-            CREATE ROLE operza_auth_definer NOLOGIN BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
-          END IF;
-        END $$;
-        GRANT operza_auth_definer TO operza_migrator;
-      `);
-      await pool.query(`GRANT ALL ON DATABASE "${this.dbName}" TO postgres, operza_migrator;`);
-      await pool.query(`GRANT CONNECT ON DATABASE "${this.dbName}" TO operza_app, operza_worker;`);
-      await pool.query('GRANT USAGE, CREATE ON SCHEMA public TO postgres, operza_migrator, operza_auth_definer;');
-      await pool.query('GRANT USAGE ON SCHEMA public TO operza_app, operza_worker;');
-
-      await pool.query(`
-        CREATE OR REPLACE FUNCTION trg_fix_migrator_templates()
-        RETURNS event_trigger
-        LANGUAGE plpgsql
-        SECURITY DEFINER
-        AS $$
-        DECLARE
-          cmd record;
-        BEGIN
-          FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands()
-          LOOP
-            IF cmd.object_type = 'policy' AND cmd.object_identity LIKE '%workflow_templates%' THEN
-              IF NOT EXISTS (
-                SELECT 1 FROM pg_policies WHERE tablename = 'workflow_templates' AND policyname = 'workflow_templates_migrator_policy'
-              ) THEN
-                EXECUTE 'CREATE POLICY workflow_templates_migrator_policy ON workflow_templates FOR ALL TO operza_migrator USING (true) WITH CHECK (true)';
-              END IF;
+    // 4. Bootstrap extensions and roles (skipped when testing clean Stage A bootstrap)
+    if (!this.skipRoleBootstrap) {
+      const { default: pg } = await import('pg');
+      const pool = new pg.Pool({ connectionString: this.connectionUrl, max: 1 });
+      try {
+        await pool.query('CREATE EXTENSION IF NOT EXISTS btree_gist;');
+        await pool.query(`
+          DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_migrator') THEN
+              CREATE ROLE operza_migrator LOGIN PASSWORD 'operza_migrator_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
             END IF;
-          END LOOP;
-        END;
-        $$;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_app') THEN
+              CREATE ROLE operza_app LOGIN PASSWORD 'operza_app_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_worker') THEN
+              CREATE ROLE operza_worker LOGIN PASSWORD 'operza_worker_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_auth_definer') THEN
+              CREATE ROLE operza_auth_definer NOLOGIN BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+            END IF;
+          END $$;
+          GRANT operza_auth_definer TO operza_migrator;
+        `);
+        await pool.query(`GRANT ALL ON DATABASE "${this.dbName}" TO postgres, operza_migrator;`);
+        await pool.query(`GRANT CONNECT ON DATABASE "${this.dbName}" TO operza_app, operza_worker;`);
+        await pool.query('GRANT USAGE, CREATE ON SCHEMA public TO postgres, operza_migrator, operza_auth_definer;');
+        await pool.query('GRANT USAGE ON SCHEMA public TO operza_app, operza_worker;');
 
-        DROP EVENT TRIGGER IF EXISTS trg_migrator_templates_rls;
-        CREATE EVENT TRIGGER trg_migrator_templates_rls ON ddl_command_end
-        EXECUTE FUNCTION trg_fix_migrator_templates();
-      `);
-    } finally {
-      await pool.end();
+        await pool.query(`
+          CREATE OR REPLACE FUNCTION trg_fix_migrator_templates()
+          RETURNS event_trigger
+          LANGUAGE plpgsql
+          SECURITY DEFINER
+          AS $$
+          DECLARE
+            cmd record;
+          BEGIN
+            FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands()
+            LOOP
+              IF cmd.object_type = 'policy' AND cmd.object_identity LIKE '%workflow_templates%' THEN
+                IF NOT EXISTS (
+                  SELECT 1 FROM pg_policies WHERE tablename = 'workflow_templates' AND policyname = 'workflow_templates_migrator_policy'
+                ) THEN
+                  EXECUTE 'CREATE POLICY workflow_templates_migrator_policy ON workflow_templates FOR ALL TO operza_migrator USING (true) WITH CHECK (true)';
+                END IF;
+              END IF;
+            END LOOP;
+          END;
+          $$;
+
+          DROP EVENT TRIGGER IF EXISTS trg_migrator_templates_rls;
+          CREATE EVENT TRIGGER trg_migrator_templates_rls ON ddl_command_end
+          EXECUTE FUNCTION trg_fix_migrator_templates();
+        `);
+      } finally {
+        await pool.end();
+      }
     }
 
     return this.connectionUrl;

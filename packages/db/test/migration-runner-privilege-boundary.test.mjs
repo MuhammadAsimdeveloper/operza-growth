@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +19,7 @@ const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, '../../..');
 const migrationsDir = path.join(root, 'packages/db/migrations');
 
-test('Phase 20.2.5.8: Production Role-Provisioning Test Fidelity & Commit Evidence Correction', async (t) => {
+test('Phase 20.2.5.9: NULL-Safe Role Provisioning, CREATE-Path Verification & Privileged Test-Seam Hardening', async (t) => {
   // 1. Provision fresh isolated PostgreSQL database
   const pgServer = new IsolatedTestPostgres({ port: 5436, dbName: 'operza_prod_migrator_test' });
   const adminDbUrl = await pgServer.start();
@@ -50,59 +51,264 @@ test('Phase 20.2.5.8: Production Role-Provisioning Test Fidelity & Commit Eviden
     await verifyRolesAndAttributes(superuserPool);
   });
 
-  // Stage A session safety & multi-connection admin pool regression test
+  // Stage A session safety & multi-connection admin pool regression test with CREATE and ALTER path verification
   await t.test('1b. Stage A Session Safety: Multi-connection admin pool executes reliably with dedicated session client', async () => {
+    // Instantiate a pristine dedicated PostgreSQL server for this test so that operza_worker does not exist
+    // and can be tested through its genuine initial CREATE path followed by the ALTER path.
+    const lifecycleDataDir = path.join(root, 'scratch', 'test-role-lifecycle-cluster-5494');
+    rmSync(lifecycleDataDir, { recursive: true, force: true });
+    const lifecycleServer = new IsolatedTestPostgres({
+      port: 5494,
+      dbName: 'operza_role_lifecycle_test',
+      dataDir: lifecycleDataDir,
+      skipRoleBootstrap: true,
+      forceIsolatedCluster: true
+    });
+    const lifecycleAdminUrl = await lifecycleServer.start();
+    const lifecycleParsed = new URL(lifecycleAdminUrl);
+    const lifecycleHost = lifecycleParsed.hostname || '127.0.0.1';
+    const lifecyclePort = lifecycleParsed.port || '5494';
+    const lifecycleDb = lifecycleParsed.pathname.slice(1);
+
+    // Enforce scram-sha-256 password authentication for operza_worker in pg_hba.conf if local cluster
+    const hbaPath = path.join(lifecycleDataDir, 'pg_hba.conf');
+    if (existsSync(hbaPath)) {
+      const existingHba = readFileSync(hbaPath, 'utf8');
+      writeFileSync(
+        hbaPath,
+        'host all operza_worker 127.0.0.1/32 scram-sha-256\nhost all operza_worker ::1/128 scram-sha-256\n' + existingHba,
+        'utf8'
+      );
+    }
+
     const multiAdminPool = new pg.Pool({
-      connectionString: adminDbUrl,
+      connectionString: lifecycleAdminUrl,
       max: 10
     });
+
+    // Reload configuration to activate scram-sha-256 rule for operza_worker
+    await multiAdminPool.query('SELECT pg_reload_conf();');
 
     const recordedSessionPids = [];
     let probeExecuted = false;
 
+    // Verify operza_worker genuinely does not exist before probe invocation
+    const preCheckWorker = await multiAdminPool.query("SELECT 1 FROM pg_roles WHERE rolname = 'operza_worker';");
+    assert.equal(preCheckWorker.rowCount, 0, 'operza_worker must not exist before CREATE path test');
+
     try {
       // Re-run privileged bootstrap using an admin pool with 10 available connections,
-      // instrumenting the live session client to test the actual production-defined pg_temp.provision_security_role
+      // instrumenting via the capability-based restricted invoker
       await runPrivilegedBootstrap(multiAdminPool, {
         migratorPassword,
+        workerPassword: 'bootstrap_worker_final_pass',
         recordedSessionPids,
-        stageAProbe: async (client, expectedPid) => {
+        roleProvisioningProbe: async (restrictedInvoker, expectedPid) => {
           probeExecuted = true;
 
           // 1. Prove that the probe is running on the exact same backend PID session as the bootstrap
-          const currentPidRes = await client.query('SELECT pg_backend_pid() AS pid;');
-          const probePid = currentPidRes.rows[0].pid;
+          const probePid = await restrictedInvoker.getBackendPid();
           assert.equal(probePid, expectedPid, 'Probe must execute on the exact same backend session PID as Stage A bootstrap');
 
-          // 2. Exercise the actual production-defined pg_temp.provision_security_role on this live session
-          // Test rejection of an unauthorized role name with SQLSTATE 42501
+          // 2. Adversarial input validation (All rejections must fail closed with SQLSTATE 42501)
+          // 2a. NULL role name
           await assert.rejects(
-            () => client.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
-              'unauthorized_role_test',
-              'pass123',
-              STANDARD_SECURITY_ROLE_OPTIONS
-            ]),
-            (err) => err.code === '42501' && /Disallowed role name/i.test(err.message),
-            'Production function must reject unauthorized role name with SQLSTATE 42501'
+            () => restrictedInvoker.invoke(null, 'pass123', STANDARD_SECURITY_ROLE_OPTIONS),
+            (err) => err.code === '42501' && /Role name cannot be NULL or empty/i.test(err.message),
+            'Must reject NULL role name with SQLSTATE 42501'
           );
 
-          // Test rejection of arbitrary role options (e.g. SUPERUSER) with SQLSTATE 42501
+          // 2b. Empty & whitespace-only role name
           await assert.rejects(
-            () => client.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
-              'operza_app',
-              'pass123',
-              'SUPERUSER'
-            ]),
+            () => restrictedInvoker.invoke('', 'pass123', STANDARD_SECURITY_ROLE_OPTIONS),
+            (err) => err.code === '42501' && /Role name cannot be NULL or empty/i.test(err.message),
+            'Must reject empty role name with SQLSTATE 42501'
+          );
+          await assert.rejects(
+            () => restrictedInvoker.invoke('   ', 'pass123', STANDARD_SECURITY_ROLE_OPTIONS),
+            (err) => err.code === '42501' && /Role name cannot be NULL or empty/i.test(err.message),
+            'Must reject whitespace-only role name with SQLSTATE 42501'
+          );
+
+          // 2c. NULL password
+          await assert.rejects(
+            () => restrictedInvoker.invoke('operza_app', null, STANDARD_SECURITY_ROLE_OPTIONS),
+            (err) => err.code === '42501' && /Password cannot be NULL or empty/i.test(err.message),
+            'Must reject NULL password with SQLSTATE 42501'
+          );
+
+          // 2d. Empty & whitespace-only password
+          await assert.rejects(
+            () => restrictedInvoker.invoke('operza_app', '', STANDARD_SECURITY_ROLE_OPTIONS),
+            (err) => err.code === '42501' && /Password cannot be NULL or empty/i.test(err.message),
+            'Must reject empty password with SQLSTATE 42501'
+          );
+          await assert.rejects(
+            () => restrictedInvoker.invoke('operza_app', '   ', STANDARD_SECURITY_ROLE_OPTIONS),
+            (err) => err.code === '42501' && /Password cannot be NULL or empty/i.test(err.message),
+            'Must reject whitespace-only password with SQLSTATE 42501'
+          );
+
+          // 2e. NULL options
+          await assert.rejects(
+            () => restrictedInvoker.invoke('operza_app', 'pass123', null),
+            (err) => err.code === '42501' && /Role options cannot be NULL or empty/i.test(err.message),
+            'Must reject NULL options with SQLSTATE 42501'
+          );
+
+          // 2f. Empty & whitespace-only options
+          await assert.rejects(
+            () => restrictedInvoker.invoke('operza_app', 'pass123', ''),
+            (err) => err.code === '42501' && /Role options cannot be NULL or empty/i.test(err.message),
+            'Must reject empty options with SQLSTATE 42501'
+          );
+          await assert.rejects(
+            () => restrictedInvoker.invoke('operza_app', 'pass123', '   '),
+            (err) => err.code === '42501' && /Role options cannot be NULL or empty/i.test(err.message),
+            'Must reject whitespace-only options with SQLSTATE 42501'
+          );
+
+          // 2g. Disallowed role options: SUPERUSER, CREATEDB, CREATEROLE, BYPASSRLS, INHERIT
+          await assert.rejects(
+            () => restrictedInvoker.invoke('operza_app', 'pass123', 'SUPERUSER'),
             (err) => err.code === '42501' && /Disallowed role options/i.test(err.message),
-            'Production function must reject arbitrary role options with SQLSTATE 42501'
+            'Must reject SUPERUSER option with SQLSTATE 42501'
+          );
+          await assert.rejects(
+            () => restrictedInvoker.invoke('operza_app', 'pass123', 'CREATEDB NOSUPERUSER NOCREATEROLE NOINHERIT NOBYPASSRLS'),
+            (err) => err.code === '42501' && /Disallowed role options/i.test(err.message),
+            'Must reject CREATEDB option with SQLSTATE 42501'
+          );
+          await assert.rejects(
+            () => restrictedInvoker.invoke('operza_app', 'pass123', 'CREATEROLE NOSUPERUSER NOCREATEDB NOINHERIT NOBYPASSRLS'),
+            (err) => err.code === '42501' && /Disallowed role options/i.test(err.message),
+            'Must reject CREATEROLE option with SQLSTATE 42501'
+          );
+          await assert.rejects(
+            () => restrictedInvoker.invoke('operza_app', 'pass123', 'BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT'),
+            (err) => err.code === '42501' && /Disallowed role options/i.test(err.message),
+            'Must reject BYPASSRLS option with SQLSTATE 42501'
+          );
+          await assert.rejects(
+            () => restrictedInvoker.invoke('operza_app', 'pass123', 'INHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS'),
+            (err) => err.code === '42501' && /Disallowed role options/i.test(err.message),
+            'Must reject INHERIT option with SQLSTATE 42501'
           );
 
-          // Test successful execution with exact approved options
-          await client.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
-            'operza_app',
-            'probe_valid_pass_123',
-            STANDARD_SECURITY_ROLE_OPTIONS
-          ]);
+          // 2h. Unauthorized role names
+          await assert.rejects(
+            () => restrictedInvoker.invoke('postgres', 'pass123', STANDARD_SECURITY_ROLE_OPTIONS),
+            (err) => err.code === '42501' && /Disallowed role name/i.test(err.message),
+            'Must reject postgres role with SQLSTATE 42501'
+          );
+          await assert.rejects(
+            () => restrictedInvoker.invoke('admin', 'pass123', STANDARD_SECURITY_ROLE_OPTIONS),
+            (err) => err.code === '42501' && /Disallowed role name/i.test(err.message),
+            'Must reject admin role with SQLSTATE 42501'
+          );
+          await assert.rejects(
+            () => restrictedInvoker.invoke('unauthorized_role_test', 'pass123', STANDARD_SECURITY_ROLE_OPTIONS),
+            (err) => err.code === '42501' && /Disallowed role name/i.test(err.message),
+            'Must reject unauthorized role name with SQLSTATE 42501'
+          );
+
+          // 2i. SQL injection attempts in role name and options
+          await assert.rejects(
+            () => restrictedInvoker.invoke("operza_app'; DROP ROLE operza_app; --", 'pass123', STANDARD_SECURITY_ROLE_OPTIONS),
+            (err) => err.code === '42501' && /Disallowed role name/i.test(err.message),
+            'Must reject SQL injection in role name with SQLSTATE 42501'
+          );
+          await assert.rejects(
+            () => restrictedInvoker.invoke('operza_app', 'pass123', "NOSUPERUSER; CREATE ROLE hacked_role;"),
+            (err) => err.code === '42501' && /Disallowed role options/i.test(err.message),
+            'Must reject SQL injection in options with SQLSTATE 42501'
+          );
+
+          // 3. GENUINE CREATE PATH: operza_worker does not exist yet
+          const initialWorkerPass = 'worker_initial_create_pass_123';
+          await restrictedInvoker.invoke('operza_worker', initialWorkerPass, STANDARD_SECURITY_ROLE_OPTIONS);
+
+          // Verify role was created and attributes strictly match least privilege
+          const createdWorkerRes = await multiAdminPool.query(`
+            SELECT rolname, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole, rolcanlogin, rolinherit
+            FROM pg_roles
+            WHERE rolname = 'operza_worker';
+          `);
+          assert.equal(createdWorkerRes.rowCount, 1, 'operza_worker must be created by CREATE path');
+          const createdWorker = createdWorkerRes.rows[0];
+          assert.equal(createdWorker.rolcanlogin, true, 'Created role must have LOGIN');
+          assert.equal(createdWorker.rolsuper, false, 'Created role must NOT be SUPERUSER');
+          assert.equal(createdWorker.rolcreatedb, false, 'Created role must NOT have CREATEDB');
+          assert.equal(createdWorker.rolcreaterole, false, 'Created role must NOT have CREATEROLE');
+          assert.equal(createdWorker.rolinherit, false, 'Created role must have NOINHERIT');
+          assert.equal(createdWorker.rolbypassrls, false, 'Created role must NOT have BYPASSRLS');
+
+          // Record initial SCRAM password verifier from pg_authid
+          const initialHashRes = await multiAdminPool.query("SELECT rolpassword FROM pg_authid WHERE rolname = 'operza_worker';");
+          const initialHash = initialHashRes.rows[0].rolpassword;
+          assert.ok(initialHash && initialHash.startsWith('SCRAM-SHA-256$'), 'Password hash must be stored as SCRAM-SHA-256');
+
+          // Verify created role can authenticate with initial password
+          const initialAuthPool = new pg.Pool({
+            connectionString: `postgresql://operza_worker:${initialWorkerPass}@${lifecycleHost}:${lifecyclePort}/${lifecycleDb}`,
+            max: 1
+          });
+          try {
+            const authCheck = await initialAuthPool.query('SELECT current_user;');
+            assert.equal(authCheck.rows[0].current_user, 'operza_worker');
+          } finally {
+            await initialAuthPool.end();
+          }
+
+          // 4. GENUINE ALTER PATH: operza_worker already exists; update password
+          const updatedWorkerPass = 'worker_updated_alter_pass_456';
+          await restrictedInvoker.invoke('operza_worker', updatedWorkerPass, STANDARD_SECURITY_ROLE_OPTIONS);
+
+          // Verify that the stored password hash in pg_authid was updated
+          const updatedHashRes = await multiAdminPool.query("SELECT rolpassword FROM pg_authid WHERE rolname = 'operza_worker';");
+          const updatedHash = updatedHashRes.rows[0].rolpassword;
+          assert.ok(updatedHash && updatedHash.startsWith('SCRAM-SHA-256$'), 'Updated password hash must be SCRAM-SHA-256');
+          assert.notEqual(initialHash, updatedHash, 'Password verifier in pg_authid must change upon ALTER update');
+
+          // Verify updated password works and old password is rejected
+          const updatedAuthPool = new pg.Pool({
+            connectionString: `postgresql://operza_worker:${updatedWorkerPass}@${lifecycleHost}:${lifecyclePort}/${lifecycleDb}`,
+            max: 1
+          });
+          try {
+            const authCheck2 = await updatedAuthPool.query('SELECT current_user;');
+            assert.equal(authCheck2.rows[0].current_user, 'operza_worker');
+          } finally {
+            await updatedAuthPool.end();
+          }
+
+          const oldAuthPool = new pg.Pool({
+            connectionString: `postgresql://operza_worker:${initialWorkerPass}@${lifecycleHost}:${lifecyclePort}/${lifecycleDb}`,
+            max: 1
+          });
+          try {
+            await assert.rejects(
+              () => oldAuthPool.query('SELECT current_user;'),
+              /password authentication failed/i,
+              'Old password must be rejected after ALTER path update'
+            );
+          } finally {
+            await oldAuthPool.end();
+          }
+
+          // Verify security attributes were NOT weakened by ALTER path
+          const alteredWorkerRes = await multiAdminPool.query(`
+            SELECT rolname, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole, rolcanlogin, rolinherit
+            FROM pg_roles
+            WHERE rolname = 'operza_worker';
+          `);
+          const alteredWorker = alteredWorkerRes.rows[0];
+          assert.equal(alteredWorker.rolcanlogin, true);
+          assert.equal(alteredWorker.rolsuper, false);
+          assert.equal(alteredWorker.rolcreatedb, false);
+          assert.equal(alteredWorker.rolcreaterole, false);
+          assert.equal(alteredWorker.rolinherit, false);
+          assert.equal(alteredWorker.rolbypassrls, false);
         }
       });
 
@@ -115,12 +321,12 @@ test('Phase 20.2.5.8: Production Role-Provisioning Test Fidelity & Commit Eviden
         assert.equal(pid, firstPid, `All Stage A commands must share identical backend PID (${firstPid}), found ${pid}`);
       }
 
-      // Verify roles and attributes are intact
+      // Verify roles and attributes are intact after bootstrap completion
       await verifyRolesAndAttributes(multiAdminPool);
     } finally {
       await multiAdminPool.end();
-      // Restore default app password
-      await runPrivilegedBootstrap(superuserPool, { migratorPassword });
+      await lifecycleServer.stop();
+      rmSync(lifecycleDataDir, { recursive: true, force: true });
     }
   });
 
