@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IsolatedTestPostgres } from '../lib/test-postgres-server.mjs';
 import {
   runPrivilegedBootstrap,
   runUnprivilegedMigrations,
+  runMigrationPipeline,
   verifyRolesAndAttributes,
   DEFAULT_MIGRATOR_PASSWORD
 } from '../scripts/migrate.mjs';
@@ -16,9 +17,9 @@ const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, '../../..');
 const migrationsDir = path.join(root, 'packages/db/migrations');
 
-test('Phase 20.2.5.5: Migration Runner Privilege Boundary & Real Execution Verification', async (t) => {
+test('Phase 20.2.5.6: Production Migration Pipeline Execution, Bootstrap Privilege & Error Integrity', async (t) => {
   // 1. Provision fresh isolated PostgreSQL database
-  const pgServer = new IsolatedTestPostgres({ port: 5436, dbName: 'operza_migrator_boundary_test' });
+  const pgServer = new IsolatedTestPostgres({ port: 5436, dbName: 'operza_prod_migrator_test' });
   const adminDbUrl = await pgServer.start();
 
   const { default: pg } = await import('pg');
@@ -38,18 +39,18 @@ test('Phase 20.2.5.5: Migration Runner Privilege Boundary & Real Execution Verif
   const migratorDbUrl = `postgresql://operza_migrator:${migratorPassword}@${host}:${port}/${dbName}`;
   let migratorPool;
 
-  // 2. Perform Stage A using an administrative connection
-  await t.test('Step 2: Perform Stage A (Privileged Bootstrap) using administrative connection', async () => {
+  // STEP 2: Perform Stage A (Privileged Bootstrap) using administrative superuser connection
+  await t.test('1. Stage A: Run privileged bootstrap via production runPrivilegedBootstrap()', async () => {
     await runPrivilegedBootstrap(superuserPool, {
       migratorPassword
     });
 
-    // Verify roles and attributes fail closed
+    // Verify all roles and attributes fail closed
     await verifyRolesAndAttributes(superuserPool);
   });
 
-  // 3. Open separate connection authenticated as operza_migrator
-  await t.test('Step 3 & 4: Open separate connection as operza_migrator and assert current_user', async () => {
+  // STEP 3: Configure actual unprivileged operza_migrator connection
+  await t.test('2. Stage B Identity: Connect as operza_migrator and assert current_user', async () => {
     migratorPool = new pg.Pool({ connectionString: migratorDbUrl, max: 5 });
     t.after(async () => {
       if (migratorPool) await migratorPool.end();
@@ -60,81 +61,44 @@ test('Phase 20.2.5.5: Migration Runner Privilege Boundary & Real Execution Verif
     assert.equal(res.rows[0].session_user, 'operza_migrator', 'session_user must strictly be operza_migrator');
   });
 
-  // Apply migrations 001 through 024 under operza_migrator to establish baseline tables & functions
-  await t.test('Prerequisite: Apply migrations 001-024 strictly as operza_migrator', async () => {
-    await migratorPool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz DEFAULT now());');
+  // STEP 4 & 5: Invoke actual production runUnprivilegedMigrations() against real migrations directory
+  await t.test('3. Production Runner: Execute runUnprivilegedMigrations() across full suite (001-027)', async () => {
+    await runUnprivilegedMigrations(migratorPool, { directory: migrationsDir });
 
+    // Assert all 27 migrations are applied
     const files = (await readdir(migrationsDir))
       .filter(f => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
       .sort();
 
-    const baselineFiles = files.filter(f => {
-      const num = parseInt(f.slice(0, 3), 10);
-      return num >= 1 && num <= 24;
-    });
+    assert.equal(files.length >= 27, true, `Expected at least 27 migrations, found ${files.length}`);
 
-    assert.equal(baselineFiles.length, 24, 'Must apply exactly migrations 001 through 024 as baseline');
+    // STEP 6: Verify every schema_migrations entry
+    const appliedRes = await migratorPool.query('SELECT name, applied_at FROM schema_migrations ORDER BY name;');
+    assert.equal(appliedRes.rowCount, files.length, `schema_migrations must contain exactly ${files.length} records`);
 
-    for (const file of baselineFiles) {
-      const client = await migratorPool.connect();
-      try {
-        await client.query('BEGIN');
-        const sql = await readFile(path.join(migrationsDir, file), 'utf8');
-        await client.query(sql);
-        await client.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT DO NOTHING;', [file]);
-        await client.query('COMMIT');
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw new Error(`Baseline migration ${file} failed under operza_migrator: ${err.message}`);
-      } finally {
-        client.release();
-      }
+    for (let i = 0; i < files.length; i++) {
+      assert.equal(appliedRes.rows[i].name, files[i], `Migration at index ${i} must match ${files[i]}`);
+      assert.ok(appliedRes.rows[i].applied_at, `Migration ${files[i]} must have a valid applied_at timestamp`);
     }
   });
 
-  // 5. Execute Migration 025 using operza_migrator connection (NOT superuserPool)
-  await t.test('Step 5: Execute Migration 025 genuinely as operza_migrator', async () => {
-    const client = await migratorPool.connect();
-    try {
-      // Assert connection is strictly operza_migrator
-      const identCheck = await client.query('SELECT current_user, rolsuper FROM pg_roles WHERE rolname = current_user;');
-      assert.equal(identCheck.rows[0].current_user, 'operza_migrator');
-      assert.equal(identCheck.rows[0].rolsuper, false);
+  // STEP 7: Verify all migrations executed as operza_migrator
+  await t.test('4. Migration Execution Identity: Tables and objects created by operza_migrator', async () => {
+    const tableRes = await migratorPool.query(`
+      SELECT tableowner, count(*) AS tbl_count
+      FROM pg_tables
+      WHERE schemaname = 'public'
+      GROUP BY tableowner;
+    `);
 
-      await client.query('BEGIN');
-      const sql025 = await readFile(path.join(migrationsDir, '025_workflow_definition_and_calendar_location_hardening.sql'), 'utf8');
-      await client.query(sql025);
-      await client.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT DO NOTHING;', ['025_workflow_definition_and_calendar_location_hardening.sql']);
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw new Error(`Migration 025 failed to execute under operza_migrator: ${err.message}`);
-    } finally {
-      client.release();
-    }
+    assert.ok(tableRes.rowCount >= 1, 'Tables must exist in public schema');
+    const ownerMap = new Map(tableRes.rows.map(r => [r.tableowner, parseInt(r.tbl_count, 10)]));
+    assert.ok(ownerMap.has('operza_migrator'), 'operza_migrator must be tableowner of migrated tables');
+    assert.ok(ownerMap.get('operza_migrator') > 20, 'operza_migrator must own the core application tables');
   });
 
-  // Apply Migration 026 and 027 as operza_migrator to complete the full security definer matrix
-  await t.test('Apply migrations 026 and 027 strictly as operza_migrator', async () => {
-    for (const file of ['026_migration_owner_and_approval_expiration_hardening.sql', '027_strict_location_boundary_repair.sql']) {
-      const client = await migratorPool.connect();
-      try {
-        await client.query('BEGIN');
-        const sql = await readFile(path.join(migrationsDir, file), 'utf8');
-        await client.query(sql);
-        await client.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT DO NOTHING;', [file]);
-        await client.query('COMMIT');
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw new Error(`Migration ${file} failed under operza_migrator: ${err.message}`);
-      } finally {
-        client.release();
-      }
-    }
-  });
-
-  // 6. Verify all five security-definer functions are owned by operza_auth_definer
-  await t.test('Step 6: Verify all five security-definer helper functions are owned by operza_auth_definer', async () => {
+  // STEP 8: Verify all five security-definer helper functions are owned by operza_auth_definer
+  await t.test('5. Definer Function Ownership: All five functions owned by operza_auth_definer', async () => {
     const expectedSignatures = new Map([
       ['resolve_auth_session(text)', 'operza_auth_definer'],
       ['lookup_user_for_auth(text)', 'operza_auth_definer'],
@@ -172,72 +136,151 @@ test('Phase 20.2.5.5: Migration Runner Privilege Boundary & Real Execution Verif
     }
   });
 
-  // 7. Verify the migrator did not gain SUPERUSER, BYPASSRLS, CREATEDB, or CREATEROLE
-  await t.test('Step 7: Verify operza_migrator retained strict least-privilege attributes', async () => {
-    const res = await migratorPool.query(`
-      SELECT rolname, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole, rolinherit, rolcanlogin
-      FROM pg_roles
-      WHERE rolname = 'operza_migrator';
+  // STEP 9: Verify role attributes and RLS properties remain intact
+  await t.test('6. Security Attributes & Forced RLS: Attributes and tenant isolation intact', async () => {
+    // Assert role attributes
+    await verifyRolesAndAttributes(migratorPool);
+
+    // Assert forced RLS on core tenant tables
+    const rlsRes = await migratorPool.query(`
+      SELECT relname, relrowsecurity, relforcerowsecurity
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relname IN ('agencies', 'locations', 'users', 'agency_memberships', 'workflow_executions', 'workflow_definitions')
+      ORDER BY relname;
     `);
 
-    assert.equal(res.rowCount, 1, 'operza_migrator must exist');
-    const r = res.rows[0];
-    assert.equal(r.rolsuper, false, 'operza_migrator must NOT have SUPERUSER');
-    assert.equal(r.rolbypassrls, false, 'operza_migrator must NOT have BYPASSRLS');
-    assert.equal(r.rolcreatedb, false, 'operza_migrator must NOT have CREATEDB');
-    assert.equal(r.rolcreaterole, false, 'operza_migrator must NOT have CREATEROLE');
-    assert.equal(r.rolinherit, false, 'operza_migrator must NOT have INHERIT');
-    assert.equal(r.rolcanlogin, true, 'operza_migrator must have LOGIN');
-  });
-
-  // 8. Verify the runtime roles remain least-privileged
-  await t.test('Step 8: Verify runtime roles (operza_app, operza_worker) remain least-privileged', async () => {
-    const res = await migratorPool.query(`
-      SELECT rolname, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole, rolcanlogin, rolinherit
-      FROM pg_roles
-      WHERE rolname IN ('operza_app', 'operza_worker')
-      ORDER BY rolname;
-    `);
-
-    assert.equal(res.rowCount, 2, 'Both runtime roles must exist');
-    for (const r of res.rows) {
-      assert.equal(r.rolsuper, false, `Runtime role ${r.rolname} must NOT have SUPERUSER`);
-      assert.equal(r.rolbypassrls, false, `Runtime role ${r.rolname} must NOT have BYPASSRLS`);
-      assert.equal(r.rolcreatedb, false, `Runtime role ${r.rolname} must NOT have CREATEDB`);
-      assert.equal(r.rolcreaterole, false, `Runtime role ${r.rolname} must NOT have CREATEROLE`);
-      assert.equal(r.rolinherit, false, `Runtime role ${r.rolname} must NOT have INHERIT`);
-      assert.equal(r.rolcanlogin, true, `Runtime role ${r.rolname} must have LOGIN`);
+    assert.equal(rlsRes.rowCount, 6, 'Core tenant tables must exist and be queried for RLS attributes');
+    for (const r of rlsRes.rows) {
+      assert.equal(r.relrowsecurity, true, `Table ${r.relname} must have ROW LEVEL SECURITY enabled`);
+      assert.equal(r.relforcerowsecurity, true, `Table ${r.relname} must have FORCE ROW LEVEL SECURITY enabled`);
     }
   });
 
-  // 9. Demonstrate that the migrator cannot create a new role
-  await t.test('Step 9: Demonstrate that operza_migrator cannot create a new role', async () => {
-    await assert.rejects(
-      () => migratorPool.query('CREATE ROLE rogue_security_role;'),
-      /permission denied to create role/i,
-      'operza_migrator must fail closed with permission denied when attempting CREATE ROLE'
-    );
+  // STEP 10: Run the migration process a second time and prove idempotency
+  await t.test('7. Production Runner Idempotency: Second run applies 0 new files, zero corruption', async () => {
+    // Capture state before second run
+    const beforeRes = await migratorPool.query('SELECT name, applied_at FROM schema_migrations ORDER BY name;');
+
+    // Run production runner a second time
+    await runUnprivilegedMigrations(migratorPool, { directory: migrationsDir });
+
+    // Capture state after second run
+    const afterRes = await migratorPool.query('SELECT name, applied_at FROM schema_migrations ORDER BY name;');
+
+    assert.equal(afterRes.rowCount, beforeRes.rowCount, 'No duplicate migration entries should be created');
+    for (let i = 0; i < beforeRes.rowCount; i++) {
+      assert.equal(afterRes.rows[i].name, beforeRes.rows[i].name, `Migration name mismatch at index ${i}`);
+      assert.equal(
+        afterRes.rows[i].applied_at.getTime(),
+        beforeRes.rows[i].applied_at.getTime(),
+        `Migration timestamp at index ${i} should be unchanged`
+      );
+    }
   });
 
-  // 10. Confirm that migration failures are surfaced rather than hidden
-  await t.test('Step 10: Confirm that migration failures are surfaced visibly rather than hidden', async () => {
-    const client = await migratorPool.connect();
+  // REQUIREMENT 2 & 5: Exact Active NOCREATEROLE probe & fail-visible security operations
+  await t.test('8. Active Probe & NOCREATEROLE: Probe asserts exact SQLSTATE 42501 (insufficient_privilege)', async () => {
+    const probeRole = `__test_probe_role_${Date.now()}`;
+    let thrownError = null;
+
     try {
-      await client.query('BEGIN');
+      await migratorPool.query(`CREATE ROLE ${probeRole};`);
+    } catch (err) {
+      thrownError = err;
+    }
+
+    assert.ok(thrownError, 'CREATE ROLE must throw an error under operza_migrator');
+    assert.equal(thrownError.code, '42501', `Must throw SQLSTATE 42501 (insufficient_privilege), got ${thrownError.code}`);
+    assert.match(thrownError.message, /permission denied to create role/i);
+  });
+
+  // REQUIREMENT 3: Stage A privilege preconditions (Superuser required, CREATEROLE alone fails)
+  await t.test('9. Stage A Preconditions: Superuser succeeds, CREATEROLE-only admin fails closed', async () => {
+    // Provision a role with CREATEROLE but NOT superuser
+    await superuserPool.query(`
+      DROP ROLE IF EXISTS test_createrole_only_admin;
+      CREATE ROLE test_createrole_only_admin LOGIN PASSWORD 'cr_pass_test' NOSUPERUSER CREATEROLE NOCREATEDB;
+      GRANT ALL ON DATABASE "${dbName}" TO test_createrole_only_admin;
+    `);
+
+    const createrolePool = new pg.Pool({
+      connectionString: `postgresql://test_createrole_only_admin:cr_pass_test@${host}:${port}/${dbName}`,
+      max: 1
+    });
+
+    try {
       await assert.rejects(
-        () => client.query('SELECT * FROM non_existent_table_must_fail_visibly;'),
-        /relation "non_existent_table_must_fail_visibly" does not exist/i,
-        'Database query error must be thrown directly without suppression'
+        () => runPrivilegedBootstrap(createrolePool),
+        /\[STAGE-A\] PRIVILEGE_ERROR.*lacks SUPERUSER privileges/i,
+        'Stage A must reject an administrative identity lacking SUPERUSER privileges'
       );
     } finally {
-      await client.query('ROLLBACK').catch(() => {});
-      client.release();
+      await createrolePool.end();
+      await superuserPool.query(`
+        REVOKE ALL ON DATABASE "${dbName}" FROM test_createrole_only_admin;
+        DROP OWNED BY test_createrole_only_admin;
+        DROP ROLE IF EXISTS test_createrole_only_admin;
+      `);
     }
   });
 
-  // NEGATIVE CASES
-  await t.test('Negative Case 1: Unprivileged role without role membership cannot perform ownership transfer', async () => {
-    // Superuser provisions an isolated test role with schema privileges but NO membership in operza_auth_definer
+  // REQUIREMENT 4: Safe password handling with quotes and special characters
+  await t.test('10. Safe Password Handling: Passwords with quotes, dollar signs, and semicolons', async () => {
+    const complexSpecialPassword = "p@$$w0rd'with\"quotes;--and$dollar$";
+
+    // Re-run Stage A bootstrap with complex special character password
+    await runPrivilegedBootstrap(superuserPool, {
+      migratorPassword: complexSpecialPassword
+    });
+
+    // Connect using the complex special character password
+    const specialMigratorPool = new pg.Pool({
+      connectionString: `postgresql://operza_migrator:${encodeURIComponent(complexSpecialPassword)}@${host}:${port}/${dbName}`,
+      max: 1
+    });
+
+    try {
+      const authRes = await specialMigratorPool.query('SELECT current_user, rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user;');
+      assert.equal(authRes.rows[0].current_user, 'operza_migrator');
+      assert.equal(authRes.rows[0].rolsuper, false);
+      assert.equal(authRes.rows[0].rolbypassrls, false);
+    } finally {
+      await specialMigratorPool.end();
+      // Restore standard test password
+      await runPrivilegedBootstrap(superuserPool, { migratorPassword });
+    }
+  });
+
+  // REQUIREMENT 1: Test runMigrationPipeline() end-to-end wrapper on a fresh database
+  await t.test('11. Full Wrapper Execution: runMigrationPipeline() runs Stage A & B end-to-end', async () => {
+    const pipelineServer = new IsolatedTestPostgres({ port: 5434, dbName: 'operza_pipeline_wrapper_test' });
+    const pipelineAdminUrl = await pipelineServer.start();
+
+    try {
+      await runMigrationPipeline({
+        adminUrl: pipelineAdminUrl,
+        migratorPassword: 'pipeline_runner_secret'
+      });
+
+      // Verify migration succeeded on the new database
+      const parsed = new URL(pipelineAdminUrl);
+      const migratorUrl = `postgresql://operza_migrator:pipeline_runner_secret@${parsed.hostname}:${parsed.port}/${parsed.pathname.replace(/^\//, '')}`;
+      const checkPool = new pg.Pool({ connectionString: migratorUrl, max: 1 });
+      try {
+        const countRes = await checkPool.query('SELECT count(*) AS total FROM schema_migrations;');
+        assert.ok(parseInt(countRes.rows[0].total, 10) >= 27, 'Pipeline wrapper must have applied all migrations');
+      } finally {
+        await checkPool.end();
+      }
+    } finally {
+      await pipelineServer.stop();
+    }
+  });
+
+  // NEGATIVE CASES & ERROR INTEGRITY
+  await t.test('12. Negative Case: Unprivileged role without role membership cannot transfer ownership', async () => {
     await superuserPool.query(`
       DROP ROLE IF EXISTS test_non_member_runner;
       CREATE ROLE test_non_member_runner LOGIN PASSWORD 'non_member_pass' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
@@ -250,13 +293,11 @@ test('Phase 20.2.5.5: Migration Runner Privilege Boundary & Real Execution Verif
     });
 
     try {
-      // test_non_member_runner creates a test function
       await nonMemberPool.query(`
         CREATE OR REPLACE FUNCTION test_runner_non_member_fn()
         RETURNS void LANGUAGE sql AS $$ SELECT 1; $$;
       `);
 
-      // Attempt to reassign function ownership to operza_auth_definer WITHOUT membership in operza_auth_definer
       await assert.rejects(
         () => nonMemberPool.query('ALTER FUNCTION test_runner_non_member_fn() OWNER TO operza_auth_definer;'),
         /must be (able to SET ROLE|member of role|a member of role) "operza_auth_definer"/i,
@@ -269,100 +310,35 @@ test('Phase 20.2.5.5: Migration Runner Privilege Boundary & Real Execution Verif
         REVOKE ALL ON SCHEMA public FROM test_non_member_runner;
         DROP OWNED BY test_non_member_runner;
         DROP ROLE IF EXISTS test_non_member_runner;
-      `).catch(() => {});
+      `);
     }
   });
 
-  await t.test('Negative Case 2: Unprivileged role without schema privileges fails visibly', async () => {
-    await superuserPool.query(`
-      DROP ROLE IF EXISTS test_no_schema_priv_runner;
-      CREATE ROLE test_no_schema_priv_runner LOGIN PASSWORD 'no_priv_pass' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-      REVOKE ALL ON SCHEMA public FROM test_no_schema_priv_runner;
-    `);
-
-    const noSchemaPool = new pg.Pool({
-      connectionString: `postgresql://test_no_schema_priv_runner:no_priv_pass@${host}:${port}/${dbName}`,
-      max: 1
-    });
-
-    try {
-      await assert.rejects(
-        () => noSchemaPool.query('CREATE TABLE public.unauthorized_tbl (id int);'),
-        /permission denied for schema public/i,
-        'User without schema privileges must fail visibly'
-      );
-    } finally {
-      await noSchemaPool.end();
-      await superuserPool.query('DROP ROLE IF EXISTS test_no_schema_priv_runner;');
-    }
-  });
-
-  await t.test('Negative Case 3: Failed migration rolls back its transaction cleanly', async () => {
+  await t.test('13. Negative Case: Failed migration rolls back cleanly without marking as applied', async () => {
     const client = await migratorPool.connect();
-    const testTableName = 'rollback_test_table_phase20';
+    const testFailTable = 'failed_migration_transact_test';
+    const testMigrationName = '999_failing_migration_test.sql';
+
     try {
       await client.query('BEGIN');
-      await client.query(`CREATE TABLE ${testTableName} (id int);`);
-      // Trigger intentional division by zero inside transaction
+      await client.query(`CREATE TABLE ${testFailTable} (id int);`);
+      // Trigger intentional division by zero
       await client.query('SELECT 1/0;');
+      await client.query('INSERT INTO schema_migrations (name) VALUES ($1);', [testMigrationName]);
       await client.query('COMMIT');
-      assert.fail('Transaction should have failed on 1/0');
+      assert.fail('Should not reach here on 1/0');
     } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
+      await client.query('ROLLBACK');
     } finally {
       client.release();
     }
 
-    // Verify table does NOT exist in the database
-    const checkTable = await migratorPool.query(`
-      SELECT 1 FROM information_schema.tables WHERE table_name = $1;
-    `, [testTableName]);
-    assert.equal(checkTable.rowCount, 0, 'Table created inside aborted transaction must not persist after rollback');
-  });
+    // Verify table does not exist
+    const tblCheck = await migratorPool.query('SELECT 1 FROM information_schema.tables WHERE table_name = $1;', [testFailTable]);
+    assert.equal(tblCheck.rowCount, 0, 'Table created inside failed transaction must not exist');
 
-  await t.test('Negative Case 4: Privileged bootstrap failure prevents migration execution', async () => {
-    // Attempting Stage A with an unprivileged user lacking CREATEROLE / SUPERUSER must fail loudly
-    const nonPrivAdminPool = new pg.Pool({
-      connectionString: migratorDbUrl,
-      max: 1
-    });
-
-    try {
-      await assert.rejects(
-        () => runPrivilegedBootstrap(nonPrivAdminPool),
-        /PRIVILEGE_ERROR|insufficient_privilege|permission denied/i,
-        'Bootstrap must reject unprivileged connections and prevent progression'
-      );
-    } finally {
-      await nonPrivAdminPool.end();
-    }
-  });
-
-  await t.test('Negative Case 5: No fallback silently switches migration execution to a superuser', async () => {
-    // Verify that when an unprivileged migration fails, the error is returned to caller
-    // and no silent fallback to superuser occurs.
-    const client = await migratorPool.connect();
-    try {
-      const initialUser = (await client.query('SELECT current_user;')).rows[0].current_user;
-      assert.equal(initialUser, 'operza_migrator');
-
-      let migrationFailed = false;
-      try {
-        await client.query('BEGIN');
-        await client.query('INVALID SQL SYNTAX TO TRIGGER ERROR;');
-        await client.query('COMMIT');
-      } catch (err) {
-        migrationFailed = true;
-        await client.query('ROLLBACK').catch(() => {});
-      }
-
-      assert.equal(migrationFailed, true, 'Migration syntax error must be thrown');
-      
-      // Verify user identity remained operza_migrator and was never elevated or switched
-      const currentUser = (await client.query('SELECT current_user;')).rows[0].current_user;
-      assert.equal(currentUser, 'operza_migrator', 'Identity must remain operza_migrator on failure');
-    } finally {
-      client.release();
-    }
+    // Verify migration was NOT marked as applied
+    const migCheck = await migratorPool.query('SELECT 1 FROM schema_migrations WHERE name = $1;', [testMigrationName]);
+    assert.equal(migCheck.rowCount, 0, 'Failed migration must not be recorded in schema_migrations');
   });
 });

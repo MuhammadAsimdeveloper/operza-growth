@@ -79,32 +79,58 @@ export async function runPrivilegedBootstrap(adminPool, options = {}) {
   const adminRole = identRes.rows[0];
   console.log(`[STAGE-A] Authenticated as "${adminRole.current_user}" (superuser=${adminRole.rolsuper}, createrole=${adminRole.rolcreaterole})`);
 
-  if (!adminRole.rolsuper && !adminRole.rolcreaterole) {
-    throw new Error(`[STAGE-A] PRIVILEGE_ERROR: Admin user "${adminRole.current_user}" lacks SUPERUSER or CREATEROLE. Cannot perform bootstrap.`);
+  // Stage A requires SUPERUSER privileges (needed for CREATE EXTENSION btree_gist and CREATE EVENT TRIGGER)
+  if (!adminRole.rolsuper) {
+    throw new Error(
+      `[STAGE-A] PRIVILEGE_ERROR: Administrative user "${adminRole.current_user}" lacks SUPERUSER privileges. ` +
+      `Stage A bootstrap requires SUPERUSER to install the "btree_gist" extension, create event triggers, and provision global security roles.`
+    );
   }
 
   // 1. Extensions
   await adminPool.query('CREATE EXTENSION IF NOT EXISTS btree_gist;');
 
-  // 2. Roles
+  // 2. Roles: provision via parameterized PL/pgSQL session function to eliminate unsafe SQL interpolation
   await adminPool.query(`
     DO $$ BEGIN
       IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_auth_definer') THEN
         CREATE ROLE operza_auth_definer NOLOGIN NOINHERIT BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
       END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_migrator') THEN
-        CREATE ROLE operza_migrator LOGIN PASSWORD '${migratorPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-      ELSE
-        ALTER ROLE operza_migrator WITH PASSWORD '${migratorPassword}';
-      END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_app') THEN
-        CREATE ROLE operza_app LOGIN PASSWORD '${appPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-      END IF;
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_worker') THEN
-        CREATE ROLE operza_worker LOGIN PASSWORD '${workerPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-      END IF;
     END $$;
+
+    CREATE OR REPLACE FUNCTION pg_temp.provision_security_role(
+      p_role text,
+      p_password text,
+      p_options text
+    )
+    RETURNS void
+    LANGUAGE plpgsql
+    AS $fn$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = p_role) THEN
+        EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L %s', p_role, p_password, p_options);
+      ELSE
+        EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', p_role, p_password);
+      END IF;
+    END;
+    $fn$;
   `);
+
+  await adminPool.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
+    'operza_migrator',
+    migratorPassword,
+    'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS'
+  ]);
+  await adminPool.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
+    'operza_app',
+    appPassword,
+    'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS'
+  ]);
+  await adminPool.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
+    'operza_worker',
+    workerPassword,
+    'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS'
+  ]);
 
   // 3. Database & Schema Privileges
   const dbRes = await adminPool.query('SELECT current_database() AS dbname');
@@ -202,20 +228,39 @@ export async function runUnprivilegedMigrations(migratorPool, options = {}) {
 
   console.log(`[STAGE-B] Verified migration runner "${ident.current_user}" attributes: NOSUPERUSER, NOBYPASSRLS, NOCREATEDB, NOCREATEROLE, NOINHERIT.`);
 
-  // Negative test: verify operza_migrator cannot create roles
-  let createRoleFailed = false;
+  // Active exact probe: verify operza_migrator cannot create roles (assert exact SQLSTATE 42501 insufficient_privilege)
+  const probeRoleName = `__probe_unauthorized_role_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  let probeSucceeded = false;
+  let probeError = null;
+
   try {
-    await migratorPool.query('CREATE ROLE __unauthorized_probe_role;');
+    await migratorPool.query(`CREATE ROLE ${probeRoleName};`);
+    probeSucceeded = true;
   } catch (err) {
-    createRoleFailed = true;
+    probeError = err;
   }
-  if (!createRoleFailed) {
-    throw new Error('[STAGE-B] SECURITY_VIOLATION: operza_migrator was able to create roles! NOCREATEROLE violated.');
+
+  if (probeSucceeded) {
+    if (options.adminPool) {
+      await options.adminPool.query(`DROP ROLE IF EXISTS ${probeRoleName};`).catch(() => {});
+    }
+    throw new Error(
+      `[STAGE-B] SECURITY_VIOLATION: Migration runner "${ident.current_user}" was able to execute CREATE ROLE "${probeRoleName}". ` +
+      'NOCREATEROLE boundary was violated!'
+    );
+  }
+
+  if (!probeError || probeError.code !== '42501') {
+    throw new Error(
+      `[STAGE-B] NOCREATEROLE_PROBE_FAILED: Expected SQLSTATE 42501 (insufficient_privilege) during NOCREATEROLE probe, ` +
+      `got ${probeError?.code || 'UNKNOWN'} (${probeError?.message || 'No error thrown'}).`
+    );
   }
 
   // 1. Ensure schema_migrations table exists and is isolated
   await migratorPool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())');
-  await migratorPool.query('REVOKE ALL ON TABLE schema_migrations FROM operza_app, operza_worker').catch(() => {});
+  // Revocation must execute without silent suppression
+  await migratorPool.query('REVOKE ALL ON TABLE schema_migrations FROM operza_app, operza_worker;');
 
   // 2. Scan and sort migrations
   const names = (await readdir(directory))
@@ -240,7 +285,11 @@ export async function runUnprivilegedMigrations(migratorPool, options = {}) {
       await client.query('COMMIT');
       console.log(`[STAGE-B] ✓ Applied ${name} as operza_migrator`);
     } catch (error) {
-      await client.query('ROLLBACK').catch(() => {});
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackErr) {
+        console.error(`[STAGE-B] Transaction rollback error while handling migration failure: ${rollbackErr.message}`);
+      }
       console.error(`[STAGE-B] ✗ Failed executing ${name} as operza_migrator:`, error.message);
       throw error;
     } finally {
@@ -297,7 +346,7 @@ export async function runMigrationPipeline(options = {}) {
   });
 
   try {
-    await runUnprivilegedMigrations(migratorPool, options);
+    await runUnprivilegedMigrations(migratorPool, { ...options, adminPool: null });
   } finally {
     await migratorPool.end();
   }
