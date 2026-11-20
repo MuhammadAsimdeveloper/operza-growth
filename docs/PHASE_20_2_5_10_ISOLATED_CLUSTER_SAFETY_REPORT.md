@@ -156,3 +156,22 @@ All verification suites were executed against real PostgreSQL instances (`Postgr
 - Cluster isolation & port collision safety: **100% VERIFIED**.
 - Remote GitHub Actions CI status: **BLOCKED** (upstream account billing lock, pending account resolution).
 - Release readiness: Conditional on upstream CI runner availability. Main branch merge and deployment remain strictly withheld.
+
+---
+
+## 7. Retrospective Documentation Corrections (Phase 20.2.5.11)
+
+In accordance with Phase 20.2.5.11 audit standards, the following prior claims from this Phase 20.2.5.10 report are formally corrected and qualified:
+
+1. **Shutdown Verification Scope:**
+   - *Phase 20.2.5.10 Claim:* Claimed `stop()` ensured complete process shutdown and port release before directory cleanup.
+   - *Correction:* In Phase 20.2.5.10, `stop()` logged a warning on `pg_ctl stop` failure, polled only for `postmaster.pid` for 5 seconds, and set `started = false` unconditionally. Positive process termination checking (`process.kill(pid, 0)`), bounded port release verification (`!await isPortOccupied(port)`), fail-closed error throwing (`PostgresShutdownError`), and preserving `started = true` on timeout were only introduced and verified in Phase 20.2.5.11.
+
+2. **Exception-Safe Setup Failure Testing:**
+   - *Phase 20.2.5.10 Claim:* Claimed exception-safe lifecycle cleanup was verified.
+   - *Correction:* Phase 20.2.5.10 Test 4 only exercised normal startup and shutdown. A genuine post-startup failure during cluster initialization (verifying error preservation, process exit, port release, and leaving unrelated clusters untouched) was only added in Phase 20.2.5.11 Test 5.
+
+3. **Path Canonicalization:**
+   - *Phase 20.2.5.10 Claim:* Claimed `canonicalizePath` handled cross-platform comparisons.
+   - *Correction:* Phase 20.2.5.10 lowercased all paths regardless of OS. Platform-aware canonicalization (preserving case on Linux/macOS and applying case-insensitivity only on Windows) was established in Phase 20.2.5.11 Test 1.
+

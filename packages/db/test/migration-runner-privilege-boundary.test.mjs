@@ -20,19 +20,24 @@ const root = path.resolve(__dirname, '../../..');
 const migrationsDir = path.join(root, 'packages/db/migrations');
 
 process.env.NODE_ENV = 'test';
-process.env.ALLOW_STAGE_A_PROBE = 'true';
 
-test('Phase 20.2.5.10: Isolated PostgreSQL Cluster Safety & Test-Probe Fail-Closed Hardening', async (t) => {
+test('Phase 20.2.5.11: Production Migration Pipeline & Privilege Boundary Integrity', async (t) => {
   // 1. Provision fresh isolated PostgreSQL database
   const pgServer = new IsolatedTestPostgres({ port: 5436, dbName: 'operza_prod_migrator_test' });
   const adminDbUrl = await pgServer.start();
 
   const { default: pg } = await import('pg');
   const superuserPool = new pg.Pool({ connectionString: adminDbUrl, max: 5 });
+  superuserPool.on('error', () => {});
+
+  let migratorPool;
 
   t.after(async () => {
-    await superuserPool.end();
-    await pgServer.stop();
+    if (migratorPool) {
+      await migratorPool.end().catch(() => {});
+    }
+    await superuserPool.end().catch(() => {});
+    await pgServer.stop().catch(() => {});
   });
 
   const parsedUrl = new URL(adminDbUrl);
@@ -42,7 +47,6 @@ test('Phase 20.2.5.10: Isolated PostgreSQL Cluster Safety & Test-Probe Fail-Clos
 
   const migratorPassword = DEFAULT_MIGRATOR_PASSWORD;
   const migratorDbUrl = `postgresql://operza_migrator:${migratorPassword}@${host}:${port}/${dbName}`;
-  let migratorPool;
 
   // STEP 2: Perform Stage A (Privileged Bootstrap) using administrative superuser connection
   await t.test('1. Stage A: Run privileged bootstrap via production runPrivilegedBootstrap()', async () => {
@@ -337,9 +341,7 @@ test('Phase 20.2.5.10: Isolated PostgreSQL Cluster Safety & Test-Probe Fail-Clos
   // STEP 3: Configure actual unprivileged operza_migrator connection
   await t.test('2. Stage B Identity: Connect as operza_migrator and assert current_user', async () => {
     migratorPool = new pg.Pool({ connectionString: migratorDbUrl, max: 5 });
-    t.after(async () => {
-      if (migratorPool) await migratorPool.end();
-    });
+    migratorPool.on('error', () => {});
 
     const res = await migratorPool.query('SELECT current_user, session_user;');
     assert.equal(res.rows[0].current_user, 'operza_migrator', 'current_user must strictly be operza_migrator');

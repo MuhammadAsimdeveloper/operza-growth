@@ -151,6 +151,31 @@ export async function runPrivilegedBootstrap(adminPool, options = {}) {
       );
     }
 
+    // PRE-MUTATION PROBE VALIDATION:
+    // Validate presence and authorization of the test probe immediately after identity verification,
+    // BEFORE creating extensions, creating/modifying roles, installing temporary functions, or applying grants.
+    // If the probe is unauthorized or absent the required test environment, fail closed before ANY mutation.
+    if (options.roleProvisioningProbe != null) {
+      if (typeof options.roleProvisioningProbe !== 'function') {
+        throw new Error('[STAGE-A] SECURITY_ERROR: roleProvisioningProbe must be a function.');
+      }
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('[STAGE-A] SECURITY_ERROR: roleProvisioningProbe is strictly forbidden in production environments (NODE_ENV="production").');
+      }
+      if (!process.env.NODE_ENV || process.env.NODE_ENV !== 'test') {
+        throw new Error(
+          `[STAGE-A] SECURITY_ERROR: roleProvisioningProbe requires an explicit test environment (NODE_ENV="test"). ` +
+          `Current NODE_ENV is ${process.env.NODE_ENV ? `"${process.env.NODE_ENV}".` : 'unset.'}`
+        );
+      }
+      if (options.allowTestProbe !== true) {
+        throw new Error(
+          '[STAGE-A] SECURITY_ERROR: roleProvisioningProbe is disabled by default and rejected without explicit test opt-in ' +
+          '(allowTestProbe: true with NODE_ENV="test").'
+        );
+      }
+    }
+
     // 1. Extensions
     await client.query('CREATE EXTENSION IF NOT EXISTS btree_gist;');
 
@@ -169,18 +194,8 @@ export async function runPrivilegedBootstrap(adminPool, options = {}) {
 
     // Narrowly scoped, capability-based test seam for validating role-provisioning constraints.
     // Preserves the backend session without exposing an unrestricted administrative client.
-    // FAIL-CLOSED: Disabled by default. Rejects if opt-in is absent/invalid or NODE_ENV === 'production'.
+    // Pre-validated above: only invoked if explicitly opted-in under NODE_ENV === 'test'.
     if (typeof options.roleProvisioningProbe === 'function') {
-      const isTestEnv = (process.env.NODE_ENV === 'test' || process.env.ALLOW_STAGE_A_PROBE === 'true') && process.env.NODE_ENV !== 'production';
-      const isExplicitlyOptedIn = options.allowTestProbe === true || options.__dangerouslyEnableTestProbe === true;
-
-      if (!isTestEnv || !isExplicitlyOptedIn) {
-        throw new Error(
-          '[STAGE-A] SECURITY_ERROR: roleProvisioningProbe is disabled by default and rejected without explicit test opt-in ' +
-          '(allowTestProbe: true in test environment).'
-        );
-      }
-
       const restrictedInvoker = {
         getBackendPid: async () => {
           const res = await client.query('SELECT pg_backend_pid() AS pid;');

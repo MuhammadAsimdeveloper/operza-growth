@@ -17,10 +17,18 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
 
   const { default: pg } = await import('pg');
   const superuserPool = new pg.Pool({ connectionString: dbUrl, max: 5 });
+  superuserPool.on('error', () => {});
+
+  let migratorPool;
+  let appPool;
+  let workerPool;
 
   t.after(async () => {
-    await superuserPool.end();
-    await pgServer.stop();
+    if (appPool) await appPool.end().catch(() => {});
+    if (workerPool) await workerPool.end().catch(() => {});
+    if (migratorPool) await migratorPool.end().catch(() => {});
+    if (superuserPool) await superuserPool.end().catch(() => {});
+    await pgServer.stop().catch(() => {});
   });
 
   const parsedUrl = new URL(dbUrl);
@@ -115,14 +123,11 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
   });
 
   // Migrator pool connecting as operza_migrator (unprivileged, NOSUPERUSER, NOBYPASSRLS)
-  const migratorPool = new pg.Pool({
+  migratorPool = new pg.Pool({
     connectionString: `postgresql://operza_migrator:${migratorPassword}@${host}:${port}/${dbName}`,
     max: 5
   });
-
-  t.after(async () => {
-    await migratorPool.end();
-  });
+  migratorPool.on('error', () => {});
 
   // 2. Apply all migrations sequentially (001 through 027) using unprivileged operza_migrator
   await t.test('2. Execute full migration suite (001 through 027) as operza_migrator', async () => {
@@ -184,19 +189,17 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
   });
 
   // Create isolated connections for operza_app and operza_worker
-  const appPool = new pg.Pool({
+  appPool = new pg.Pool({
     connectionString: `postgresql://operza_app:${appPassword}@${host}:${port}/${dbName}`,
     max: 5
   });
-  const workerPool = new pg.Pool({
+  appPool.on('error', () => {});
+
+  workerPool = new pg.Pool({
     connectionString: `postgresql://operza_worker:${workerPassword}@${host}:${port}/${dbName}`,
     max: 5
   });
-
-  t.after(async () => {
-    await appPool.end();
-    await workerPool.end();
-  });
+  workerPool.on('error', () => {});
 
   // Seed two distinct tenants using superuser pool
   const tenantA = randomUUID();

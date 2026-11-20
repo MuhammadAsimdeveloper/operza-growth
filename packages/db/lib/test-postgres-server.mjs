@@ -25,9 +25,34 @@ export function findPgBin(name) {
   return process.platform === 'win32' ? `${name}.exe` : name;
 }
 
-export function canonicalizePath(p) {
-  if (!p) return '';
-  return path.resolve(p).toLowerCase().replace(/\\/g, '/').replace(/\/+$/, '');
+export function canonicalizePath(p, platform = process.platform) {
+  if (!p || typeof p !== 'string') return '';
+  const resolved = path.resolve(p).replace(/\\/g, '/').replace(/\/+$/, '');
+  return platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+export function parsePostmasterPid(content) {
+  if (!content || typeof content !== 'string') return null;
+  const lines = content.trim().split(/\r?\n/);
+  const pid = parseInt(lines[0], 10);
+  const dataDir = lines[1] ? lines[1].trim() : '';
+  const port = lines[3] ? parseInt(lines[3], 10) : null;
+  return {
+    pid: Number.isFinite(pid) && pid > 0 ? pid : null,
+    dataDir,
+    port: Number.isFinite(port) && port > 0 ? port : null
+  };
+}
+
+export function isProcessAlive(pid) {
+  if (!pid || typeof pid !== 'number' || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if (err.code === 'EPERM') return true;
+    return false;
+  }
 }
 
 export async function getAvailablePort() {
@@ -217,6 +242,13 @@ export class IsolatedTestPostgres {
     if (existsSync(pgVersionFile)) {
       const existingVer = readFileSync(pgVersionFile, 'utf8').trim();
       if (existingVer !== binMajor) {
+        const pidFile = path.join(this.dataDir, 'postmaster.pid');
+        if (existsSync(pidFile)) {
+          const parsed = parsePostmasterPid(readFileSync(pidFile, 'utf8'));
+          if (parsed?.pid && isProcessAlive(parsed.pid)) {
+            throw new Error(`[ISOLATED-PG] SafetyError: Cannot recreate data directory because PostgreSQL process (PID ${parsed.pid}) is currently running in "${this.dataDir}".`);
+          }
+        }
         rmSync(this.dataDir, { recursive: true, force: true });
       }
     }
@@ -294,6 +326,10 @@ export class IsolatedTestPostgres {
         );
       }
 
+      if (this.options._simulatePostStartupFailure) {
+        throw new Error('[TEST-SIMULATED] Controlled post-startup initialization failure');
+      }
+
       // 6c. Re-create isolated test database now that cluster identity is verified
       const dropRes = spawnSync(psqlBin, ['-U', 'postgres', '-h', '127.0.0.1', '-p', String(this.port), '-d', 'template1', '-c', `DROP DATABASE IF EXISTS "${this.dbName}";`], { encoding: 'utf8' });
       if (dropRes.status !== 0) {
@@ -367,36 +403,130 @@ export class IsolatedTestPostgres {
       return this.connectionUrl;
     } catch (setupErr) {
       // Guaranteed teardown on setup failure: never leave PostgreSQL running
-      await this.stop();
+      let stopFailure = null;
+      try {
+        await this.stop();
+      } catch (stopErr) {
+        stopFailure = stopErr;
+      }
+      if (stopFailure) {
+        throw new Error(
+          `[ISOLATED-PG] Startup failed with: "${setupErr.message}". ` +
+          `Subsequent cleanup also failed: "${stopFailure.message}"`
+        );
+      }
       throw setupErr;
     }
   }
 
-  async stop() {
+  cleanupDataDir() {
+    if (this.started) {
+      throw new Error(`[ISOLATED-PG] SafetyError: Refusing to delete data directory while PostgreSQL instance is marked started.`);
+    }
+    const pidFile = this.dataDir ? path.join(this.dataDir, 'postmaster.pid') : null;
+    if (pidFile && existsSync(pidFile)) {
+      try {
+        const parsed = parsePostmasterPid(readFileSync(pidFile, 'utf8'));
+        if (parsed?.pid && isProcessAlive(parsed.pid)) {
+          throw new Error(`[ISOLATED-PG] SafetyError: Refusing to delete data directory while PostgreSQL process (PID ${parsed.pid}) is alive.`);
+        }
+      } catch (e) {
+        if (e.message.includes('SafetyError')) throw e;
+      }
+    }
+    if (this.dataDir && existsSync(this.dataDir)) {
+      rmSync(this.dataDir, { recursive: true, force: true });
+    }
+  }
+
+  async stop(stopOptions = {}) {
     if (this.isExternal || !this.started) return;
-    try {
-      const pgCtlBin = findPgBin('pg_ctl');
-      if (this.dataDir && existsSync(this.dataDir)) {
-        const pidFile = path.join(this.dataDir, 'postmaster.pid');
-        if (existsSync(pidFile)) {
-          const stopRes = spawnSync(pgCtlBin, ['-D', this.dataDir, '-m', 'immediate', 'stop'], {
-            encoding: 'utf8',
-            timeout: 15000
-          });
-          if (stopRes.status !== 0) {
-            console.warn(`[ISOLATED-PG] Warning: pg_ctl stop returned status ${stopRes.status}: ${stopRes.stderr || stopRes.stdout}`);
+
+    const timeoutMs = typeof stopOptions.timeoutMs === 'number' ? stopOptions.timeoutMs : 10000;
+    const pidFile = this.dataDir ? path.join(this.dataDir, 'postmaster.pid') : null;
+    let targetPid = null;
+
+    if (pidFile && existsSync(pidFile)) {
+      try {
+        const pidContent = readFileSync(pidFile, 'utf8');
+        const parsed = parsePostmasterPid(pidContent);
+        if (parsed) {
+          targetPid = parsed.pid;
+          if (parsed.dataDir && this.dataDir) {
+            if (canonicalizePath(parsed.dataDir) !== canonicalizePath(this.dataDir)) {
+              throw new Error(
+                `[ISOLATED-PG] ShutdownIdentityMismatchError: PID file indicates data directory "${parsed.dataDir}" ` +
+                `which does not match instance data directory "${this.dataDir}". Refusing to stop unrelated server.`
+              );
+            }
           }
-          for (let i = 0; i < 50; i++) {
-            if (!existsSync(pidFile)) break;
-            await new Promise((r) => setTimeout(r, 100));
+          if (parsed.port && this.port && Number(parsed.port) !== Number(this.port)) {
+            throw new Error(
+              `[ISOLATED-PG] ShutdownPortMismatchError: PID file indicates port ${parsed.port} ` +
+              `which does not match instance port ${this.port}. Refusing to stop unrelated server.`
+            );
           }
         }
+      } catch (readErr) {
+        if (readErr.message.includes('ShutdownIdentityMismatchError') || readErr.message.includes('ShutdownPortMismatchError')) {
+          throw readErr;
+        }
       }
-    } catch (stopErr) {
-      console.error(`[ISOLATED-PG] Error during server stop: ${stopErr.message}`);
-      throw stopErr;
-    } finally {
-      this.started = false;
     }
+
+    if (this.options._simulateCleanupErrorOnStartupFailure || stopOptions._simulateCleanupError) {
+      throw new Error('[TEST-SIMULATED] Simulated teardown error during server stop');
+    }
+
+    const simulateCmdFail = this.options._simulateShutdownCommandFailure || stopOptions._simulateShutdownCommandFailure;
+    if (!simulateCmdFail) {
+      const pgCtlBin = findPgBin('pg_ctl');
+      if (pidFile && existsSync(pidFile)) {
+        const stopRes = spawnSync(pgCtlBin, ['-D', this.dataDir, '-m', 'immediate', 'stop'], {
+          encoding: 'utf8',
+          timeout: 15000
+        });
+        if (stopRes.status !== 0) {
+          console.warn(`[ISOLATED-PG] Warning: pg_ctl stop returned status ${stopRes.status}: ${stopRes.stderr || stopRes.stdout}`);
+        }
+      }
+    }
+
+    // Bounded polling for verified shutdown
+    const startTime = Date.now();
+    let isFullyStopped = false;
+    let lastFailureReason = '';
+
+    while (Date.now() - startTime < timeoutMs) {
+      const simulatePidRemains = this.options._simulatePidFileRemains || stopOptions._simulatePidFileRemains;
+      const pidFileExists = simulatePidRemains ? true : (pidFile ? existsSync(pidFile) : false);
+
+      const processAlive = targetPid ? isProcessAlive(targetPid) : false;
+
+      const simulatePortOccupied = this.options._simulatePortOccupied || stopOptions._simulatePortOccupied;
+      const portOccupied = simulatePortOccupied ? true : (this.port ? await isPortOccupied(this.port) : false);
+
+      if (!pidFileExists && !processAlive && !portOccupied) {
+        isFullyStopped = true;
+        break;
+      }
+
+      const reasons = [];
+      if (pidFileExists) reasons.push('PID file still exists');
+      if (processAlive) reasons.push(`process ${targetPid} still alive`);
+      if (portOccupied) reasons.push(`port ${this.port} still occupied`);
+      lastFailureReason = reasons.join(', ');
+
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    if (!isFullyStopped) {
+      throw new Error(
+        `[ISOLATED-PG] PostgresShutdownError: Failed to verify shutdown of PostgreSQL server on port ${this.port} ` +
+        `within ${timeoutMs}ms. Remaining blockers: ${lastFailureReason}. Instance state remains started=true.`
+      );
+    }
+
+    this.started = false;
   }
 }
