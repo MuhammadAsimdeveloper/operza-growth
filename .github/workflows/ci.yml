@@ -99,10 +99,40 @@ jobs:
       - name: Install Monorepo Dependencies
         run: npm ci
 
-      - name: Execute Real PostgreSQL Migrations 001-014 & RLS Suite
+      - name: Verify PostgreSQL Service Readiness
+        run: |
+          node -e "
+          import pg from 'pg';
+          const pool = new pg.Pool({ connectionString: 'postgresql://operza_ci_admin:ci_test_password_123@127.0.0.1:5432/operza_ci_test', connectionTimeoutMillis: 3000 });
+          for (let i = 0; i < 30; i++) {
+            try {
+              await pool.query('SELECT 1');
+              console.log('✓ PostgreSQL service container is ready and accepting queries.');
+              await pool.end();
+              process.exit(0);
+            } catch (err) {
+              await new Promise(r => setTimeout(r, 1000));
+            }
+          }
+          console.error('✗ Timed out waiting for PostgreSQL service container.');
+          process.exit(1);
+          "
+
+      - name: Execute Deterministic Migration Chain 001-027
         env:
+          MIGRATION_DATABASE_URL: postgresql://operza_ci_admin:ci_test_password_123@127.0.0.1:5432/operza_ci_test
+        run: node packages/db/scripts/migrate.mjs
+
+      - name: Execute Real PostgreSQL RLS & Isolation Test Suite
+        env:
+          REQUIRE_POSTGRES_INTEGRATION: 'true'
           OPERZA_TEST_DATABASE_URL: postgresql://operza_ci_admin:ci_test_password_123@127.0.0.1:5432/operza_ci_test
         run: npm --workspace=@operza/db test
+
+      - name: Execute Workflow Persistence & PostgreSQL Authoritative Integration Tests
+        env:
+          OPERZA_TEST_DATABASE_URL: postgresql://operza_ci_admin:ci_test_password_123@127.0.0.1:5432/operza_ci_test
+        run: node --test apps/api/test/workflow-persistence-reliability.test.mjs apps/api/test/durable-workflow-and-postgres.test.mjs apps/api/test/auth-postgresql-authority.test.mjs apps/api/test/appointment-concurrency-api.test.mjs
 
   # ============================================================================
   # Gate 3: Redis & Distributed Worker Resiliency

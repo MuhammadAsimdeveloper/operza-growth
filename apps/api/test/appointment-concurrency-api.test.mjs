@@ -48,6 +48,25 @@ test('Multi-Process Appointment Booking Concurrency (Two Independent API Instanc
 
   // 1. Run migrations
   await t.test('1. Apply migrations to shared PostgreSQL database', async () => {
+    await pool.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_auth_definer') THEN
+          CREATE ROLE operza_auth_definer NOLOGIN NOINHERIT BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_app') THEN
+          CREATE ROLE operza_app LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_worker') THEN
+          CREATE ROLE operza_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+        END IF;
+      END $$;
+      GRANT USAGE, CREATE ON SCHEMA public TO operza_auth_definer;
+      DO $$ BEGIN
+        EXECUTE format('GRANT operza_auth_definer TO %I', current_user);
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END $$;
+    `);
+
     const files = (await readdir(migrationsDir))
       .filter(f => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
       .sort();

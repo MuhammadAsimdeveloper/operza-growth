@@ -24,6 +24,20 @@ test('Appointment Concurrency & PostgreSQL GiST Exclusion Constraint', async (t)
 
   // 1. Run all migrations in sequence
   await t.test('1. Apply all database migrations', async () => {
+    await pool.query(`
+      CREATE EXTENSION IF NOT EXISTS btree_gist;
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_auth_definer') THEN
+          CREATE ROLE operza_auth_definer NOLOGIN NOINHERIT BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
+        END IF;
+      END $$;
+      GRANT USAGE, CREATE ON SCHEMA public TO operza_auth_definer;
+      DO $$ BEGIN
+        EXECUTE format('GRANT operza_auth_definer TO %I', current_user);
+      EXCEPTION WHEN OTHERS THEN NULL;
+      END $$;
+    `);
+
     const files = (await readdir(migrationsDir))
       .filter(f => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
       .sort();

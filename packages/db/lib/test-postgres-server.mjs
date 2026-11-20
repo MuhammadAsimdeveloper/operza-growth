@@ -36,7 +36,30 @@ export class IsolatedTestPostgres {
   async start() {
     if (process.env.OPERZA_TEST_DATABASE_URL) {
       this.isExternal = true;
-      this.connectionUrl = process.env.OPERZA_TEST_DATABASE_URL;
+      const parsed = new URL(process.env.OPERZA_TEST_DATABASE_URL);
+      const targetDb = this.dbName || parsed.pathname.replace(/^\//, '');
+
+      if (targetDb && parsed.pathname.replace(/^\//, '') !== targetDb) {
+        const { default: pg } = await import('pg');
+        const adminPool = new pg.Pool({
+          connectionString: process.env.OPERZA_TEST_DATABASE_URL,
+          max: 1,
+          connectionTimeoutMillis: 5000
+        });
+        try {
+          await adminPool.query(`DROP DATABASE IF EXISTS "${targetDb}" WITH (FORCE)`);
+          await adminPool.query(`CREATE DATABASE "${targetDb}"`);
+        } catch (_) {
+          try {
+            await adminPool.query(`CREATE DATABASE "${targetDb}"`);
+          } catch (__) {}
+        } finally {
+          await adminPool.end();
+        }
+        parsed.pathname = `/${targetDb}`;
+      }
+
+      this.connectionUrl = parsed.toString();
       return this.connectionUrl;
     }
 
