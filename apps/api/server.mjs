@@ -48,6 +48,7 @@ import { createPostgresOAuthStateStore } from '../../packages/db/lib/outlook-oau
 import { createOutlookOAuthService, createMemoryOAuthStateStore } from '../../packages/platform-core/src/outlook-oauth.mjs';
 import { executeCalendarSync, generatePKCE, googleCalendarAdapter, microsoftGraphCalendarAdapter, signOAuthState, verifyOAuthState } from '../../packages/platform-core/src/calendar-sync.mjs';
 import { workflowQueue } from './queue.mjs';
+import { persistInitialWorkflowExecution, persistCompletedWorkflowExecution } from './workflow-persistence.mjs';
 import { handleZapierRoute, dispatchZapierEvent } from './zapier-router.mjs';
 import { handleSystemRoutes } from './routes/system.mjs';
 import { handleAuthRoutes } from './routes/auth.mjs';
@@ -1564,28 +1565,16 @@ async function executeWorkflowInstance({
       }
 
       if (pgPool) {
-        const client = await pgPool.connect();
-        try {
-          await client.query('BEGIN');
-          await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [String(agencyId), String(locationId || agencyId)]);
-          await client.query(`
-            INSERT INTO workflow_executions (
-              id, agency_id, location_id, workflow_id, status, trigger_event,
-              attempts, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, 0, now(), now())
-            ON CONFLICT (agency_id, location_id, id) DO NOTHING
-          `, [execution.id, agencyId, locationId || agencyId, flow.id, execution.status, JSON.stringify(triggerContext || {})]);
-          await client.query('COMMIT');
-        } catch (dbErr) {
-          await client.query('ROLLBACK').catch(() => {});
-          if (isStagingOrProd || platformDbEnabled) {
-            throw Object.assign(new Error(`Failed to persist workflow execution to PostgreSQL: ${dbErr.message}`), {
-              code: 'WORKFLOW_EXECUTION_PERSIST_FAILED'
-            });
-          }
-        } finally {
-          client.release();
-        }
+        await persistInitialWorkflowExecution({
+          pgPool,
+          agencyId,
+          locationId,
+          execution,
+          flow,
+          triggerContext,
+          isStagingOrProd,
+          platformDbEnabled
+        });
       }
     } else {
       // In dry_run mode, never enqueue durable event and never execute live side effects
@@ -2065,26 +2054,15 @@ async function executeWorkflowInstance({
     durationMs: execution.durationMs
   });
   if (pgPool) {
-    const client = await pgPool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [String(agencyId), String(execution.locationId || agencyId)]);
-      await client.query(`
-        UPDATE workflow_executions SET
-          status = $2,
-          finished_at = CASE WHEN $2 IN ('completed', 'failed', 'canceled') THEN now() ELSE finished_at END,
-          last_error_code = $3,
-          state = $4::jsonb,
-          updated_at = now()
-        WHERE agency_id = $5 AND id = $1
-      `, [execution.id, execution.status, execution.lastErrorCode || null, JSON.stringify(execution.steps || []), agencyId]);
-      await client.query('COMMIT');
-    } catch (pgErr) {
-      await client.query('ROLLBACK').catch(() => {});
-      console.warn('[WORKFLOW-EXEC-PERSIST] DB update warning:', pgErr.message);
-    } finally {
-      client.release();
-    }
+    await persistCompletedWorkflowExecution({
+      pgPool,
+      agencyId,
+      locationId,
+      execution,
+      flow,
+      isStagingOrProd,
+      platformDbEnabled
+    });
   }
   await saveState();
   return execution;
@@ -8630,8 +8608,9 @@ const server = createServer(async (req, res) => {
       }
       await expirePendingWorkflowApprovals(agency.id, activeLocation.id);
       if (pgPool) {
-        const client = await pgPool.connect();
+        let client;
         try {
+          client = await pgPool.connect();
           await client.query('BEGIN');
           await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [agency.id, activeLocation.id]);
           const resExec = await client.query(`
@@ -8658,7 +8637,9 @@ const server = createServer(async (req, res) => {
           }));
           return sendJson(res, 200, mappedRuns.map(publicWorkflowExecution));
         } catch (pgErr) {
-          await client.query('ROLLBACK').catch(() => {});
+          if (client) {
+            await client.query('ROLLBACK').catch(() => {});
+          }
           console.error('[WORKFLOW-RUNS] PG query error:', pgErr.message);
           if (isStagingOrProd || platformDbEnabled) {
             return sendJson(res, 500, {
@@ -8667,7 +8648,9 @@ const server = createServer(async (req, res) => {
             });
           }
         } finally {
-          client.release();
+          if (client) {
+            client.release();
+          }
         }
         if (isStagingOrProd || platformDbEnabled) {
           return;
