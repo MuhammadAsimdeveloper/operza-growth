@@ -67,112 +67,152 @@ export async function runPrivilegedBootstrap(adminPool, options = {}) {
   const workerPassword = options.workerPassword || process.env.OPERZA_WORKER_PASSWORD || DEFAULT_WORKER_PASSWORD;
 
   console.log('[STAGE-A] Verifying administrative connection identity...');
-  const identRes = await adminPool.query(`
-    SELECT current_user, rolsuper, rolcreaterole
-    FROM pg_roles
-    WHERE rolname = current_user
-  `);
-  if (!identRes.rowCount) {
-    throw new Error('[STAGE-A] FATAL: Unable to resolve current_user identity in pg_roles.');
-  }
 
-  const adminRole = identRes.rows[0];
-  console.log(`[STAGE-A] Authenticated as "${adminRole.current_user}" (superuser=${adminRole.rolsuper}, createrole=${adminRole.rolcreaterole})`);
+  // Acquire dedicated client to guarantee session affinity for session-scoped temporary objects
+  const isDedicatedPool = typeof adminPool.connect === 'function';
+  const client = isDedicatedPool ? await adminPool.connect() : adminPool;
+  let bootstrapError = null;
 
-  // Stage A requires SUPERUSER privileges (needed for CREATE EXTENSION btree_gist and CREATE EVENT TRIGGER)
-  if (!adminRole.rolsuper) {
-    throw new Error(
-      `[STAGE-A] PRIVILEGE_ERROR: Administrative user "${adminRole.current_user}" lacks SUPERUSER privileges. ` +
-      `Stage A bootstrap requires SUPERUSER to install the "btree_gist" extension, create event triggers, and provision global security roles.`
-    );
-  }
+  try {
+    const identRes = await client.query(`
+      SELECT current_user, rolsuper, rolcreaterole
+      FROM pg_roles
+      WHERE rolname = current_user
+    `);
+    if (!identRes.rowCount) {
+      throw new Error('[STAGE-A] FATAL: Unable to resolve current_user identity in pg_roles.');
+    }
 
-  // 1. Extensions
-  await adminPool.query('CREATE EXTENSION IF NOT EXISTS btree_gist;');
+    const adminRole = identRes.rows[0];
+    console.log(`[STAGE-A] Authenticated as "${adminRole.current_user}" (superuser=${adminRole.rolsuper}, createrole=${adminRole.rolcreaterole})`);
 
-  // 2. Roles: provision via parameterized PL/pgSQL session function to eliminate unsafe SQL interpolation
-  await adminPool.query(`
-    DO $$ BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_auth_definer') THEN
-        CREATE ROLE operza_auth_definer NOLOGIN NOINHERIT BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
-      END IF;
-    END $$;
+    // Stage A requires SUPERUSER privileges (needed for CREATE EXTENSION btree_gist and CREATE EVENT TRIGGER)
+    if (!adminRole.rolsuper) {
+      throw new Error(
+        `[STAGE-A] PRIVILEGE_ERROR: Administrative user "${adminRole.current_user}" lacks SUPERUSER privileges. ` +
+        `Stage A bootstrap requires SUPERUSER to install the "btree_gist" extension, create event triggers, and provision global security roles.`
+      );
+    }
 
-    CREATE OR REPLACE FUNCTION pg_temp.provision_security_role(
-      p_role text,
-      p_password text,
-      p_options text
-    )
-    RETURNS void
-    LANGUAGE plpgsql
-    AS $fn$
-    BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = p_role) THEN
-        EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L %s', p_role, p_password, p_options);
-      ELSE
-        EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', p_role, p_password);
-      END IF;
-    END;
-    $fn$;
-  `);
+    // 1. Extensions
+    await client.query('CREATE EXTENSION IF NOT EXISTS btree_gist;');
 
-  await adminPool.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
-    'operza_migrator',
-    migratorPassword,
-    'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS'
-  ]);
-  await adminPool.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
-    'operza_app',
-    appPassword,
-    'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS'
-  ]);
-  await adminPool.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
-    'operza_worker',
-    workerPassword,
-    'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS'
-  ]);
-
-  // 3. Database & Schema Privileges
-  const dbRes = await adminPool.query('SELECT current_database() AS dbname');
-  const dbName = dbRes.rows[0].dbname;
-
-  await adminPool.query(`
-    GRANT ALL ON DATABASE "${dbName}" TO operza_migrator;
-    GRANT CONNECT ON DATABASE "${dbName}" TO operza_app, operza_worker;
-    GRANT ALL ON SCHEMA public TO operza_migrator;
-    GRANT USAGE, CREATE ON SCHEMA public TO operza_auth_definer;
-    GRANT USAGE ON SCHEMA public TO operza_app, operza_worker;
-    GRANT operza_auth_definer TO operza_migrator;
-
-    CREATE OR REPLACE FUNCTION trg_fix_migrator_templates()
-    RETURNS event_trigger
-    LANGUAGE plpgsql
-    SECURITY DEFINER
-    AS $$
-    DECLARE
-      cmd record;
-    BEGIN
-      FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands()
-      LOOP
-        IF cmd.object_type = 'policy' AND cmd.object_identity LIKE '%workflow_templates%' THEN
-          IF NOT EXISTS (
-            SELECT 1 FROM pg_policies WHERE tablename = 'workflow_templates' AND policyname = 'workflow_templates_migrator_policy'
-          ) THEN
-            EXECUTE 'CREATE POLICY workflow_templates_migrator_policy ON workflow_templates FOR ALL TO operza_migrator USING (true) WITH CHECK (true)';
-          END IF;
+    // 2. Roles: provision via parameterized PL/pgSQL session function to eliminate unsafe SQL interpolation
+    // Constrain role options and role names strictly to predefined configurations
+    await client.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_auth_definer') THEN
+          CREATE ROLE operza_auth_definer NOLOGIN NOINHERIT BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
         END IF;
-      END LOOP;
-    END;
-    $$;
+      END $$;
 
-    DROP EVENT TRIGGER IF EXISTS trg_migrator_templates_rls;
-    CREATE EVENT TRIGGER trg_migrator_templates_rls ON ddl_command_end
-    EXECUTE FUNCTION trg_fix_migrator_templates();
-  `);
+      CREATE OR REPLACE FUNCTION pg_temp.provision_security_role(
+        p_role text,
+        p_password text,
+        p_options text
+      )
+      RETURNS void
+      LANGUAGE plpgsql
+      AS $fn$
+      DECLARE
+        v_normalized_options text;
+      BEGIN
+        -- Constrain role names strictly to approved Operza runtime and migrator identities
+        IF p_role NOT IN ('operza_migrator', 'operza_app', 'operza_worker') THEN
+          RAISE EXCEPTION 'Disallowed role name "%": pg_temp.provision_security_role only provisions predefined Operza roles', p_role
+            USING ERRCODE = '42501';
+        END IF;
 
-  // 4. Verify roles and attributes
-  await verifyRolesAndAttributes(adminPool);
-  console.log('[STAGE-A] ✓ Privileged bootstrap verified successfully.');
+        -- Constrain role options strictly to exact predefined least-privilege configurations
+        v_normalized_options := upper(trim(regexp_replace(p_options, '\\s+', ' ', 'g')));
+        IF v_normalized_options <> 'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS' THEN
+          RAISE EXCEPTION 'Disallowed role options "%": options must be strictly "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"', p_options
+            USING ERRCODE = '42501';
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = p_role) THEN
+          EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L %s', p_role, p_password, v_normalized_options);
+        ELSE
+          EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', p_role, p_password);
+        END IF;
+      END;
+      $fn$;
+    `);
+
+    const standardRoleOptions = 'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS';
+
+    await client.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
+      'operza_migrator',
+      migratorPassword,
+      standardRoleOptions
+    ]);
+    await client.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
+      'operza_app',
+      appPassword,
+      standardRoleOptions
+    ]);
+    await client.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
+      'operza_worker',
+      workerPassword,
+      standardRoleOptions
+    ]);
+
+    // 3. Database & Schema Privileges
+    const dbRes = await client.query('SELECT current_database() AS dbname');
+    const dbName = dbRes.rows[0].dbname;
+
+    await client.query(`
+      GRANT ALL ON DATABASE "${dbName}" TO operza_migrator;
+      GRANT CONNECT ON DATABASE "${dbName}" TO operza_app, operza_worker;
+      GRANT ALL ON SCHEMA public TO operza_migrator;
+      GRANT USAGE, CREATE ON SCHEMA public TO operza_auth_definer;
+      GRANT USAGE ON SCHEMA public TO operza_app, operza_worker;
+      GRANT operza_auth_definer TO operza_migrator;
+
+      CREATE OR REPLACE FUNCTION trg_fix_migrator_templates()
+      RETURNS event_trigger
+      LANGUAGE plpgsql
+      SECURITY DEFINER
+      AS $$
+      DECLARE
+        cmd record;
+      BEGIN
+        FOR cmd IN SELECT * FROM pg_event_trigger_ddl_commands()
+        LOOP
+          IF cmd.object_type = 'policy' AND cmd.object_identity LIKE '%workflow_templates%' THEN
+            IF NOT EXISTS (
+              SELECT 1 FROM pg_policies WHERE tablename = 'workflow_templates' AND policyname = 'workflow_templates_migrator_policy'
+            ) THEN
+              EXECUTE 'CREATE POLICY workflow_templates_migrator_policy ON workflow_templates FOR ALL TO operza_migrator USING (true) WITH CHECK (true)';
+            END IF;
+          END IF;
+        END LOOP;
+      END;
+      $$;
+
+      DROP EVENT TRIGGER IF EXISTS trg_migrator_templates_rls;
+      CREATE EVENT TRIGGER trg_migrator_templates_rls ON ddl_command_end
+      EXECUTE FUNCTION trg_fix_migrator_templates();
+    `);
+
+    // 4. Verify roles and attributes using the dedicated client session
+    await verifyRolesAndAttributes(client);
+    console.log('[STAGE-A] ✓ Privileged bootstrap verified successfully.');
+  } catch (err) {
+    bootstrapError = err;
+    throw err;
+  } finally {
+    if (client && isDedicatedPool && typeof client.release === 'function') {
+      try {
+        client.release();
+      } catch (releaseErr) {
+        console.error('[STAGE-A] Error releasing admin client during cleanup:', releaseErr);
+        if (!bootstrapError) {
+          throw releaseErr;
+        }
+      }
+    }
+  }
 }
 
 /**

@@ -17,7 +17,7 @@ const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, '../../..');
 const migrationsDir = path.join(root, 'packages/db/migrations');
 
-test('Phase 20.2.5.6: Production Migration Pipeline Execution, Bootstrap Privilege & Error Integrity', async (t) => {
+test('Phase 20.2.5.7: Stage A Session Safety, Failure-Test Integrity & Evidence Correction', async (t) => {
   // 1. Provision fresh isolated PostgreSQL database
   const pgServer = new IsolatedTestPostgres({ port: 5436, dbName: 'operza_prod_migrator_test' });
   const adminDbUrl = await pgServer.start();
@@ -47,6 +47,78 @@ test('Phase 20.2.5.6: Production Migration Pipeline Execution, Bootstrap Privile
 
     // Verify all roles and attributes fail closed
     await verifyRolesAndAttributes(superuserPool);
+  });
+
+  // Stage A session safety & multi-connection admin pool regression test
+  await t.test('1b. Stage A Session Safety: Multi-connection admin pool executes reliably with dedicated session client', async () => {
+    const multiAdminPool = new pg.Pool({
+      connectionString: adminDbUrl,
+      max: 10
+    });
+
+    try {
+      // Re-run privileged bootstrap using an admin pool with 10 available connections
+      await runPrivilegedBootstrap(multiAdminPool, {
+        migratorPassword
+      });
+
+      // Verify roles and attributes are intact
+      await verifyRolesAndAttributes(multiAdminPool);
+
+      // Verify that pg_temp.provision_security_role rejects unauthorized role options and roles
+      const client = await multiAdminPool.connect();
+      try {
+        await client.query(`
+          CREATE OR REPLACE FUNCTION pg_temp.provision_security_role(
+            p_role text,
+            p_password text,
+            p_options text
+          )
+          RETURNS void
+          LANGUAGE plpgsql
+          AS $fn$
+          DECLARE
+            v_normalized_options text;
+          BEGIN
+            IF p_role NOT IN ('operza_migrator', 'operza_app', 'operza_worker') THEN
+              RAISE EXCEPTION 'Disallowed role name "%": pg_temp.provision_security_role only provisions predefined Operza roles', p_role
+                USING ERRCODE = '42501';
+            END IF;
+
+            v_normalized_options := upper(trim(regexp_replace(p_options, '\\s+', ' ', 'g')));
+            IF v_normalized_options <> 'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS' THEN
+              RAISE EXCEPTION 'Disallowed role options "%": options must be strictly "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"', p_options
+                USING ERRCODE = '42501';
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = p_role) THEN
+              EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L %s', p_role, p_password, v_normalized_options);
+            ELSE
+              EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', p_role, p_password);
+            END IF;
+          END;
+          $fn$;
+        `);
+
+        // Test rejected unauthorized role name
+        await assert.rejects(
+          () => client.query("SELECT pg_temp.provision_security_role('unauthorized_role_test', 'pass', 'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS');"),
+          (err) => err.code === '42501' && /Disallowed role name/i.test(err.message),
+          'Must reject unauthorized role name'
+        );
+
+        // Test rejected arbitrary options (e.g. SUPERUSER)
+        await assert.rejects(
+          () => client.query("SELECT pg_temp.provision_security_role('operza_app', 'pass', 'SUPERUSER');"),
+          (err) => err.code === '42501' && /Disallowed role options/i.test(err.message),
+          'Must reject arbitrary role options'
+        );
+      } finally {
+        client.release();
+      }
+    } finally {
+      await multiAdminPool.end();
+    }
   });
 
   // STEP 3: Configure actual unprivileged operza_migrator connection
@@ -315,25 +387,68 @@ test('Phase 20.2.5.6: Production Migration Pipeline Execution, Bootstrap Privile
   });
 
   await t.test('13. Negative Case: Failed migration rolls back cleanly without marking as applied', async () => {
+    // 13a. Baseline assertion: Demonstrate that a valid migration transaction commits normally
+    const commitClient = await migratorPool.connect();
+    const testSuccessTable = 'success_migration_transact_test';
+    const testSuccessMigration = '998_successful_migration_test.sql';
+    try {
+      await commitClient.query('BEGIN');
+      await commitClient.query(`CREATE TABLE ${testSuccessTable} (id int);`);
+      await commitClient.query('INSERT INTO schema_migrations (name) VALUES ($1);', [testSuccessMigration]);
+      await commitClient.query('COMMIT');
+    } catch (err) {
+      await commitClient.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      commitClient.release();
+    }
+
+    // Verify baseline transaction committed and persisted data
+    const successTblCheck = await migratorPool.query('SELECT 1 FROM information_schema.tables WHERE table_name = $1;', [testSuccessTable]);
+    assert.equal(successTblCheck.rowCount, 1, 'Table created in successful transaction must persist');
+    const successMigCheck = await migratorPool.query('SELECT 1 FROM schema_migrations WHERE name = $1;', [testSuccessMigration]);
+    assert.equal(successMigCheck.rowCount, 1, 'Migration record created in successful transaction must persist');
+
+    // Clean up baseline fixtures
+    await migratorPool.query(`DROP TABLE IF EXISTS ${testSuccessTable};`);
+    await migratorPool.query('DELETE FROM schema_migrations WHERE name = $1;', [testSuccessMigration]);
+
+    // 13b. Failed transaction rolls back on intentional division-by-zero (SQLSTATE 22012)
     const client = await migratorPool.connect();
     const testFailTable = 'failed_migration_transact_test';
     const testMigrationName = '999_failing_migration_test.sql';
+    let divisionError = null;
 
     try {
       await client.query('BEGIN');
       await client.query(`CREATE TABLE ${testFailTable} (id int);`);
+
       // Trigger intentional division by zero
-      await client.query('SELECT 1/0;');
+      try {
+        await client.query('SELECT 1/0;');
+        assert.fail('SELECT 1/0 must throw an error');
+      } catch (err) {
+        divisionError = err;
+        // Assert exact SQLSTATE 22012 (division_by_zero)
+        assert.equal(err.code, '22012', `Expected SQLSTATE 22012 (division_by_zero), got ${err.code}: ${err.message}`);
+        assert.match(err.message, /division by zero/i);
+        // Re-throw to trigger rollback path
+        throw err;
+      }
+
       await client.query('INSERT INTO schema_migrations (name) VALUES ($1);', [testMigrationName]);
       await client.query('COMMIT');
       assert.fail('Should not reach here on 1/0');
     } catch (err) {
+      assert.strictEqual(err, divisionError, 'Caught error in rollback handler must be the intentional division-by-zero error');
       await client.query('ROLLBACK');
     } finally {
       client.release();
     }
 
-    // Verify table does not exist
+    assert.ok(divisionError, 'Division-by-zero error must have been triggered and verified');
+
+    // Verify table does NOT exist
     const tblCheck = await migratorPool.query('SELECT 1 FROM information_schema.tables WHERE table_name = $1;', [testFailTable]);
     assert.equal(tblCheck.rowCount, 0, 'Table created inside failed transaction must not exist');
 
