@@ -1166,10 +1166,11 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
       `);
     }
 
-    // 17.3 A correctly privileged migration succeeds and validates role properties
+    // 17.3 A correctly privileged migration succeeds under unprivileged operza_migrator and validates role properties
     {
       const sql025 = await readFile(path.join(migrationsDir, '025_workflow_definition_and_calendar_location_hardening.sql'), 'utf8');
-      await superuserPool.query(sql025);
+      // Genuinely execute Migration 025 through unprivileged operza_migrator (not superuserPool)
+      await migratorPool.query(sql025);
     }
 
     // 17.4 Verify operza_auth_definer attributes (NOLOGIN, BYPASSRLS, NOSUPERUSER, NOCREATEDB, NOCREATEROLE)

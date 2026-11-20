@@ -119,6 +119,17 @@ GRANT SELECT ON users, auth_sessions, agencies, calendars TO operza_auth_definer
 GRANT SELECT, UPDATE ON workflow_approvals, workflow_executions, workflow_execution_steps TO operza_auth_definer;
 
 -- Update lookup_user_for_auth to return user record including status (allowing USER_INACTIVE detection)
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_proc p
+    JOIN pg_roles r ON p.proowner = r.oid
+    WHERE p.proname = 'lookup_user_for_auth' AND r.rolname = 'operza_auth_definer'
+  ) AND pg_has_role(current_user, 'operza_auth_definer', 'MEMBER') THEN
+    EXECUTE 'SET ROLE operza_auth_definer';
+  END IF;
+END $$;
+
 CREATE OR REPLACE FUNCTION lookup_user_for_auth(p_email text)
 RETURNS TABLE (
   id uuid,
@@ -137,11 +148,29 @@ AS $func$
   WHERE lower(u.email) = lower(p_email);
 $func$;
 
+DO $$
+BEGIN
+  IF pg_has_role(session_user, 'operza_auth_definer', 'MEMBER') THEN
+    RESET ROLE;
+  END IF;
+END $$;
+
 -- Reassign ownership of security definer helper functions to operza_auth_definer
-ALTER FUNCTION resolve_auth_session(text) OWNER TO operza_auth_definer;
-ALTER FUNCTION lookup_user_for_auth(text) OWNER TO operza_auth_definer;
-ALTER FUNCTION lookup_public_calendar(text) OWNER TO operza_auth_definer;
-ALTER FUNCTION expire_pending_workflow_approvals() OWNER TO operza_auth_definer;
+DO $$
+BEGIN
+  IF (SELECT r.rolname FROM pg_proc p JOIN pg_roles r ON p.proowner = r.oid WHERE p.proname = 'resolve_auth_session') <> 'operza_auth_definer' THEN
+    ALTER FUNCTION resolve_auth_session(text) OWNER TO operza_auth_definer;
+  END IF;
+  IF (SELECT r.rolname FROM pg_proc p JOIN pg_roles r ON p.proowner = r.oid WHERE p.proname = 'lookup_user_for_auth') <> 'operza_auth_definer' THEN
+    ALTER FUNCTION lookup_user_for_auth(text) OWNER TO operza_auth_definer;
+  END IF;
+  IF (SELECT r.rolname FROM pg_proc p JOIN pg_roles r ON p.proowner = r.oid WHERE p.proname = 'lookup_public_calendar') <> 'operza_auth_definer' THEN
+    ALTER FUNCTION lookup_public_calendar(text) OWNER TO operza_auth_definer;
+  END IF;
+  IF (SELECT r.rolname FROM pg_proc p JOIN pg_roles r ON p.proowner = r.oid WHERE p.proname = 'expire_pending_workflow_approvals') <> 'operza_auth_definer' THEN
+    ALTER FUNCTION expire_pending_workflow_approvals() OWNER TO operza_auth_definer;
+  END IF;
+END $$;
 
 -- =========================================================================
 -- 2. HARDEN WORKFLOW DEFINITIONS LOCATION ISOLATION
