@@ -9,7 +9,8 @@ import {
   runUnprivilegedMigrations,
   runMigrationPipeline,
   verifyRolesAndAttributes,
-  DEFAULT_MIGRATOR_PASSWORD
+  DEFAULT_MIGRATOR_PASSWORD,
+  STANDARD_SECURITY_ROLE_OPTIONS
 } from '../scripts/migrate.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -17,7 +18,7 @@ const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, '../../..');
 const migrationsDir = path.join(root, 'packages/db/migrations');
 
-test('Phase 20.2.5.7: Stage A Session Safety, Failure-Test Integrity & Evidence Correction', async (t) => {
+test('Phase 20.2.5.8: Production Role-Provisioning Test Fidelity & Commit Evidence Correction', async (t) => {
   // 1. Provision fresh isolated PostgreSQL database
   const pgServer = new IsolatedTestPostgres({ port: 5436, dbName: 'operza_prod_migrator_test' });
   const adminDbUrl = await pgServer.start();
@@ -56,68 +57,70 @@ test('Phase 20.2.5.7: Stage A Session Safety, Failure-Test Integrity & Evidence 
       max: 10
     });
 
+    const recordedSessionPids = [];
+    let probeExecuted = false;
+
     try {
-      // Re-run privileged bootstrap using an admin pool with 10 available connections
+      // Re-run privileged bootstrap using an admin pool with 10 available connections,
+      // instrumenting the live session client to test the actual production-defined pg_temp.provision_security_role
       await runPrivilegedBootstrap(multiAdminPool, {
-        migratorPassword
+        migratorPassword,
+        recordedSessionPids,
+        stageAProbe: async (client, expectedPid) => {
+          probeExecuted = true;
+
+          // 1. Prove that the probe is running on the exact same backend PID session as the bootstrap
+          const currentPidRes = await client.query('SELECT pg_backend_pid() AS pid;');
+          const probePid = currentPidRes.rows[0].pid;
+          assert.equal(probePid, expectedPid, 'Probe must execute on the exact same backend session PID as Stage A bootstrap');
+
+          // 2. Exercise the actual production-defined pg_temp.provision_security_role on this live session
+          // Test rejection of an unauthorized role name with SQLSTATE 42501
+          await assert.rejects(
+            () => client.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
+              'unauthorized_role_test',
+              'pass123',
+              STANDARD_SECURITY_ROLE_OPTIONS
+            ]),
+            (err) => err.code === '42501' && /Disallowed role name/i.test(err.message),
+            'Production function must reject unauthorized role name with SQLSTATE 42501'
+          );
+
+          // Test rejection of arbitrary role options (e.g. SUPERUSER) with SQLSTATE 42501
+          await assert.rejects(
+            () => client.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
+              'operza_app',
+              'pass123',
+              'SUPERUSER'
+            ]),
+            (err) => err.code === '42501' && /Disallowed role options/i.test(err.message),
+            'Production function must reject arbitrary role options with SQLSTATE 42501'
+          );
+
+          // Test successful execution with exact approved options
+          await client.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
+            'operza_app',
+            'probe_valid_pass_123',
+            STANDARD_SECURITY_ROLE_OPTIONS
+          ]);
+        }
       });
+
+      assert.equal(probeExecuted, true, 'Stage A test probe must have executed against the live session');
+
+      // Verify that all commands during Stage A used the exact same backend PID
+      assert.ok(recordedSessionPids.length >= 3, 'Must have recorded session PIDs throughout Stage A sequence');
+      const firstPid = recordedSessionPids[0];
+      for (const pid of recordedSessionPids) {
+        assert.equal(pid, firstPid, `All Stage A commands must share identical backend PID (${firstPid}), found ${pid}`);
+      }
 
       // Verify roles and attributes are intact
       await verifyRolesAndAttributes(multiAdminPool);
-
-      // Verify that pg_temp.provision_security_role rejects unauthorized role options and roles
-      const client = await multiAdminPool.connect();
-      try {
-        await client.query(`
-          CREATE OR REPLACE FUNCTION pg_temp.provision_security_role(
-            p_role text,
-            p_password text,
-            p_options text
-          )
-          RETURNS void
-          LANGUAGE plpgsql
-          AS $fn$
-          DECLARE
-            v_normalized_options text;
-          BEGIN
-            IF p_role NOT IN ('operza_migrator', 'operza_app', 'operza_worker') THEN
-              RAISE EXCEPTION 'Disallowed role name "%": pg_temp.provision_security_role only provisions predefined Operza roles', p_role
-                USING ERRCODE = '42501';
-            END IF;
-
-            v_normalized_options := upper(trim(regexp_replace(p_options, '\\s+', ' ', 'g')));
-            IF v_normalized_options <> 'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS' THEN
-              RAISE EXCEPTION 'Disallowed role options "%": options must be strictly "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"', p_options
-                USING ERRCODE = '42501';
-            END IF;
-
-            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = p_role) THEN
-              EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L %s', p_role, p_password, v_normalized_options);
-            ELSE
-              EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', p_role, p_password);
-            END IF;
-          END;
-          $fn$;
-        `);
-
-        // Test rejected unauthorized role name
-        await assert.rejects(
-          () => client.query("SELECT pg_temp.provision_security_role('unauthorized_role_test', 'pass', 'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS');"),
-          (err) => err.code === '42501' && /Disallowed role name/i.test(err.message),
-          'Must reject unauthorized role name'
-        );
-
-        // Test rejected arbitrary options (e.g. SUPERUSER)
-        await assert.rejects(
-          () => client.query("SELECT pg_temp.provision_security_role('operza_app', 'pass', 'SUPERUSER');"),
-          (err) => err.code === '42501' && /Disallowed role options/i.test(err.message),
-          'Must reject arbitrary role options'
-        );
-      } finally {
-        client.release();
-      }
     } finally {
       await multiAdminPool.end();
+      // Restore default app password
+      await runPrivilegedBootstrap(superuserPool, { migratorPassword });
     }
   });
 

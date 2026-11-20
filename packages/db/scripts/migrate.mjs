@@ -9,6 +9,42 @@ export const DEFAULT_MIGRATOR_PASSWORD = 'operza_migrator_secret';
 export const DEFAULT_APP_PASSWORD = 'operza_app_secret';
 export const DEFAULT_WORKER_PASSWORD = 'operza_worker_secret';
 
+export const STANDARD_SECURITY_ROLE_OPTIONS = 'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS';
+
+export const PROVISION_SECURITY_ROLE_FUNCTION_SQL = `
+CREATE OR REPLACE FUNCTION pg_temp.provision_security_role(
+  p_role text,
+  p_password text,
+  p_options text
+)
+RETURNS void
+LANGUAGE plpgsql
+AS $fn$
+DECLARE
+  v_normalized_options text;
+BEGIN
+  -- Constrain role names strictly to approved Operza runtime and migrator identities
+  IF p_role NOT IN ('operza_migrator', 'operza_app', 'operza_worker') THEN
+    RAISE EXCEPTION 'Disallowed role name "%": pg_temp.provision_security_role only provisions predefined Operza roles', p_role
+      USING ERRCODE = '42501';
+  END IF;
+
+  -- Constrain role options strictly to exact predefined least-privilege configurations
+  v_normalized_options := upper(trim(regexp_replace(p_options, '\\s+', ' ', 'g')));
+  IF v_normalized_options <> 'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS' THEN
+    RAISE EXCEPTION 'Disallowed role options "%": options must be strictly "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"', p_options
+      USING ERRCODE = '42501';
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = p_role) THEN
+    EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L %s', p_role, p_password, v_normalized_options);
+  ELSE
+    EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', p_role, p_password);
+  END IF;
+END;
+$fn$;
+`;
+
 /**
  * Helper to strictly verify role security attributes fail-closed
  */
@@ -84,7 +120,12 @@ export async function runPrivilegedBootstrap(adminPool, options = {}) {
     }
 
     const adminRole = identRes.rows[0];
-    console.log(`[STAGE-A] Authenticated as "${adminRole.current_user}" (superuser=${adminRole.rolsuper}, createrole=${adminRole.rolcreaterole})`);
+    const sessionPid = (await client.query('SELECT pg_backend_pid() AS pid;')).rows[0].pid;
+    console.log(`[STAGE-A] Authenticated as "${adminRole.current_user}" (pid=${sessionPid}, superuser=${adminRole.rolsuper}, createrole=${adminRole.rolcreaterole})`);
+
+    if (options.recordedSessionPids && Array.isArray(options.recordedSessionPids)) {
+      options.recordedSessionPids.push(sessionPid);
+    }
 
     // Stage A requires SUPERUSER privileges (needed for CREATE EXTENSION btree_gist and CREATE EVENT TRIGGER)
     if (!adminRole.rolsuper) {
@@ -105,57 +146,36 @@ export async function runPrivilegedBootstrap(adminPool, options = {}) {
           CREATE ROLE operza_auth_definer NOLOGIN NOINHERIT BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
         END IF;
       END $$;
-
-      CREATE OR REPLACE FUNCTION pg_temp.provision_security_role(
-        p_role text,
-        p_password text,
-        p_options text
-      )
-      RETURNS void
-      LANGUAGE plpgsql
-      AS $fn$
-      DECLARE
-        v_normalized_options text;
-      BEGIN
-        -- Constrain role names strictly to approved Operza runtime and migrator identities
-        IF p_role NOT IN ('operza_migrator', 'operza_app', 'operza_worker') THEN
-          RAISE EXCEPTION 'Disallowed role name "%": pg_temp.provision_security_role only provisions predefined Operza roles', p_role
-            USING ERRCODE = '42501';
-        END IF;
-
-        -- Constrain role options strictly to exact predefined least-privilege configurations
-        v_normalized_options := upper(trim(regexp_replace(p_options, '\\s+', ' ', 'g')));
-        IF v_normalized_options <> 'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS' THEN
-          RAISE EXCEPTION 'Disallowed role options "%": options must be strictly "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS"', p_options
-            USING ERRCODE = '42501';
-        END IF;
-
-        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = p_role) THEN
-          EXECUTE format('CREATE ROLE %I LOGIN PASSWORD %L %s', p_role, p_password, v_normalized_options);
-        ELSE
-          EXECUTE format('ALTER ROLE %I WITH PASSWORD %L', p_role, p_password);
-        END IF;
-      END;
-      $fn$;
     `);
 
-    const standardRoleOptions = 'NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS';
+    // Install production role provisioner temporary function on this exact session
+    await client.query(PROVISION_SECURITY_ROLE_FUNCTION_SQL);
+
+    // If caller provided an instrumentation probe, execute it against this exact session client
+    if (typeof options.stageAProbe === 'function') {
+      await options.stageAProbe(client, sessionPid);
+    }
 
     await client.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
       'operza_migrator',
       migratorPassword,
-      standardRoleOptions
+      STANDARD_SECURITY_ROLE_OPTIONS
     ]);
     await client.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
       'operza_app',
       appPassword,
-      standardRoleOptions
+      STANDARD_SECURITY_ROLE_OPTIONS
     ]);
     await client.query('SELECT pg_temp.provision_security_role($1, $2, $3);', [
       'operza_worker',
       workerPassword,
-      standardRoleOptions
+      STANDARD_SECURITY_ROLE_OPTIONS
     ]);
+
+    if (options.recordedSessionPids && Array.isArray(options.recordedSessionPids)) {
+      const pidRes2 = await client.query('SELECT pg_backend_pid() AS backend_pid;');
+      options.recordedSessionPids.push(pidRes2.rows[0].backend_pid);
+    }
 
     // 3. Database & Schema Privileges
     const dbRes = await client.query('SELECT current_database() AS dbname');
@@ -197,6 +217,12 @@ export async function runPrivilegedBootstrap(adminPool, options = {}) {
 
     // 4. Verify roles and attributes using the dedicated client session
     await verifyRolesAndAttributes(client);
+
+    if (options.recordedSessionPids && Array.isArray(options.recordedSessionPids)) {
+      const pidRes3 = await client.query('SELECT pg_backend_pid() AS backend_pid;');
+      options.recordedSessionPids.push(pidRes3.rows[0].backend_pid);
+    }
+
     console.log('[STAGE-A] ✓ Privileged bootstrap verified successfully.');
   } catch (err) {
     bootstrapError = err;
