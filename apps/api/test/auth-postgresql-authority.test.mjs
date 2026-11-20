@@ -144,7 +144,7 @@ test('PostgreSQL-Authoritative Authentication & Session Resolution Regression Su
   });
 
   // Step 1: Run all migrations sequentially
-  await t.test('Setup: Run all database migrations (001-026)', async () => {
+  await t.test('Setup: Run all database migrations (001-027)', async () => {
     await superuserPool.query(`
       CREATE EXTENSION IF NOT EXISTS btree_gist;
       DO $$ BEGIN
@@ -196,7 +196,7 @@ test('PostgreSQL-Authoritative Authentication & Session Resolution Regression Su
       .filter(f => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
       .sort();
 
-    assert.ok(files.length >= 26, `Expected 26 migrations, found ${files.length}`);
+    assert.ok(files.length >= 27, `Expected 27 migrations, found ${files.length}`);
 
     await superuserPool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz DEFAULT now());');
 

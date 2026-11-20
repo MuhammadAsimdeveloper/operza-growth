@@ -2178,7 +2178,13 @@ function publicWorkflowApproval(approval) {
 }
 
 async function expirePendingWorkflowApprovals(agencyId, locationId) {
-  if (pgPool && agencyId && locationId) {
+  if (pgPool) {
+    if (!agencyId || !locationId) {
+      if (isStagingOrProd || platformDbEnabled) {
+        throw new Error('Database approval expiration requires both agencyId and locationId.');
+      }
+      return;
+    }
     const client = await pgPool.connect();
     try {
       await client.query('BEGIN');
@@ -2201,9 +2207,7 @@ async function expirePendingWorkflowApprovals(agencyId, locationId) {
     } finally {
       client.release();
     }
-    if (isStagingOrProd || platformDbEnabled) {
-      return;
-    }
+    return;
   }
 
   state.workflowApprovals = state.workflowApprovals || [];
@@ -6643,6 +6647,13 @@ const server = createServer(async (req, res) => {
       }
       if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
 
+      if (!activeLocation?.id) {
+        return sendJson(res, 400, {
+          error: 'Active location is required for calendar operations',
+          code: 'LOCATION_REQUIRED'
+        });
+      }
+
       const provider = url.searchParams.get('provider') || 'google_calendar';
       const redirectUri = `${process.env.APP_BASE_URL || url.origin}/api/calendars/oauth/callback`;
       let authorizationUrl = '';
@@ -6652,7 +6663,7 @@ const server = createServer(async (req, res) => {
       const expiresAt = Date.now() + 600_000;
       const statePayload = {
         tenantId: agency.id,
-        locationId: activeLocation?.id || agency.id,
+        locationId: activeLocation.id,
         actorId: actor?.user?.id || 'system',
         calendarId: cal.id,
         provider,
@@ -6670,7 +6681,7 @@ const server = createServer(async (req, res) => {
       await oauthStore.create({
         stateHash,
         tenantId: agency.id,
-        locationId: activeLocation?.id || agency.id,
+        locationId: activeLocation.id,
         actorId: actor?.user?.id || 'system',
         codeVerifier: pkce.verifier,
         expiresAt
@@ -6689,7 +6700,7 @@ const server = createServer(async (req, res) => {
           redirectUri,
           stateKey: effectiveVaultKey,
           tenantId: agency.id,
-          locationId: activeLocation?.id || agency.id,
+          locationId: activeLocation.id,
           calendarId: cal.id,
           codeChallenge: pkce.challenge,
           state: signedState
@@ -6707,7 +6718,7 @@ const server = createServer(async (req, res) => {
           redirectUri,
           stateKey: effectiveVaultKey,
           tenantId: agency.id,
-          locationId: activeLocation?.id || agency.id,
+          locationId: activeLocation.id,
           calendarId: cal.id,
           codeChallenge: pkce.challenge,
           state: signedState
@@ -8601,35 +8612,42 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'GET' && pathname === '/api/workflows/runs') {
-      await expirePendingWorkflowApprovals(agency.id, activeLocation?.id || agency.id);
+      if (!activeLocation?.id) {
+        return sendJson(res, 400, {
+          error: 'Active location is required for workflow runs',
+          code: 'LOCATION_REQUIRED'
+        });
+      }
+      await expirePendingWorkflowApprovals(agency.id, activeLocation.id);
       if (pgPool) {
         try {
           const resExec = await pgPool.query(`
             SELECT id, agency_id, location_id, workflow_id, status, trigger_event,
                    current_node_id, state, attempts, last_error_code, finished_at, created_at, updated_at
             FROM workflow_executions
-            WHERE agency_id = $1 AND ($2::uuid IS NULL OR location_id = $2)
+            WHERE agency_id = $1 AND location_id = $2
             ORDER BY created_at DESC
-          `, [agency.id, activeLocation?.id || null]);
-          if (resExec.rows.length > 0) {
-            const mappedRuns = resExec.rows.map(row => ({
-              id: row.id,
-              agencyId: row.agency_id,
-              locationId: row.location_id,
-              workflowId: row.workflow_id,
-              status: row.status,
-              triggerContext: row.trigger_event,
-              currentNodeId: row.current_node_id,
-              state: row.state,
-              attempts: row.attempts,
-              lastErrorCode: row.last_error_code,
-              createdAt: row.created_at?.toISOString?.() || row.created_at,
-              finishedAt: row.finished_at?.toISOString?.() || row.finished_at
-            }));
-            return sendJson(res, 200, mappedRuns.map(publicWorkflowExecution));
-          }
+          `, [agency.id, activeLocation.id]);
+          const mappedRuns = resExec.rows.map(row => ({
+            id: row.id,
+            agencyId: row.agency_id,
+            locationId: row.location_id,
+            workflowId: row.workflow_id,
+            status: row.status,
+            triggerContext: row.trigger_event,
+            currentNodeId: row.current_node_id,
+            state: row.state,
+            attempts: row.attempts,
+            lastErrorCode: row.last_error_code,
+            createdAt: row.created_at?.toISOString?.() || row.created_at,
+            finishedAt: row.finished_at?.toISOString?.() || row.finished_at
+          }));
+          return sendJson(res, 200, mappedRuns.map(publicWorkflowExecution));
         } catch (pgErr) {
           console.warn('[WORKFLOW-RUNS] PG query warning:', pgErr.message);
+          if (isStagingOrProd || platformDbEnabled) {
+            throw pgErr;
+          }
         }
       }
       const runs = (state.workflowExecutions || []).filter(
@@ -8639,18 +8657,24 @@ const server = createServer(async (req, res) => {
     }
 
     if (method === 'GET' && pathname === '/api/workflows/approvals') {
-      await expirePendingWorkflowApprovals(agency.id, activeLocation?.id || agency.id);
+      if (!activeLocation?.id) {
+        return sendJson(res, 400, {
+          error: 'Active location is required for workflow approvals',
+          code: 'LOCATION_REQUIRED'
+        });
+      }
+      await expirePendingWorkflowApprovals(agency.id, activeLocation.id);
       if (pgPool) {
         const client = await pgPool.connect();
         try {
           await client.query('BEGIN');
-          await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [agency.id, activeLocation?.id || agency.id]);
+          await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [agency.id, activeLocation.id]);
           const appRes = await client.query(`
             SELECT id, agency_id, location_id, execution_id, workflow_id, node_id, action_id, action_hash, status, requested_at, expires_at
             FROM workflow_approvals
             WHERE agency_id = $1 AND location_id = $2 AND status = 'pending'
             ORDER BY requested_at DESC
-          `, [agency.id, activeLocation?.id || agency.id]);
+          `, [agency.id, activeLocation.id]);
           await client.query('COMMIT');
           const mapped = appRes.rows.map(row => ({
             id: row.id,
@@ -8683,6 +8707,12 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' &&
         pathname.startsWith('/api/workflows/runs/') &&
         (pathname.endsWith('/approve') || pathname.endsWith('/reject'))) {
+      if (!activeLocation?.id) {
+        return sendJson(res, 400, {
+          error: 'Active location is required for workflow approval decisions',
+          code: 'LOCATION_REQUIRED'
+        });
+      }
       await expirePendingWorkflowApprovals(agency.id, activeLocation.id);
       const runId = pathname.split('/')[4];
       const pathDecision = pathname.endsWith('/reject') ? 'rejected' : 'approved';

@@ -112,8 +112,8 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
     await migratorPool.end();
   });
 
-  // 2. Apply all migrations sequentially (001 through 026) using unprivileged operza_migrator
-  await t.test('2. Execute full migration suite (001 through 026) as operza_migrator', async () => {
+  // 2. Apply all migrations sequentially (001 through 027) using unprivileged operza_migrator
+  await t.test('2. Execute full migration suite (001 through 027) as operza_migrator', async () => {
     // Negative test: verify operza_migrator cannot create roles (NOCREATEROLE)
     await assert.rejects(
       () => migratorPool.query('CREATE ROLE unauthorized_test_role;'),
@@ -125,7 +125,7 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
       .filter(f => /^\d{3}_[a-z0-9_]+\.sql$/.test(f))
       .sort();
 
-    assert.ok(files.length >= 26, `Expected at least 26 migrations, found ${files.length}`);
+    assert.ok(files.length >= 27, `Expected at least 27 migrations, found ${files.length}`);
 
     await migratorPool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz DEFAULT now());');
 
@@ -544,47 +544,92 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
     }
   });
 
-  await t.test('11. Authoritative PostgreSQL Approval Expiration', async () => {
-    // Seed an expired approval and a non-expired approval for Tenant A
-    const expiredApprId = randomUUID();
-    const activeApprId = randomUUID();
-    const expiredExecId = randomUUID();
-    const activeExecId = randomUUID();
-    const flowId = randomUUID();
+  await t.test('11. Authoritative PostgreSQL Approval Expiration & Adversarial Location Boundary Verification', async () => {
+    // Seed expired approvals in two different locations of Tenant A, plus an active approval
+    const flowIdA1 = randomUUID();
+    const flowIdA2 = randomUUID();
+    const expiredExecA1 = randomUUID();
+    const expiredExecA2 = randomUUID();
+    const activeExecA1 = randomUUID();
+    const expiredApprA1 = randomUUID();
+    const expiredApprA2 = randomUUID();
+    const activeApprA1 = randomUUID();
 
     await superuserPool.query(`
       INSERT INTO workflow_definitions (id, agency_id, location_id, name, trigger_type, nodes)
-      VALUES ($1, $2, $3, 'Approval Flow', 'form', '[]'::jsonb)
-    `, [flowId, tenantA, locationA1]);
+      VALUES ($1, $2, $3, 'Flow A1', 'form', '[]'::jsonb),
+             ($4, $2, $5, 'Flow A2', 'form', '[]'::jsonb)
+    `, [flowIdA1, tenantA, locationA1, flowIdA2, locationA2]);
 
+    // Seed expired approval in Location A1 (expires in past)
     await superuserPool.query(`
       INSERT INTO workflow_executions (id, agency_id, location_id, workflow_id, status)
       VALUES ($1, $2, $3, $4, 'waiting_approval')
-    `, [expiredExecId, tenantA, locationA1, flowId]);
+    `, [expiredExecA1, tenantA, locationA1, flowIdA1]);
 
     await superuserPool.query(`
       INSERT INTO workflow_execution_steps (id, agency_id, location_id, execution_id, node_id, status)
-      VALUES ($1, $2, $3, $4, 'gate_node', 'waiting_approval')
-    `, [randomUUID(), tenantA, locationA1, expiredExecId]);
+      VALUES ($1, $2, $3, $4, 'gate_node_a1', 'waiting_approval')
+    `, [randomUUID(), tenantA, locationA1, expiredExecA1]);
 
     await superuserPool.query(`
       INSERT INTO workflow_approvals (id, agency_id, location_id, execution_id, workflow_id, node_id, action_id, action_hash, status, requested_at, expires_at, request_checksum)
-      VALUES ($1, $2, $3, $4, $5, 'gate_node', 'action_crm', '${'0'.repeat(64)}', 'pending', now() - interval '2 hours', now() - interval '1 hour', '${'1'.repeat(64)}')
-    `, [expiredApprId, tenantA, locationA1, expiredExecId, flowId]);
+      VALUES ($1, $2, $3, $4, $5, 'gate_node_a1', 'action_crm', '${'0'.repeat(64)}', 'pending', now() - interval '2 hours', now() - interval '1 hour', '${'1'.repeat(64)}')
+    `, [expiredApprA1, tenantA, locationA1, expiredExecA1, flowIdA1]);
 
-    // Active approval (expires in 24 hours)
+    // Seed expired approval in Location A2 (expires in past)
     await superuserPool.query(`
       INSERT INTO workflow_executions (id, agency_id, location_id, workflow_id, status)
       VALUES ($1, $2, $3, $4, 'waiting_approval')
-    `, [activeExecId, tenantA, locationA1, flowId]);
+    `, [expiredExecA2, tenantA, locationA2, flowIdA2]);
+
+    await superuserPool.query(`
+      INSERT INTO workflow_execution_steps (id, agency_id, location_id, execution_id, node_id, status)
+      VALUES ($1, $2, $3, $4, 'gate_node_a2', 'waiting_approval')
+    `, [randomUUID(), tenantA, locationA2, expiredExecA2]);
 
     await superuserPool.query(`
       INSERT INTO workflow_approvals (id, agency_id, location_id, execution_id, workflow_id, node_id, action_id, action_hash, status, requested_at, expires_at, request_checksum)
-      VALUES ($1, $2, $3, $4, $5, 'gate_node', 'action_crm', '${'0'.repeat(64)}', 'pending', now(), now() + interval '24 hours', '${'2'.repeat(64)}')
-    `, [activeApprId, tenantA, locationA1, activeExecId, flowId]);
+      VALUES ($1, $2, $3, $4, $5, 'gate_node_a2', 'action_crm', '${'0'.repeat(64)}', 'pending', now() - interval '2 hours', now() - interval '1 hour', '${'2'.repeat(64)}')
+    `, [expiredApprA2, tenantA, locationA2, expiredExecA2, flowIdA2]);
 
-    // Run authoritative expiration logic against PostgreSQL
-    // 11.1 operza_app must NOT be able to call global expire_pending_workflow_approvals()
+    // Seed active approval in Location A1 (expires in future)
+    await superuserPool.query(`
+      INSERT INTO workflow_executions (id, agency_id, location_id, workflow_id, status)
+      VALUES ($1, $2, $3, $4, 'waiting_approval')
+    `, [activeExecA1, tenantA, locationA1, flowIdA1]);
+
+    await superuserPool.query(`
+      INSERT INTO workflow_execution_steps (id, agency_id, location_id, execution_id, node_id, status)
+      VALUES ($1, $2, $3, $4, 'gate_node_a1_active', 'waiting_approval')
+    `, [randomUUID(), tenantA, locationA1, activeExecA1]);
+
+    await superuserPool.query(`
+      INSERT INTO workflow_approvals (id, agency_id, location_id, execution_id, workflow_id, node_id, action_id, action_hash, status, requested_at, expires_at, request_checksum)
+      VALUES ($1, $2, $3, $4, $5, 'gate_node_a1_active', 'action_crm', '${'0'.repeat(64)}', 'pending', now(), now() + interval '24 hours', '${'3'.repeat(64)}')
+    `, [activeApprA1, tenantA, locationA1, activeExecA1, flowIdA1]);
+
+    // Verification helper: prove records remain strictly pending and unmodified
+    async function assertRecordsPending(apprId, execId, stepNodeId) {
+      const a = await superuserPool.query('SELECT status, decided_at FROM workflow_approvals WHERE id = $1', [apprId]);
+      assert.equal(a.rows[0].status, 'pending', `Approval ${apprId} must be pending`);
+      assert.equal(a.rows[0].decided_at, null, `Approval ${apprId} decided_at must be null`);
+
+      const e = await superuserPool.query('SELECT status, last_error_code FROM workflow_executions WHERE id = $1', [execId]);
+      assert.equal(e.rows[0].status, 'waiting_approval', `Execution ${execId} status must be waiting_approval`);
+      assert.equal(e.rows[0].last_error_code, null, `Execution ${execId} last_error_code must be null`);
+
+      const s = await superuserPool.query('SELECT status, error_code FROM workflow_execution_steps WHERE execution_id = $1 AND node_id = $2', [execId, stepNodeId]);
+      assert.equal(s.rows[0].status, 'waiting_approval', `Step for ${execId} must be waiting_approval`);
+      assert.equal(s.rows[0].error_code, null, `Step error_code must be null`);
+    }
+
+    // Initial state check
+    await assertRecordsPending(expiredApprA1, expiredExecA1, 'gate_node_a1');
+    await assertRecordsPending(expiredApprA2, expiredExecA2, 'gate_node_a2');
+    await assertRecordsPending(activeApprA1, activeExecA1, 'gate_node_a1_active');
+
+    // 11.1 operza_app cannot execute global expire_pending_workflow_approvals()
     const appClientGlobal = await appPool.connect();
     try {
       await assert.rejects(
@@ -595,40 +640,183 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
     } finally {
       appClientGlobal.release();
     }
+    await assertRecordsPending(expiredApprA1, expiredExecA1, 'gate_node_a1');
+    await assertRecordsPending(expiredApprA2, expiredExecA2, 'gate_node_a2');
 
-    // 11.2 operza_app calling expire_tenant_workflow_approvals with mismatched tenant context fails closed
-    const appClientTenantMismatch = await appPool.connect();
+    // 11.2 Missing agency context (app.agency_id unset or empty) fails closed
+    const appClientMissingAgency = await appPool.connect();
     try {
-      await appClientTenantMismatch.query('BEGIN');
-      await appClientTenantMismatch.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
+      await appClientMissingAgency.query('BEGIN');
+      await appClientMissingAgency.query("SELECT set_config('app.agency_id', '', true), set_config('app.location_id', $1, true)", [locationA1]);
       await assert.rejects(
-        () => appClientTenantMismatch.query('SELECT * FROM expire_tenant_workflow_approvals($1, $2)', [tenantB, locationB1]),
+        () => appClientMissingAgency.query('SELECT * FROM expire_tenant_workflow_approvals($1, $2)', [tenantA, locationA1]),
         /TENANT_CONTEXT_MISMATCH/i,
-        'expire_tenant_workflow_approvals must fail closed if context does not match arguments'
+        'Must reject when app.agency_id context is empty'
       );
     } finally {
-      await appClientTenantMismatch.query('ROLLBACK').catch(() => {});
-      appClientTenantMismatch.release();
+      await appClientMissingAgency.query('ROLLBACK').catch(() => {});
+      appClientMissingAgency.release();
     }
+    await assertRecordsPending(expiredApprA1, expiredExecA1, 'gate_node_a1');
+    await assertRecordsPending(expiredApprA2, expiredExecA2, 'gate_node_a2');
 
-    // 11.3 operza_app calling expire_tenant_workflow_approvals for its own tenant succeeds
-    const client = await appPool.connect();
+    // 11.3 Missing location context (app.location_id unset) fails closed
+    const appClientMissingLocation = await appPool.connect();
     try {
-      await client.query('BEGIN');
-      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
-      const expiredRes = await client.query('SELECT * FROM expire_tenant_workflow_approvals($1, $2)', [tenantA, locationA1]);
-      await client.query('COMMIT');
-
-      assert.equal(expiredRes.rows.length, 1, 'Exactly one approval should be expired');
-      assert.equal(expiredRes.rows[0].expired_approval_id, expiredApprId);
-      assert.equal(expiredRes.rows[0].agency_id, tenantA);
-      assert.equal(expiredRes.rows[0].execution_id, expiredExecId);
-      assert.equal(expiredRes.rows[0].node_id, 'gate_node');
+      await appClientMissingLocation.query('BEGIN');
+      await appClientMissingLocation.query("SELECT set_config('app.agency_id', $1, true)", [tenantA]);
+      await assert.rejects(
+        () => appClientMissingLocation.query('SELECT * FROM expire_tenant_workflow_approvals($1, $2)', [tenantA, locationA1]),
+        /TENANT_CONTEXT_MISMATCH/i,
+        'Must reject when app.location_id context is missing'
+      );
     } finally {
-      client.release();
+      await appClientMissingLocation.query('ROLLBACK').catch(() => {});
+      appClientMissingLocation.release();
+    }
+    await assertRecordsPending(expiredApprA1, expiredExecA1, 'gate_node_a1');
+    await assertRecordsPending(expiredApprA2, expiredExecA2, 'gate_node_a2');
+
+    // 11.4 Empty location context (app.location_id = '') fails closed
+    const appClientEmptyLocation = await appPool.connect();
+    try {
+      await appClientEmptyLocation.query('BEGIN');
+      await appClientEmptyLocation.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', '', true)", [tenantA]);
+      await assert.rejects(
+        () => appClientEmptyLocation.query('SELECT * FROM expire_tenant_workflow_approvals($1, $2)', [tenantA, locationA1]),
+        /TENANT_CONTEXT_MISMATCH/i,
+        'Must reject when app.location_id context is empty string'
+      );
+    } finally {
+      await appClientEmptyLocation.query('ROLLBACK').catch(() => {});
+      appClientEmptyLocation.release();
+    }
+    await assertRecordsPending(expiredApprA1, expiredExecA1, 'gate_node_a1');
+    await assertRecordsPending(expiredApprA2, expiredExecA2, 'gate_node_a2');
+
+    // 11.5 NULL arguments fail closed with ARGUMENT_REQUIRED
+    {
+      const client = await appPool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
+        await assert.rejects(
+          () => client.query('SELECT * FROM expire_tenant_workflow_approvals($1, NULL)', [tenantA]),
+          /ARGUMENT_REQUIRED/i,
+          'Must reject when p_location_id argument is NULL'
+        );
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        client.release();
+      }
+    }
+    {
+      const client = await appPool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
+        await assert.rejects(
+          () => client.query('SELECT * FROM expire_tenant_workflow_approvals(NULL, $1)', [locationA1]),
+          /ARGUMENT_REQUIRED/i,
+          'Must reject when p_agency_id argument is NULL'
+        );
+      } finally {
+        await client.query('ROLLBACK').catch(() => {});
+        client.release();
+      }
+    }
+    await assertRecordsPending(expiredApprA1, expiredExecA1, 'gate_node_a1');
+    await assertRecordsPending(expiredApprA2, expiredExecA2, 'gate_node_a2');
+
+    // 11.6 Cross-location in same agency fails closed (context is locationA1, argument is locationA2)
+    const appClientCrossLoc = await appPool.connect();
+    try {
+      await appClientCrossLoc.query('BEGIN');
+      await appClientCrossLoc.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
+      await assert.rejects(
+        () => appClientCrossLoc.query('SELECT * FROM expire_tenant_workflow_approvals($1, $2)', [tenantA, locationA2]),
+        /TENANT_CONTEXT_MISMATCH/i,
+        'Must reject when p_location_id does not match active app.location_id context'
+      );
+    } finally {
+      await appClientCrossLoc.query('ROLLBACK').catch(() => {});
+      appClientCrossLoc.release();
+    }
+    await assertRecordsPending(expiredApprA1, expiredExecA1, 'gate_node_a1');
+    await assertRecordsPending(expiredApprA2, expiredExecA2, 'gate_node_a2');
+
+    // 11.7 Cross-agency and cross-location fails closed
+    const appClientCrossTenant = await appPool.connect();
+    try {
+      await appClientCrossTenant.query('BEGIN');
+      await appClientCrossTenant.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
+      await assert.rejects(
+        () => appClientCrossTenant.query('SELECT * FROM expire_tenant_workflow_approvals($1, $2)', [tenantB, locationB1]),
+        /TENANT_CONTEXT_MISMATCH/i,
+        'Must reject when p_agency_id and p_location_id do not match active tenant context'
+      );
+    } finally {
+      await appClientCrossTenant.query('ROLLBACK').catch(() => {});
+      appClientCrossTenant.release();
+    }
+    await assertRecordsPending(expiredApprA1, expiredExecA1, 'gate_node_a1');
+    await assertRecordsPending(expiredApprA2, expiredExecA2, 'gate_node_a2');
+
+    // 11.8 Malformed UUID session context fails closed
+    const appClientMalformedUuid = await appPool.connect();
+    try {
+      await appClientMalformedUuid.query('BEGIN');
+      await appClientMalformedUuid.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', 'not-a-valid-uuid', true)", [tenantA]);
+      await assert.rejects(
+        () => appClientMalformedUuid.query('SELECT * FROM expire_tenant_workflow_approvals($1, $2)', [tenantA, locationA1]),
+        /TENANT_CONTEXT_MISMATCH/i,
+        'Must reject when app.location_id context is not a valid UUID'
+      );
+    } finally {
+      await appClientMalformedUuid.query('ROLLBACK').catch(() => {});
+      appClientMalformedUuid.release();
+    }
+    await assertRecordsPending(expiredApprA1, expiredExecA1, 'gate_node_a1');
+    await assertRecordsPending(expiredApprA2, expiredExecA2, 'gate_node_a2');
+
+    // 11.9 Valid location A1 call: expires ONLY location A1, Location A2 remains strictly pending
+    const appClientValid = await appPool.connect();
+    try {
+      await appClientValid.query('BEGIN');
+      await appClientValid.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA1]);
+      const expiredRes = await appClientValid.query('SELECT * FROM expire_tenant_workflow_approvals($1, $2)', [tenantA, locationA1]);
+      await appClientValid.query('COMMIT');
+
+      assert.equal(expiredRes.rows.length, 1, 'Exactly one approval in Location A1 must be expired');
+      assert.equal(expiredRes.rows[0].expired_approval_id, expiredApprA1);
+      assert.equal(expiredRes.rows[0].agency_id, tenantA);
+      assert.equal(expiredRes.rows[0].location_id, locationA1);
+      assert.equal(expiredRes.rows[0].execution_id, expiredExecA1);
+      assert.equal(expiredRes.rows[0].node_id, 'gate_node_a1');
+    } finally {
+      appClientValid.release();
     }
 
-    // 11.4 operza_worker CAN execute global expire_pending_workflow_approvals()
+    // Verify Location A1 approval is expired
+    const checkApprA1 = await superuserPool.query('SELECT status, decided_at FROM workflow_approvals WHERE id = $1', [expiredApprA1]);
+    assert.equal(checkApprA1.rows[0].status, 'expired', 'Location A1 approval status must be expired');
+    assert.ok(checkApprA1.rows[0].decided_at, 'Location A1 decided_at must be set');
+
+    const checkExecA1 = await superuserPool.query('SELECT status, last_error_code FROM workflow_executions WHERE id = $1', [expiredExecA1]);
+    assert.equal(checkExecA1.rows[0].status, 'failed', 'Location A1 execution status must be failed');
+    assert.equal(checkExecA1.rows[0].last_error_code, 'APPROVAL_EXPIRED');
+
+    const checkStepA1 = await superuserPool.query('SELECT status, error_code FROM workflow_execution_steps WHERE execution_id = $1 AND node_id = $2', [expiredExecA1, 'gate_node_a1']);
+    assert.equal(checkStepA1.rows[0].status, 'failed', 'Location A1 step status must be failed');
+    assert.equal(checkStepA1.rows[0].error_code, 'APPROVAL_EXPIRED');
+
+    // CRUCIAL: Verify Location A2 (in same agency!) remained untouched and strictly pending
+    await assertRecordsPending(expiredApprA2, expiredExecA2, 'gate_node_a2');
+
+    // Verify Active approval in Location A1 remained pending
+    await assertRecordsPending(activeApprA1, activeExecA1, 'gate_node_a1_active');
+
+    // 11.10 operza_worker CAN execute global expire_pending_workflow_approvals() across all tenants/locations
     const expiredTenantBExecId = randomUUID();
     const expiredTenantBApprId = randomUUID();
     const flowIdB = randomUUID();
@@ -646,36 +834,25 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
     `, [randomUUID(), tenantB, locationB1, expiredTenantBExecId]);
     await superuserPool.query(`
       INSERT INTO workflow_approvals (id, agency_id, location_id, execution_id, workflow_id, node_id, action_id, action_hash, status, requested_at, expires_at, request_checksum)
-      VALUES ($1, $2, $3, $4, $5, 'gate_node_b', 'action_crm', '${'0'.repeat(64)}', 'pending', now() - interval '2 hours', now() - interval '1 hour', '${'3'.repeat(64)}')
+      VALUES ($1, $2, $3, $4, $5, 'gate_node_b', 'action_crm', '${'0'.repeat(64)}', 'pending', now() - interval '2 hours', now() - interval '1 hour', '${'4'.repeat(64)}')
     `, [expiredTenantBApprId, tenantB, locationB1, expiredTenantBExecId, flowIdB]);
 
     const workerExpireClient = await workerPool.connect();
     try {
       const workerExpireRes = await workerExpireClient.query('SELECT * FROM expire_pending_workflow_approvals()');
-      assert.ok(workerExpireRes.rows.some(r => r.expired_approval_id === expiredTenantBApprId), 'operza_worker must be able to expire Tenant B approval globally');
+      const expiredIds = workerExpireRes.rows.map(r => r.expired_approval_id);
+      assert.ok(expiredIds.includes(expiredApprA2), 'operza_worker must expire Location A2 approval in global pass');
+      assert.ok(expiredIds.includes(expiredTenantBApprId), 'operza_worker must expire Tenant B approval in global pass');
     } finally {
       workerExpireClient.release();
     }
 
-    // Verify final states in PostgreSQL
-    const checkAppr = await superuserPool.query('SELECT status, decided_at FROM workflow_approvals WHERE id = $1', [expiredApprId]);
-    assert.equal(checkAppr.rows[0].status, 'expired', 'Expired approval status must be expired');
-    assert.ok(checkAppr.rows[0].decided_at, 'decided_at must be set');
+    // Verify Location A2 is now expired after global worker sweep
+    const checkApprA2 = await superuserPool.query('SELECT status, decided_at FROM workflow_approvals WHERE id = $1', [expiredApprA2]);
+    assert.equal(checkApprA2.rows[0].status, 'expired', 'Location A2 approval status must be expired by worker');
 
-    const checkExec = await superuserPool.query('SELECT status, last_error_code FROM workflow_executions WHERE id = $1', [expiredExecId]);
-    assert.equal(checkExec.rows[0].status, 'failed', 'Execution status must be failed');
-    assert.equal(checkExec.rows[0].last_error_code, 'APPROVAL_EXPIRED');
-
-    const checkStep = await superuserPool.query('SELECT status, error_code FROM workflow_execution_steps WHERE execution_id = $1 AND node_id = $2', [expiredExecId, 'gate_node']);
-    assert.equal(checkStep.rows[0].status, 'failed', 'Step status must be failed');
-    assert.equal(checkStep.rows[0].error_code, 'APPROVAL_EXPIRED');
-
-    // Verify active approval remained pending and unchanged
-    const checkActive = await superuserPool.query('SELECT status FROM workflow_approvals WHERE id = $1', [activeApprId]);
-    assert.equal(checkActive.rows[0].status, 'pending', 'Non-expired approval must remain pending');
-
-    const checkActiveExec = await superuserPool.query('SELECT status FROM workflow_executions WHERE id = $1', [activeExecId]);
-    assert.equal(checkActiveExec.rows[0].status, 'waiting_approval', 'Non-expired execution must remain waiting_approval');
+    // Active approval remains pending
+    await assertRecordsPending(activeApprA1, activeExecA1, 'gate_node_a1_active');
   });
 
   await t.test('12. Function Execution Privileges (PUBLIC revoked, least-privilege enforced)', async () => {

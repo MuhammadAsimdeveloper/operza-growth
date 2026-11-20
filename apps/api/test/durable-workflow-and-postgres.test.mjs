@@ -957,8 +957,8 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
     };
 
     const appts = [
-      { id: apptId1, calendarId: calId, startsAt: '2026-11-20T10:00:00Z', endsAt: '2026-11-20T10:30:00Z', title: 'Consultation' },
-      { id: apptId2, calendarId: calId, startsAt: '2026-11-20T11:00:00Z', endsAt: '2026-11-20T11:30:00Z', title: 'Follow-up' }
+      { id: apptId1, calendarId: calId, startsAt: new Date(Date.now() + 3600000).toISOString(), endsAt: new Date(Date.now() + 5400000).toISOString(), title: 'Consultation' },
+      { id: apptId2, calendarId: calId, startsAt: new Date(Date.now() + 7200000).toISOString(), endsAt: new Date(Date.now() + 9000000).toISOString(), title: 'Follow-up' }
     ];
 
     // Mock fetch that returns calendar verification and events from provider
