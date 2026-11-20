@@ -1516,9 +1516,23 @@ async function executeWorkflowInstance({
 
   const workerLeaseId = `api-worker-${process.pid || 'local'}`;
   if (currentExecution) {
+    if (agencyId && execution.agencyId && String(agencyId) !== String(execution.agencyId)) {
+      if (isStagingOrProd || platformDbEnabled) {
+        throw Object.assign(new Error(`Workflow execution agency mismatch: caller agencyId (${agencyId}) does not match execution.agencyId (${execution.agencyId})`), {
+          code: 'TENANT_CONTEXT_MISMATCH'
+        });
+      }
+    }
+    if (locationId && execution.locationId && String(locationId) !== String(execution.locationId)) {
+      if (isStagingOrProd || platformDbEnabled) {
+        throw Object.assign(new Error(`Workflow execution location mismatch: caller locationId (${locationId}) does not match execution.locationId (${execution.locationId})`), {
+          code: 'TENANT_CONTEXT_MISMATCH'
+        });
+      }
+    }
     flow = flow || execution.workflowSnapshot;
-    agencyId = execution.agencyId;
-    locationId = execution.locationId;
+    agencyId = agencyId || execution.agencyId;
+    locationId = locationId || execution.locationId;
     triggerType = execution.triggerType;
     triggerContext = execution.triggerContext || {};
     mode = execution.mode;

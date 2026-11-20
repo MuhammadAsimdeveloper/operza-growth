@@ -1,7 +1,7 @@
 /**
  * Workflow Execution PostgreSQL Relational Persistence Helpers
  * Enforces transaction-local tenant context, strict composite key scoping,
- * connection leak prevention, and fail-closed error propagation.
+ * connection leak prevention, authoritative location context, and fail-closed error propagation.
  */
 
 export async function persistInitialWorkflowExecution({
@@ -16,8 +16,30 @@ export async function persistInitialWorkflowExecution({
 }) {
   if (!pgPool) return null;
 
-  const effectiveAgencyId = agencyId || execution.agencyId || flow?.agency_id;
-  const effectiveLocationId = locationId || execution.locationId || flow?.location_id;
+  // Verify consistency between explicit arguments and execution object
+  if (agencyId && execution?.agencyId && String(agencyId) !== String(execution.agencyId)) {
+    if (isStagingOrProd || platformDbEnabled) {
+      throw Object.assign(new Error(`Tenant agency mismatch: explicit agencyId (${agencyId}) does not match execution.agencyId (${execution.agencyId})`), {
+        code: 'TENANT_CONTEXT_MISMATCH'
+      });
+    }
+    console.warn(`[WORKFLOW-EXEC-PERSIST] Tenant agency mismatch: ${agencyId} vs ${execution.agencyId}`);
+    return null;
+  }
+
+  if (locationId && execution?.locationId && String(locationId) !== String(execution.locationId)) {
+    if (isStagingOrProd || platformDbEnabled) {
+      throw Object.assign(new Error(`Tenant location mismatch: explicit locationId (${locationId}) does not match execution.locationId (${execution.locationId})`), {
+        code: 'TENANT_CONTEXT_MISMATCH'
+      });
+    }
+    console.warn(`[WORKFLOW-EXEC-PERSIST] Tenant location mismatch: ${locationId} vs ${execution.locationId}`);
+    return null;
+  }
+
+  // Authoritative ordering: explicit parameter takes precedence over execution, then flow
+  const effectiveAgencyId = agencyId || execution?.agencyId || flow?.agency_id;
+  const effectiveLocationId = locationId || execution?.locationId || flow?.location_id;
 
   let client;
   try {
@@ -57,8 +79,11 @@ export async function persistInitialWorkflowExecution({
       await client.query('ROLLBACK').catch(() => {});
     }
     if (isStagingOrProd || platformDbEnabled) {
+      const code = (dbErr.code === 'WORKFLOW_EXECUTION_LOCATION_REQUIRED' || dbErr.code === 'TENANT_CONTEXT_MISMATCH')
+        ? dbErr.code
+        : 'WORKFLOW_EXECUTION_PERSIST_FAILED';
       throw Object.assign(new Error(`Failed to persist workflow execution to PostgreSQL: ${dbErr.message}`), {
-        code: dbErr.code === 'WORKFLOW_EXECUTION_LOCATION_REQUIRED' ? dbErr.code : 'WORKFLOW_EXECUTION_PERSIST_FAILED'
+        code
       });
     }
     console.warn('[WORKFLOW-EXEC-PERSIST] DB insert warning:', dbErr.message);
@@ -81,8 +106,30 @@ export async function persistCompletedWorkflowExecution({
 }) {
   if (!pgPool) return null;
 
-  const finalAgencyId = agencyId || execution.agencyId || flow?.agency_id;
-  const finalLocationId = execution.locationId || locationId || flow?.location_id;
+  // Verify consistency between explicit arguments and execution object
+  if (agencyId && execution?.agencyId && String(agencyId) !== String(execution.agencyId)) {
+    if (isStagingOrProd || platformDbEnabled) {
+      throw Object.assign(new Error(`Tenant agency mismatch: explicit agencyId (${agencyId}) does not match execution.agencyId (${execution.agencyId})`), {
+        code: 'TENANT_CONTEXT_MISMATCH'
+      });
+    }
+    console.warn(`[WORKFLOW-EXEC-PERSIST] Tenant agency mismatch: ${agencyId} vs ${execution.agencyId}`);
+    return null;
+  }
+
+  if (locationId && execution?.locationId && String(locationId) !== String(execution.locationId)) {
+    if (isStagingOrProd || platformDbEnabled) {
+      throw Object.assign(new Error(`Tenant location mismatch: explicit locationId (${locationId}) does not match execution.locationId (${execution.locationId})`), {
+        code: 'TENANT_CONTEXT_MISMATCH'
+      });
+    }
+    console.warn(`[WORKFLOW-EXEC-PERSIST] Tenant location mismatch: ${locationId} vs ${execution.locationId}`);
+    return null;
+  }
+
+  // Authoritative ordering: explicit parameter takes precedence over execution, then flow
+  const finalAgencyId = agencyId || execution?.agencyId || flow?.agency_id;
+  const finalLocationId = locationId || execution?.locationId || flow?.location_id;
 
   let client;
   try {
@@ -124,8 +171,11 @@ export async function persistCompletedWorkflowExecution({
       await client.query('ROLLBACK').catch(() => {});
     }
     if (isStagingOrProd || platformDbEnabled) {
+      const code = (pgErr.code === 'WORKFLOW_EXECUTION_LOCATION_REQUIRED' || pgErr.code === 'TENANT_CONTEXT_MISMATCH')
+        ? pgErr.code
+        : 'WORKFLOW_EXECUTION_UPDATE_FAILED';
       throw Object.assign(new Error(`Failed to update workflow execution in PostgreSQL: ${pgErr.message}`), {
-        code: pgErr.code === 'WORKFLOW_EXECUTION_LOCATION_REQUIRED' ? pgErr.code : 'WORKFLOW_EXECUTION_UPDATE_FAILED'
+        code
       });
     }
     console.warn('[WORKFLOW-EXEC-PERSIST] DB update warning:', pgErr.message);

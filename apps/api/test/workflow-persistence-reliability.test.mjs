@@ -306,15 +306,18 @@ test('Workflow Execution Persistence Reliability & Connection Error Handling', a
     assert.equal(res3, null);
   });
 
-  await t.test('Scenario 8: Real PostgreSQL composite key & tenant isolation', async () => {
+  await t.test('Scenario 8: Real PostgreSQL composite key & tenant isolation under migration least-privilege', async () => {
     const pgServer = new IsolatedTestPostgres({ port: 5437, dbName: 'operza_wf_persist_test' });
     const dbUrl = await pgServer.start();
+
+    const parsedUrl = new URL(dbUrl);
+    const dbName = parsedUrl.pathname.replace(/^\//, '');
 
     const { default: pg } = await import('pg');
     const adminPool = new pg.Pool({ connectionString: dbUrl, max: 10 });
 
     try {
-      // 1. Run migrations
+      // 1. Setup least-privilege roles without artificial superuser or bypassrls grants
       await adminPool.query(`
         CREATE EXTENSION IF NOT EXISTS btree_gist;
         DO $$ BEGIN
@@ -331,8 +334,11 @@ test('Workflow Execution Persistence Reliability & Connection Error Handling', a
             CREATE ROLE operza_worker LOGIN PASSWORD 'operza_worker_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
           END IF;
         END $$;
+        GRANT ALL ON DATABASE "${dbName}" TO operza_migrator;
+        GRANT CONNECT ON DATABASE "${dbName}" TO operza_app, operza_worker;
         GRANT USAGE, CREATE ON SCHEMA public TO operza_migrator, operza_auth_definer;
         GRANT operza_auth_definer TO operza_migrator;
+        GRANT USAGE ON SCHEMA public TO operza_app, operza_worker;
       `);
 
       const migratorUrl = new URL(dbUrl);
@@ -347,13 +353,16 @@ test('Workflow Execution Persistence Reliability & Connection Error Handling', a
       }
       await migratorPool.end();
 
-      // Grant app role privileges
-      await adminPool.query(`
-        GRANT USAGE ON SCHEMA public TO operza_app;
-        GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO operza_app;
-        GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public TO operza_app;
+      // Verify operza_app role retains NOSUPERUSER and NOBYPASSRLS
+      const roleCheck = await adminPool.query(`
+        SELECT rolname, rolsuper, rolbypassrls 
+        FROM pg_roles 
+        WHERE rolname = 'operza_app'
       `);
+      assert.equal(roleCheck.rows[0].rolsuper, false, 'operza_app must not be superuser');
+      assert.equal(roleCheck.rows[0].rolbypassrls, false, 'operza_app must not have BYPASSRLS');
 
+      // Connect as genuine least-privilege operza_app role
       const appUrl = new URL(dbUrl);
       appUrl.username = 'operza_app';
       appUrl.password = 'operza_app_secret';
@@ -388,7 +397,7 @@ test('Workflow Execution Persistence Reliability & Connection Error Handling', a
           [workflowId, agencyA, locationA1]
         );
 
-        // 8a. Initial persist for Location A1
+        // 8a. Initial persist for Location A1 via operza_app
         const initialRes = await persistInitialWorkflowExecution({
           pgPool: appPool,
           agencyId: agencyA,
@@ -438,7 +447,18 @@ test('Workflow Execution Persistence Reliability & Connection Error Handling', a
         });
         assert.equal(crossAgencyUpdate, null, 'Cross-agency update must affect 0 rows and return null');
 
-        // 8d. Legitimate update for Location A1
+        // 8d. Attempt update for non-existent execution ID -> returns null (never reports false success)
+        const nonExistentUpdate = await persistCompletedWorkflowExecution({
+          pgPool: appPool,
+          agencyId: agencyA,
+          locationId: locationA1,
+          execution: { id: randomUUID(), status: 'completed', steps: [] },
+          flow: { id: workflowId },
+          platformDbEnabled: true
+        });
+        assert.equal(nonExistentUpdate, null, 'Non-existent execution update must return null');
+
+        // 8e. Legitimate update for Location A1
         const completedRes = await persistCompletedWorkflowExecution({
           pgPool: appPool,
           agencyId: agencyA,
@@ -458,5 +478,115 @@ test('Workflow Execution Persistence Reliability & Connection Error Handling', a
       await adminPool.end();
       await pgServer.stop();
     }
+  });
+
+  await t.test('Scenario 9: Tenant identity consistency & conflict rejection', async () => {
+    const locA = randomUUID();
+    const locB = randomUUID();
+    const agencyA = randomUUID();
+    const agencyB = randomUUID();
+
+    const fakePool = {
+      connect: async () => ({ query: async () => {}, release: () => {} })
+    };
+
+    // 9a. Initial persistence with conflicting locationId throws TENANT_CONTEXT_MISMATCH in authoritative mode
+    await assert.rejects(
+      async () => {
+        await persistInitialWorkflowExecution({
+          pgPool: fakePool,
+          agencyId: agencyA,
+          locationId: locA,
+          execution: { id: randomUUID(), agencyId: agencyA, locationId: locB, status: 'running' },
+          flow: { id: randomUUID() },
+          platformDbEnabled: true
+        });
+      },
+      (err) => {
+        assert.equal(err.code, 'TENANT_CONTEXT_MISMATCH');
+        assert.match(err.message, /Tenant location mismatch/);
+        return true;
+      }
+    );
+
+    // 9b. Initial persistence with conflicting agencyId throws TENANT_CONTEXT_MISMATCH in authoritative mode
+    await assert.rejects(
+      async () => {
+        await persistInitialWorkflowExecution({
+          pgPool: fakePool,
+          agencyId: agencyA,
+          locationId: locA,
+          execution: { id: randomUUID(), agencyId: agencyB, locationId: locA, status: 'running' },
+          flow: { id: randomUUID() },
+          platformDbEnabled: true
+        });
+      },
+      (err) => {
+        assert.equal(err.code, 'TENANT_CONTEXT_MISMATCH');
+        assert.match(err.message, /Tenant agency mismatch/);
+        return true;
+      }
+    );
+
+    // 9c. Completion persistence with conflicting locationId throws TENANT_CONTEXT_MISMATCH in authoritative mode
+    await assert.rejects(
+      async () => {
+        await persistCompletedWorkflowExecution({
+          pgPool: fakePool,
+          agencyId: agencyA,
+          locationId: locA,
+          execution: { id: randomUUID(), agencyId: agencyA, locationId: locB, status: 'completed' },
+          flow: { id: randomUUID() },
+          isStagingOrProd: true
+        });
+      },
+      (err) => {
+        assert.equal(err.code, 'TENANT_CONTEXT_MISMATCH');
+        assert.match(err.message, /Tenant location mismatch/);
+        return true;
+      }
+    );
+
+    // 9d. Completion persistence with conflicting agencyId throws TENANT_CONTEXT_MISMATCH in authoritative mode
+    await assert.rejects(
+      async () => {
+        await persistCompletedWorkflowExecution({
+          pgPool: fakePool,
+          agencyId: agencyA,
+          locationId: locA,
+          execution: { id: randomUUID(), agencyId: agencyB, locationId: locA, status: 'completed' },
+          flow: { id: randomUUID() },
+          isStagingOrProd: true
+        });
+      },
+      (err) => {
+        assert.equal(err.code, 'TENANT_CONTEXT_MISMATCH');
+        assert.match(err.message, /Tenant agency mismatch/);
+        return true;
+      }
+    );
+
+    // 9e. Development mode fallback: returns null and logs warning without throwing
+    const resDevLocationConflict = await persistInitialWorkflowExecution({
+      pgPool: fakePool,
+      agencyId: agencyA,
+      locationId: locA,
+      execution: { id: randomUUID(), agencyId: agencyA, locationId: locB, status: 'running' },
+      flow: { id: randomUUID() },
+      platformDbEnabled: false,
+      isStagingOrProd: false
+    });
+    assert.equal(resDevLocationConflict, null, 'Dev mode conflict must return null');
+
+    const resDevAgencyConflict = await persistCompletedWorkflowExecution({
+      pgPool: fakePool,
+      agencyId: agencyA,
+      locationId: locA,
+      execution: { id: randomUUID(), agencyId: agencyB, locationId: locA, status: 'completed' },
+      flow: { id: randomUUID() },
+      platformDbEnabled: false,
+      isStagingOrProd: false
+    });
+    assert.equal(resDevAgencyConflict, null, 'Dev mode conflict must return null');
   });
 });
