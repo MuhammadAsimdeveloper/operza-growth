@@ -1566,6 +1566,7 @@ async function executeWorkflowInstance({
       if (pgPool) {
         const client = await pgPool.connect();
         try {
+          await client.query('BEGIN');
           await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [String(agencyId), String(locationId || agencyId)]);
           await client.query(`
             INSERT INTO workflow_executions (
@@ -1574,7 +1575,9 @@ async function executeWorkflowInstance({
             ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, 0, now(), now())
             ON CONFLICT (agency_id, location_id, id) DO NOTHING
           `, [execution.id, agencyId, locationId || agencyId, flow.id, execution.status, JSON.stringify(triggerContext || {})]);
+          await client.query('COMMIT');
         } catch (dbErr) {
+          await client.query('ROLLBACK').catch(() => {});
           if (isStagingOrProd || platformDbEnabled) {
             throw Object.assign(new Error(`Failed to persist workflow execution to PostgreSQL: ${dbErr.message}`), {
               code: 'WORKFLOW_EXECUTION_PERSIST_FAILED'
@@ -2062,8 +2065,11 @@ async function executeWorkflowInstance({
     durationMs: execution.durationMs
   });
   if (pgPool) {
+    const client = await pgPool.connect();
     try {
-      await pgPool.query(`
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [String(agencyId), String(execution.locationId || agencyId)]);
+      await client.query(`
         UPDATE workflow_executions SET
           status = $2,
           finished_at = CASE WHEN $2 IN ('completed', 'failed', 'canceled') THEN now() ELSE finished_at END,
@@ -2072,8 +2078,12 @@ async function executeWorkflowInstance({
           updated_at = now()
         WHERE agency_id = $5 AND id = $1
       `, [execution.id, execution.status, execution.lastErrorCode || null, JSON.stringify(execution.steps || []), agencyId]);
+      await client.query('COMMIT');
     } catch (pgErr) {
+      await client.query('ROLLBACK').catch(() => {});
       console.warn('[WORKFLOW-EXEC-PERSIST] DB update warning:', pgErr.message);
+    } finally {
+      client.release();
     }
   }
   await saveState();
@@ -8620,14 +8630,18 @@ const server = createServer(async (req, res) => {
       }
       await expirePendingWorkflowApprovals(agency.id, activeLocation.id);
       if (pgPool) {
+        const client = await pgPool.connect();
         try {
-          const resExec = await pgPool.query(`
+          await client.query('BEGIN');
+          await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [agency.id, activeLocation.id]);
+          const resExec = await client.query(`
             SELECT id, agency_id, location_id, workflow_id, status, trigger_event,
                    current_node_id, state, attempts, last_error_code, finished_at, created_at, updated_at
             FROM workflow_executions
             WHERE agency_id = $1 AND location_id = $2
             ORDER BY created_at DESC
           `, [agency.id, activeLocation.id]);
+          await client.query('COMMIT');
           const mappedRuns = resExec.rows.map(row => ({
             id: row.id,
             agencyId: row.agency_id,
@@ -8644,10 +8658,19 @@ const server = createServer(async (req, res) => {
           }));
           return sendJson(res, 200, mappedRuns.map(publicWorkflowExecution));
         } catch (pgErr) {
-          console.warn('[WORKFLOW-RUNS] PG query warning:', pgErr.message);
+          await client.query('ROLLBACK').catch(() => {});
+          console.error('[WORKFLOW-RUNS] PG query error:', pgErr.message);
           if (isStagingOrProd || platformDbEnabled) {
-            throw pgErr;
+            return sendJson(res, 500, {
+              error: 'Failed to retrieve workflow executions from database: ' + pgErr.message,
+              code: 'DATABASE_WORKFLOW_RUNS_FAILED'
+            });
           }
+        } finally {
+          client.release();
+        }
+        if (isStagingOrProd || platformDbEnabled) {
+          return;
         }
       }
       const runs = (state.workflowExecutions || []).filter(

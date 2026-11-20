@@ -1843,4 +1843,236 @@ test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) =
       await appPool.end();
     }
   });
+
+  await t.test('20. Workflow Runs PostgreSQL RLS Context & Multi-Tenant Isolation Verification', async () => {
+    const PORT_RUNS = 4309;
+    const BASE_RUNS = `http://127.0.0.1:${PORT_RUNS}`;
+    const STORE_RUNS = './scratch/store_api_runs_rls.json';
+    try { rmSync(path.join(root, 'apps/api', STORE_RUNS), { force: true }); } catch {}
+
+    const appDbUrl = dbUrl.replace('//postgres@', '//operza_app:operza_app_secret@').replace('//postgres:', '//operza_app:operza_app_secret@');
+    const appEnv = {
+      ...process.env,
+      NODE_ENV: 'test',
+      PORT: String(PORT_RUNS),
+      DATA_FILE: STORE_RUNS,
+      DATABASE_URL: appDbUrl,
+      MIGRATION_DATABASE_URL: dbUrl,
+      OPERZA_TEST_DATABASE_URL: appDbUrl,
+      PLATFORM_DB_ENABLED: 'true',
+      OPERZA_VAULT_KEY: 'test-vault-key-for-approvals-32-chars-long',
+      OPERZA_ADMIN_KEY: 'operza-admin-telemetry-secret-key-32chars-valid-pass'
+    };
+
+    const serverProc = spawn('node', ['apps/api/server.mjs'], {
+      cwd: root,
+      stdio: 'pipe',
+      env: appEnv
+    });
+
+    let serverLogs = '';
+    serverProc.stdout.on('data', d => { serverLogs += d.toString(); });
+    serverProc.stderr.on('data', d => { serverLogs += d.toString(); });
+
+    try {
+      // Wait for server health
+      let serverUp = false;
+      for (let i = 0; i < 40; i++) {
+        try {
+          const r = await fetch(`${BASE_RUNS}/health`);
+          if (r.ok) { serverUp = true; break; }
+        } catch {}
+        await sleep(250);
+      }
+      assert.equal(serverUp, true, 'Runs API server must become healthy');
+
+      // 1. Sign up Agency A
+      const emailA = `agency-a-runs-${Date.now()}@example.com`;
+      const signupResA = await fetch(`${BASE_RUNS}/api/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Agency A Admin',
+          email: emailA,
+          password: 'Password123!',
+          agencyName: 'Agency Alpha Runs'
+        })
+      });
+      assert.equal(signupResA.status, 201);
+      const dataA = await signupResA.json();
+      const agencyA = dataA.agency.id;
+      const locationA1 = dataA.activeLocationId || dataA.locations[0].id;
+
+      const cookiesA = signupResA.headers.getSetCookie ? signupResA.headers.getSetCookie() : [signupResA.headers.get('set-cookie')].filter(Boolean);
+      const sessionCookieA = cookiesA.map(c => c.split(';')[0]).join('; ');
+
+      // 2. Provision Location A2 for Agency A in PostgreSQL
+      const locationA2 = randomUUID();
+      await pool.query(`
+        INSERT INTO locations (id, agency_id, name, status, created_at)
+        VALUES ($1, $2, 'Agency A - Location 2', 'active', now())
+      `, [locationA2, agencyA]);
+
+      // 3. Sign up Agency B
+      const emailB = `agency-b-runs-${Date.now()}@example.com`;
+      const signupResB = await fetch(`${BASE_RUNS}/api/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Agency B Admin',
+          email: emailB,
+          password: 'Password123!',
+          agencyName: 'Agency Beta Runs'
+        })
+      });
+      assert.equal(signupResB.status, 201);
+      const dataB = await signupResB.json();
+      const agencyB = dataB.agency.id;
+      const locationB1 = dataB.activeLocationId || dataB.locations[0].id;
+
+      const cookiesB = signupResB.headers.getSetCookie ? signupResB.headers.getSetCookie() : [signupResB.headers.get('set-cookie')].filter(Boolean);
+      const sessionCookieB = cookiesB.map(c => c.split(';')[0]).join('; ');
+
+      // 4. Seed workflow definitions and executions
+      const flowA1 = randomUUID();
+      const flowA2 = randomUUID();
+      const flowB1 = randomUUID();
+
+      await pool.query(`
+        INSERT INTO workflow_definitions (id, agency_id, location_id, name, status, trigger_type, nodes)
+        VALUES ($1, $2, $3, 'Flow A1', 'published', 'webhook', '[]'::jsonb),
+               ($4, $2, $5, 'Flow A2', 'published', 'webhook', '[]'::jsonb),
+               ($6, $7, $8, 'Flow B1', 'published', 'webhook', '[]'::jsonb)
+      `, [flowA1, agencyA, locationA1, flowA2, locationA2, flowB1, agencyB, locationB1]);
+
+      const execA1_1 = randomUUID();
+      const execA1_2 = randomUUID();
+      const execA2_1 = randomUUID();
+      const execB1_1 = randomUUID();
+
+      await pool.query(`
+        INSERT INTO workflow_executions (id, agency_id, location_id, workflow_id, status, trigger_event)
+        VALUES ($1, $2, $3, $4, 'completed', '{"source":"testA1_1"}'::jsonb),
+               ($5, $2, $3, $4, 'running', '{"source":"testA1_2"}'::jsonb),
+               ($6, $2, $7, $8, 'completed', '{"source":"testA2_1"}'::jsonb),
+               ($9, $10, $11, $12, 'completed', '{"source":"testB1_1"}'::jsonb)
+      `, [
+        execA1_1, agencyA, locationA1, flowA1,
+        execA1_2,
+        execA2_1, locationA2, flowA2,
+        execB1_1, agencyB, locationB1, flowB1
+      ]);
+
+      // Direct operza_app client test: Verify RLS query behavior
+      const testAppPool = new pg.Pool({ connectionString: appDbUrl, max: 2 });
+      try {
+        const client = await testAppPool.connect();
+        try {
+          // Without tenant context, RLS returns 0 rows
+          const uncontextualRes = await client.query('SELECT * FROM workflow_executions');
+          assert.equal(uncontextualRes.rows.length, 0, 'operza_app without context returns 0 rows due to RLS');
+
+          // Under transaction-local context for (agencyA, locationA1)
+          await client.query('BEGIN');
+          await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [agencyA, locationA1]);
+          const a1Res = await client.query(`
+            SELECT id, agency_id, location_id FROM workflow_executions
+            WHERE agency_id = $1 AND location_id = $2
+          `, [agencyA, locationA1]);
+          await client.query('COMMIT');
+
+          assert.equal(a1Res.rows.length, 2, 'Must return exactly 2 executions for Location A1');
+          const a1Ids = a1Res.rows.map(r => r.id);
+          assert.ok(a1Ids.includes(execA1_1));
+          assert.ok(a1Ids.includes(execA1_2));
+          assert.equal(a1Ids.includes(execA2_1), false, 'Location A2 must NOT be returned');
+          assert.equal(a1Ids.includes(execB1_1), false, 'Agency B must NOT be returned');
+        } finally {
+          client.release();
+        }
+      } finally {
+        await testAppPool.end();
+      }
+
+      // 5. HTTP Route Verification: GET /api/workflows/runs
+      // 5.1 Request as Agency A, Location A1 (default active location)
+      const resA1 = await fetch(`${BASE_RUNS}/api/workflows/runs`, {
+        headers: { Cookie: sessionCookieA }
+      });
+      assert.equal(resA1.status, 200);
+      const runsA1 = await resA1.json();
+      assert.equal(runsA1.length, 2, 'HTTP route must return 2 runs for Location A1');
+      const httpA1Ids = runsA1.map(r => r.id);
+      assert.ok(httpA1Ids.includes(execA1_1));
+      assert.ok(httpA1Ids.includes(execA1_2));
+      assert.equal(httpA1Ids.includes(execA2_1), false, 'HTTP route must NOT return Location A2 run');
+      assert.equal(httpA1Ids.includes(execB1_1), false, 'HTTP route must NOT return Agency B run');
+
+      // Verify response structure compatibility
+      const sampleRun = runsA1[0];
+      assert.ok(sampleRun.id);
+      assert.ok(sampleRun.workflowId);
+      assert.ok(sampleRun.status);
+      assert.ok(sampleRun.createdAt);
+      assert.ok(sampleRun.triggerContext);
+
+      // 5.2 Request as Agency A, switching to Location A2
+      const resA2 = await fetch(`${BASE_RUNS}/api/workflows/runs`, {
+        headers: {
+          Cookie: sessionCookieA,
+          'x-operza-location': locationA2
+        }
+      });
+      assert.equal(resA2.status, 200);
+      const runsA2 = await resA2.json();
+      assert.equal(runsA2.length, 1, 'HTTP route must return 1 run for Location A2');
+      assert.equal(runsA2[0].id, execA2_1);
+      assert.equal(runsA2[0].workflowId, flowA2);
+
+      // 5.3 Request as Agency B, Location B1
+      const resB1 = await fetch(`${BASE_RUNS}/api/workflows/runs`, {
+        headers: { Cookie: sessionCookieB }
+      });
+      assert.equal(resB1.status, 200);
+      const runsB1 = await resB1.json();
+      assert.equal(runsB1.length, 1, 'HTTP route must return 1 run for Agency B');
+      assert.equal(runsB1[0].id, execB1_1);
+      assert.equal(runsB1[0].workflowId, flowB1);
+
+      // 5.4 Missing active location context: unauthorized location header returns 401
+      const resUnauthLoc = await fetch(`${BASE_RUNS}/api/workflows/runs`, {
+        headers: {
+          Cookie: sessionCookieA,
+          'x-operza-location': randomUUID()
+        }
+      });
+      assert.equal(resUnauthLoc.status, 401, 'Unauthorized location header fails authentication');
+
+      // 5.5 Fail-closed behavior on database error: does NOT return memory-backed runs
+      // Temporarily rename table to trigger a PostgreSQL query error in GET /api/workflows/runs
+      await pool.query('ALTER TABLE workflow_executions RENAME TO workflow_executions_tmp;');
+      try {
+        const failRes = await fetch(`${BASE_RUNS}/api/workflows/runs`, {
+          headers: { Cookie: sessionCookieA }
+        });
+        assert.equal(failRes.status, 500, 'Database failure must return 500 under authoritative PostgreSQL');
+        const failBody = await failRes.json();
+        assert.equal(failBody.code, 'DATABASE_WORKFLOW_RUNS_FAILED', 'Error code must indicate database query failure');
+      } finally {
+        // Restore table name
+        await pool.query('ALTER TABLE workflow_executions_tmp RENAME TO workflow_executions;');
+      }
+
+      // 5.6 Confirm immediate recovery after error: transaction was rolled back and client was released
+      const recoverRes = await fetch(`${BASE_RUNS}/api/workflows/runs`, {
+        headers: { Cookie: sessionCookieA }
+      });
+      assert.equal(recoverRes.status, 200, 'Subsequent request succeeds proving client was properly released');
+      const recoverRuns = await recoverRes.json();
+      assert.equal(recoverRuns.length, 2, 'Returns full Location A1 runs after recovery');
+    } finally {
+      serverProc.kill('SIGTERM');
+      try { rmSync(path.join(root, 'apps/api', STORE_RUNS), { force: true }); } catch {}
+    }
+  });
 });
