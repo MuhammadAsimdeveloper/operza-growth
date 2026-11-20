@@ -62,8 +62,9 @@ test('Multi-Process Appointment Booking Concurrency (Two Independent API Instanc
       END $$;
       GRANT USAGE, CREATE ON SCHEMA public TO operza_auth_definer;
       DO $$ BEGIN
-        EXECUTE format('GRANT operza_auth_definer TO %I', current_user);
-      EXCEPTION WHEN OTHERS THEN NULL;
+        IF NOT pg_has_role(current_user, 'operza_auth_definer', 'MEMBER') THEN
+          EXECUTE format('GRANT operza_auth_definer TO %I', current_user);
+        END IF;
       END $$;
     `);
 

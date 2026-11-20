@@ -126,8 +126,9 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
         END IF;
       END $$;
       DO $$ BEGIN
-        EXECUTE format('GRANT operza_auth_definer TO %I', current_user);
-      EXCEPTION WHEN OTHERS THEN NULL;
+        IF NOT pg_has_role(current_user, 'operza_auth_definer', 'MEMBER') THEN
+          EXECUTE format('GRANT operza_auth_definer TO %I', current_user);
+        END IF;
       END $$;
       GRANT USAGE, CREATE ON SCHEMA public TO operza_auth_definer;
     `);
@@ -354,6 +355,22 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       const crossLocOppCheck = await clientB.query('SELECT * FROM opportunities WHERE id = $1', [oppIdA]);
       assert.equal(crossLocOppCheck.rowCount, 0, 'Same-agency cross-location query for opportunities must return 0 rows');
 
+      // Attempt to update Location A1's opportunity while operating as operza_app under Location A2 context
+      // Note: We deliberately do NOT include a location filter in the WHERE clause so that RLS alone enforces the isolation
+      const crossLocOppUpdate = await clientB.query(`
+        UPDATE opportunities 
+        SET name = 'CrossLocMutated', value = 999999
+        WHERE id = $1
+      `, [oppIdA]);
+      assert.equal(crossLocOppUpdate.rowCount, 0, 'Cross-location update on opportunity must affect exactly 0 rows due to RLS');
+
+      // Query opportunity again under Location A1 context and verify original values are completely unchanged
+      const verifyOppLocA1 = await clientA.query('SELECT id, name, value, status, location_id FROM opportunities WHERE id = $1', [oppIdA]);
+      assert.equal(verifyOppLocA1.rowCount, 1, 'Opportunity must be found under its owning location A1 context');
+      assert.equal(verifyOppLocA1.rows[0].name, 'Enterprise Deal A', 'Opportunity name must remain unaltered after cross-location update attempt');
+      assert.equal(Number(verifyOppLocA1.rows[0].value), 50000, 'Opportunity value must remain unaltered after cross-location update attempt');
+      assert.equal(verifyOppLocA1.rows[0].location_id, locA1, 'Opportunity location_id must remain location A1');
+
       // 5c. Missing tenant context fails closed under operza_app
       await clientNoCtx.query('BEGIN');
       const noCtxOpps = await clientNoCtx.query('SELECT * FROM opportunities WHERE id = $1', [oppIdA]);
@@ -376,6 +393,9 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       await clientA.query('COMMIT');
       await clientB.query('ROLLBACK');
     } finally {
+      await clientA.query('ROLLBACK').catch(() => {});
+      await clientB.query('ROLLBACK').catch(() => {});
+      await clientNoCtx.query('ROLLBACK').catch(() => {});
       await clientA.query('RESET ROLE').catch(() => {});
       await clientB.query('RESET ROLE').catch(() => {});
       await clientNoCtx.query('RESET ROLE').catch(() => {});
@@ -411,6 +431,7 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
 
       await auditClient.query('COMMIT');
     } finally {
+      await auditClient.query('ROLLBACK').catch(() => {});
       auditClient.release();
     }
 

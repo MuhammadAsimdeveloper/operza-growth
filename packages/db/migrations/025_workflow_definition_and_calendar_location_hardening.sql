@@ -22,11 +22,9 @@ BEGIN
 
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'operza_migrator') AND
      EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'operza_auth_definer') THEN
-    BEGIN
+    IF NOT pg_has_role('operza_migrator', 'operza_auth_definer', 'MEMBER') THEN
       GRANT operza_auth_definer TO operza_migrator;
-    EXCEPTION
-      WHEN OTHERS THEN NULL;
-    END;
+    END IF;
   END IF;
 END $$;
 

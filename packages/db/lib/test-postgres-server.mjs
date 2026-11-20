@@ -101,8 +101,9 @@ export class IsolatedTestPostgres {
               END IF;
             END $$;
             DO $$ BEGIN
-              EXECUTE format('GRANT operza_auth_definer TO %I', current_user);
-            EXCEPTION WHEN OTHERS THEN NULL;
+              IF NOT pg_has_role(current_user, 'operza_auth_definer', 'MEMBER') THEN
+                EXECUTE format('GRANT operza_auth_definer TO %I', current_user);
+              END IF;
             END $$;
             GRANT operza_auth_definer TO operza_migrator;
           `);
