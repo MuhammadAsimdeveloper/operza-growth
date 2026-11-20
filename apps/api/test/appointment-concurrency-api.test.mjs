@@ -27,7 +27,7 @@ function sleep(ms) {
 }
 
 test('Multi-Process Appointment Booking Concurrency (Two Independent API Instances)', async (t) => {
-  const pgServer = new IsolatedTestPostgres({ port: 5435, dbName: 'operza_multi_proc_test' });
+  const pgServer = new IsolatedTestPostgres({ port: 0, dbName: 'operza_multi_proc_test' });
   const dbUrl = await pgServer.start();
 
   const { default: pg } = await import('pg');

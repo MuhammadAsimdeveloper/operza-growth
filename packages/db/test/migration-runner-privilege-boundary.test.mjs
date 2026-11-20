@@ -22,22 +22,36 @@ const migrationsDir = path.join(root, 'packages/db/migrations');
 process.env.NODE_ENV = 'test';
 
 test('Phase 20.2.5.11: Production Migration Pipeline & Privilege Boundary Integrity', async (t) => {
-  // 1. Provision fresh isolated PostgreSQL database
-  const pgServer = new IsolatedTestPostgres({ port: 5436, dbName: 'operza_prod_migrator_test' });
+  // 1. Provision fresh isolated PostgreSQL database on dynamic ephemeral port
+  const pgServer = new IsolatedTestPostgres({ port: 0, dbName: 'operza_prod_migrator_test' });
   const adminDbUrl = await pgServer.start();
 
   const { default: pg } = await import('pg');
+  const poolErrors = [];
   const superuserPool = new pg.Pool({ connectionString: adminDbUrl, max: 5 });
-  superuserPool.on('error', () => {});
+  superuserPool.on('error', (err) => poolErrors.push({ pool: 'superuser', error: err }));
 
   let migratorPool;
 
   t.after(async () => {
-    if (migratorPool) {
-      await migratorPool.end().catch(() => {});
+    const errors = [];
+    for (const action of [
+      () => migratorPool && migratorPool.end(),
+      () => superuserPool && superuserPool.end(),
+      () => pgServer && pgServer.stop(),
+      () => pgServer && pgServer.cleanupDataDir()
+    ]) {
+      try {
+        await action();
+      } catch (err) {
+        errors.push(err);
+      }
     }
-    await superuserPool.end().catch(() => {});
-    await pgServer.stop().catch(() => {});
+    if (poolErrors.length > 0) {
+      errors.push(new Error(`Unexpected pool errors: ${poolErrors.map(e => `${e.pool}: ${e.error.message}`).join(', ')}`));
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, 'Teardown cleanup failed');
   });
 
   const parsedUrl = new URL(adminDbUrl);
@@ -62,10 +76,10 @@ test('Phase 20.2.5.11: Production Migration Pipeline & Privilege Boundary Integr
   await t.test('1b. Stage A Session Safety: Multi-connection admin pool executes reliably with dedicated session client', async () => {
     // Instantiate a pristine dedicated PostgreSQL server for this test so that operza_worker does not exist
     // and can be tested through its genuine initial CREATE path followed by the ALTER path.
-    const lifecycleDataDir = path.join(root, 'scratch', 'test-role-lifecycle-cluster-5494');
+    const lifecycleDataDir = path.join(root, 'scratch', `test-role-lifecycle-cluster-${Date.now()}-${Math.floor(Math.random() * 100000)}`);
     rmSync(lifecycleDataDir, { recursive: true, force: true });
     const lifecycleServer = new IsolatedTestPostgres({
-      port: 5494,
+      port: 0,
       dbName: 'operza_role_lifecycle_test',
       dataDir: lifecycleDataDir,
       skipRoleBootstrap: true,
@@ -74,7 +88,7 @@ test('Phase 20.2.5.11: Production Migration Pipeline & Privilege Boundary Integr
     const lifecycleAdminUrl = await lifecycleServer.start();
     const lifecycleParsed = new URL(lifecycleAdminUrl);
     const lifecycleHost = lifecycleParsed.hostname || '127.0.0.1';
-    const lifecyclePort = lifecycleParsed.port || '5494';
+    const lifecyclePort = lifecycleParsed.port;
     const lifecycleDb = lifecycleParsed.pathname.slice(1);
 
     // Enforce scram-sha-256 password authentication for operza_worker in pg_hba.conf if local cluster
@@ -334,14 +348,14 @@ test('Phase 20.2.5.11: Production Migration Pipeline & Privilege Boundary Integr
     } finally {
       await multiAdminPool.end();
       await lifecycleServer.stop();
-      rmSync(lifecycleDataDir, { recursive: true, force: true });
+      lifecycleServer.cleanupDataDir();
     }
   });
 
   // STEP 3: Configure actual unprivileged operza_migrator connection
   await t.test('2. Stage B Identity: Connect as operza_migrator and assert current_user', async () => {
     migratorPool = new pg.Pool({ connectionString: migratorDbUrl, max: 5 });
-    migratorPool.on('error', () => {});
+    migratorPool.on('error', (err) => poolErrors.push({ pool: 'migrator', error: err }));
 
     const res = await migratorPool.query('SELECT current_user, session_user;');
     assert.equal(res.rows[0].current_user, 'operza_migrator', 'current_user must strictly be operza_migrator');
@@ -541,15 +555,24 @@ test('Phase 20.2.5.11: Production Migration Pipeline & Privilege Boundary Integr
   });
 
   // REQUIREMENT 1: Test runMigrationPipeline() end-to-end wrapper on a fresh database
-  await t.test('11. Full Wrapper Execution: runMigrationPipeline() runs Stage A & B end-to-end', async () => {
-    const pipelineServer = new IsolatedTestPostgres({ port: 5434, dbName: 'operza_pipeline_wrapper_test' });
+  await t.test('11. Full Wrapper Execution: runMigrationPipeline() runs Stage A & B end-to-end with sanitized options', async () => {
+    const pipelineServer = new IsolatedTestPostgres({ port: 0, dbName: 'operza_pipeline_wrapper_test' });
     const pipelineAdminUrl = await pipelineServer.start();
+
+    let probeInvoked = false;
 
     try {
       await runMigrationPipeline({
         adminUrl: pipelineAdminUrl,
-        migratorPassword: 'pipeline_runner_secret'
+        migratorPassword: 'pipeline_runner_secret',
+        allowTestProbe: true,
+        roleProvisioningProbe: async () => {
+          probeInvoked = true;
+        }
       });
+
+      // Assert that neither Stage A nor Stage B executed the probe
+      assert.equal(probeInvoked, false, 'runMigrationPipeline must strictly sanitize options so probes never run');
 
       // Verify migration succeeded on the new database
       const parsed = new URL(pipelineAdminUrl);
@@ -563,6 +586,7 @@ test('Phase 20.2.5.11: Production Migration Pipeline & Privilege Boundary Integr
       }
     } finally {
       await pipelineServer.stop();
+      pipelineServer.cleanupDataDir();
     }
   });
 

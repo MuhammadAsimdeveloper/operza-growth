@@ -5,7 +5,7 @@ console.log('=====================================================');
 console.log('🚀 Phase 20.2.5 Real PostgreSQL CI Verification Script');
 console.log('=====================================================');
 
-const server = new IsolatedTestPostgres({ port: 5439, dbName: 'operza_ci_local_test' });
+const server = new IsolatedTestPostgres({ port: 0, dbName: 'operza_ci_local_test' });
 const dbUrl = await server.start();
 console.log(`[CI-RUNNER] Isolated PostgreSQL started at: ${dbUrl}`);
 

@@ -12,23 +12,39 @@ const root = path.resolve(__dirname, '../../..');
 const migrationsDir = path.join(root, 'packages/db/migrations');
 
 test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', async (t) => {
-  const pgServer = new IsolatedTestPostgres({ port: 5437, dbName: 'operza_rls_test' });
+  const pgServer = new IsolatedTestPostgres({ port: 0, dbName: 'operza_rls_test' });
   const dbUrl = await pgServer.start();
 
   const { default: pg } = await import('pg');
+  const poolErrors = [];
   const superuserPool = new pg.Pool({ connectionString: dbUrl, max: 5 });
-  superuserPool.on('error', () => {});
+  superuserPool.on('error', (err) => poolErrors.push({ pool: 'superuser', error: err }));
 
   let migratorPool;
   let appPool;
   let workerPool;
 
   t.after(async () => {
-    if (appPool) await appPool.end().catch(() => {});
-    if (workerPool) await workerPool.end().catch(() => {});
-    if (migratorPool) await migratorPool.end().catch(() => {});
-    if (superuserPool) await superuserPool.end().catch(() => {});
-    await pgServer.stop().catch(() => {});
+    const errors = [];
+    for (const action of [
+      () => appPool && appPool.end(),
+      () => workerPool && workerPool.end(),
+      () => migratorPool && migratorPool.end(),
+      () => superuserPool && superuserPool.end(),
+      () => pgServer && pgServer.stop(),
+      () => pgServer && pgServer.cleanupDataDir()
+    ]) {
+      try {
+        await action();
+      } catch (err) {
+        errors.push(err);
+      }
+    }
+    if (poolErrors.length > 0) {
+      errors.push(new Error(`Unexpected pool errors encountered: ${poolErrors.map(e => `${e.pool}: ${e.error.message}`).join(', ')}`));
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, 'Teardown cleanup failed');
   });
 
   const parsedUrl = new URL(dbUrl);
@@ -127,7 +143,7 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
     connectionString: `postgresql://operza_migrator:${migratorPassword}@${host}:${port}/${dbName}`,
     max: 5
   });
-  migratorPool.on('error', () => {});
+  migratorPool.on('error', (err) => poolErrors.push({ pool: 'migrator', error: err }));
 
   // 2. Apply all migrations sequentially (001 through 027) using unprivileged operza_migrator
   await t.test('2. Execute full migration suite (001 through 027) as operza_migrator', async () => {
@@ -193,13 +209,13 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
     connectionString: `postgresql://operza_app:${appPassword}@${host}:${port}/${dbName}`,
     max: 5
   });
-  appPool.on('error', () => {});
+  appPool.on('error', (err) => poolErrors.push({ pool: 'app', error: err }));
 
   workerPool = new pg.Pool({
     connectionString: `postgresql://operza_worker:${workerPassword}@${host}:${port}/${dbName}`,
     max: 5
   });
-  workerPool.on('error', () => {});
+  workerPool.on('error', (err) => poolErrors.push({ pool: 'worker', error: err }));
 
   // Seed two distinct tenants using superuser pool
   const tenantA = randomUUID();

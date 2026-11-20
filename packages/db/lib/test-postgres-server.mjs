@@ -34,24 +34,31 @@ export function canonicalizePath(p, platform = process.platform) {
 export function parsePostmasterPid(content) {
   if (!content || typeof content !== 'string') return null;
   const lines = content.trim().split(/\r?\n/);
-  const pid = parseInt(lines[0], 10);
+  if (lines.length < 1) return null;
+  const rawPid = lines[0].trim();
+  if (!/^\d+$/.test(rawPid)) return null;
+  const pid = parseInt(rawPid, 10);
+  if (!Number.isFinite(pid) || pid <= 0) return null;
   const dataDir = lines[1] ? lines[1].trim() : '';
-  const port = lines[3] ? parseInt(lines[3], 10) : null;
+  const port = lines[3] && /^\d+$/.test(lines[3].trim()) ? parseInt(lines[3].trim(), 10) : null;
   return {
-    pid: Number.isFinite(pid) && pid > 0 ? pid : null,
+    pid,
     dataDir,
     port: Number.isFinite(port) && port > 0 ? port : null
   };
 }
 
 export function isProcessAlive(pid) {
-  if (!pid || typeof pid !== 'number' || pid <= 0) return false;
+  if (typeof pid !== 'number' || !Number.isFinite(pid) || pid <= 0) {
+    throw new TypeError(`[ISOLATED-PG] Invalid PID: ${pid}. Must be a positive integer.`);
+  }
   try {
     process.kill(pid, 0);
     return true;
   } catch (err) {
     if (err.code === 'EPERM') return true;
-    return false;
+    if (err.code === 'ESRCH') return false;
+    throw new Error(`[ISOLATED-PG] IndeterminateProcessStateError: Unexpected error inspecting PID ${pid}: ${err.message} (${err.code})`);
   }
 }
 
@@ -107,6 +114,21 @@ export async function isPortOccupied(port) {
 
 export class IsolatedTestPostgres {
   constructor(options = {}) {
+    const SIMULATION_OPTIONS = [
+      '_simulatePostStartupFailure',
+      '_simulateCleanupErrorOnStartupFailure',
+      '_simulateShutdownCommandFailure',
+      '_simulatePidFileRemains',
+      '_simulatePortOccupied'
+    ];
+    const hasSimulationOpt = SIMULATION_OPTIONS.some((key) => options[key] != null);
+    if (hasSimulationOpt && process.env.NODE_ENV !== 'test') {
+      throw new Error(
+        `[ISOLATED-PG] SecurityError: Test failure simulation options (${SIMULATION_OPTIONS.filter(k => options[k] != null).join(', ')}) ` +
+        `are strictly forbidden outside NODE_ENV="test". Current NODE_ENV is ${process.env.NODE_ENV ? `"${process.env.NODE_ENV}"` : 'unset'}.`
+      );
+    }
+
     this.options = options;
     this.requestedPort = options.port;
     this.port = typeof options.port === 'number' && options.port > 0 ? options.port : null;
@@ -120,6 +142,9 @@ export class IsolatedTestPostgres {
     this.isExternal = false;
     this.skipRoleBootstrap = options.skipRoleBootstrap || false;
     this.forceIsolatedCluster = options.forceIsolatedCluster || false;
+    this.pid = null;
+    this.instanceDataDir = null;
+    this.instancePort = null;
   }
 
   async start() {
@@ -219,7 +244,7 @@ export class IsolatedTestPostgres {
 
     // 2. Resolve data directory
     if (!this.dataDir) {
-      this.dataDir = path.join(root, 'scratch', `test-shared-pg-cluster-${this.port}`);
+      this.dataDir = path.join(root, 'scratch', `test-shared-pg-cluster-${this.port}-${Date.now()}-${Math.floor(Math.random() * 100000)}`);
     }
 
     // 3. FAIL-CLOSED PORT COLLISION CHECK: Never reuse an existing server for an isolated cluster
@@ -292,6 +317,20 @@ export class IsolatedTestPostgres {
       if (!ready) {
         throw new Error(`PostgreSQL server on port ${this.port} failed to become ready within timeout.`);
       }
+
+      // 6a-1. Capture and retain verified postmaster process identity
+      const startupPidFile = path.join(this.dataDir, 'postmaster.pid');
+      if (!existsSync(startupPidFile)) {
+        throw new Error(`[ISOLATED-PG] StartupError: Expected postmaster.pid file not found in "${this.dataDir}".`);
+      }
+      const startupPidContent = readFileSync(startupPidFile, 'utf8');
+      const parsedStartupPid = parsePostmasterPid(startupPidContent);
+      if (!parsedStartupPid || !parsedStartupPid.pid) {
+        throw new Error(`[ISOLATED-PG] StartupError: Failed to obtain valid postmaster PID from "${startupPidFile}".`);
+      }
+      this.pid = parsedStartupPid.pid;
+      this.instanceDataDir = canonicalizePath(this.dataDir);
+      this.instancePort = Number(this.port);
 
       // 6b. VERIFY CLUSTER IDENTITY: Assert actual data_directory and port before any destructive operations
       const { default: pg } = await import('pg');
@@ -423,54 +462,104 @@ export class IsolatedTestPostgres {
     if (this.started) {
       throw new Error(`[ISOLATED-PG] SafetyError: Refusing to delete data directory while PostgreSQL instance is marked started.`);
     }
-    const pidFile = this.dataDir ? path.join(this.dataDir, 'postmaster.pid') : null;
-    if (pidFile && existsSync(pidFile)) {
+    if (!this.dataDir || !existsSync(this.dataDir)) {
+      return; // Idempotent: already clean
+    }
+
+    const pidFile = path.join(this.dataDir, 'postmaster.pid');
+    if (existsSync(pidFile)) {
+      let content;
       try {
-        const parsed = parsePostmasterPid(readFileSync(pidFile, 'utf8'));
-        if (parsed?.pid && isProcessAlive(parsed.pid)) {
-          throw new Error(`[ISOLATED-PG] SafetyError: Refusing to delete data directory while PostgreSQL process (PID ${parsed.pid}) is alive.`);
-        }
-      } catch (e) {
-        if (e.message.includes('SafetyError')) throw e;
+        content = readFileSync(pidFile, 'utf8');
+      } catch (readErr) {
+        throw new Error(`[ISOLATED-PG] SafetyError: Cannot verify process identity because PID file is unreadable: ${readErr.message}`);
+      }
+
+      const parsed = parsePostmasterPid(content);
+      if (!parsed || !parsed.pid) {
+        throw new Error(`[ISOLATED-PG] SafetyError: Refusing to delete data directory: PID file is malformed, incomplete, or contains an invalid PID.`);
+      }
+
+      let alive;
+      try {
+        alive = isProcessAlive(parsed.pid);
+      } catch (procErr) {
+        throw new Error(`[ISOLATED-PG] SafetyError: Cannot determine process status for PID ${parsed.pid}: ${procErr.message}`);
+      }
+
+      if (alive) {
+        throw new Error(`[ISOLATED-PG] SafetyError: Refusing to delete data directory while PostgreSQL process (PID ${parsed.pid}) is alive.`);
+      }
+
+      if (parsed.dataDir && canonicalizePath(parsed.dataDir) !== canonicalizePath(this.dataDir)) {
+        throw new Error(
+          `[ISOLATED-PG] SafetyError: Stale PID file data directory "${parsed.dataDir}" does not match instance directory "${this.dataDir}".`
+        );
       }
     }
-    if (this.dataDir && existsSync(this.dataDir)) {
-      rmSync(this.dataDir, { recursive: true, force: true });
-    }
+
+    rmSync(this.dataDir, { recursive: true, force: true });
   }
 
   async stop(stopOptions = {}) {
     if (this.isExternal || !this.started) return;
 
+    // Fail closed: reject test simulation options outside NODE_ENV === 'test'
+    const STOP_SIMULATION_OPTIONS = [
+      '_simulateCleanupError',
+      '_simulateShutdownCommandFailure',
+      '_simulatePidFileRemains',
+      '_simulatePortOccupied'
+    ];
+    const hasStopSimulation = STOP_SIMULATION_OPTIONS.some((k) => stopOptions[k] != null);
+    if (hasStopSimulation && process.env.NODE_ENV !== 'test') {
+      throw new Error(
+        `[ISOLATED-PG] SecurityError: Test failure simulation options are strictly forbidden outside NODE_ENV="test". ` +
+        `Current NODE_ENV is ${process.env.NODE_ENV ? `"${process.env.NODE_ENV}"` : 'unset'}.`
+      );
+    }
+
     const timeoutMs = typeof stopOptions.timeoutMs === 'number' ? stopOptions.timeoutMs : 10000;
     const pidFile = this.dataDir ? path.join(this.dataDir, 'postmaster.pid') : null;
-    let targetPid = null;
+    const targetPid = this.pid;
 
     if (pidFile && existsSync(pidFile)) {
+      let parsed;
       try {
         const pidContent = readFileSync(pidFile, 'utf8');
-        const parsed = parsePostmasterPid(pidContent);
-        if (parsed) {
-          targetPid = parsed.pid;
-          if (parsed.dataDir && this.dataDir) {
-            if (canonicalizePath(parsed.dataDir) !== canonicalizePath(this.dataDir)) {
-              throw new Error(
-                `[ISOLATED-PG] ShutdownIdentityMismatchError: PID file indicates data directory "${parsed.dataDir}" ` +
-                `which does not match instance data directory "${this.dataDir}". Refusing to stop unrelated server.`
-              );
-            }
-          }
-          if (parsed.port && this.port && Number(parsed.port) !== Number(this.port)) {
-            throw new Error(
-              `[ISOLATED-PG] ShutdownPortMismatchError: PID file indicates port ${parsed.port} ` +
-              `which does not match instance port ${this.port}. Refusing to stop unrelated server.`
-            );
-          }
-        }
+        parsed = parsePostmasterPid(pidContent);
       } catch (readErr) {
-        if (readErr.message.includes('ShutdownIdentityMismatchError') || readErr.message.includes('ShutdownPortMismatchError')) {
-          throw readErr;
+        throw new Error(`[ISOLATED-PG] ShutdownIdentityError: Unable to read PID file at "${pidFile}": ${readErr.message}`);
+      }
+
+      if (!parsed || !parsed.pid) {
+        throw new Error(`[ISOLATED-PG] ShutdownIdentityError: PID file at "${pidFile}" is malformed or missing valid PID.`);
+      }
+
+      // Identity check 1: PID in file must match stored instance PID
+      if (targetPid && parsed.pid !== targetPid) {
+        throw new Error(
+          `[ISOLATED-PG] ShutdownIdentityMismatchError: PID file records PID ${parsed.pid} ` +
+          `which does not match instance stored PID ${targetPid}. Refusing to stop unrelated server.`
+        );
+      }
+
+      // Identity check 2: Data directory in postmaster.pid must match this.dataDir
+      if (parsed.dataDir && this.dataDir) {
+        if (canonicalizePath(parsed.dataDir) !== canonicalizePath(this.dataDir)) {
+          throw new Error(
+            `[ISOLATED-PG] ShutdownIdentityMismatchError: PID file indicates data directory "${parsed.dataDir}" ` +
+            `which does not match instance data directory "${this.dataDir}". Refusing to stop unrelated server.`
+          );
         }
+      }
+
+      // Identity check 3: Port in postmaster.pid must match this.port
+      if (parsed.port && this.port && Number(parsed.port) !== Number(this.port)) {
+        throw new Error(
+          `[ISOLATED-PG] ShutdownPortMismatchError: PID file indicates port ${parsed.port} ` +
+          `which does not match instance port ${this.port}. Refusing to stop unrelated server.`
+        );
       }
     }
 
@@ -492,7 +581,10 @@ export class IsolatedTestPostgres {
       }
     }
 
-    // Bounded polling for verified shutdown
+    // Bounded polling for verified shutdown:
+    // 1. PID file has disappeared
+    // 2. Stored process has exited (isProcessAlive(targetPid) === false)
+    // 3. Port is no longer accepting connections (!isPortOccupied(this.port))
     const startTime = Date.now();
     let isFullyStopped = false;
     let lastFailureReason = '';
@@ -501,7 +593,14 @@ export class IsolatedTestPostgres {
       const simulatePidRemains = this.options._simulatePidFileRemains || stopOptions._simulatePidFileRemains;
       const pidFileExists = simulatePidRemains ? true : (pidFile ? existsSync(pidFile) : false);
 
-      const processAlive = targetPid ? isProcessAlive(targetPid) : false;
+      let processAlive = false;
+      if (targetPid) {
+        try {
+          processAlive = isProcessAlive(targetPid);
+        } catch (procErr) {
+          processAlive = true;
+        }
+      }
 
       const simulatePortOccupied = this.options._simulatePortOccupied || stopOptions._simulatePortOccupied;
       const portOccupied = simulatePortOccupied ? true : (this.port ? await isPortOccupied(this.port) : false);
@@ -528,5 +627,6 @@ export class IsolatedTestPostgres {
     }
 
     this.started = false;
+    this.pid = null;
   }
 }

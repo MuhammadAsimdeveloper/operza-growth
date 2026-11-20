@@ -445,15 +445,16 @@ export async function runMigrationPipeline(options = {}) {
   });
 
   // Security: Production pipeline must NEVER enable or forward test probes
+  // Sanitize pipeline options consistently for both Stage A and Stage B
   const {
     roleProvisioningProbe,
     allowTestProbe,
     __dangerouslyEnableTestProbe,
-    ...safeBootstrapOptions
+    ...sanitizedPipelineOptions
   } = options;
 
   try {
-    await runPrivilegedBootstrap(adminPool, { ...safeBootstrapOptions, migratorPassword });
+    await runPrivilegedBootstrap(adminPool, { ...sanitizedPipelineOptions, migratorPassword });
   } finally {
     await adminPool.end();
   }
@@ -476,7 +477,7 @@ export async function runMigrationPipeline(options = {}) {
   });
 
   try {
-    await runUnprivilegedMigrations(migratorPool, { ...options, adminPool: null });
+    await runUnprivilegedMigrations(migratorPool, { ...sanitizedPipelineOptions, adminPool: null });
   } finally {
     await migratorPool.end();
   }

@@ -71,7 +71,7 @@ async function seedUserFixture(pool, {
 }
 
 test('PostgreSQL-Authoritative Authentication & Session Resolution Regression Suite', async (t) => {
-  const pgServer = new IsolatedTestPostgres({ port: 5439, dbName: 'operza_auth_authority_test' });
+  const pgServer = new IsolatedTestPostgres({ port: 0, dbName: 'operza_auth_authority_test' });
   const dbUrl = await pgServer.start();
 
   const { default: pg } = await import('pg');

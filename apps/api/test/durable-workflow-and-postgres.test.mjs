@@ -22,7 +22,7 @@ const migrationsDir = path.join(root, 'packages/db/migrations');
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 test('Durable Workflow Execution & PostgreSQL Relational Integrity', async (t) => {
-  const pgServer = new IsolatedTestPostgres({ port: 5436, dbName: 'operza_workflow_durable_test' });
+  const pgServer = new IsolatedTestPostgres({ port: 0, dbName: 'operza_workflow_durable_test' });
   const dbUrl = await pgServer.start();
 
   const { default: pg } = await import('pg');

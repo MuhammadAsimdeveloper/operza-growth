@@ -307,7 +307,7 @@ test('Workflow Execution Persistence Reliability & Connection Error Handling', a
   });
 
   await t.test('Scenario 8: Real PostgreSQL composite key & tenant isolation under migration least-privilege', async () => {
-    const pgServer = new IsolatedTestPostgres({ port: 5437, dbName: 'operza_wf_persist_test' });
+    const pgServer = new IsolatedTestPostgres({ port: 0, dbName: 'operza_wf_persist_test' });
     const dbUrl = await pgServer.start();
 
     const parsedUrl = new URL(dbUrl);

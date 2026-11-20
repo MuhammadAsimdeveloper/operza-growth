@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -28,6 +28,43 @@ function createTempClusterDir(name) {
   const dir = path.join(root, 'scratch', `test-${name}-${Date.now()}-${Math.floor(Math.random() * 100000)}`);
   rmSync(dir, { recursive: true, force: true });
   return dir;
+}
+
+async function withEnv(overrides, action) {
+  const saved = {};
+  for (const k of Object.keys(overrides)) {
+    saved[k] = process.env[k];
+    if (overrides[k] === undefined) {
+      delete process.env[k];
+    } else {
+      process.env[k] = overrides[k];
+    }
+  }
+  try {
+    return await action();
+  } finally {
+    for (const k of Object.keys(saved)) {
+      if (saved[k] === undefined) {
+        delete process.env[k];
+      } else {
+        process.env[k] = saved[k];
+      }
+    }
+  }
+}
+
+async function safeTeardown(cleanups) {
+  const errors = [];
+  for (const action of cleanups) {
+    if (!action) continue;
+    try {
+      await action();
+    } catch (err) {
+      errors.push(err);
+    }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, `Multiple teardown failures:\n${errors.map(e => e.message).join('\n')}`);
 }
 
 test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Ordering & Regression Test Integrity', async (t) => {
@@ -74,36 +111,39 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
       forceIsolatedCluster: true
     });
 
+    let pool = null;
+    const poolErrors = [];
+
     try {
       const dbUrl = await server.start();
       assert.ok(server.port > 1024, `Dynamic port should be unprivileged (>1024), got ${server.port}`);
       assert.equal(server.started, true, 'Server must be marked started');
+      assert.ok(typeof server.pid === 'number' && server.pid > 0, 'Server must retain verified process PID');
 
-      const pool = new pg.Pool({ connectionString: dbUrl, max: 1 });
-      try {
-        const dirRes = await pool.query('SHOW data_directory;');
-        const portRes = await pool.query('SHOW port;');
-        const dbRes = await pool.query('SELECT current_database();');
+      pool = new pg.Pool({ connectionString: dbUrl, max: 1 });
+      pool.on('error', (err) => poolErrors.push(err));
 
-        assert.equal(
-          canonicalizePath(dirRes.rows[0].data_directory),
-          canonicalizePath(dataDir),
-          'Server data_directory must strictly match requested dataDir'
-        );
-        assert.equal(Number(portRes.rows[0].port), Number(server.port));
-        assert.equal(dbRes.rows[0].current_database, 'operza_ephemeral_test');
-      } finally {
-        await pool.end();
-      }
+      const dirRes = await pool.query('SHOW data_directory;');
+      const portRes = await pool.query('SHOW port;');
+      const dbRes = await pool.query('SELECT current_database();');
 
-      await server.stop();
+      assert.equal(
+        canonicalizePath(dirRes.rows[0].data_directory),
+        canonicalizePath(dataDir),
+        'Server data_directory must strictly match requested dataDir'
+      );
+      assert.equal(Number(portRes.rows[0].port), Number(server.port));
+      assert.equal(dbRes.rows[0].current_database, 'operza_ephemeral_test');
+    } finally {
+      await safeTeardown([
+        () => pool && pool.end(),
+        () => server.stop(),
+        () => server.cleanupDataDir()
+      ]);
+      assert.equal(poolErrors.length, 0, 'Pool must not report errors during normal run');
       assert.equal(server.started, false, 'Server must be marked stopped after verified teardown');
-
       const stillOccupied = await isPortOccupied(server.port);
       assert.equal(stillOccupied, false, `Port ${server.port} must be released after teardown`);
-    } finally {
-      await server.stop().catch(() => {});
-      server.cleanupDataDir();
     }
   });
 
@@ -124,6 +164,9 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
     const server1Port = server1.port;
 
     const pool1 = new pg.Pool({ connectionString: server1Url, max: 1 });
+    const pool1Errors = [];
+    pool1.on('error', (err) => pool1Errors.push(err));
+
     try {
       await pool1.query('CREATE TABLE sentinel_untouched_table (id int, label text);');
       await pool1.query("INSERT INTO sentinel_untouched_table VALUES (1, 'sentinel_value_keep_safe');");
@@ -170,11 +213,12 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
         await verifyServer1StillUp.end();
       }
     } finally {
-      await server2.stop().catch(() => {});
-      server2.cleanupDataDir();
-
-      await server1.stop();
-      server1.cleanupDataDir();
+      await safeTeardown([
+        () => server2.stop(),
+        () => server2.cleanupDataDir(),
+        () => server1.stop(),
+        () => server1.cleanupDataDir()
+      ]);
 
       const portNowFree = await isPortOccupied(server1Port);
       assert.equal(portNowFree, false, `Port ${server1Port} must be free after Server 1 teardown`);
@@ -182,11 +226,178 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
   });
 
   // =========================================================================
-  // Test Suite 4: PostgreSQL Shutdown Verification Guarantees
+  // Test Suite 4: Fail-Closed Data-Directory Cleanup (cleanupDataDir)
   // =========================================================================
-  await t.test('4. PostgreSQL Teardown Guarantees: Verified shutdown, repeated stop, failure detection & safety', async (tSub) => {
-    // 4a. Normal verified shutdown
-    await tSub.test('4a. Normal shutdown: Verifies process exit, PID disappearance, and port release', async () => {
+  await t.test('4. Fail-Closed Data Directory Cleanup: Refuses deletion on uncertain or active process identity', async (tSub) => {
+    // 4a. Refuses deletion while instance is marked started
+    await tSub.test('4a. Running instance: Refuses deletion when server.started === true', async () => {
+      const dir = createTempClusterDir('cleanup-running');
+      const server = new IsolatedTestPostgres({
+        port: 0,
+        dbName: 'running_cleanup_db',
+        dataDir: dir,
+        skipRoleBootstrap: true,
+        forceIsolatedCluster: true
+      });
+
+      try {
+        await server.start();
+        assert.equal(server.started, true);
+
+        assert.throws(
+          () => server.cleanupDataDir(),
+          (err) => err.message.includes('SafetyError') && err.message.includes('while PostgreSQL instance is marked started'),
+          'Must reject directory deletion while started === true'
+        );
+      } finally {
+        await safeTeardown([
+          () => server.stop(),
+          () => server.cleanupDataDir()
+        ]);
+      }
+    });
+
+    // 4b. Refuses deletion when PID file records a live process
+    await tSub.test('4b. Live process: Refuses deletion when process in postmaster.pid is alive', async () => {
+      const dir = createTempClusterDir('cleanup-live-proc');
+      const server = new IsolatedTestPostgres({
+        port: 0,
+        dbName: 'live_proc_db',
+        dataDir: dir,
+        skipRoleBootstrap: true,
+        forceIsolatedCluster: true
+      });
+
+      try {
+        await server.start();
+        const livePid = server.pid;
+        assert.ok(livePid > 0);
+
+        // Manually flip started to false to test PID inspection guard specifically
+        server.started = false;
+
+        assert.throws(
+          () => server.cleanupDataDir(),
+          (err) => err.message.includes('SafetyError') && err.message.includes(`while PostgreSQL process (PID ${livePid}) is alive`),
+          'Must refuse deletion while recorded process is alive'
+        );
+
+        // Restore started flag so clean stop operates
+        server.started = true;
+      } finally {
+        await safeTeardown([
+          () => server.stop(),
+          () => server.cleanupDataDir()
+        ]);
+      }
+    });
+
+    // 4c. Refuses deletion when PID file is malformed
+    await tSub.test('4c. Malformed PID file: Refuses deletion on unparseable PID file', () => {
+      const dir = createTempClusterDir('cleanup-malformed-pid');
+      mkdirSync(dir, { recursive: true });
+      const pidFile = path.join(dir, 'postmaster.pid');
+      writeFileSync(pidFile, 'not_a_valid_number\n/some/path\n1234567\n5432\n', 'utf8');
+
+      const server = new IsolatedTestPostgres({
+        port: 0,
+        dataDir: dir,
+        skipRoleBootstrap: true
+      });
+
+      assert.throws(
+        () => server.cleanupDataDir(),
+        (err) => err.message.includes('SafetyError') && err.message.includes('PID file is malformed, incomplete, or contains an invalid PID'),
+        'Must refuse deletion when PID file has non-numeric PID'
+      );
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    // 4d. Refuses deletion when PID file is missing PID field
+    await tSub.test('4d. Missing PID field: Refuses deletion on empty PID file', () => {
+      const dir = createTempClusterDir('cleanup-empty-pid');
+      mkdirSync(dir, { recursive: true });
+      const pidFile = path.join(dir, 'postmaster.pid');
+      writeFileSync(pidFile, '', 'utf8');
+
+      const server = new IsolatedTestPostgres({
+        port: 0,
+        dataDir: dir,
+        skipRoleBootstrap: true
+      });
+
+      assert.throws(
+        () => server.cleanupDataDir(),
+        (err) => err.message.includes('SafetyError') && err.message.includes('PID file is malformed, incomplete, or contains an invalid PID'),
+        'Must refuse deletion on empty PID file'
+      );
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    // 4e. Refuses deletion when PID file records a different data directory
+    await tSub.test('4e. Directory mismatch: Refuses deletion when PID file belongs to another directory', () => {
+      const dir = createTempClusterDir('cleanup-mismatch-dir');
+      mkdirSync(dir, { recursive: true });
+      const pidFile = path.join(dir, 'postmaster.pid');
+      // Use safe non-existent PID 9999999 on Windows/POSIX
+      writeFileSync(pidFile, '9999999\nC:/Different/DataDir\n1234567\n5432\n', 'utf8');
+
+      const server = new IsolatedTestPostgres({
+        port: 0,
+        dataDir: dir,
+        skipRoleBootstrap: true
+      });
+
+      assert.throws(
+        () => server.cleanupDataDir(),
+        (err) => err.message.includes('SafetyError') && err.message.includes('does not match instance directory'),
+        'Must refuse deletion when recorded directory does not match'
+      );
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    // 4f. Successfully deletes directory when PID file process is confirmed exited
+    await tSub.test('4f. Exited process: Safely deletes directory when process is confirmed not alive', () => {
+      const dir = createTempClusterDir('cleanup-exited-proc');
+      mkdirSync(dir, { recursive: true });
+      const pidFile = path.join(dir, 'postmaster.pid');
+      // Write verified matching directory with dead PID 9999999
+      writeFileSync(pidFile, `9999999\n${canonicalizePath(dir)}\n1234567\n5432\n`, 'utf8');
+
+      const server = new IsolatedTestPostgres({
+        port: 0,
+        dataDir: dir,
+        skipRoleBootstrap: true
+      });
+
+      assert.doesNotThrow(() => server.cleanupDataDir());
+      assert.equal(existsSync(dir), false, 'Directory must be removed when process is confirmed dead and dir matches');
+    });
+
+    // 4g. Idempotent cleanup when directory does not exist
+    await tSub.test('4g. Idempotency: Returns cleanly when data directory does not exist', () => {
+      const dir = path.join(root, 'scratch', 'test-non-existent-cluster-dir');
+      rmSync(dir, { recursive: true, force: true });
+
+      const server = new IsolatedTestPostgres({
+        port: 0,
+        dataDir: dir,
+        skipRoleBootstrap: true
+      });
+
+      assert.doesNotThrow(() => server.cleanupDataDir(), 'Repeated cleanup of non-existent directory must succeed');
+    });
+  });
+
+  // =========================================================================
+  // Test Suite 5: Process Identity Retention & Verified Shutdown
+  // =========================================================================
+  await t.test('5. Process Identity Retention & Verified Shutdown: Positive verification and identity safety', async (tSub) => {
+    // 5a. Normal shutdown: Verifies process exit, PID disappearance, and port release
+    await tSub.test('5a. Normal shutdown: Verifies process exit, PID disappearance, and port release', async () => {
       const dir = createTempClusterDir('shutdown-normal');
       const server = new IsolatedTestPostgres({
         port: 0,
@@ -199,28 +410,28 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
       try {
         await server.start();
         const serverPort = server.port;
-        const pidFile = path.join(dir, 'postmaster.pid');
-        assert.ok(existsSync(pidFile), 'postmaster.pid must exist while running');
-        const parsed = parsePostmasterPid(readFileSync(pidFile, 'utf8'));
-        assert.ok(parsed && parsed.pid > 0, 'Must parse valid PID');
-        const targetPid = parsed.pid;
-        assert.equal(isProcessAlive(targetPid), true, 'Process must be alive while server is running');
+        const targetPid = server.pid;
 
-        // Stop server
+        assert.ok(targetPid > 0, 'Instance must retain positive numeric PID');
+        assert.equal(isProcessAlive(targetPid), true, 'Process must be alive while running');
+
         await server.stop();
 
-        assert.equal(server.started, false, 'Server must be marked started = false after stop');
-        assert.equal(existsSync(pidFile), false, 'postmaster.pid must be removed after stop');
+        assert.equal(server.started, false, 'Server must be marked started = false');
+        assert.equal(server.pid, null, 'Server PID must be cleared after verified stop');
+        assert.equal(existsSync(path.join(dir, 'postmaster.pid')), false, 'postmaster.pid must disappear');
         assert.equal(isProcessAlive(targetPid), false, 'Process must have exited');
         assert.equal(await isPortOccupied(serverPort), false, 'Port must be released');
       } finally {
-        await server.stop().catch(() => {});
-        server.cleanupDataDir();
+        await safeTeardown([
+          () => server.stop(),
+          () => server.cleanupDataDir()
+        ]);
       }
     });
 
-    // 4b. Repeated shutdown: Idempotent and safe after successful stop
-    await tSub.test('4b. Repeated shutdown: Safe and idempotent without error', async () => {
+    // 5b. Repeated shutdown: Safe and idempotent
+    await tSub.test('5b. Repeated shutdown: Safe and idempotent without error', async () => {
       const dir = createTempClusterDir('shutdown-repeated');
       const server = new IsolatedTestPostgres({
         port: 0,
@@ -235,17 +446,173 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
         await server.stop();
         assert.equal(server.started, false);
 
-        // Calling stop() a second time must return cleanly
         await assert.doesNotReject(() => server.stop(), 'Second call to stop() must be safe and idempotent');
         assert.equal(server.started, false);
       } finally {
-        await server.stop().catch(() => {});
-        server.cleanupDataDir();
+        await safeTeardown([
+          () => server.stop(),
+          () => server.cleanupDataDir()
+        ]);
       }
     });
 
-    // 4c. Failed shutdown command: Server remains running, throws PostgresShutdownError, preserves started = true
-    await tSub.test('4c. Failed shutdown command: Surfaces failure and preserves started=true', async () => {
+    // 5c. Missing PID file while original process remains alive: Fails closed, does not infer process exit
+    await tSub.test('5c. Missing PID file: Refuses to report stopped while process is still alive', async () => {
+      const dir = createTempClusterDir('shutdown-missing-pid-file');
+      const server = new IsolatedTestPostgres({
+        port: 0,
+        dbName: 'missing_pid_file_db',
+        dataDir: dir,
+        skipRoleBootstrap: true,
+        forceIsolatedCluster: true
+      });
+
+      try {
+        await server.start();
+        const targetPid = server.pid;
+        const pidFile = path.join(dir, 'postmaster.pid');
+        assert.ok(existsSync(pidFile));
+
+        // Manually delete PID file while PostgreSQL process is STILL ALIVE
+        rmSync(pidFile, { force: true });
+        assert.equal(existsSync(pidFile), false, 'PID file artificially deleted');
+        assert.equal(isProcessAlive(targetPid), true, 'Process is still running');
+
+        // stop() must NOT assume process is dead just because PID file is gone!
+        await assert.rejects(
+          () => server.stop({ timeoutMs: 800 }),
+          (err) => err.message.includes('PostgresShutdownError') && err.message.includes(`process ${targetPid} still alive`),
+          'Must fail closed when PID file is missing but stored process is still alive'
+        );
+
+        assert.equal(server.started, true, 'Server state must remain started = true');
+
+        // Recreate PID file so pg_ctl immediate stop can cleanly kill the process
+        writeFileSync(pidFile, `${targetPid}\n${canonicalizePath(dir)}\n1234567\n${server.port}\n`, 'utf8');
+        await server.stop();
+        assert.equal(server.started, false);
+      } finally {
+        await safeTeardown([
+          () => server.stop(),
+          () => server.cleanupDataDir()
+        ]);
+      }
+    });
+
+    // 5d. Mismatched PID identity in postmaster.pid
+    await tSub.test('5d. Mismatched PID: Refuses to stop server when PID in postmaster.pid does not match stored PID', async () => {
+      const dir = createTempClusterDir('shutdown-pid-mismatch');
+      const server = new IsolatedTestPostgres({
+        port: 0,
+        dbName: 'pid_mismatch_db',
+        dataDir: dir,
+        skipRoleBootstrap: true,
+        forceIsolatedCluster: true
+      });
+
+      try {
+        await server.start();
+        const realPid = server.pid;
+        const pidFile = path.join(dir, 'postmaster.pid');
+
+        // Overwrite PID file with a different PID (e.g. realPid + 9999)
+        const origContent = readFileSync(pidFile, 'utf8');
+        const lines = origContent.split(/\r?\n/);
+        lines[0] = String(realPid + 9999);
+        writeFileSync(pidFile, lines.join('\n'), 'utf8');
+
+        await assert.rejects(
+          () => server.stop(),
+          (err) => err.message.includes('ShutdownIdentityMismatchError') && err.message.includes('which does not match instance stored PID'),
+          'Must reject stop when PID in postmaster.pid does not match stored PID'
+        );
+
+        // Restore genuine PID file to allow clean shutdown
+        writeFileSync(pidFile, origContent, 'utf8');
+        await server.stop();
+        assert.equal(server.started, false);
+      } finally {
+        await safeTeardown([
+          () => server.stop(),
+          () => server.cleanupDataDir()
+        ]);
+      }
+    });
+
+    // 5e. Mismatched data-directory identity
+    await tSub.test('5e. Mismatched data directory: Refuses to stop server when directory in PID file differs', async () => {
+      const dir = createTempClusterDir('shutdown-dir-mismatch');
+      const server = new IsolatedTestPostgres({
+        port: 0,
+        dbName: 'dir_mismatch_db',
+        dataDir: dir,
+        skipRoleBootstrap: true,
+        forceIsolatedCluster: true
+      });
+
+      try {
+        await server.start();
+        const pidFile = path.join(dir, 'postmaster.pid');
+        const origContent = readFileSync(pidFile, 'utf8');
+        const lines = origContent.split(/\r?\n/);
+        lines[1] = 'C:/Mismatched/Fake/Directory';
+        writeFileSync(pidFile, lines.join('\n'), 'utf8');
+
+        await assert.rejects(
+          () => server.stop(),
+          (err) => err.message.includes('ShutdownIdentityMismatchError') && err.message.includes('does not match instance data directory'),
+          'Must reject stop when data directory in PID file does not match'
+        );
+
+        writeFileSync(pidFile, origContent, 'utf8');
+        await server.stop();
+        assert.equal(server.started, false);
+      } finally {
+        await safeTeardown([
+          () => server.stop(),
+          () => server.cleanupDataDir()
+        ]);
+      }
+    });
+
+    // 5f. Mismatched port identity
+    await tSub.test('5f. Mismatched port: Refuses to stop server when port in PID file differs', async () => {
+      const dir = createTempClusterDir('shutdown-port-mismatch');
+      const server = new IsolatedTestPostgres({
+        port: 0,
+        dbName: 'port_mismatch_db',
+        dataDir: dir,
+        skipRoleBootstrap: true,
+        forceIsolatedCluster: true
+      });
+
+      try {
+        await server.start();
+        const pidFile = path.join(dir, 'postmaster.pid');
+        const origContent = readFileSync(pidFile, 'utf8');
+        const lines = origContent.split(/\r?\n/);
+        lines[3] = String(Number(server.port) + 10);
+        writeFileSync(pidFile, lines.join('\n'), 'utf8');
+
+        await assert.rejects(
+          () => server.stop(),
+          (err) => err.message.includes('ShutdownPortMismatchError') && err.message.includes('does not match instance port'),
+          'Must reject stop when port in PID file does not match'
+        );
+
+        writeFileSync(pidFile, origContent, 'utf8');
+        await server.stop();
+        assert.equal(server.started, false);
+      } finally {
+        await safeTeardown([
+          () => server.stop(),
+          () => server.cleanupDataDir()
+        ]);
+      }
+    });
+
+    // 5g. Failed shutdown command
+    await tSub.test('5g. Failed shutdown command: Surfaces failure and preserves started=true', async () => {
       const dir = createTempClusterDir('shutdown-cmd-fail');
       const server = new IsolatedTestPostgres({
         port: 0,
@@ -259,27 +626,27 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
         await server.start();
         const serverPort = server.port;
 
-        // Attempt stop with simulated command failure and short timeout (800ms)
         await assert.rejects(
           () => server.stop({ _simulateShutdownCommandFailure: true, timeoutMs: 800 }),
           (err) => err.message.includes('PostgresShutdownError') && err.message.includes('process') && err.message.includes('still alive'),
-          'Must throw PostgresShutdownError when shutdown command fails and process remains alive'
+          'Must throw PostgresShutdownError when command fails'
         );
 
-        assert.equal(server.started, true, 'Server state must remain started = true when shutdown verification fails');
-        assert.equal(await isPortOccupied(serverPort), true, 'Port must still be occupied by running server');
+        assert.equal(server.started, true, 'Server state must remain started = true');
+        assert.equal(await isPortOccupied(serverPort), true, 'Port must still be occupied');
 
-        // Clean up genuine server
         await server.stop();
         assert.equal(server.started, false);
       } finally {
-        await server.stop().catch(() => {});
-        server.cleanupDataDir();
+        await safeTeardown([
+          () => server.stop(),
+          () => server.cleanupDataDir()
+        ]);
       }
     });
 
-    // 4d. PID file remains after timeout: Surfaces failure and preserves started = true
-    await tSub.test('4d. PID file remains after timeout: Throws PostgresShutdownError', async () => {
+    // 5h. PID file remains after timeout
+    await tSub.test('5h. PID file remains: Throws PostgresShutdownError and preserves started=true', async () => {
       const dir = createTempClusterDir('shutdown-pid-remains');
       const server = new IsolatedTestPostgres({
         port: 0,
@@ -295,22 +662,23 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
         await assert.rejects(
           () => server.stop({ _simulatePidFileRemains: true, timeoutMs: 600 }),
           (err) => err.message.includes('PostgresShutdownError') && err.message.includes('PID file still exists'),
-          'Must throw PostgresShutdownError when PID file remains after timeout'
+          'Must throw PostgresShutdownError when PID file remains'
         );
 
-        assert.equal(server.started, true, 'Server state must remain started = true when PID file verification fails');
+        assert.equal(server.started, true);
 
-        // Now perform actual stop
         await server.stop();
         assert.equal(server.started, false);
       } finally {
-        await server.stop().catch(() => {});
-        server.cleanupDataDir();
+        await safeTeardown([
+          () => server.stop(),
+          () => server.cleanupDataDir()
+        ]);
       }
     });
 
-    // 4e. Port remains occupied after expected shutdown: Throws PostgresShutdownError
-    await tSub.test('4e. Port remains occupied after expected shutdown: Throws PostgresShutdownError', async () => {
+    // 5i. Port remains occupied after expected shutdown
+    await tSub.test('5i. Port remains occupied: Throws PostgresShutdownError and preserves started=true', async () => {
       const dir = createTempClusterDir('shutdown-port-occupied');
       const server = new IsolatedTestPostgres({
         port: 0,
@@ -329,19 +697,20 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
           'Must throw PostgresShutdownError when port remains occupied'
         );
 
-        assert.equal(server.started, true, 'Server state must remain started = true when port verification fails');
+        assert.equal(server.started, true);
 
-        // Now perform actual stop
         await server.stop();
         assert.equal(server.started, false);
       } finally {
-        await server.stop().catch(() => {});
-        server.cleanupDataDir();
+        await safeTeardown([
+          () => server.stop(),
+          () => server.cleanupDataDir()
+        ]);
       }
     });
 
-    // 4f. Ensuring an unrelated server remains untouched
-    await tSub.test('4f. Ensuring an unrelated server remains untouched: Identity mismatch prevents stopping other clusters', async () => {
+    // 5j. Ensuring an unrelated server remains untouched
+    await tSub.test('5j. Unrelated server safety: Identity mismatch prevents stopping other clusters', async () => {
       const dirA = createTempClusterDir('shutdown-server-a');
       const serverA = new IsolatedTestPostgres({
         port: 0,
@@ -354,25 +723,22 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
       const serverAUrl = await serverA.start();
       const serverAPort = serverA.port;
 
-      // Create an attacker / mismatched Server B instance that points to Server A's data dir but specifies a wrong port
       const serverB = new IsolatedTestPostgres({
-        port: serverAPort + 1, // Mismatched port
+        port: serverAPort + 1,
         dbName: 'server_b_db',
-        dataDir: dirA, // Targets Server A's dataDir!
+        dataDir: dirA,
         skipRoleBootstrap: true,
         forceIsolatedCluster: true
       });
-      serverB.started = true; // Pretend it was started
+      serverB.started = true;
 
       try {
-        // Attempting to stop Server B must detect port mismatch in postmaster.pid and refuse to stop Server A
         await assert.rejects(
           () => serverB.stop(),
           (err) => err.message.includes('ShutdownPortMismatchError') && err.message.includes('Refusing to stop unrelated server'),
           'Must refuse to stop cluster when postmaster.pid port does not match'
         );
 
-        // Verify Server A is STILL online, alive, and queryable
         const checkPoolA = new pg.Pool({ connectionString: serverAUrl, max: 1 });
         try {
           const res = await checkPoolA.query('SELECT 42 AS num;');
@@ -382,50 +748,20 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
         }
       } finally {
         serverB.started = false;
-        await serverA.stop();
-        serverA.cleanupDataDir();
-      }
-    });
-
-    // 4g. Data directory safety: Refuses deletion while server is running
-    await tSub.test('4g. Data directory safety: Refuses to delete dataDir while server is marked started', async () => {
-      const dir = createTempClusterDir('dir-safety-cluster');
-      const server = new IsolatedTestPostgres({
-        port: 0,
-        dbName: 'dir_safety_db',
-        dataDir: dir,
-        skipRoleBootstrap: true,
-        forceIsolatedCluster: true
-      });
-
-      try {
-        await server.start();
-
-        // Attempting to delete data dir while server.started === true must throw SafetyError
-        assert.throws(
-          () => server.cleanupDataDir(),
-          (err) => err.message.includes('SafetyError') && err.message.includes('Refusing to delete data directory while PostgreSQL instance is marked started'),
-          'Must refuse to delete dataDir while instance is running'
-        );
-
-        await server.stop();
-        // After stop, cleanupDataDir succeeds
-        assert.doesNotThrow(() => server.cleanupDataDir());
-        assert.equal(existsSync(dir), false, 'Data directory must be removed after safe cleanup');
-      } finally {
-        await server.stop().catch(() => {});
-        server.cleanupDataDir();
+        await safeTeardown([
+          () => serverA.stop(),
+          () => serverA.cleanupDataDir()
+        ]);
       }
     });
   });
 
   // =========================================================================
-  // Test Suite 5: Real Exception-Safe Startup Cleanup
+  // Test Suite 6: Real Exception-Safe Startup Cleanup
   // =========================================================================
-  await t.test('5. Real Exception-Safe Startup Cleanup: Setup failure cleans up and preserves original error', async (tSub) => {
-    // 5a. Post-startup failure triggers automatic teardown and releases resources without touching unrelated server
-    await tSub.test('5a. Post-startup failure: Releases process and port, preserves error, leaves unrelated server intact', async () => {
-      // Start unrelated Server A
+  await t.test('6. Real Exception-Safe Startup Cleanup: Setup failure cleans up and preserves original error', async (tSub) => {
+    // 6a. Post-startup failure triggers automatic teardown and releases resources without touching unrelated server
+    await tSub.test('6a. Post-startup failure: Releases process and port, preserves error, leaves unrelated server intact', async () => {
       const dirA = createTempClusterDir('startup-cleanup-server-a');
       const serverA = new IsolatedTestPostgres({
         port: 0,
@@ -437,7 +773,6 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
       const serverAUrl = await serverA.start();
       const serverAPort = serverA.port;
 
-      // Start Server B with controlled failure injected immediately after startup & identity verification
       const dirB = createTempClusterDir('startup-cleanup-server-b');
       const serverB = new IsolatedTestPostgres({
         port: 0,
@@ -448,34 +783,30 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
         _simulatePostStartupFailure: true
       });
 
+      let serverBPort = null;
+      let caughtErr = null;
       try {
-        let serverBPort = null;
-        let caughtErr = null;
-        try {
-          await serverB.start();
-        } catch (err) {
-          caughtErr = err;
-          serverBPort = serverB.port;
-        }
+        await serverB.start();
+      } catch (err) {
+        caughtErr = err;
+        serverBPort = serverB.port;
+      }
 
-        // 1. Original error must be preserved
+      try {
         assert.ok(caughtErr !== null, 'Must reject on post-startup failure');
         assert.ok(
           caughtErr.message.includes('[TEST-SIMULATED] Controlled post-startup initialization failure'),
           `Original error must be preserved, got: ${caughtErr.message}`
         );
 
-        // 2. Server B must be marked stopped
         assert.equal(serverB.started, false, 'Server B must be marked started = false after cleanup');
 
-        // 3. Server B postmaster.pid must be gone and port must be free
         const pidFileB = path.join(dirB, 'postmaster.pid');
         assert.equal(existsSync(pidFileB), false, 'Server B postmaster.pid must disappear');
         if (serverBPort) {
           assert.equal(await isPortOccupied(serverBPort), false, `Server B port ${serverBPort} must be released`);
         }
 
-        // 4. Unrelated Server A must remain completely unaffected and queryable
         const poolA = new pg.Pool({ connectionString: serverAUrl, max: 1 });
         try {
           const resA = await poolA.query('SELECT 1234 AS test_val;');
@@ -484,16 +815,17 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
           await poolA.end();
         }
       } finally {
-        await serverB.stop().catch(() => {});
-        serverB.cleanupDataDir();
-
-        await serverA.stop();
-        serverA.cleanupDataDir();
+        await safeTeardown([
+          () => serverB.stop(),
+          () => serverB.cleanupDataDir(),
+          () => serverA.stop(),
+          () => serverA.cleanupDataDir()
+        ]);
       }
     });
 
-    // 5b. Cleanup errors during startup failure are not silently swallowed
-    await tSub.test('5b. Cleanup errors during setup failure are chained and surfaced', async () => {
+    // 6b. Cleanup errors during startup failure are chained and surfaced
+    await tSub.test('6b. Cleanup errors during setup failure are chained and surfaced', async () => {
       const dir = createTempClusterDir('startup-cleanup-double-fail');
       const server = new IsolatedTestPostgres({
         port: 0,
@@ -515,19 +847,20 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
           },
           'Must surface both setup failure and teardown cleanup failure'
         );
-
       } finally {
         server.options._simulateCleanupErrorOnStartupFailure = false;
-        await server.stop().catch(() => {});
-        server.cleanupDataDir();
+        await safeTeardown([
+          () => server.stop(),
+          () => server.cleanupDataDir()
+        ]);
       }
     });
   });
 
   // =========================================================================
-  // Test Suite 6: Pre-Mutation Stage A Probe Validation & Fail-Closed Ordering
+  // Test Suite 7: Pre-Mutation Stage A Probe Validation & Fail-Closed Ordering
   // =========================================================================
-  await t.test('6. Pre-Mutation Stage A Probe Ordering: Unauthorized probe rejected BEFORE any database mutation', async () => {
+  await t.test('7. Pre-Mutation Stage A Probe Ordering: Unauthorized probe rejected BEFORE any database mutation', async () => {
     const clusterDir = createTempClusterDir('probe-ordering-cluster');
     const server = new IsolatedTestPostgres({
       port: 0,
@@ -569,16 +902,35 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
       assert.equal(snapRolesAfter.rowCount, 0, 'CRITICAL: No operza roles were created during unauthorized probe rejection');
       assert.equal(snapFuncAfter.rowCount, 0, 'CRITICAL: provision_security_role was NOT created during unauthorized probe rejection');
     } finally {
-      await adminPool.end();
-      await server.stop();
-      server.cleanupDataDir();
+      await safeTeardown([
+        () => adminPool.end(),
+        () => server.stop(),
+        () => server.cleanupDataDir()
+      ]);
     }
   });
 
   // =========================================================================
-  // Test Suite 7: Strict Test-Only Authorization Matrix
+  // Test Suite 8: Strict Test-Only Authorization Matrix & Failure Injection Boundaries
   // =========================================================================
-  await t.test('7. Strict Test-Only Authorization: Matrix of environment and opt-in combinations', async () => {
+  await t.test('8. Strict Test-Only Authorization & Simulation Boundaries: Matrix of environment and opt-in combinations', async () => {
+    // 8a. Test failure simulation options strictly rejected outside NODE_ENV === 'test'
+    for (const nonTestEnv of ['production', 'development', undefined]) {
+      await withEnv({ NODE_ENV: nonTestEnv }, async () => {
+        assert.throws(
+          () => new IsolatedTestPostgres({ _simulatePostStartupFailure: true }),
+          (err) => err.message.includes('SecurityError: Test failure simulation options') && err.message.includes('are strictly forbidden outside NODE_ENV="test"'),
+          `Constructor must reject simulation options under NODE_ENV=${nonTestEnv}`
+        );
+
+        assert.throws(
+          () => new IsolatedTestPostgres({ _simulatePortOccupied: true }),
+          (err) => err.message.includes('SecurityError: Test failure simulation options') && err.message.includes('are strictly forbidden outside NODE_ENV="test"'),
+          `Constructor must reject _simulatePortOccupied under NODE_ENV=${nonTestEnv}`
+        );
+      });
+    }
+
     const clusterDir = createTempClusterDir('auth-matrix-cluster');
     const server = new IsolatedTestPostgres({
       port: 0,
@@ -591,149 +943,155 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
     const adminUrl = await server.start();
     const adminPool = new pg.Pool({ connectionString: adminUrl, max: 5 });
 
-    const origNodeEnv = process.env.NODE_ENV;
-    const origProbeEnv = process.env.ALLOW_STAGE_A_PROBE;
-
     try {
-      // 7a. Test environment with explicit opt-in (NODE_ENV="test", allowTestProbe=true) -> SUCCEEDS
-      process.env.NODE_ENV = 'test';
-      delete process.env.ALLOW_STAGE_A_PROBE;
+      // 8b. Test environment with explicit opt-in (NODE_ENV="test", allowTestProbe=true) -> SUCCEEDS
+      await withEnv({ NODE_ENV: 'test', ALLOW_STAGE_A_PROBE: undefined }, async () => {
+        let probeRan = false;
+        let probeInvoker = null;
+        let probeSessionPid = null;
 
-      let probeRan = false;
-      let probeInvoker = null;
-      let probeSessionPid = null;
+        await runPrivilegedBootstrap(adminPool, {
+          migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
+          allowTestProbe: true,
+          roleProvisioningProbe: async (invoker, sessionPid) => {
+            probeRan = true;
+            probeInvoker = invoker;
+            probeSessionPid = sessionPid;
+          }
+        });
 
-      await runPrivilegedBootstrap(adminPool, {
-        migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
-        allowTestProbe: true,
-        roleProvisioningProbe: async (invoker, sessionPid) => {
-          probeRan = true;
-          probeInvoker = invoker;
-          probeSessionPid = sessionPid;
-        }
+        assert.equal(probeRan, true, 'Probe must execute when explicitly opted-in under NODE_ENV="test"');
+        assert.ok(typeof probeSessionPid === 'number', 'Probe must receive numeric session pid');
+
+        // Assert restricted invoker capability surface
+        assert.deepEqual(
+          Object.keys(probeInvoker).sort(),
+          ['getBackendPid', 'invoke'],
+          'restrictedInvoker must strictly expose only getBackendPid and invoke'
+        );
+        assert.equal(probeInvoker.client, undefined, 'Must not expose raw client');
+        assert.equal(probeInvoker.query, undefined, 'Must not expose raw query method');
       });
 
-      assert.equal(probeRan, true, 'Probe must execute when explicitly opted-in under NODE_ENV="test"');
-      assert.ok(typeof probeSessionPid === 'number', 'Probe must receive numeric session pid');
-
-      // Assert restricted invoker capability surface
-      assert.deepEqual(
-        Object.keys(probeInvoker).sort(),
-        ['getBackendPid', 'invoke'],
-        'restrictedInvoker must strictly expose only getBackendPid and invoke'
-      );
-      assert.equal(probeInvoker.client, undefined, 'Must not expose raw client');
-      assert.equal(probeInvoker.query, undefined, 'Must not expose raw query method');
-
-      // 7b. Test environment without opt-in (allowTestProbe: undefined) -> REJECTED
-      await assert.rejects(
-        () => runPrivilegedBootstrap(adminPool, {
-          migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
-          roleProvisioningProbe: async () => {}
-        }),
-        (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe is disabled by default'),
-        'Must reject probe when opt-in is omitted'
-      );
-
-      // 7c. Test environment with opt-in explicitly false (allowTestProbe: false) -> REJECTED
-      await assert.rejects(
-        () => runPrivilegedBootstrap(adminPool, {
-          migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
-          allowTestProbe: false,
-          roleProvisioningProbe: async () => {}
-        }),
-        (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe is disabled by default'),
-        'Must reject probe when allowTestProbe is false'
-      );
-
-      // 7d. Development environment (NODE_ENV="development") -> REJECTED
-      process.env.NODE_ENV = 'development';
-      await assert.rejects(
-        () => runPrivilegedBootstrap(adminPool, {
-          migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
-          allowTestProbe: true,
-          roleProvisioningProbe: async () => {}
-        }),
-        (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe requires an explicit test environment'),
-        'Must reject probe when NODE_ENV is "development"'
-      );
-
-      // 7e. Production environment (NODE_ENV="production") -> REJECTED UNCONDITIONALLY
-      process.env.NODE_ENV = 'production';
-      await assert.rejects(
-        () => runPrivilegedBootstrap(adminPool, {
-          migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
-          allowTestProbe: true,
-          roleProvisioningProbe: async () => {}
-        }),
-        (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe is strictly forbidden in production environments'),
-        'Must reject probe unconditionally in production environment'
-      );
-
-      // 7f. Unset NODE_ENV -> REJECTED
-      delete process.env.NODE_ENV;
-      await assert.rejects(
-        () => runPrivilegedBootstrap(adminPool, {
-          migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
-          allowTestProbe: true,
-          roleProvisioningProbe: async () => {}
-        }),
-        (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe requires an explicit test environment (NODE_ENV="test"). Current NODE_ENV is unset.'),
-        'Must reject probe when NODE_ENV is unset'
-      );
-
-      // 7g. Environment opt-in set (ALLOW_STAGE_A_PROBE=true) while NODE_ENV is unset -> REJECTED
-      process.env.ALLOW_STAGE_A_PROBE = 'true';
-      delete process.env.NODE_ENV;
-      await assert.rejects(
-        () => runPrivilegedBootstrap(adminPool, {
-          migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
-          allowTestProbe: true,
-          roleProvisioningProbe: async () => {}
-        }),
-        (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe requires an explicit test environment (NODE_ENV="test"). Current NODE_ENV is unset.'),
-        'Must reject probe even if ALLOW_STAGE_A_PROBE is set when NODE_ENV is unset'
-      );
-
-      // 7h. Non-boolean opt-in values -> REJECTED
-      process.env.NODE_ENV = 'test';
-      delete process.env.ALLOW_STAGE_A_PROBE;
-
-      for (const invalidOptIn of ['true', '1', 1, {}, []]) {
+      // 8c. Test environment without opt-in (allowTestProbe: undefined) -> REJECTED
+      await withEnv({ NODE_ENV: 'test' }, async () => {
         await assert.rejects(
           () => runPrivilegedBootstrap(adminPool, {
             migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
-            allowTestProbe: invalidOptIn,
             roleProvisioningProbe: async () => {}
           }),
           (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe is disabled by default'),
-          `Must reject non-boolean opt-in value: ${JSON.stringify(invalidOptIn)}`
+          'Must reject probe when opt-in is omitted'
         );
-      }
+      });
 
-      // 7i. Obsolete alias (__dangerouslyEnableTestProbe: true without allowTestProbe: true) -> REJECTED
-      await assert.rejects(
-        () => runPrivilegedBootstrap(adminPool, {
-          migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
-          __dangerouslyEnableTestProbe: true,
-          roleProvisioningProbe: async () => {}
-        }),
-        (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe is disabled by default and rejected without explicit test opt-in'),
-        'Must reject obsolete __dangerouslyEnableTestProbe alias'
-      );
+      // 8d. Test environment with opt-in explicitly false (allowTestProbe: false) -> REJECTED
+      await withEnv({ NODE_ENV: 'test' }, async () => {
+        await assert.rejects(
+          () => runPrivilegedBootstrap(adminPool, {
+            migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
+            allowTestProbe: false,
+            roleProvisioningProbe: async () => {}
+          }),
+          (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe is disabled by default'),
+          'Must reject probe when allowTestProbe is false'
+        );
+      });
 
-      // 7j. Non-function probe -> REJECTED
-      await assert.rejects(
-        () => runPrivilegedBootstrap(adminPool, {
-          migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
-          allowTestProbe: true,
-          roleProvisioningProbe: 'not_a_function'
-        }),
-        (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe must be a function'),
-        'Must reject non-function roleProvisioningProbe'
-      );
+      // 8e. Development environment (NODE_ENV="development") -> REJECTED
+      await withEnv({ NODE_ENV: 'development' }, async () => {
+        await assert.rejects(
+          () => runPrivilegedBootstrap(adminPool, {
+            migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
+            allowTestProbe: true,
+            roleProvisioningProbe: async () => {}
+          }),
+          (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe requires an explicit test environment'),
+          'Must reject probe when NODE_ENV is "development"'
+        );
+      });
 
-      // 7k. Production pipeline wrapper: runMigrationPipeline strips and NEVER forwards test probes
+      // 8f. Production environment (NODE_ENV="production") -> REJECTED UNCONDITIONALLY
+      await withEnv({ NODE_ENV: 'production' }, async () => {
+        await assert.rejects(
+          () => runPrivilegedBootstrap(adminPool, {
+            migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
+            allowTestProbe: true,
+            roleProvisioningProbe: async () => {}
+          }),
+          (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe is strictly forbidden in production environments'),
+          'Must reject probe unconditionally in production environment'
+        );
+      });
+
+      // 8g. Unset NODE_ENV -> REJECTED
+      await withEnv({ NODE_ENV: undefined }, async () => {
+        await assert.rejects(
+          () => runPrivilegedBootstrap(adminPool, {
+            migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
+            allowTestProbe: true,
+            roleProvisioningProbe: async () => {}
+          }),
+          (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe requires an explicit test environment (NODE_ENV="test"). Current NODE_ENV is unset.'),
+          'Must reject probe when NODE_ENV is unset'
+        );
+      });
+
+      // 8h. Environment opt-in set (ALLOW_STAGE_A_PROBE=true) while NODE_ENV is unset -> REJECTED
+      await withEnv({ NODE_ENV: undefined, ALLOW_STAGE_A_PROBE: 'true' }, async () => {
+        await assert.rejects(
+          () => runPrivilegedBootstrap(adminPool, {
+            migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
+            allowTestProbe: true,
+            roleProvisioningProbe: async () => {}
+          }),
+          (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe requires an explicit test environment (NODE_ENV="test"). Current NODE_ENV is unset.'),
+          'Must reject probe even if ALLOW_STAGE_A_PROBE is set when NODE_ENV is unset'
+        );
+      });
+
+      // 8i. Non-boolean opt-in values -> REJECTED
+      await withEnv({ NODE_ENV: 'test', ALLOW_STAGE_A_PROBE: undefined }, async () => {
+        for (const invalidOptIn of ['true', '1', 1, {}, []]) {
+          await assert.rejects(
+            () => runPrivilegedBootstrap(adminPool, {
+              migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
+              allowTestProbe: invalidOptIn,
+              roleProvisioningProbe: async () => {}
+            }),
+            (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe is disabled by default'),
+            `Must reject non-boolean opt-in value: ${JSON.stringify(invalidOptIn)}`
+          );
+        }
+      });
+
+      // 8j. Obsolete alias (__dangerouslyEnableTestProbe: true without allowTestProbe: true) -> REJECTED
+      await withEnv({ NODE_ENV: 'test' }, async () => {
+        await assert.rejects(
+          () => runPrivilegedBootstrap(adminPool, {
+            migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
+            __dangerouslyEnableTestProbe: true,
+            roleProvisioningProbe: async () => {}
+          }),
+          (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe is disabled by default and rejected without explicit test opt-in'),
+          'Must reject obsolete __dangerouslyEnableTestProbe alias'
+        );
+      });
+
+      // 8k. Non-function probe -> REJECTED
+      await withEnv({ NODE_ENV: 'test' }, async () => {
+        await assert.rejects(
+          () => runPrivilegedBootstrap(adminPool, {
+            migratorPassword: DEFAULT_MIGRATOR_PASSWORD,
+            allowTestProbe: true,
+            roleProvisioningProbe: 'not_a_function'
+          }),
+          (err) => err.message.includes('SECURITY_ERROR: roleProvisioningProbe must be a function'),
+          'Must reject non-function roleProvisioningProbe'
+        );
+      });
+
+      // 8l. Production pipeline wrapper: runMigrationPipeline strips and NEVER forwards test probes
       let pipelineProbeRan = false;
       await runMigrationPipeline({
         adminUrl,
@@ -745,13 +1103,11 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
       });
       assert.equal(pipelineProbeRan, false, 'runMigrationPipeline must strictly strip roleProvisioningProbe');
     } finally {
-      process.env.NODE_ENV = origNodeEnv || 'test';
-      if (origProbeEnv) process.env.ALLOW_STAGE_A_PROBE = origProbeEnv;
-      else delete process.env.ALLOW_STAGE_A_PROBE;
-
-      await adminPool.end();
-      await server.stop();
-      server.cleanupDataDir();
+      await safeTeardown([
+        () => adminPool.end(),
+        () => server.stop(),
+        () => server.cleanupDataDir()
+      ]);
     }
   });
 });

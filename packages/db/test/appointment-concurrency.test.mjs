@@ -11,7 +11,7 @@ const root = path.resolve(__dirname, '../../..');
 const migrationsDir = path.join(root, 'packages/db/migrations');
 
 test('Appointment Concurrency & PostgreSQL GiST Exclusion Constraint', async (t) => {
-  const pgServer = new IsolatedTestPostgres({ port: 5434, dbName: 'operza_concurrency_test' });
+  const pgServer = new IsolatedTestPostgres({ port: 0, dbName: 'operza_concurrency_test' });
   const dbUrl = await pgServer.start();
 
   const { default: pg } = await import('pg');
@@ -20,6 +20,7 @@ test('Appointment Concurrency & PostgreSQL GiST Exclusion Constraint', async (t)
   t.after(async () => {
     await pool.end();
     await pgServer.stop();
+    pgServer.cleanupDataDir();
   });
 
   // 1. Run all migrations in sequence
