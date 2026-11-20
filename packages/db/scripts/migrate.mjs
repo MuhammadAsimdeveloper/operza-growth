@@ -169,10 +169,18 @@ export async function runPrivilegedBootstrap(adminPool, options = {}) {
 
     // Narrowly scoped, capability-based test seam for validating role-provisioning constraints.
     // Preserves the backend session without exposing an unrestricted administrative client.
+    // FAIL-CLOSED: Disabled by default. Rejects if opt-in is absent/invalid or NODE_ENV === 'production'.
     if (typeof options.roleProvisioningProbe === 'function') {
-      if (process.env.NODE_ENV === 'production') {
-        throw new Error('[STAGE-A] SECURITY_ERROR: roleProvisioningProbe is prohibited in production environment.');
+      const isTestEnv = (process.env.NODE_ENV === 'test' || process.env.ALLOW_STAGE_A_PROBE === 'true') && process.env.NODE_ENV !== 'production';
+      const isExplicitlyOptedIn = options.allowTestProbe === true || options.__dangerouslyEnableTestProbe === true;
+
+      if (!isTestEnv || !isExplicitlyOptedIn) {
+        throw new Error(
+          '[STAGE-A] SECURITY_ERROR: roleProvisioningProbe is disabled by default and rejected without explicit test opt-in ' +
+          '(allowTestProbe: true in test environment).'
+        );
       }
+
       const restrictedInvoker = {
         getBackendPid: async () => {
           const res = await client.query('SELECT pg_backend_pid() AS pid;');
@@ -421,8 +429,16 @@ export async function runMigrationPipeline(options = {}) {
     ssl
   });
 
+  // Security: Production pipeline must NEVER enable or forward test probes
+  const {
+    roleProvisioningProbe,
+    allowTestProbe,
+    __dangerouslyEnableTestProbe,
+    ...safeBootstrapOptions
+  } = options;
+
   try {
-    await runPrivilegedBootstrap(adminPool, { ...options, migratorPassword });
+    await runPrivilegedBootstrap(adminPool, { ...safeBootstrapOptions, migratorPassword });
   } finally {
     await adminPool.end();
   }

@@ -19,7 +19,10 @@ const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, '../../..');
 const migrationsDir = path.join(root, 'packages/db/migrations');
 
-test('Phase 20.2.5.9: NULL-Safe Role Provisioning, CREATE-Path Verification & Privileged Test-Seam Hardening', async (t) => {
+process.env.NODE_ENV = 'test';
+process.env.ALLOW_STAGE_A_PROBE = 'true';
+
+test('Phase 20.2.5.10: Isolated PostgreSQL Cluster Safety & Test-Probe Fail-Closed Hardening', async (t) => {
   // 1. Provision fresh isolated PostgreSQL database
   const pgServer = new IsolatedTestPostgres({ port: 5436, dbName: 'operza_prod_migrator_test' });
   const adminDbUrl = await pgServer.start();
@@ -98,10 +101,11 @@ test('Phase 20.2.5.9: NULL-Safe Role Provisioning, CREATE-Path Verification & Pr
 
     try {
       // Re-run privileged bootstrap using an admin pool with 10 available connections,
-      // instrumenting via the capability-based restricted invoker
+      // instrumenting via the capability-based restricted invoker with explicit test opt-in
       await runPrivilegedBootstrap(multiAdminPool, {
         migratorPassword,
         workerPassword: 'bootstrap_worker_final_pass',
+        allowTestProbe: true,
         recordedSessionPids,
         roleProvisioningProbe: async (restrictedInvoker, expectedPid) => {
           probeExecuted = true;

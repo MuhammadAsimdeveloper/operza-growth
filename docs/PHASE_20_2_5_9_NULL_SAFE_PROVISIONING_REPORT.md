@@ -121,8 +121,10 @@ All verification commands were executed against real PostgreSQL instances (`Post
 2. **Ephemeral Cluster vs. Shared Database:**
    - *PostgreSQL Constraint:* PostgreSQL roles are cluster-global. Once a role has privileges granted across existing databases in a cluster, it cannot be dropped (`2BP01` dependent objects error).
    - *Design Choice:* To test genuine CREATE and ALTER paths on real PostgreSQL without weakening the strict allowlist (`operza_migrator`, `operza_app`, `operza_worker`), Test 1b provisions a dedicated ephemeral cluster where `operza_worker` genuinely does not exist, tests CREATE, tests ALTER, asserts SCRAM password authentication and rejection, and completely tears down the cluster upon completion.
-3. **Remote CI Billing Lock:**
-   - Remote GitHub Actions execution remains suspended due to repository account billing restrictions (`actions/checkout` refused before runner allocation). Local end-to-end verification (`scripts/verify-ci-postgres.mjs`) provides byte-for-byte fidelity with the GitHub Actions workflow definition.
+3. **Remote CI Billing Lock & Verification Boundary:**
+   - Remote GitHub Actions execution remains suspended and unverified due to repository account billing restrictions (`actions/checkout` refused before runner allocation).
+   - Local PostgreSQL 18.6 verification was executed across all local suites; however, local execution does not substitute for real remote GitHub Actions runner execution.
+   - Tests that skipped during workspace commands are strictly recorded as skipped and not counted as passed. Each verification command's individual test counts and exit codes are recorded separately.
 
 ---
 
