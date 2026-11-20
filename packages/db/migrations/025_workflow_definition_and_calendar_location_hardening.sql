@@ -11,56 +11,109 @@
 -- =========================================================================
 DO $$
 BEGIN
+  -- Attempt deterministic role creation. If the role does not exist, CREATE ROLE is executed.
+  -- Only duplicate_object is caught to safely accommodate concurrent bootstrap races.
+  -- Any privilege failure (e.g. insufficient_privilege / permission denied) FAILS VISIBLY.
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'operza_auth_definer') THEN
     BEGIN
       CREATE ROLE operza_auth_definer WITH NOLOGIN BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
     EXCEPTION
       WHEN duplicate_object THEN NULL;
-      WHEN insufficient_privilege THEN NULL;
     END;
   END IF;
 
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'operza_migrator') AND
-     EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'operza_auth_definer') THEN
+  -- Ensure the migration runner is granted membership in operza_auth_definer
+  -- so it can reassign function ownership to operza_auth_definer.
+  IF NOT pg_has_role(current_user, 'operza_auth_definer', 'MEMBER') AND
+     NOT (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) THEN
+    EXECUTE format('GRANT operza_auth_definer TO %I', current_user);
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'operza_migrator') THEN
     IF NOT pg_has_role('operza_migrator', 'operza_auth_definer', 'MEMBER') THEN
       GRANT operza_auth_definer TO operza_migrator;
     END IF;
   END IF;
 END $$;
 
+-- Verify operza_auth_definer exists and possesses exact required attributes
 DO $$
+DECLARE
+  v_super boolean;
+  v_login boolean;
+  v_bypass boolean;
+  v_createdb boolean;
+  v_createrole boolean;
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'operza_auth_definer') THEN
-    GRANT USAGE ON SCHEMA public TO operza_auth_definer;
-    GRANT SELECT ON users, auth_sessions, agencies, calendars TO operza_auth_definer;
-    GRANT SELECT, UPDATE ON workflow_approvals, workflow_executions, workflow_execution_steps TO operza_auth_definer;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'operza_auth_definer') THEN
+    RAISE EXCEPTION 'CRITICAL: Required role operza_auth_definer does not exist. Database bootstrap must provision this role.';
+  END IF;
 
-    -- Update lookup_user_for_auth to return user record including status (allowing USER_INACTIVE detection)
-    CREATE OR REPLACE FUNCTION lookup_user_for_auth(p_email text)
-    RETURNS TABLE (
-      id uuid,
-      name text,
-      email text,
-      password_hash text,
-      status text
-    )
-    LANGUAGE sql
-    SECURITY DEFINER
-    SET search_path = public
-    STABLE
-    AS $func$
-      SELECT u.id, u.name, u.email, u.password_hash, u.status
-      FROM users u
-      WHERE lower(u.email) = lower(p_email);
-    $func$;
+  SELECT rolsuper, rolcanlogin, rolbypassrls, rolcreatedb, rolcreaterole
+  INTO v_super, v_login, v_bypass, v_createdb, v_createrole
+  FROM pg_roles WHERE rolname = 'operza_auth_definer';
 
-    -- Reassign ownership of security definer helper functions to operza_auth_definer
-    ALTER FUNCTION resolve_auth_session(text) OWNER TO operza_auth_definer;
-    ALTER FUNCTION lookup_user_for_auth(text) OWNER TO operza_auth_definer;
-    ALTER FUNCTION lookup_public_calendar(text) OWNER TO operza_auth_definer;
-    ALTER FUNCTION expire_pending_workflow_approvals() OWNER TO operza_auth_definer;
+  IF v_super THEN
+    RAISE EXCEPTION 'SECURITY_VIOLATION: operza_auth_definer must NOT be a superuser';
+  END IF;
+  IF v_login THEN
+    RAISE EXCEPTION 'SECURITY_VIOLATION: operza_auth_definer must NOT have LOGIN permission (NOLOGIN required)';
+  END IF;
+  IF NOT v_bypass THEN
+    RAISE EXCEPTION 'SECURITY_VIOLATION: operza_auth_definer must have BYPASSRLS to execute security-definer helpers';
+  END IF;
+  IF v_createdb THEN
+    RAISE EXCEPTION 'SECURITY_VIOLATION: operza_auth_definer must NOT have CREATEDB';
+  END IF;
+  IF v_createrole THEN
+    RAISE EXCEPTION 'SECURITY_VIOLATION: operza_auth_definer must NOT have CREATEROLE';
   END IF;
 END $$;
+
+-- Verify application and worker roles remain unprivileged (NOSUPERUSER, NOBYPASSRLS)
+DO $$
+DECLARE
+  r RECORD;
+BEGIN
+  FOR r IN SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname IN ('operza_app', 'operza_worker') LOOP
+    IF r.rolsuper THEN
+      RAISE EXCEPTION 'SECURITY_VIOLATION: % must NOT be a superuser', r.rolname;
+    END IF;
+    IF r.rolbypassrls THEN
+      RAISE EXCEPTION 'SECURITY_VIOLATION: % must NOT have BYPASSRLS', r.rolname;
+    END IF;
+  END LOOP;
+END $$;
+
+-- Apply least-privilege schema & table grants to operza_auth_definer and transfer function ownership
+GRANT USAGE ON SCHEMA public TO operza_auth_definer;
+GRANT SELECT ON users, auth_sessions, agencies, calendars TO operza_auth_definer;
+GRANT SELECT, UPDATE ON workflow_approvals, workflow_executions, workflow_execution_steps TO operza_auth_definer;
+
+-- Update lookup_user_for_auth to return user record including status (allowing USER_INACTIVE detection)
+CREATE OR REPLACE FUNCTION lookup_user_for_auth(p_email text)
+RETURNS TABLE (
+  id uuid,
+  name text,
+  email text,
+  password_hash text,
+  status text
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $func$
+  SELECT u.id, u.name, u.email, u.password_hash, u.status
+  FROM users u
+  WHERE lower(u.email) = lower(p_email);
+$func$;
+
+-- Reassign ownership of security definer helper functions to operza_auth_definer
+ALTER FUNCTION resolve_auth_session(text) OWNER TO operza_auth_definer;
+ALTER FUNCTION lookup_user_for_auth(text) OWNER TO operza_auth_definer;
+ALTER FUNCTION lookup_public_calendar(text) OWNER TO operza_auth_definer;
+ALTER FUNCTION expire_pending_workflow_approvals() OWNER TO operza_auth_definer;
 
 -- =========================================================================
 -- 2. HARDEN WORKFLOW DEFINITIONS LOCATION ISOLATION

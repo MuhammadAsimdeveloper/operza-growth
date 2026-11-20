@@ -1100,4 +1100,135 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
       }
     }
   });
+
+  await t.test('17. Migration Privilege Failure, Determinism & Security Definer Verification', async () => {
+    // 17.1 A migration with insufficient privileges fails visibly when a required role cannot be established
+    {
+      const client = await migratorPool.connect();
+      try {
+        await assert.rejects(
+          () => client.query(`
+            DO $$
+            BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'operza_missing_definer_role') THEN
+                BEGIN
+                  CREATE ROLE operza_missing_definer_role WITH NOLOGIN BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+                EXCEPTION
+                  WHEN duplicate_object THEN NULL;
+                END;
+              END IF;
+            END $$;
+          `),
+          /permission denied to create role|insufficient_privilege/i,
+          'Unprivileged migration runner must fail visibly when attempting to establish a missing role without CREATEROLE'
+        );
+      } finally {
+        client.release();
+      }
+    }
+
+    // 17.2 An existing role does not cause duplicate-object failures (safe concurrency / idempotent bootstrap)
+    {
+      await superuserPool.query(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'operza_auth_definer') THEN
+            BEGIN
+              CREATE ROLE operza_auth_definer WITH NOLOGIN BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+            EXCEPTION
+              WHEN duplicate_object THEN NULL;
+            END;
+          END IF;
+        END $$;
+      `);
+
+      await superuserPool.query(`
+        DO $$
+        BEGIN
+          BEGIN
+            CREATE ROLE operza_auth_definer WITH NOLOGIN BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+          EXCEPTION
+            WHEN duplicate_object THEN NULL;
+          END;
+        END $$;
+      `);
+    }
+
+    // 17.3 A correctly privileged migration succeeds and validates role properties
+    {
+      const sql025 = await readFile(path.join(migrationsDir, '025_workflow_definition_and_calendar_location_hardening.sql'), 'utf8');
+      await superuserPool.query(sql025);
+    }
+
+    // 17.4 Verify operza_auth_definer attributes (NOLOGIN, BYPASSRLS, NOSUPERUSER, NOCREATEDB, NOCREATEROLE)
+    {
+      const res = await superuserPool.query(`
+        SELECT rolname, rolsuper, rolcanlogin, rolbypassrls, rolcreatedb, rolcreaterole
+        FROM pg_roles
+        WHERE rolname = 'operza_auth_definer'
+      `);
+      assert.equal(res.rowCount, 1, 'operza_auth_definer role must exist');
+      const r = res.rows[0];
+      assert.equal(r.rolsuper, false, 'operza_auth_definer must NOT be superuser');
+      assert.equal(r.rolcanlogin, false, 'operza_auth_definer must have NOLOGIN');
+      assert.equal(r.rolbypassrls, true, 'operza_auth_definer must have BYPASSRLS');
+      assert.equal(r.rolcreatedb, false, 'operza_auth_definer must NOT have CREATEDB');
+      assert.equal(r.rolcreaterole, false, 'operza_auth_definer must NOT have CREATEROLE');
+    }
+
+    // 17.5 Verify operza_app and operza_worker attributes
+    {
+      const res = await superuserPool.query(`
+        SELECT rolname, rolsuper, rolbypassrls
+        FROM pg_roles
+        WHERE rolname IN ('operza_app', 'operza_worker')
+      `);
+      for (const r of res.rows) {
+        assert.equal(r.rolsuper, false, `Role ${r.rolname} must NOT be superuser`);
+        assert.equal(r.rolbypassrls, false, `Role ${r.rolname} must NOT have BYPASSRLS`);
+      }
+    }
+
+    // 17.6 Verify security-definer helper functions are owned by operza_auth_definer
+    {
+      const res = await superuserPool.query(`
+        SELECT p.proname, r.rolname AS owner
+        FROM pg_proc p
+        JOIN pg_roles r ON p.proowner = r.oid
+        WHERE p.proname IN (
+          'resolve_auth_session',
+          'lookup_user_for_auth',
+          'lookup_public_calendar',
+          'expire_pending_workflow_approvals',
+          'expire_tenant_workflow_approvals'
+        )
+      `);
+      assert.ok(res.rowCount >= 4, 'Must find security-definer helper functions');
+      for (const row of res.rows) {
+        assert.equal(row.owner, 'operza_auth_definer', `Function ${row.proname} must be owned by operza_auth_definer, got ${row.owner}`);
+      }
+    }
+
+    // 17.7 Verify required table privileges for operza_auth_definer
+    {
+      const tables = ['users', 'auth_sessions', 'agencies', 'calendars'];
+      for (const table of tables) {
+        const check = await superuserPool.query(`
+          SELECT has_table_privilege('operza_auth_definer', $1, 'SELECT') AS has_select
+        `, [table]);
+        assert.equal(check.rows[0].has_select, true, `operza_auth_definer must have SELECT on ${table}`);
+      }
+
+      const mutTables = ['workflow_approvals', 'workflow_executions', 'workflow_execution_steps'];
+      for (const table of mutTables) {
+        const check = await superuserPool.query(`
+          SELECT 
+            has_table_privilege('operza_auth_definer', $1, 'SELECT') AS has_select,
+            has_table_privilege('operza_auth_definer', $1, 'UPDATE') AS has_update
+        `, [table]);
+        assert.equal(check.rows[0].has_select, true, `operza_auth_definer must have SELECT on ${table}`);
+        assert.equal(check.rows[0].has_update, true, `operza_auth_definer must have UPDATE on ${table}`);
+      }
+    }
+  });
 });

@@ -20,14 +20,17 @@ BEGIN
   END IF;
 END $$;
 
--- Verify operza_auth_definer has proper attributes (NOLOGIN, BYPASSRLS, NOSUPERUSER)
+-- Verify operza_auth_definer has proper attributes (NOLOGIN, BYPASSRLS, NOSUPERUSER, NOCREATEDB, NOCREATEROLE)
 DO $$
 DECLARE
   v_super boolean;
   v_login boolean;
   v_bypass boolean;
+  v_createdb boolean;
+  v_createrole boolean;
 BEGIN
-  SELECT rolsuper, rolcanlogin, rolbypassrls INTO v_super, v_login, v_bypass
+  SELECT rolsuper, rolcanlogin, rolbypassrls, rolcreatedb, rolcreaterole
+  INTO v_super, v_login, v_bypass, v_createdb, v_createrole
   FROM pg_roles WHERE rolname = 'operza_auth_definer';
 
   IF v_super THEN
@@ -38,6 +41,12 @@ BEGIN
   END IF;
   IF NOT v_bypass THEN
     RAISE EXCEPTION 'operza_auth_definer must have BYPASSRLS to execute security-definer helpers';
+  END IF;
+  IF v_createdb THEN
+    RAISE EXCEPTION 'operza_auth_definer must NOT have CREATEDB';
+  END IF;
+  IF v_createrole THEN
+    RAISE EXCEPTION 'operza_auth_definer must NOT have CREATEROLE';
   END IF;
 END $$;
 

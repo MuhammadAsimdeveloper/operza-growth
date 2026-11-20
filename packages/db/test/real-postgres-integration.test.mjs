@@ -338,12 +338,18 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       const execCheckB = await clientB.query('SELECT * FROM workflow_executions WHERE id = $1', [execId]);
       assert.equal(execCheckB.rowCount, 0, 'Tenant B must not see Tenant A workflow execution');
 
-      // Cross-tenant update from Tenant B -> affects 0 rows
+      // Adversarial cross-tenant update from Tenant B targeting strictly WHERE id = $1 (no tenant filter)
       const crossUpdateB = await clientB.query(`
-        UPDATE workflow_executions SET status = 'completed'
-        WHERE agency_id = $1 AND location_id = $2 AND id = $3
-      `, [agencyB, locB1, execId]);
-      assert.equal(crossUpdateB.rowCount, 0, 'Cross-tenant execution update must affect 0 rows');
+        UPDATE workflow_executions
+        SET status = 'completed'
+        WHERE id = $1
+      `, [execId]);
+      assert.equal(crossUpdateB.rowCount, 0, 'Adversarial cross-tenant execution update targeting only id must affect 0 rows');
+
+      // Re-query under Tenant A context and assert original status remains unchanged
+      const verifyExecA = await clientA.query('SELECT status FROM workflow_executions WHERE id = $1', [execId]);
+      assert.equal(verifyExecA.rowCount, 1, 'Tenant A workflow execution must exist');
+      assert.equal(verifyExecA.rows[0].status, 'running', 'Tenant A workflow execution status must remain unaltered after cross-tenant update attempt');
 
       // Same-agency cross-location isolation: Tenant A under locA2 context
       await clientB.query('COMMIT');
@@ -351,6 +357,19 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       await clientB.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [agencyA, locA2]);
       const crossLocCheck = await clientB.query('SELECT * FROM workflow_executions WHERE id = $1', [execId]);
       assert.equal(crossLocCheck.rowCount, 0, 'Same-agency cross-location query must return 0 rows');
+
+      // Adversarial same-agency cross-location update on workflow execution targeting only id = $1
+      const crossLocExecUpdate = await clientB.query(`
+        UPDATE workflow_executions
+        SET status = 'completed'
+        WHERE id = $1
+      `, [execId]);
+      assert.equal(crossLocExecUpdate.rowCount, 0, 'Adversarial same-agency cross-location execution update must affect 0 rows');
+
+      // Verify workflow execution status under Location A1 context remains unaltered
+      const verifyExecLocA1 = await clientA.query('SELECT status FROM workflow_executions WHERE id = $1', [execId]);
+      assert.equal(verifyExecLocA1.rowCount, 1, 'Workflow execution must be found under location A1 context');
+      assert.equal(verifyExecLocA1.rows[0].status, 'running', 'Workflow execution status must remain unaltered after cross-location update attempt');
 
       const crossLocOppCheck = await clientB.query('SELECT * FROM opportunities WHERE id = $1', [oppIdA]);
       assert.equal(crossLocOppCheck.rowCount, 0, 'Same-agency cross-location query for opportunities must return 0 rows');
