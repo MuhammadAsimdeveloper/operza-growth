@@ -11,7 +11,7 @@
 
 ## 1. Executive Summary & Objective
 
-In Phase 20.2.4, local persistence and RLS fixes were successfully completed under least-privilege roles. However, independent review flagged that the integration tests had historically skipped when `OPERZA_TEST_DATABASE_URL` was not provisioned, allowing remote CI runs to bypass actual PostgreSQL execution.
+In Phase 20.2.4, local persistence and RLS fixes were completed under least-privilege roles. However, independent review flagged that previous integration test runs skipped when `OPERZA_TEST_DATABASE_URL` was not provisioned, allowing remote CI runs to bypass actual PostgreSQL execution.
 
 The objective of **Phase 20.2.5** was to:
 1. Ensure GitHub Actions starts a real PostgreSQL 16 service container in Gate 2 (`postgres-integration`).
@@ -20,9 +20,9 @@ The objective of **Phase 20.2.5** was to:
 4. Execute real PostgreSQL persistence, appointment concurrency, and PostgreSQL-authoritative auth suites without silent skips.
 5. Investigate remote GitHub Actions run failures with full transparency and zero fabricated results.
 
-**Verdict:** **CONDITIONAL PASS / LOCAL RELEASE READINESS CERTIFIED**  
-- **Local Real PostgreSQL Integration:** 100% Verified (All 27 migrations applied; 59 `@operza/db` tests passed with 0 skips; 132 `apps/api` tests passed; 66 `@operza/workflow-engine` tests passed; 116 E2E tests passed; 106 SEO checks passed; 0 high/critical npm vulnerabilities).
-- **Remote CI Pipeline:** Objectively **UNVERIFIED** due to a verified GitHub platform account billing lock (`"The job was not started because your account is locked due to a billing issue."`). The workflow syntax and runner configuration are fully valid and ready to execute once the account billing status is unlocked.
+**Verdict:** **CONDITIONAL PASS**  
+- **Local Real PostgreSQL Integration:** Local checks pass. All 27 migrations applied; 59 `@operza/db` tests passed (0 skips, 0 failures); 132 `apps/api` tests passed (0 skips, 0 failures); 66 `@operza/workflow-engine` tests passed (0 skips, 0 failures); 116 E2E tests passed; 106 SEO checks passed; 0 high/critical npm vulnerabilities.
+- **Remote CI Pipeline:** Objectively **UNVERIFIED**. GitHub Actions runner execution is blocked by a verified account billing lock (`"The job was not started because your account is locked due to a billing issue."`). Remote CI cannot be certified until GitHub permits runner execution. Release readiness cannot be declared while remote CI remains unverified.
 
 ---
 
@@ -31,10 +31,10 @@ The objective of **Phase 20.2.5** was to:
 ### 2.1 Hardened GitHub Actions Workflow (`.github/workflows/ci.yml`)
 - Updated **Gate 2 (`postgres-integration`)**:
   - Configured PostgreSQL 16 Alpine service container (`postgres:16-alpine`) with active health checks (`pg_isready --interval 5s --timeout 5s --retries 5`).
-  - Added an explicit pre-migration service readiness probe in Node.js to prevent race conditions during container spin-up.
+  - Added an explicit pre-migration service readiness probe script (`node packages/db/scripts/wait-for-postgres.mjs`) with bounded retries and explicit pool cleanup.
   - Configured execution of the deterministic migration runner (`node packages/db/scripts/migrate.mjs`).
   - Configured real PostgreSQL RLS and isolation testing with fail-closed requirement (`REQUIRE_POSTGRES_INTEGRATION='true'`).
-  - Configured execution of API database integration tests under real PostgreSQL:
+  - Configured execution of selected API PostgreSQL integration and persistence tests:
     - `apps/api/test/workflow-persistence-reliability.test.mjs`
     - `apps/api/test/durable-workflow-and-postgres.test.mjs`
     - `apps/api/test/auth-postgresql-authority.test.mjs`
@@ -47,20 +47,21 @@ The objective of **Phase 20.2.5** was to:
   - `operza_auth_definer`: `NOLOGIN NOINHERIT BYPASSRLS NOSUPERUSER`
   - `operza_app`: `LOGIN NOSUPERUSER NOBYPASSRLS`
   - `operza_worker`: `LOGIN NOSUPERUSER NOBYPASSRLS`
-- Grants `operza_auth_definer` membership to the migration runner role so migration 027 executes cleanly.
+- Grants `operza_auth_definer` membership to the migration runner role and grants schema permissions without swallowing privilege grant failures.
 - Applies all migrations 001 through 027 in ascending order, recording each run in `schema_migrations`.
 
-### 2.3 Strict Fail-Closed Verification in DB Suite (`packages/db/test/real-postgres-integration.test.mjs`)
+### 2.3 Comprehensive RLS Coverage Verification (`packages/db/test/real-postgres-integration.test.mjs`)
 - Replaced conditional skips with fail-closed enforcement: if `REQUIRE_POSTGRES_INTEGRATION === 'true'` or `process.env.CI` is true, missing database credentials throws an immediate `CI_FAILURE` exception.
-- Added automated verification for `FORCE ROW LEVEL SECURITY` across 13 core tables:
-  - `contacts`, `opportunities`, `custom_fields`, `pipelines`, `conversation_messages`, `calendars`, `appointments`, `tasks`, `invoices`, `workflow_definitions`, `workflow_executions`, `immutable_audit_events`, `workflow_templates`.
-- Added role verification asserting that `operza_app` and `operza_worker` have `rolsuper === false` and `rolbypassrls === false`.
-- Tested tenant isolation, cross-tenant zero-row return, same-agency cross-location isolation, and immutable audit logging.
+- Defined an explicit inventory of all **44 tenant-bound RLS tables** derived from repository migrations:
+  `agencies`, `agency_audit_events`, `agency_branding`, `agency_invitations`, `agency_memberships`, `agency_snapshots`, `agent_conversation_messages`, `agent_conversation_sessions`, `agent_tool_executions`, `ai_bot_configs`, `ai_knowledge_base`, `appointments`, `billing_ledger_accounts`, `billing_ledger_entries`, `calendars`, `communication_consents`, `copilot_proposals`, `developer_keys`, `developer_webhook_deliveries`, `developer_webhooks`, `immutable_audit_events`, `location_records`, `locations`, `opportunities`, `phone_numbers`, `pipeline_stages`, `pipelines`, `provider_connections`, `provider_oauth_states`, `provider_secrets`, `tenant_entitlements`, `usage_events`, `users`, `workflow_action_receipts`, `workflow_approvals`, `workflow_definitions`, `workflow_execution_steps`, `workflow_executions`, `workflow_outbox`, `workflow_templates`, `zapier_hook_deliveries`, `zapier_hook_subscriptions`, `zapier_rest_hook_deliveries`, `zapier_rest_hook_subscriptions`.
+- Verified every expected table exists in schema `public` and has `relrowsecurity = true` and `relforcerowsecurity = true`.
+- Verified role safety asserting that `operza_app` and `operza_worker` exist and have `rolsuper === false` and `rolbypassrls === false`.
+- Tested tenant isolation, cross-tenant zero-row return, same-agency cross-location isolation, missing context fail-closed behavior, and audit log immutability under the genuine `operza_app` role.
 
 ### 2.4 Multi-Database Concurrency in Test PostgreSQL Server (`packages/db/lib/test-postgres-server.mjs`)
 - Enhanced `IsolatedTestPostgres` to check if `OPERZA_TEST_DATABASE_URL` is set:
-  - When tests specify a distinct `dbName` (e.g. `operza_rls_test`, `operza_wf_persist_test`, `operza_multi_proc_test`), it connects to the target server, executes `CREATE DATABASE <dbName>`, and scopes the connection URL to that specific database.
-  - This prevents cross-test table contamination during parallel or sequential integration runs.
+  - When tests specify a distinct `dbName` (e.g. `operza_rls_test`, `operza_wf_persist_test`, `operza_multi_proc_test`), it validates the database name strictly (`^[a-zA-Z0-9_]{1,63}$`), prevents targeting reserved databases (`postgres`, `template0`, `template1`, or supplied database), and recreates the target database without swallowing errors.
+  - Automatically provisions required roles and schema grants on newly created test databases.
 
 ### 2.5 Migration Bootstrap in API Concurrency & Persistence Tests
 - In `apps/api/test/workflow-persistence-reliability.test.mjs`:
@@ -71,82 +72,51 @@ The objective of **Phase 20.2.5** was to:
 ### 2.6 Local CI Reproduction Harness (`scripts/verify-ci-postgres.mjs`)
 - Created an end-to-end verification script mimicking Gate 2 in its entirety:
   - Spawns isolated PostgreSQL 16 on port 5439.
+  - Runs service readiness probe (`packages/db/scripts/wait-for-postgres.mjs`).
   - Executes `packages/db/scripts/migrate.mjs` (001–027).
   - Executes `npm --workspace=@operza/db test`.
-  - Executes all four API PostgreSQL integration and persistence test suites.
+  - Executes the 4 selected API PostgreSQL integration and persistence test suites.
 
 ---
 
 ## 3. Comprehensive Verification Matrix & Test Evidence
 
 ### 3.1 Step 1: Migration Runner (001–027)
-```
-[MIGRATION] Connected to PostgreSQL. Verifying bootstrap roles and extensions...
-[MIGRATION] Found 27 migration files in sequence.
-[MIGRATION] ✓ Applied 001_agency_tenant_core.sql
-[MIGRATION] ✓ Applied 002_public_form_registry.sql
-[MIGRATION] ✓ Applied 003_workflow_executions.sql
-[MIGRATION] ✓ Applied 004_workflow_templates.sql
-[MIGRATION] ✓ Applied 005_agency_snapshots.sql
-[MIGRATION] ✓ Applied 006_ecosystem_and_telephony.sql
-[MIGRATION] ✓ Applied 007_workflow_step_simulation_status.sql
-[MIGRATION] ✓ Applied 008_platform_foundation.sql
-[MIGRATION] ✓ Applied 009_copilot_proposals.sql
-[MIGRATION] ✓ Applied 010_zapier_and_agent_suite.sql
-[MIGRATION] ✓ Applied 011_platform_reconciliation.sql
-[MIGRATION] ✓ Applied 012_durable_workflow_leases.sql
-[MIGRATION] ✓ Applied 013_transactional_billing_ledger.sql
-[MIGRATION] ✓ Applied 014_immutable_audit_events.sql
-[MIGRATION] ✓ Applied 015_appointment_concurrency_exclusion.sql
-[MIGRATION] ✓ Applied 016_provider_secret_vault.sql
-[MIGRATION] ✓ Applied 017_provider_oauth_states.sql
-[MIGRATION] ✓ Applied 018_durable_zapier_hooks.sql
-[MIGRATION] ✓ Applied 019_worker_heartbeats.sql
-[MIGRATION] ✓ Applied 020_worker_execution_grants.sql
-[MIGRATION] ✓ Applied 021_appointment_external_event_id.sql
-[MIGRATION] ✓ Applied 022_tenant_rls_and_worker_consent.sql
-[MIGRATION] ✓ Applied 023_tenant_rls_policy_repair.sql
-[MIGRATION] ✓ Applied 024_least_privilege_and_location_hardening.sql
-[MIGRATION] ✓ Applied 025_workflow_definition_and_calendar_location_hardening.sql
-[MIGRATION] ✓ Applied 026_migration_owner_and_approval_expiration_hardening.sql
-[MIGRATION] ✓ Applied 027_strict_location_boundary_repair.sql
-[MIGRATION] All migrations applied successfully.
-```
+- Command: `node packages/db/scripts/migrate.mjs`
+- Exit Code: `0`
+- Result: 27 / 27 Migrations Applied Cleanly
 
 ### 3.2 Step 2: `@operza/db` Test Suite
-```
-✔ lib/test-postgres-server.mjs
-✔ Appointment Concurrency & PostgreSQL GiST Exclusion Constraint (14 tests passed, 0 failed)
-✔ P0 Multi-Tenant Security & Database Least-Privilege RLS Verification (19 tests passed, 0 failed)
-✔ Real PostgreSQL RLS & Schema Integration Verification (25 tests passed, 0 failed)
-ℹ tests 59
-ℹ pass 59
-ℹ fail 0
-ℹ skipped 0
-```
+- Command: `npm test -w @operza/db`
+- Exit Code: `0`
+- Breakdown: 59 passed, 0 failed, 0 skipped
+- Components:
+  - `lib/test-postgres-server.mjs`: 1 passed
+  - Appointment Concurrency & PostgreSQL GiST Exclusion Constraint: 14 passed
+  - P0 Multi-Tenant Security & Database Least-Privilege RLS Verification: 19 passed
+  - Real PostgreSQL RLS & Schema Integration Verification: 25 passed (44 tables verified for forced RLS, role properties checked, tenant isolation verified)
 
-### 3.3 Step 3: API PostgreSQL Persistence & Authority Suites
-```
-✔ Multi-Process Appointment Booking Concurrency (Two Independent API Instances) (8 tests passed, 0 failed)
-✔ PostgreSQL-Authoritative Authentication & Session Resolution Regression Suite (18 tests passed, 0 failed)
-✔ Durable Workflow Execution & PostgreSQL Relational Integrity (20 tests passed, 0 failed)
-✔ Workflow Execution Persistence Reliability & Connection Error Handling (9 tests passed, 0 failed)
-ℹ tests 61
-ℹ pass 61
-ℹ fail 0
-ℹ skipped 0
-```
+### 3.3 Step 3: Selected API PostgreSQL Persistence & Authority Tests (Gate 2 Scope)
+- Command: `node --test apps/api/test/workflow-persistence-reliability.test.mjs apps/api/test/durable-workflow-and-postgres.test.mjs apps/api/test/auth-postgresql-authority.test.mjs apps/api/test/appointment-concurrency-api.test.mjs`
+- Exit Code: `0`
+- Breakdown: 61 passed, 0 failed, 0 skipped
+  - `appointment-concurrency-api.test.mjs`: 8 passed
+  - `auth-postgresql-authority.test.mjs`: 18 passed
+  - `durable-workflow-and-postgres.test.mjs`: 20 passed
+  - `workflow-persistence-reliability.test.mjs`: 9 passed
+  - Root suites: 6 passed
 
 ### 3.4 Full Verification Matrix Summary
-| Verification Target | Command | Result | Pass/Fail/Skip |
-|---|---|---|---|
-| Migration Runner | `node packages/db/scripts/migrate.mjs` | 27 / 27 Migrations Applied | **PASS** |
-| `@operza/db` Suite | `npm test -w @operza/db` | 59 passed, 0 skipped, 0 failed | **PASS** |
-| `apps/api` Suite | `npm test -w apps/api` | 132 passed, 0 skipped, 0 failed | **PASS** |
-| `@operza/workflow-engine` | `npm test -w @operza/workflow-engine` | 66 passed, 0 skipped, 0 failed | **PASS** |
-| Full E2E Verification | `node scripts/test-e2e.mjs` | 116 passed, 0 skipped, 0 failed | **PASS** |
-| SEO & Metadata Audit | `node scripts/seo-audit/run-seo-checks.mjs` | 106 passed, 0 skipped, 0 failed | **PASS** |
-| Production Dependency Audit | `npm audit --omit=dev --audit-level=high` | 0 high/critical vulnerabilities | **PASS** |
+| Verification Target | Command | Result | Pass | Fail | Skip | Exit Code | Status |
+|---|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Migration Runner | `node packages/db/scripts/migrate.mjs` | 27 / 27 Applied | 27 | 0 | 0 | 0 | **PASS** |
+| `@operza/db` Suite | `npm test -w @operza/db` | 59 tests | 59 | 0 | 0 | 0 | **PASS** |
+| Selected API DB Tests | `node --test apps/api/test/...` | 61 tests | 61 | 0 | 0 | 0 | **PASS** |
+| Full API Suite | `npm test -w apps/api` | 132 tests | 132 | 0 | 0 | 0 | **PASS** |
+| `@operza/workflow-engine` | `npm test -w @operza/workflow-engine` | 66 tests | 66 | 0 | 0 | 0 | **PASS** |
+| Full E2E Verification | `node scripts/test-e2e.mjs` | 116 scenarios | 116 | 0 | 0 | 0 | **PASS** |
+| SEO & Metadata Audit | `node scripts/seo-audit/run-seo-checks.mjs` | 106 checks | 106 | 0 | 0 | 0 | **PASS** |
+| Dependency Audit | `npm audit --omit=dev --audit-level=high` | 0 high/critical | — | 0 | 0 | 0 | **PASS** |
 
 ---
 
@@ -154,20 +124,20 @@ The objective of **Phase 20.2.5** was to:
 
 ### 4.1 Investigation Findings
 We queried the GitHub Actions API for run details on `feat/operza-agency-launch-readiness`:
-- Run ID: `44727394899`
+- Run ID: `44731273116`
 - Status: `completed` / `failure`
 - Run Duration: ~3 seconds
 - Runner Name: None assigned (`""`)
 - Executed Steps: None (`[]`)
 
-### 4.2 Exact Root Cause Annotation
+### 4.2 Verified Annotation from GitHub API
 The GitHub API returned the following check annotation:
 > `"The job was not started because your account is locked due to a billing issue."`
 
 ### 4.3 Objective CI Verdict
 - **Status:** **UNVERIFIED (Remote Execution Blocked by Platform Account Billing Limit)**.
 - **Analysis:** This failure is not caused by any syntax error, missing file, test assertion, migration mismatch, or workflow bug. The GitHub-hosted Ubuntu runners were not provisioned by GitHub because the repository owner's account currently has a spending limit or billing lock on Actions minutes.
-- **Resolution:** As soon as the account owner updates billing or enables minutes, Gate 1, Gate 2, Gate 3, and Gate 4 will execute the configured steps.
+- **Release Readiness:** Release readiness cannot be declared while remote CI remains blocked and unverified by GitHub Actions.
 
 ---
 
@@ -178,20 +148,16 @@ The GitHub API returned the following check annotation:
    - `operza_worker` role: verified `rolsuper = false`, `rolbypassrls = false`.
    - `operza_auth_definer` role: verified `NOLOGIN NOINHERIT BYPASSRLS NOSUPERUSER`.
 2. **Mandatory RLS (`FORCE ROW LEVEL SECURITY`):**
-   - Verified active and forced on all 13 tenant data tables.
+   - Verified active and forced on all 44 tenant data tables.
 3. **Cross-Tenant & Cross-Location Isolation:**
-   - Any query or mutation lacking matching `app.agency_id` or `app.location_id` returns 0 rows or fails closed.
-   - Cross-location updates within the same agency affect 0 rows.
+   - Queries or mutations lacking matching `app.agency_id` or `app.location_id` return 0 rows or fail closed under `operza_app`.
+   - Cross-tenant update attempts affect 0 rows and leave target tenant records unaltered.
+   - Cross-location queries and updates within the same agency return/affect 0 rows.
 4. **Authoritative PostgreSQL Auth:**
    - Inactive users, inactive agencies, revoked memberships, and revoked sessions fail closed immediately via PostgreSQL functions, without relying on stale in-memory state.
 
 ---
 
-## 6. Conclusion & Recommendation
+## 6. Conclusion
 
-All objectives for **Phase 20.2.5** are satisfied:
-1. The GitHub Actions workflow `.github/workflows/ci.yml` is updated with a real PostgreSQL 16 Alpine service container, readiness checking, deterministic migrations, and fail-closed integration suites.
-2. The entire test matrix (59 DB tests, 132 API tests, 66 workflow engine tests, 116 E2E tests, 106 SEO checks) passes 100% locally with zero skips.
-3. The remote GitHub Actions failure has been investigated and honestly documented as an account billing lock rather than a technical defect.
-
-The branch `feat/operza-agency-launch-readiness` is hardened, fully tested, and ready for release once account billing is cleared.
+All local requirements for real PostgreSQL verification, 44-table RLS enforcement, deterministic migration execution, and least-privilege testing are satisfied. Remote CI execution remains blocked exclusively by the external GitHub account billing lock.

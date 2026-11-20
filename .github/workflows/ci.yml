@@ -100,23 +100,9 @@ jobs:
         run: npm ci
 
       - name: Verify PostgreSQL Service Readiness
-        run: |
-          node -e "
-          import pg from 'pg';
-          const pool = new pg.Pool({ connectionString: 'postgresql://operza_ci_admin:ci_test_password_123@127.0.0.1:5432/operza_ci_test', connectionTimeoutMillis: 3000 });
-          for (let i = 0; i < 30; i++) {
-            try {
-              await pool.query('SELECT 1');
-              console.log('✓ PostgreSQL service container is ready and accepting queries.');
-              await pool.end();
-              process.exit(0);
-            } catch (err) {
-              await new Promise(r => setTimeout(r, 1000));
-            }
-          }
-          console.error('✗ Timed out waiting for PostgreSQL service container.');
-          process.exit(1);
-          "
+        env:
+          MIGRATION_DATABASE_URL: postgresql://operza_ci_admin:ci_test_password_123@127.0.0.1:5432/operza_ci_test
+        run: node packages/db/scripts/wait-for-postgres.mjs
 
       - name: Execute Deterministic Migration Chain 001-027
         env:

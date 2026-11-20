@@ -164,23 +164,73 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       }
     }
 
-    // 3. Verify RLS tables have FORCE ROW LEVEL SECURITY enabled
+    // 3. Verify ALL expected RLS tables exist in public schema and enforce FORCE ROW LEVEL SECURITY
+    const EXPECTED_RLS_TABLES = [
+      'agencies',
+      'agency_audit_events',
+      'agency_branding',
+      'agency_invitations',
+      'agency_memberships',
+      'agency_snapshots',
+      'agent_conversation_messages',
+      'agent_conversation_sessions',
+      'agent_tool_executions',
+      'ai_bot_configs',
+      'ai_knowledge_base',
+      'appointments',
+      'billing_ledger_accounts',
+      'billing_ledger_entries',
+      'calendars',
+      'communication_consents',
+      'copilot_proposals',
+      'developer_keys',
+      'developer_webhook_deliveries',
+      'developer_webhooks',
+      'immutable_audit_events',
+      'location_records',
+      'locations',
+      'opportunities',
+      'phone_numbers',
+      'pipeline_stages',
+      'pipelines',
+      'provider_connections',
+      'provider_oauth_states',
+      'provider_secrets',
+      'tenant_entitlements',
+      'usage_events',
+      'users',
+      'workflow_action_receipts',
+      'workflow_approvals',
+      'workflow_definitions',
+      'workflow_execution_steps',
+      'workflow_executions',
+      'workflow_outbox',
+      'workflow_templates',
+      'zapier_hook_deliveries',
+      'zapier_hook_subscriptions',
+      'zapier_rest_hook_deliveries',
+      'zapier_rest_hook_subscriptions'
+    ];
+
     const rlsCheck = await pool.query(`
-      SELECT relname, relrowsecurity, relforcerowsecurity
-      FROM pg_class
-      WHERE relname IN (
-        'agencies', 'locations', 'users', 'agency_memberships', 'contacts',
-        'opportunities', 'calendars', 'appointments', 'workflow_definitions',
-        'workflow_executions', 'workflow_execution_steps', 'billing_ledger_accounts',
-        'immutable_audit_events'
-      )
-      AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')
+      SELECT 
+        c.relname,
+        c.relrowsecurity,
+        c.relforcerowsecurity
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public'
+        AND c.relkind = 'r'
+      ORDER BY c.relname;
     `);
 
-    assert.ok(rlsCheck.rows.length >= 10, 'Expected core RLS tables to exist');
-    for (const row of rlsCheck.rows) {
-      assert.equal(row.relrowsecurity, true, `Table ${row.relname} must have ROW LEVEL SECURITY enabled`);
-      assert.equal(row.relforcerowsecurity, true, `Table ${row.relname} must have FORCE ROW LEVEL SECURITY enabled`);
+    const tableMap = new Map(rlsCheck.rows.map(r => [r.relname, r]));
+
+    for (const tableName of EXPECTED_RLS_TABLES) {
+      assert.ok(tableMap.has(tableName), `Required RLS table "${tableName}" does not exist in schema public`);
+      const row = tableMap.get(tableName);
+      assert.equal(row.relrowsecurity, true, `Table "${tableName}" must have relrowsecurity = true`);
+      assert.equal(row.relforcerowsecurity, true, `Table "${tableName}" must have relforcerowsecurity = true`);
     }
 
     // 4. Verify role attributes: operza_app and operza_worker must be NOSUPERUSER and NOBYPASSRLS
@@ -189,6 +239,7 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       FROM pg_roles
       WHERE rolname IN ('operza_app', 'operza_worker')
     `);
+    assert.equal(roleCheck.rows.length, 2, 'Both operza_app and operza_worker roles must exist in PostgreSQL');
     for (const row of roleCheck.rows) {
       assert.equal(row.rolsuper, false, `Role ${row.rolname} must not be superuser`);
       assert.equal(row.rolbypassrls, false, `Role ${row.rolname} must not have BYPASSRLS`);
@@ -197,6 +248,7 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
     // 5. Test RLS Tenant Isolation under operza_app role
     const clientA = await pool.connect();
     const clientB = await pool.connect();
+    const clientNoCtx = await pool.connect();
 
     const agencyA = randomUUID();
     const locA1 = randomUUID();
@@ -232,9 +284,10 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
         VALUES ($1, $2, $3, 'Live CI Flow', 'published', 'manual', 1)
       `, [workflowId, agencyA, locA1]);
 
-      // Switch both test clients to the genuine least-privileged application role
+      // Switch test clients to the genuine least-privileged application role
       await clientA.query('SET ROLE operza_app');
       await clientB.query('SET ROLE operza_app');
+      await clientNoCtx.query('SET ROLE operza_app');
 
       // 5a. Opportunity RLS Isolation
       await clientA.query('BEGIN');
@@ -260,6 +313,17 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       // Tenant B queries for Tenant A's record -> MUST RETURN 0 ROWS
       const checkB = await clientB.query('SELECT * FROM opportunities WHERE id = $1', [oppIdA]);
       assert.equal(checkB.rowCount, 0, 'Tenant B must receive 0 rows when querying Tenant A record (RLS isolation)');
+
+      // Tenant B attempts to update Tenant A's opportunity -> MUST AFFECT 0 ROWS
+      const crossOppUpdateB = await clientB.query(`
+        UPDATE opportunities SET name = 'Tampered Deal'
+        WHERE id = $1
+      `, [oppIdA]);
+      assert.equal(crossOppUpdateB.rowCount, 0, 'Cross-tenant opportunity update must affect 0 rows');
+
+      // Verify Tenant A's opportunity remains intact
+      const verifyOppA = await clientA.query('SELECT name FROM opportunities WHERE id = $1', [oppIdA]);
+      assert.equal(verifyOppA.rows[0].name, 'Enterprise Deal A', 'Tenant A opportunity name must remain unchanged');
 
       // 5b. Workflow Executions RLS & Isolation
       const execId = randomUUID();
@@ -287,6 +351,21 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       const crossLocCheck = await clientB.query('SELECT * FROM workflow_executions WHERE id = $1', [execId]);
       assert.equal(crossLocCheck.rowCount, 0, 'Same-agency cross-location query must return 0 rows');
 
+      const crossLocOppCheck = await clientB.query('SELECT * FROM opportunities WHERE id = $1', [oppIdA]);
+      assert.equal(crossLocOppCheck.rowCount, 0, 'Same-agency cross-location query for opportunities must return 0 rows');
+
+      // 5c. Missing tenant context fails closed under operza_app
+      await clientNoCtx.query('BEGIN');
+      const noCtxOpps = await clientNoCtx.query('SELECT * FROM opportunities WHERE id = $1', [oppIdA]);
+      assert.equal(noCtxOpps.rowCount, 0, 'Query without tenant context must return 0 rows for opportunities');
+
+      const noCtxExecs = await clientNoCtx.query('SELECT * FROM workflow_executions WHERE id = $1', [execId]);
+      assert.equal(noCtxExecs.rowCount, 0, 'Query without tenant context must return 0 rows for workflow_executions');
+
+      const noCtxUpdate = await clientNoCtx.query("UPDATE opportunities SET name = 'NoCtx' WHERE id = $1", [oppIdA]);
+      assert.equal(noCtxUpdate.rowCount, 0, 'Update without tenant context must affect 0 rows');
+      await clientNoCtx.query('ROLLBACK');
+
       // Legitimate Tenant A update
       const validUpdate = await clientA.query(`
         UPDATE workflow_executions SET status = 'completed', updated_at = now()
@@ -299,8 +378,10 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
     } finally {
       await clientA.query('RESET ROLE').catch(() => {});
       await clientB.query('RESET ROLE').catch(() => {});
+      await clientNoCtx.query('RESET ROLE').catch(() => {});
       clientA.release();
       clientB.release();
+      clientNoCtx.release();
     }
 
     // 6. Test Audit Trail Immutability (Migration 014)

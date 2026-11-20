@@ -16,9 +16,11 @@ process.env.REQUIRE_POSTGRES_INTEGRATION = 'true';
 function run(cmd, args, env = {}) {
   return new Promise((resolve, reject) => {
     console.log(`\n[EXEC] ${cmd} ${args.join(' ')}`);
-    const child = spawn(cmd, args, {
+    const isWindowsCmd = process.platform === 'win32' && (cmd === 'npm' || cmd.endsWith('.cmd') || cmd.endsWith('.bat'));
+    const executable = isWindowsCmd ? (cmd.endsWith('.cmd') ? cmd : `${cmd}.cmd`) : cmd;
+    const child = spawn(executable, args, {
       stdio: 'inherit',
-      shell: true,
+      shell: isWindowsCmd,
       env: { ...process.env, ...env }
     });
     child.on('exit', (code) => {
@@ -29,6 +31,10 @@ function run(cmd, args, env = {}) {
 }
 
 try {
+  // Step 0: Test service readiness probe
+  console.log('\n--- STEP 0: Verifying PostgreSQL Service Readiness Probe ---');
+  await run('node', ['packages/db/scripts/wait-for-postgres.mjs']);
+
   // Step 1: Run migration runner
   console.log('\n--- STEP 1: Running Migration Runner (001-027) ---');
   await run('node', ['packages/db/scripts/migrate.mjs']);
@@ -48,6 +54,9 @@ try {
   ]);
 
   console.log('\n🎉 ALL REAL POSTGRESQL INTEGRATION TESTS PASSED CLEANLY! 🎉');
+} catch (err) {
+  console.error('\n❌ [CI-RUNNER] Error during verification:', err.message);
+  process.exitCode = 1;
 } finally {
   console.log('\n[CI-RUNNER] Stopping PostgreSQL server...');
   await server.stop();
