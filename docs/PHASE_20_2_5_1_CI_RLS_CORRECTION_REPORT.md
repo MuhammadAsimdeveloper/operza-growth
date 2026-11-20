@@ -155,7 +155,11 @@ All 10 required checks were run locally and completed with exit code 0:
 ## 6. Remote GitHub Actions Status
 
 - **Status:** **UNVERIFIED (Runner Provisioning Blocked by Platform Account Billing Limit)**
-- **GitHub Check Run Annotation:**
+- **Git Commit SHA:** `5e3bad84f31352b20efd7f10fc51d771fee6805e`
+- **Workflow Run ID:** `44733476533` (Run #241)
+- **Workflow Run URL:** `https://github.com/MuhammadAsimdeveloper/operza-growth/actions/runs/44733476533`
+- **Execution Evidence:** Run completed in 3 seconds (`12:09:49Z` to `12:09:52Z`) with 0 runner assigned (`runner_name: ""`) and 0 steps executed (`steps: []`).
+- **Verified GitHub Check Run Annotation:**
   > `"The job was not started because your account is locked due to a billing issue."`
 - **Assessment:**
   The CI workflow `.github/workflows/ci.yml` is syntactically valid and its Gate 2 service container and readiness probe are verified to function properly. However, until the repository owner's GitHub account billing lock is cleared, GitHub-hosted runners will not execute workflow jobs.
