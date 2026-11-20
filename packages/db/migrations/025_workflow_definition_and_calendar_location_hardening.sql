@@ -70,17 +70,45 @@ BEGIN
   END IF;
 END $$;
 
--- Verify application and worker roles remain unprivileged (NOSUPERUSER, NOBYPASSRLS)
+-- Verify runtime roles operza_app and operza_worker exist and possess exact least-privilege attributes
+-- NOTE: In Operza's security architecture, operza_app and operza_worker are provisioned during initial
+-- database bootstrap (e.g. migrate.mjs, bootstrap-roles.sql). Migration 025 strictly requires both roles.
 DO $$
 DECLARE
-  r RECORD;
+  v_count integer;
+  v_role record;
 BEGIN
-  FOR r IN SELECT rolname, rolsuper, rolbypassrls FROM pg_roles WHERE rolname IN ('operza_app', 'operza_worker') LOOP
-    IF r.rolsuper THEN
-      RAISE EXCEPTION 'SECURITY_VIOLATION: % must NOT be a superuser', r.rolname;
+  SELECT count(*) INTO v_count
+  FROM pg_roles
+  WHERE rolname IN ('operza_app', 'operza_worker');
+
+  IF v_count <> 2 THEN
+    RAISE EXCEPTION 'CRITICAL: Required runtime roles (operza_app, operza_worker) do not exist (found %). Database bootstrap must provision both roles.', v_count;
+  END IF;
+
+  FOR v_role IN
+    SELECT rolname, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole, rolcanlogin, rolinherit
+    FROM pg_roles
+    WHERE rolname IN ('operza_app', 'operza_worker')
+    ORDER BY rolname
+  LOOP
+    IF v_role.rolsuper THEN
+      RAISE EXCEPTION 'SECURITY_VIOLATION: % must NOT be a superuser', v_role.rolname;
     END IF;
-    IF r.rolbypassrls THEN
-      RAISE EXCEPTION 'SECURITY_VIOLATION: % must NOT have BYPASSRLS', r.rolname;
+    IF v_role.rolbypassrls THEN
+      RAISE EXCEPTION 'SECURITY_VIOLATION: % must NOT have BYPASSRLS', v_role.rolname;
+    END IF;
+    IF v_role.rolcreatedb THEN
+      RAISE EXCEPTION 'SECURITY_VIOLATION: % must NOT have CREATEDB', v_role.rolname;
+    END IF;
+    IF v_role.rolcreaterole THEN
+      RAISE EXCEPTION 'SECURITY_VIOLATION: % must NOT have CREATEROLE', v_role.rolname;
+    END IF;
+    IF NOT v_role.rolcanlogin THEN
+      RAISE EXCEPTION 'SECURITY_VIOLATION: % must have LOGIN permission', v_role.rolname;
+    END IF;
+    IF v_role.rolinherit THEN
+      RAISE EXCEPTION 'SECURITY_VIOLATION: % must have NOINHERIT', v_role.rolname;
     END IF;
   END LOOP;
 END $$;

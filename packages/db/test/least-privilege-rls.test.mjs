@@ -84,20 +84,32 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
       EXECUTE FUNCTION trg_fix_migrator_templates();
     `);
 
-    // Verify role attributes
+    // Verify role attributes fail closed
     const roleRes = await superuserPool.query(`
-      SELECT rolname, rolsuper, rolbypassrls, rolinherit
+      SELECT rolname, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole, rolcanlogin, rolinherit
       FROM pg_roles
       WHERE rolname IN ('operza_app', 'operza_worker', 'operza_migrator', 'operza_auth_definer')
       ORDER BY rolname
     `);
 
-    for (const row of roleRes.rows) {
-      assert.equal(row.rolsuper, false, `Role ${row.rolname} must NOT be a superuser`);
-      if (row.rolname === 'operza_auth_definer') {
+    assert.equal(roleRes.rowCount, 4, 'All four security roles (operza_app, operza_worker, operza_migrator, operza_auth_definer) must exist');
+    const roleMap = new Map(roleRes.rows.map(r => [r.rolname, r]));
+    for (const expectedRole of ['operza_app', 'operza_worker', 'operza_migrator', 'operza_auth_definer']) {
+      assert.ok(roleMap.has(expectedRole), `Role "${expectedRole}" must exist in pg_roles`);
+    }
+
+    for (const [name, row] of roleMap.entries()) {
+      assert.equal(row.rolsuper, false, `Role ${name} must NOT be a superuser`);
+      assert.equal(row.rolcreatedb, false, `Role ${name} must NOT have CREATEDB`);
+      assert.equal(row.rolcreaterole, false, `Role ${name} must NOT have CREATEROLE`);
+      assert.equal(row.rolinherit, false, `Role ${name} must have NOINHERIT`);
+
+      if (name === 'operza_auth_definer') {
         assert.equal(row.rolbypassrls, true, 'operza_auth_definer must have BYPASSRLS');
+        assert.equal(row.rolcanlogin, false, 'operza_auth_definer must have NOLOGIN');
       } else {
-        assert.equal(row.rolbypassrls, false, `Role ${row.rolname} must NOT have BYPASSRLS`);
+        assert.equal(row.rolbypassrls, false, `Role ${name} must NOT have BYPASSRLS`);
+        assert.equal(row.rolcanlogin, true, `Role ${name} must have LOGIN permission`);
       }
     }
   });
@@ -1176,36 +1188,65 @@ test('P0 Multi-Tenant Security & Database Least-Privilege RLS Verification', asy
       assert.equal(r.rolcreaterole, false, 'operza_auth_definer must NOT have CREATEROLE');
     }
 
-    // 17.5 Verify operza_app and operza_worker attributes
+    // 17.5 Verify operza_app and operza_worker attributes fail closed
     {
       const res = await superuserPool.query(`
-        SELECT rolname, rolsuper, rolbypassrls
+        SELECT rolname, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole, rolcanlogin, rolinherit
         FROM pg_roles
         WHERE rolname IN ('operza_app', 'operza_worker')
+        ORDER BY rolname
       `);
-      for (const r of res.rows) {
-        assert.equal(r.rolsuper, false, `Role ${r.rolname} must NOT be superuser`);
-        assert.equal(r.rolbypassrls, false, `Role ${r.rolname} must NOT have BYPASSRLS`);
+      assert.equal(res.rowCount, 2, 'Both operza_app and operza_worker roles must exist in PostgreSQL');
+      const roleMap = new Map(res.rows.map(r => [r.rolname, r]));
+      assert.ok(roleMap.has('operza_app'), 'operza_app must exist');
+      assert.ok(roleMap.has('operza_worker'), 'operza_worker must exist');
+
+      for (const [name, r] of roleMap.entries()) {
+        assert.equal(r.rolsuper, false, `Role ${name} must NOT be superuser`);
+        assert.equal(r.rolbypassrls, false, `Role ${name} must NOT have BYPASSRLS`);
+        assert.equal(r.rolcreatedb, false, `Role ${name} must NOT have CREATEDB`);
+        assert.equal(r.rolcreaterole, false, `Role ${name} must NOT have CREATEROLE`);
+        assert.equal(r.rolcanlogin, true, `Role ${name} must have LOGIN permission`);
+        assert.equal(r.rolinherit, false, `Role ${name} must have NOINHERIT`);
       }
     }
 
-    // 17.6 Verify security-definer helper functions are owned by operza_auth_definer
+    // 17.6 Verify exact five security-definer helper functions exist and are owned by operza_auth_definer
     {
+      const expectedSignatures = new Map([
+        ['resolve_auth_session(text)', 'operza_auth_definer'],
+        ['lookup_user_for_auth(text)', 'operza_auth_definer'],
+        ['lookup_public_calendar(text)', 'operza_auth_definer'],
+        ['expire_pending_workflow_approvals()', 'operza_auth_definer'],
+        ['expire_tenant_workflow_approvals(uuid, uuid)', 'operza_auth_definer']
+      ]);
+
       const res = await superuserPool.query(`
-        SELECT p.proname, r.rolname AS owner
+        SELECT 
+          p.proname,
+          format('%s(%s)', p.proname, oidvectortypes(p.proargtypes)) AS signature,
+          r.rolname AS owner
         FROM pg_proc p
         JOIN pg_roles r ON p.proowner = r.oid
-        WHERE p.proname IN (
-          'resolve_auth_session',
-          'lookup_user_for_auth',
-          'lookup_public_calendar',
-          'expire_pending_workflow_approvals',
-          'expire_tenant_workflow_approvals'
-        )
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        WHERE n.nspname = 'public'
+          AND p.proname IN (
+            'resolve_auth_session',
+            'lookup_user_for_auth',
+            'lookup_public_calendar',
+            'expire_pending_workflow_approvals',
+            'expire_tenant_workflow_approvals'
+          )
+        ORDER BY p.proname;
       `);
-      assert.ok(res.rowCount >= 4, 'Must find security-definer helper functions');
-      for (const row of res.rows) {
-        assert.equal(row.owner, 'operza_auth_definer', `Function ${row.proname} must be owned by operza_auth_definer, got ${row.owner}`);
+
+      assert.equal(res.rowCount, 5, 'Exactly 5 security-definer helper functions must exist in public schema');
+      const foundMap = new Map(res.rows.map(r => [r.signature, r.owner]));
+
+      for (const [signature, expectedOwner] of expectedSignatures.entries()) {
+        assert.ok(foundMap.has(signature), `Required function signature "${signature}" must exist in schema public`);
+        const actualOwner = foundMap.get(signature);
+        assert.equal(actualOwner, expectedOwner, `Function "${signature}" must be owned by "${expectedOwner}", got "${actualOwner}"`);
       }
     }
 

@@ -234,16 +234,25 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       assert.equal(row.relforcerowsecurity, true, `Table "${tableName}" must have relforcerowsecurity = true`);
     }
 
-    // 4. Verify role attributes: operza_app and operza_worker must be NOSUPERUSER and NOBYPASSRLS
+    // 4. Verify role attributes: operza_app and operza_worker must exist and be strictly least-privileged
     const roleCheck = await pool.query(`
-      SELECT rolname, rolsuper, rolbypassrls
+      SELECT rolname, rolsuper, rolbypassrls, rolcreatedb, rolcreaterole, rolcanlogin, rolinherit
       FROM pg_roles
       WHERE rolname IN ('operza_app', 'operza_worker')
+      ORDER BY rolname
     `);
     assert.equal(roleCheck.rows.length, 2, 'Both operza_app and operza_worker roles must exist in PostgreSQL');
-    for (const row of roleCheck.rows) {
-      assert.equal(row.rolsuper, false, `Role ${row.rolname} must not be superuser`);
-      assert.equal(row.rolbypassrls, false, `Role ${row.rolname} must not have BYPASSRLS`);
+    const roleCheckMap = new Map(roleCheck.rows.map(r => [r.rolname, r]));
+    assert.ok(roleCheckMap.has('operza_app'), 'operza_app role must exist');
+    assert.ok(roleCheckMap.has('operza_worker'), 'operza_worker role must exist');
+
+    for (const [name, row] of roleCheckMap.entries()) {
+      assert.equal(row.rolsuper, false, `Role ${name} must not be superuser`);
+      assert.equal(row.rolbypassrls, false, `Role ${name} must not have BYPASSRLS`);
+      assert.equal(row.rolcreatedb, false, `Role ${name} must not have CREATEDB`);
+      assert.equal(row.rolcreaterole, false, `Role ${name} must not have CREATEROLE`);
+      assert.equal(row.rolcanlogin, true, `Role ${name} must have LOGIN permission`);
+      assert.equal(row.rolinherit, false, `Role ${name} must have NOINHERIT`);
     }
 
     // 5. Test RLS Tenant Isolation under operza_app role
