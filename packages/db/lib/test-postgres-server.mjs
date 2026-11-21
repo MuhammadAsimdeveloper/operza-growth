@@ -34,17 +34,25 @@ export function canonicalizePath(p, platform = process.platform) {
 export function parsePostmasterPid(content) {
   if (!content || typeof content !== 'string') return null;
   const lines = content.trim().split(/\r?\n/);
-  if (lines.length < 1) return null;
+  if (lines.length < 4) return null;
+
   const rawPid = lines[0].trim();
   if (!/^\d+$/.test(rawPid)) return null;
   const pid = parseInt(rawPid, 10);
   if (!Number.isFinite(pid) || pid <= 0) return null;
+
   const dataDir = lines[1] ? lines[1].trim() : '';
-  const port = lines[3] && /^\d+$/.test(lines[3].trim()) ? parseInt(lines[3].trim(), 10) : null;
+  if (!dataDir) return null;
+
+  const rawPort = lines[3] ? lines[3].trim() : '';
+  if (!/^\d+$/.test(rawPort)) return null;
+  const port = parseInt(rawPort, 10);
+  if (!Number.isFinite(port) || port <= 0 || port > 65535) return null;
+
   return {
     pid,
     dataDir,
-    port: Number.isFinite(port) && port > 0 ? port : null
+    port
   };
 }
 
@@ -466,6 +474,26 @@ export class IsolatedTestPostgres {
       return; // Idempotent: already clean
     }
 
+    // Safety check: Detect divergence if dataDir was mutated from retained instanceDataDir
+    if (this.instanceDataDir && canonicalizePath(this.dataDir) !== this.instanceDataDir) {
+      throw new Error(
+        `[ISOLATED-PG] SafetyError: Current dataDir "${this.dataDir}" diverges from retained instanceDataDir "${this.instanceDataDir}". Refusing to delete data directory.`
+      );
+    }
+
+    // Check the retained this.pid even when postmaster.pid is missing
+    if (this.pid) {
+      let retainedAlive;
+      try {
+        retainedAlive = isProcessAlive(this.pid);
+      } catch (procErr) {
+        throw new Error(`[ISOLATED-PG] SafetyError: Cannot determine process status for retained PID ${this.pid}: ${procErr.message}`);
+      }
+      if (retainedAlive) {
+        throw new Error(`[ISOLATED-PG] SafetyError: Refusing to delete data directory while PostgreSQL process (PID ${this.pid}) is alive.`);
+      }
+    }
+
     const pidFile = path.join(this.dataDir, 'postmaster.pid');
     if (existsSync(pidFile)) {
       let content;
@@ -476,8 +504,31 @@ export class IsolatedTestPostgres {
       }
 
       const parsed = parsePostmasterPid(content);
-      if (!parsed || !parsed.pid) {
-        throw new Error(`[ISOLATED-PG] SafetyError: Refusing to delete data directory: PID file is malformed, incomplete, or contains an invalid PID.`);
+      if (!parsed || !parsed.pid || !parsed.dataDir || !parsed.port) {
+        throw new Error(`[ISOLATED-PG] SafetyError: Refusing to delete data directory: PID file is malformed, incomplete, or contains an invalid PID, directory, or port.`);
+      }
+
+      // Check PID against retained identity
+      if (this.pid && parsed.pid !== this.pid) {
+        throw new Error(
+          `[ISOLATED-PG] SafetyError: Refusing to delete data directory: PID in postmaster.pid (${parsed.pid}) does not match retained instance PID (${this.pid}).`
+        );
+      }
+
+      // Check data directory against instance identity
+      const expectedDataDir = this.instanceDataDir || canonicalizePath(this.dataDir);
+      if (canonicalizePath(parsed.dataDir) !== expectedDataDir) {
+        throw new Error(
+          `[ISOLATED-PG] SafetyError: Stale PID file data directory "${parsed.dataDir}" does not match instance directory "${this.dataDir}".`
+        );
+      }
+
+      // Check port against instance identity if port is known
+      const expectedPort = this.instancePort || (this.port ? Number(this.port) : null);
+      if (expectedPort && Number(parsed.port) !== expectedPort) {
+        throw new Error(
+          `[ISOLATED-PG] SafetyError: PID file port "${parsed.port}" does not match instance port "${expectedPort}".`
+        );
       }
 
       let alive;
@@ -489,12 +540,6 @@ export class IsolatedTestPostgres {
 
       if (alive) {
         throw new Error(`[ISOLATED-PG] SafetyError: Refusing to delete data directory while PostgreSQL process (PID ${parsed.pid}) is alive.`);
-      }
-
-      if (parsed.dataDir && canonicalizePath(parsed.dataDir) !== canonicalizePath(this.dataDir)) {
-        throw new Error(
-          `[ISOLATED-PG] SafetyError: Stale PID file data directory "${parsed.dataDir}" does not match instance directory "${this.dataDir}".`
-        );
       }
     }
 
@@ -520,8 +565,27 @@ export class IsolatedTestPostgres {
     }
 
     const timeoutMs = typeof stopOptions.timeoutMs === 'number' ? stopOptions.timeoutMs : 10000;
-    const pidFile = this.dataDir ? path.join(this.dataDir, 'postmaster.pid') : null;
+
+    // Detect mutation divergence between current mutable properties and retained immutable identity
+    if (this.instanceDataDir && this.dataDir && canonicalizePath(this.dataDir) !== this.instanceDataDir) {
+      throw new Error(
+        `[ISOLATED-PG] ShutdownIdentityMismatchError: Current dataDir "${this.dataDir}" ` +
+        `diverges from retained instanceDataDir "${this.instanceDataDir}". Refusing to stop unrelated or mutated cluster.`
+      );
+    }
+
+    if (this.instancePort && this.port && Number(this.port) !== this.instancePort) {
+      throw new Error(
+        `[ISOLATED-PG] ShutdownPortMismatchError: Current port "${this.port}" ` +
+        `diverges from retained instancePort "${this.instancePort}". Refusing to stop unrelated or mutated cluster.`
+      );
+    }
+
     const targetPid = this.pid;
+    const targetDataDir = this.instanceDataDir || (this.dataDir ? canonicalizePath(this.dataDir) : null);
+    const targetPort = this.instancePort || (this.port ? Number(this.port) : null);
+
+    const pidFile = targetDataDir ? path.join(targetDataDir, 'postmaster.pid') : null;
 
     if (pidFile && existsSync(pidFile)) {
       let parsed;
@@ -532,8 +596,8 @@ export class IsolatedTestPostgres {
         throw new Error(`[ISOLATED-PG] ShutdownIdentityError: Unable to read PID file at "${pidFile}": ${readErr.message}`);
       }
 
-      if (!parsed || !parsed.pid) {
-        throw new Error(`[ISOLATED-PG] ShutdownIdentityError: PID file at "${pidFile}" is malformed or missing valid PID.`);
+      if (!parsed || !parsed.pid || !parsed.dataDir || !parsed.port) {
+        throw new Error(`[ISOLATED-PG] ShutdownIdentityError: PID file at "${pidFile}" is malformed, incomplete, or contains invalid identity fields.`);
       }
 
       // Identity check 1: PID in file must match stored instance PID
@@ -544,23 +608,29 @@ export class IsolatedTestPostgres {
         );
       }
 
-      // Identity check 2: Data directory in postmaster.pid must match this.dataDir
-      if (parsed.dataDir && this.dataDir) {
-        if (canonicalizePath(parsed.dataDir) !== canonicalizePath(this.dataDir)) {
-          throw new Error(
-            `[ISOLATED-PG] ShutdownIdentityMismatchError: PID file indicates data directory "${parsed.dataDir}" ` +
-            `which does not match instance data directory "${this.dataDir}". Refusing to stop unrelated server.`
-          );
-        }
+      // Identity check 2: Data directory in postmaster.pid must match targetDataDir
+      if (targetDataDir && canonicalizePath(parsed.dataDir) !== targetDataDir) {
+        throw new Error(
+          `[ISOLATED-PG] ShutdownIdentityMismatchError: PID file indicates data directory "${parsed.dataDir}" ` +
+          `which does not match instance data directory "${this.dataDir}". Refusing to stop unrelated server.`
+        );
       }
 
-      // Identity check 3: Port in postmaster.pid must match this.port
-      if (parsed.port && this.port && Number(parsed.port) !== Number(this.port)) {
+      // Identity check 3: Port in postmaster.pid must match targetPort
+      if (targetPort && Number(parsed.port) !== targetPort) {
         throw new Error(
           `[ISOLATED-PG] ShutdownPortMismatchError: PID file indicates port ${parsed.port} ` +
           `which does not match instance port ${this.port}. Refusing to stop unrelated server.`
         );
       }
+    }
+
+    // Fail closed: require valid process identity before shutdown verification
+    if (!targetPid || !targetDataDir || !targetPort) {
+      throw new Error(
+        `[ISOLATED-PG] ShutdownIdentityError: Cannot stop server: valid startup process identity is unavailable. ` +
+        `Preserving started=true.`
+      );
     }
 
     if (this.options._simulateCleanupErrorOnStartupFailure || stopOptions._simulateCleanupError) {
@@ -571,7 +641,7 @@ export class IsolatedTestPostgres {
     if (!simulateCmdFail) {
       const pgCtlBin = findPgBin('pg_ctl');
       if (pidFile && existsSync(pidFile)) {
-        const stopRes = spawnSync(pgCtlBin, ['-D', this.dataDir, '-m', 'immediate', 'stop'], {
+        const stopRes = spawnSync(pgCtlBin, ['-D', targetDataDir, '-m', 'immediate', 'stop'], {
           encoding: 'utf8',
           timeout: 15000
         });
@@ -584,7 +654,7 @@ export class IsolatedTestPostgres {
     // Bounded polling for verified shutdown:
     // 1. PID file has disappeared
     // 2. Stored process has exited (isProcessAlive(targetPid) === false)
-    // 3. Port is no longer accepting connections (!isPortOccupied(this.port))
+    // 3. Port is no longer accepting connections (!isPortOccupied(targetPort))
     const startTime = Date.now();
     let isFullyStopped = false;
     let lastFailureReason = '';
@@ -594,16 +664,14 @@ export class IsolatedTestPostgres {
       const pidFileExists = simulatePidRemains ? true : (pidFile ? existsSync(pidFile) : false);
 
       let processAlive = false;
-      if (targetPid) {
-        try {
-          processAlive = isProcessAlive(targetPid);
-        } catch (procErr) {
-          processAlive = true;
-        }
+      try {
+        processAlive = isProcessAlive(targetPid);
+      } catch (procErr) {
+        processAlive = true;
       }
 
       const simulatePortOccupied = this.options._simulatePortOccupied || stopOptions._simulatePortOccupied;
-      const portOccupied = simulatePortOccupied ? true : (this.port ? await isPortOccupied(this.port) : false);
+      const portOccupied = simulatePortOccupied ? true : (targetPort ? await isPortOccupied(targetPort) : false);
 
       if (!pidFileExists && !processAlive && !portOccupied) {
         isFullyStopped = true;
@@ -613,7 +681,7 @@ export class IsolatedTestPostgres {
       const reasons = [];
       if (pidFileExists) reasons.push('PID file still exists');
       if (processAlive) reasons.push(`process ${targetPid} still alive`);
-      if (portOccupied) reasons.push(`port ${this.port} still occupied`);
+      if (portOccupied) reasons.push(`port ${targetPort} still occupied`);
       lastFailureReason = reasons.join(', ');
 
       await new Promise((r) => setTimeout(r, 100));
@@ -621,12 +689,12 @@ export class IsolatedTestPostgres {
 
     if (!isFullyStopped) {
       throw new Error(
-        `[ISOLATED-PG] PostgresShutdownError: Failed to verify shutdown of PostgreSQL server on port ${this.port} ` +
+        `[ISOLATED-PG] PostgresShutdownError: Failed to verify shutdown of PostgreSQL server on port ${targetPort} ` +
         `within ${timeoutMs}ms. Remaining blockers: ${lastFailureReason}. Instance state remains started=true.`
       );
     }
 
     this.started = false;
-    this.pid = null;
+    // NOTE: Retain this.pid, this.instanceDataDir, this.instancePort as immutable process identity for cleanupDataDir()
   }
 }

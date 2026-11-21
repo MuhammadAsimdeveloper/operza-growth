@@ -281,10 +281,8 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
           (err) => err.message.includes('SafetyError') && err.message.includes(`while PostgreSQL process (PID ${livePid}) is alive`),
           'Must refuse deletion while recorded process is alive'
         );
-
-        // Restore started flag so clean stop operates
-        server.started = true;
       } finally {
+        server.started = true;
         await safeTeardown([
           () => server.stop(),
           () => server.cleanupDataDir()
@@ -292,8 +290,107 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
       }
     });
 
-    // 4c. Refuses deletion when PID file is malformed
-    await tSub.test('4c. Malformed PID file: Refuses deletion on unparseable PID file', () => {
+    // 4c. Refuses deletion when retained process is alive even if postmaster.pid is missing
+    await tSub.test('4c. Missing PID file: Refuses deletion when retained process is alive', () => {
+      const dir = createTempClusterDir('cleanup-missing-pidfile-live-proc');
+      mkdirSync(dir, { recursive: true });
+      const pidFile = path.join(dir, 'postmaster.pid');
+      if (existsSync(pidFile)) rmSync(pidFile, { force: true });
+
+      const server = new IsolatedTestPostgres({
+        port: 0,
+        dataDir: dir,
+        skipRoleBootstrap: true
+      });
+      // Retain process.pid (current live test process)
+      server.pid = process.pid;
+
+      assert.throws(
+        () => server.cleanupDataDir(),
+        (err) => err.message.includes('SafetyError') && err.message.includes(`while PostgreSQL process (PID ${process.pid}) is alive`),
+        'Must refuse deletion when retained process is alive even if postmaster.pid is missing'
+      );
+      assert.equal(existsSync(dir), true, 'Directory must remain untouched');
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    // 4d. Refuses deletion when PID file has valid PID but is missing data directory field
+    await tSub.test('4d. Incomplete PID file: Refuses deletion when data directory field is missing', () => {
+      const dir = createTempClusterDir('cleanup-missing-datadir-field');
+      mkdirSync(dir, { recursive: true });
+      const pidFile = path.join(dir, 'postmaster.pid');
+      // Valid PID, but empty data directory line
+      writeFileSync(pidFile, '9999999\n\n1234567\n5432\n', 'utf8');
+
+      const server = new IsolatedTestPostgres({
+        port: 0,
+        dataDir: dir,
+        skipRoleBootstrap: true
+      });
+
+      assert.throws(
+        () => server.cleanupDataDir(),
+        (err) => err.message.includes('SafetyError') && err.message.includes('PID file is malformed, incomplete, or contains an invalid PID'),
+        'Must refuse deletion on PID file missing data directory field'
+      );
+      assert.equal(existsSync(dir), true, 'Directory must remain untouched');
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    // 4e. Refuses deletion when PID file has missing or invalid port field
+    await tSub.test('4e. Incomplete PID file: Refuses deletion when port field is missing or invalid', () => {
+      const dir = createTempClusterDir('cleanup-invalid-port-field');
+      mkdirSync(dir, { recursive: true });
+      const pidFile = path.join(dir, 'postmaster.pid');
+      writeFileSync(pidFile, `9999999\n${canonicalizePath(dir)}\n1234567\nnot_a_port\n`, 'utf8');
+
+      const server = new IsolatedTestPostgres({
+        port: 0,
+        dataDir: dir,
+        skipRoleBootstrap: true
+      });
+
+      assert.throws(
+        () => server.cleanupDataDir(),
+        (err) => err.message.includes('SafetyError') && err.message.includes('PID file is malformed, incomplete, or contains an invalid PID'),
+        'Must refuse deletion on PID file with invalid port'
+      );
+      assert.equal(existsSync(dir), true, 'Directory must remain untouched');
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    // 4f. Refuses deletion when PID file records a different PID than retained identity
+    await tSub.test('4f. Different PID: Refuses deletion when PID file records a different PID than retained identity', () => {
+      const dir = createTempClusterDir('cleanup-different-pid');
+      mkdirSync(dir, { recursive: true });
+      const pidFile = path.join(dir, 'postmaster.pid');
+      writeFileSync(pidFile, `9999999\n${canonicalizePath(dir)}\n1234567\n5432\n`, 'utf8');
+
+      const server = new IsolatedTestPostgres({
+        port: 5432,
+        dataDir: dir,
+        skipRoleBootstrap: true
+      });
+      // Retained PID is 8888888, which differs from 9999999 in PID file
+      server.pid = 8888888;
+      server.instanceDataDir = canonicalizePath(dir);
+      server.instancePort = 5432;
+
+      assert.throws(
+        () => server.cleanupDataDir(),
+        (err) => err.message.includes('SafetyError') && err.message.includes('does not match retained instance PID'),
+        'Must refuse deletion when PID file records a different PID than retained instance PID'
+      );
+      assert.equal(existsSync(dir), true, 'Directory must remain untouched');
+
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    // 4g. Refuses deletion when PID file is malformed
+    await tSub.test('4g. Malformed PID file: Refuses deletion on unparseable PID file', () => {
       const dir = createTempClusterDir('cleanup-malformed-pid');
       mkdirSync(dir, { recursive: true });
       const pidFile = path.join(dir, 'postmaster.pid');
@@ -314,8 +411,8 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
       rmSync(dir, { recursive: true, force: true });
     });
 
-    // 4d. Refuses deletion when PID file is missing PID field
-    await tSub.test('4d. Missing PID field: Refuses deletion on empty PID file', () => {
+    // 4h. Refuses deletion when PID file is missing PID field
+    await tSub.test('4h. Missing PID field: Refuses deletion on empty PID file', () => {
       const dir = createTempClusterDir('cleanup-empty-pid');
       mkdirSync(dir, { recursive: true });
       const pidFile = path.join(dir, 'postmaster.pid');
@@ -336,8 +433,8 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
       rmSync(dir, { recursive: true, force: true });
     });
 
-    // 4e. Refuses deletion when PID file records a different data directory
-    await tSub.test('4e. Directory mismatch: Refuses deletion when PID file belongs to another directory', () => {
+    // 4i. Refuses deletion when PID file records a different data directory
+    await tSub.test('4i. Directory mismatch: Refuses deletion when PID file belongs to another directory', () => {
       const dir = createTempClusterDir('cleanup-mismatch-dir');
       mkdirSync(dir, { recursive: true });
       const pidFile = path.join(dir, 'postmaster.pid');
@@ -359,26 +456,29 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
       rmSync(dir, { recursive: true, force: true });
     });
 
-    // 4f. Successfully deletes directory when PID file process is confirmed exited
-    await tSub.test('4f. Exited process: Safely deletes directory when process is confirmed not alive', () => {
-      const dir = createTempClusterDir('cleanup-exited-proc');
+    // 4j. Successfully deletes directory when identity is verified and process is confirmed dead
+    await tSub.test('4j. Correct identity with confirmed dead process: Cleanup succeeds', () => {
+      const dir = createTempClusterDir('cleanup-confirmed-dead');
       mkdirSync(dir, { recursive: true });
       const pidFile = path.join(dir, 'postmaster.pid');
       // Write verified matching directory with dead PID 9999999
       writeFileSync(pidFile, `9999999\n${canonicalizePath(dir)}\n1234567\n5432\n`, 'utf8');
 
       const server = new IsolatedTestPostgres({
-        port: 0,
+        port: 5432,
         dataDir: dir,
         skipRoleBootstrap: true
       });
+      server.pid = 9999999;
+      server.instanceDataDir = canonicalizePath(dir);
+      server.instancePort = 5432;
 
-      assert.doesNotThrow(() => server.cleanupDataDir());
+      assert.doesNotThrow(() => server.cleanupDataDir(), 'Cleanup must succeed when process is confirmed dead and identity matches');
       assert.equal(existsSync(dir), false, 'Directory must be removed when process is confirmed dead and dir matches');
     });
 
-    // 4g. Idempotent cleanup when directory does not exist
-    await tSub.test('4g. Idempotency: Returns cleanly when data directory does not exist', () => {
+    // 4k. Idempotent cleanup when directory does not exist
+    await tSub.test('4k. Idempotency: Returns cleanly when data directory does not exist', () => {
       const dir = path.join(root, 'scratch', 'test-non-existent-cluster-dir');
       rmSync(dir, { recursive: true, force: true });
 
@@ -418,7 +518,7 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
         await server.stop();
 
         assert.equal(server.started, false, 'Server must be marked started = false');
-        assert.equal(server.pid, null, 'Server PID must be cleared after verified stop');
+        assert.equal(server.pid, targetPid, 'Server PID must be retained as immutable startup identity after verified stop');
         assert.equal(existsSync(path.join(dir, 'postmaster.pid')), false, 'postmaster.pid must disappear');
         assert.equal(isProcessAlive(targetPid), false, 'Process must have exited');
         assert.equal(await isPortOccupied(serverPort), false, 'Port must be released');
@@ -751,6 +851,60 @@ test('Phase 20.2.5.11: PostgreSQL Teardown Guarantees, Fail-Closed Probe Orderin
         await safeTeardown([
           () => serverA.stop(),
           () => serverA.cleanupDataDir()
+        ]);
+      }
+    });
+
+    // 5k. Mutated dataDir or port after startup: stop detects identity divergence
+    await tSub.test('5k. Mutated dataDir or port after startup: Stop detects identity divergence', async () => {
+      const dir = createTempClusterDir('shutdown-mutated-identity');
+      const server = new IsolatedTestPostgres({
+        port: 0,
+        dbName: 'mutated_identity_db',
+        dataDir: dir,
+        skipRoleBootstrap: true,
+        forceIsolatedCluster: true
+      });
+
+      try {
+        await server.start();
+        assert.ok(server.pid > 0);
+        assert.ok(server.instanceDataDir);
+        assert.ok(server.instancePort > 0);
+
+        // 1. Mutate dataDir
+        server.dataDir = path.join(root, 'scratch', 'mutated-fake-dir');
+        await assert.rejects(
+          () => server.stop(),
+          (err) => err.message.includes('ShutdownIdentityMismatchError') && err.message.includes('diverges from retained instanceDataDir'),
+          'Must reject stop when dataDir has been mutated from instanceDataDir'
+        );
+
+        // Restore dataDir
+        server.dataDir = server.instanceDataDir;
+
+        // 2. Mutate port
+        server.port = server.instancePort + 99;
+        await assert.rejects(
+          () => server.stop(),
+          (err) => err.message.includes('ShutdownPortMismatchError') && err.message.includes('diverges from retained instancePort'),
+          'Must reject stop when port has been mutated from instancePort'
+        );
+
+        // Restore port
+        server.port = server.instancePort;
+
+        // Clean stop succeeds
+        await server.stop();
+        assert.equal(server.started, false);
+      } finally {
+        await safeTeardown([
+          () => {
+            if (server.instanceDataDir) server.dataDir = server.instanceDataDir;
+            if (server.instancePort) server.port = server.instancePort;
+            return server.stop();
+          },
+          () => server.cleanupDataDir()
         ]);
       }
     });
