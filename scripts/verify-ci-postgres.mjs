@@ -36,7 +36,7 @@ try {
   await run('node', ['packages/db/scripts/wait-for-postgres.mjs']);
 
   // Step 1: Run migration runner
-  console.log('\n--- STEP 1: Running Migration Runner (001-029) ---');
+  console.log('\n--- STEP 1: Running Migration Runner (001-030) ---');
   await run('node', ['packages/db/scripts/migrate.mjs']);
 
   // Step 2: Run @operza/db tests with real PostgreSQL

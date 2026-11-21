@@ -135,7 +135,16 @@ export async function executeStep({
   providerExecutor = null,
   now = Date.now(),
   variables = {},
+  signal = null,
 }) {
+  if (signal?.aborted) {
+    const abortErr = new Error('Step execution aborted due to resume lease loss');
+    abortErr.name = 'AbortError';
+    abortErr.code = 'RESUME_LEASE_LOST';
+    abortErr.retryable = true;
+    throw abortErr;
+  }
+
   const { id: nodeId, type, config = {} } = node;
 
   // Approval is scoped to one exact node. An approval for a previous step
@@ -1080,6 +1089,14 @@ export async function walkGraph(nodes, triggerContext, stepExecutor, deps = {}) 
   let nextResumeNodeId = null;
 
   while (queue.length > 0) {
+    if (deps.signal?.aborted) {
+      const abortErr = new Error('Graph execution aborted due to resume lease loss');
+      abortErr.name = 'AbortError';
+      abortErr.code = 'RESUME_LEASE_LOST';
+      abortErr.retryable = true;
+      throw abortErr;
+    }
+
     const currentId = queue.shift();
 
     // Guard: skip already-visited (prevents infinite loops)
@@ -1105,6 +1122,7 @@ export async function walkGraph(nodes, triggerContext, stepExecutor, deps = {}) 
         providerExecutor: deps.providerExecutor,
         now: startedAt,
         variables,
+        signal: deps.signal,
       });
     }
 
@@ -1186,6 +1204,7 @@ export async function walkGraph(nodes, triggerContext, stepExecutor, deps = {}) 
               providerExecutor: deps.providerExecutor,
               now: childStart,
               variables,
+              signal: deps.signal,
             });
           }
           const childEnd = Date.now();

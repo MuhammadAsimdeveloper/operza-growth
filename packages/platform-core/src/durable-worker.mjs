@@ -56,8 +56,20 @@ export async function runOutboxBatch({
       try {
         if (typeof handler !== 'function') throw new PermanentJobError('No trusted handler is registered for this event type', 'HANDLER_NOT_REGISTERED');
         const result = await handler(job.payload, { job, workerId, signal, lease: { get lost() { return leaseLost; } } });
-        if (leaseLost) {
-          results.push({ jobId: job.id, status: 'lease_lost' });
+        if (leaseLost || result?.status === 'lease_lost') {
+          if (result?.status === 'lease_lost' && !leaseLost) {
+            const delay = Math.max(1000, Number(retryDelayMs(job.attempts || 1, { code: 'RESUME_LEASE_LOST' })) || 1000);
+            const disposition = await repository.fail({
+              jobId: job.id,
+              workerId,
+              errorCode: 'RESUME_LEASE_LOST',
+              retryable: true,
+              retryDelayMs: delay
+            });
+            results.push({ jobId: job.id, status: disposition?.status || 'retry', reason: 'lease_lost' });
+          } else {
+            results.push({ jobId: job.id, status: 'lease_lost' });
+          }
         } else {
           await repository.acknowledge({ jobId: job.id, workerId, result });
           results.push({ jobId: job.id, status: 'delivered' });
@@ -66,8 +78,9 @@ export async function runOutboxBatch({
         if (leaseLost) {
           results.push({ jobId: job.id, status: 'lease_lost' });
         } else {
+          const isLeaseLost = error?.code === 'RESUME_LEASE_LOST';
           const retryable = !(error instanceof PermanentJobError) && error?.retryable !== false;
-          const delay = retryable ? Math.max(0, Number(retryDelayMs(job.attempts || 1, error)) || 0) : 0;
+          const delay = retryable ? Math.max(isLeaseLost ? 1000 : 0, Number(retryDelayMs(job.attempts || 1, error)) || 0) : 0;
           const disposition = await repository.fail({
             jobId: job.id,
             workerId,

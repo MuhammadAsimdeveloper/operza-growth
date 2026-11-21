@@ -5093,24 +5093,37 @@ const server = createServer(async (req, res) => {
     if (method === 'POST' && webhookCallbackMatch) {
       const resumeToken = webhookCallbackMatch[1];
 
+      let rawBody = '';
+      let body;
+      try {
+        let totalLen = 0;
+        const maxLen = 64 * 1024; // 64KB bounded request body size
+        for await (const chunk of req) {
+          totalLen += chunk.length;
+          if (totalLen > maxLen) {
+            return sendJson(res, 413, { error: 'Payload too large; maximum 64KB permitted' });
+          }
+          rawBody += chunk;
+        }
+        body = rawBody ? JSON.parse(rawBody) : {};
+        if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+          return sendJson(res, 400, { error: 'Callback payload must be a JSON object' });
+        }
+      } catch (parseErr) {
+        return sendJson(res, 400, { error: 'Invalid JSON body' });
+      }
+
       if (pgPool) {
         let client;
         try {
-          // 1. Resolve execution across tenants via security definer function or direct lookup
+          // 1. Resolve execution across tenants via security definer function (FAIL CLOSED: NO UNSCOPED DIRECT QUERY FALLBACK)
           let targetExec = null;
           try {
             const fnRes = await pgPool.query('SELECT * FROM lookup_workflow_execution_by_resume_token($1)', [resumeToken]);
             if (fnRes.rows.length > 0) targetExec = fnRes.rows[0];
-          } catch {
-            const dirRes = await pgPool.query(
-              `SELECT id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
-                      wait_generation, wait_type, retry_at, created_at
-               FROM workflow_executions
-               WHERE resume_token = $1 AND status = 'waiting_webhook'
-               LIMIT 1`,
-              [resumeToken]
-            );
-            if (dirRes.rows.length > 0) targetExec = dirRes.rows[0];
+          } catch (fnErr) {
+            console.error('[WORKFLOW-CALLBACK] Security definer lookup failed:', fnErr.message);
+            return sendJson(res, 500, { error: 'Internal callback lookup service unavailable' });
           }
 
           if (!targetExec) {
@@ -5119,12 +5132,10 @@ const server = createServer(async (req, res) => {
             });
           }
 
-          // 2. Reject expired callbacks
+          // 2. Pre-check expired callbacks using database/server time
           if (targetExec.retry_at && new Date(targetExec.retry_at).getTime() < Date.now()) {
             return sendJson(res, 410, { error: 'Webhook callback has expired' });
           }
-
-          const body = await readBody(req);
 
           // 3. Atomically consume token and update execution state
           client = await pgPool.connect();
@@ -5136,7 +5147,8 @@ const server = createServer(async (req, res) => {
 
           const execRes = await client.query(`
             SELECT id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
-                   wait_generation, wait_type, resume_token, retry_at, state, trigger_event
+                   wait_generation, wait_type, resume_token, retry_at, state, trigger_event,
+                   (retry_at IS NOT NULL AND now() > retry_at) AS is_expired
             FROM workflow_executions
             WHERE agency_id = $1 AND location_id = $2 AND id = $3 AND resume_token = $4 AND status = 'waiting_webhook'
             FOR UPDATE
@@ -5150,6 +5162,13 @@ const server = createServer(async (req, res) => {
           }
 
           const lockedRow = execRes.rows[0];
+
+          // Authoritative atomic check using PostgreSQL clock
+          if (lockedRow.is_expired) {
+            await client.query('ROLLBACK').catch(() => {});
+            return sendJson(res, 410, { error: 'Webhook callback has expired' });
+          }
+
           const updatedState = { ...(lockedRow.state || {}), callbackData: body };
 
           // Clear resume_token so duplicate callbacks are immediately rejected
@@ -5194,8 +5213,16 @@ const server = createServer(async (req, res) => {
             ) VALUES ($1, $2, $3, $4, 'workflow.wait.resume', $5::jsonb, $6, 0, 5, now())
             ON CONFLICT (agency_id, location_id, idempotency_key) DO UPDATE
               SET available_at = now(),
-                  payload = jsonb_set(workflow_outbox.payload, '{callbackData}', $5::jsonb->'callbackData')
-              WHERE workflow_outbox.status IN ('pending', 'retryable')
+                  status = 'pending',
+                  lease_until = NULL,
+                  lease_owner = NULL,
+                  attempts = 0,
+                  last_error_code = NULL,
+                  payload = jsonb_set(
+                    jsonb_set(workflow_outbox.payload, '{callbackData}', $5::jsonb->'callbackData'),
+                    '{requestType}', '"webhook"'
+                  ),
+                  updated_at = now()
           `, [randomUUID(), targetExec.agency_id, targetExec.location_id, targetExec.id, JSON.stringify(outboxPayload), idemKey]);
 
           await client.query('COMMIT');
@@ -5204,13 +5231,13 @@ const server = createServer(async (req, res) => {
             success: true,
             resumed: true,
             executionId: targetExec.id,
-            status: 'resuming',
+            status: 'waiting',
             message: 'Webhook callback accepted and resume continuation enqueued'
           });
         } catch (pgErr) {
           if (client) await client.query('ROLLBACK').catch(() => {});
           console.error('[WORKFLOW-CALLBACK] PG error:', pgErr.message);
-          return sendJson(res, 500, { error: 'Failed to process webhook callback in database: ' + pgErr.message });
+          return sendJson(res, 500, { error: 'Failed to process webhook callback' });
         } finally {
           if (client) client.release();
         }
@@ -5227,7 +5254,7 @@ const server = createServer(async (req, res) => {
         });
       }
 
-      const body = await readBody(req);
+      if (!body) body = await readBody(req);
       run.status = 'resuming';
       run.currentNodeIndex = (run.currentNodeIndex || 0) + 1;
       run.variables = run.variables || {};
@@ -9259,13 +9286,14 @@ const server = createServer(async (req, res) => {
           const waitNode = row.current_node_id || 'wait';
           const resumeNode = row.resume_node_id || null;
 
-          // 4. Expedite existing pending scheduled outbox continuation or insert idempotent event
+          // 4. Inspect workflow_outbox continuation for this execution and generation
           const outboxRes = await client.query(`
-            SELECT id, status, available_at, (available_at <= now()) AS is_due
+            SELECT id, status, available_at, lease_until, lease_owner, attempts,
+                   (available_at <= now()) AS is_due,
+                   (lease_until IS NOT NULL AND lease_until > now()) AS is_job_leased
             FROM workflow_outbox
             WHERE agency_id = $1 AND location_id = $2 AND execution_id = $3
               AND event_type = 'workflow.wait.resume'
-              AND status IN ('pending', 'retryable')
               AND (payload->>'resumeGeneration')::int = $4
             ORDER BY created_at DESC
             LIMIT 1
@@ -9276,21 +9304,45 @@ const server = createServer(async (req, res) => {
 
           if (outboxRes.rows.length > 0) {
             const existingJob = outboxRes.rows[0];
-            if (existingJob.is_due) {
-              resultStatus = 'resume_already_requested';
-            } else {
+
+            if (['pending', 'retryable'].includes(existingJob.status)) {
+              if (existingJob.is_due) {
+                resultStatus = 'resume_already_requested';
+              } else {
+                await client.query(`
+                  UPDATE workflow_outbox
+                  SET available_at = now(),
+                      payload = jsonb_set(
+                        jsonb_set(payload, '{requestType}', '"manual"'),
+                        '{expeditedAt}',
+                        to_jsonb(now()::text)
+                      ),
+                      updated_at = now()
+                  WHERE id = $1
+                `, [existingJob.id]);
+                resultStatus = 'resume_enqueued';
+              }
+            } else if (['delivered', 'dead_letter', 'failed'].includes(existingJob.status)) {
+              // Re-drive recoverable continuation safely
               await client.query(`
                 UPDATE workflow_outbox
-                SET available_at = now(),
+                SET status = 'pending',
+                    available_at = now(),
+                    lease_until = NULL,
+                    lease_owner = NULL,
+                    attempts = 0,
+                    last_error_code = NULL,
                     payload = jsonb_set(
                       jsonb_set(payload, '{requestType}', '"manual"'),
-                      '{expeditedAt}',
+                      '{reDrivenAt}',
                       to_jsonb(now()::text)
                     ),
                     updated_at = now()
                 WHERE id = $1
               `, [existingJob.id]);
               resultStatus = 'resume_enqueued';
+            } else {
+              resultStatus = 'resume_already_requested';
             }
           } else {
             const idemKey = `idem_${crypto.createHash('sha256').update(JSON.stringify([
@@ -9319,25 +9371,25 @@ const server = createServer(async (req, res) => {
                 idempotency_key, priority, max_attempts, available_at
               ) VALUES ($1, $2, $3, $4, 'workflow.wait.resume', $5::jsonb, $6, 0, 5, now())
               ON CONFLICT (agency_id, location_id, idempotency_key) DO UPDATE
-                SET available_at = now(),
-                    payload = jsonb_set(workflow_outbox.payload, '{requestType}', '"manual"')
-                WHERE workflow_outbox.status IN ('pending', 'retryable')
+                SET status = 'pending',
+                    available_at = now(),
+                    lease_until = NULL,
+                    lease_owner = NULL,
+                    attempts = 0,
+                    last_error_code = NULL,
+                    payload = jsonb_set(
+                      jsonb_set(workflow_outbox.payload, '{requestType}', '"manual"'),
+                      '{reDrivenAt}',
+                      to_jsonb(now()::text)
+                    ),
+                    updated_at = now()
             `, [randomUUID(), agency.id, activeLocation.id, runId, JSON.stringify(outboxPayload), idemKey]);
 
             resultStatus = 'resume_enqueued';
           }
 
-          // If execution was stuck in 'resuming' with expired lease, reset to 'waiting' with cleared lease
-          if (row.status === 'resuming' && !row.is_lease_active) {
-            await client.query(`
-              UPDATE workflow_executions
-              SET status = 'waiting',
-                  resume_lease_owner = NULL,
-                  resume_lease_until = NULL,
-                  updated_at = now()
-              WHERE agency_id = $1 AND location_id = $2 AND id = $3
-            `, [agency.id, activeLocation.id, runId]);
-          }
+          // Do NOT reset 'resuming' to 'waiting' when recovering!
+          // The worker's workflow.wait.resume handles recovering expired resume leases.
 
           await client.query('COMMIT');
 
@@ -9352,12 +9404,12 @@ const server = createServer(async (req, res) => {
               agencyId: agency.id,
               locationId: activeLocation.id,
               workflowId: row.workflow_id,
-              status: 'waiting',
+              status: row.status,
               currentNodeId: waitNode,
               resumeNodeId: resumeNode,
               waitGeneration: waitGen,
               createdAt: row.created_at,
-              updatedAt: new Date().toISOString()
+              updatedAt: row.updated_at
             })
           });
         } catch (dbErr) {

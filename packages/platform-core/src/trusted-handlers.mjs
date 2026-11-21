@@ -955,7 +955,20 @@ export function createTrustedWorkerHandlers({
             };
           }
 
-          // 5. Node mismatch validation
+          // 5. Workflow ID mismatch validation
+          if (payload.workflowId && existingExecution.workflow_id && payload.workflowId !== existingExecution.workflow_id) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.warn(`[WORKFLOW-RESUME] Mismatched workflow ID for execution ${executionId} (expected: ${existingExecution.workflow_id}, received: ${payload.workflowId})`);
+            return {
+              status: 'ignored_mismatched_workflow',
+              executionId,
+              expectedWorkflowId: existingExecution.workflow_id,
+              receivedWorkflowId: payload.workflowId,
+              message: `Workflow ID mismatch (expected: ${existingExecution.workflow_id}, received: ${payload.workflowId})`
+            };
+          }
+
+          // 6. Node mismatch validation
           if (waitNodeId && existingExecution.current_node_id && waitNodeId !== existingExecution.current_node_id) {
             await client.query('ROLLBACK').catch(() => {});
             console.warn(`[WORKFLOW-RESUME] Mismatched wait node for execution ${executionId} (expected: ${existingExecution.current_node_id}, received: ${waitNodeId})`);
@@ -967,11 +980,22 @@ export function createTrustedWorkerHandlers({
             };
           }
 
-          // 6. Scheduled due time check
+          // 7. Resume node mismatch validation
+          if (payload.resumeNodeId && existingExecution.resume_node_id && payload.resumeNodeId !== existingExecution.resume_node_id) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.warn(`[WORKFLOW-RESUME] Mismatched resume node for execution ${executionId} (expected: ${existingExecution.resume_node_id}, received: ${payload.resumeNodeId})`);
+            return {
+              status: 'ignored_mismatched_resume_node',
+              executionId,
+              expectedResumeNode: existingExecution.resume_node_id,
+              receivedResumeNode: payload.resumeNodeId,
+              message: `Resume node mismatch (expected: ${existingExecution.resume_node_id}, received: ${payload.resumeNodeId})`
+            };
+          }
+
+          // 8. Scheduled due time check (database time is authoritative)
           if (requestType !== 'manual' && requestType !== 'webhook' && !isRecovery) {
-            const jobAvailableAt = job?.availableAt || job?.available_at;
-            const isOutboxDue = jobAvailableAt ? (new Date(jobAvailableAt).getTime() <= Date.now()) : false;
-            if (existingExecution.retry_at && !existingExecution.is_due && !isOutboxDue) {
+            if (existingExecution.retry_at && !existingExecution.is_due) {
               await client.query('ROLLBACK').catch(() => {});
               throw Object.assign(new Error(`Continuation for ${executionId} claimed before due time ${existingExecution.retry_at}`), {
                 code: 'CONTINUATION_NOT_DUE',
@@ -980,11 +1004,15 @@ export function createTrustedWorkerHandlers({
             }
           }
 
-          // 7. Load pinned immutable workflow snapshot
+          // 9. Load pinned immutable workflow snapshot
           if (existingExecution.workflow_snapshot) {
-            flow = typeof existingExecution.workflow_snapshot === 'string'
-              ? JSON.parse(existingExecution.workflow_snapshot)
-              : existingExecution.workflow_snapshot;
+            try {
+              flow = typeof existingExecution.workflow_snapshot === 'string'
+                ? JSON.parse(existingExecution.workflow_snapshot)
+                : existingExecution.workflow_snapshot;
+            } catch (jsonErr) {
+              flow = null;
+            }
           }
 
           if (!flow || !Array.isArray(flow.nodes) || flow.nodes.length === 0) {
@@ -1003,23 +1031,40 @@ export function createTrustedWorkerHandlers({
             throw new PermanentJobError(`Execution ${executionId} lacks valid pinned workflow snapshot`, 'INVALID_WORKFLOW_SNAPSHOT');
           }
 
-          // 8. Claim resume lease (60 seconds)
+          // Verify that snapshot version agrees with stored workflow_version
+          if (existingExecution.workflow_version != null && flow.version != null && Number(existingExecution.workflow_version) !== Number(flow.version)) {
+            console.error(`[WORKFLOW-RESUME] Execution ${executionId} workflow snapshot version (${flow.version}) conflicts with stored workflow_version (${existingExecution.workflow_version})`);
+            await client.query(`
+              UPDATE workflow_executions SET
+                status = 'failed',
+                last_error_code = 'INCONSISTENT_WORKFLOW_SNAPSHOT_VERSION',
+                finished_at = now(),
+                resume_lease_owner = NULL,
+                resume_lease_until = NULL,
+                updated_at = now()
+              WHERE agency_id = $1 AND location_id = $2 AND id = $3
+            `, [tenantId, locationId || tenantId, executionId]);
+            await client.query('COMMIT');
+            throw new PermanentJobError(`Execution ${executionId} has inconsistent snapshot version`, 'INCONSISTENT_WORKFLOW_SNAPSHOT_VERSION');
+          }
+
+          // 10. Claim resume lease (configurable duration, default 60s)
+          const leaseDurationSeconds = Math.max(1, Number(payload?.leaseDurationSeconds) || Number(process.env.OPERZA_WORKFLOW_RESUME_LEASE_SECONDS) || 60);
           await client.query(`
             UPDATE workflow_executions SET
               status = 'resuming',
               resume_lease_owner = $1,
-              resume_lease_until = now() + interval '60 seconds',
+              resume_lease_until = now() + ($5 || ' seconds')::interval,
               resume_started_at = now(),
               updated_at = now()
             WHERE agency_id = $2 AND location_id = $3 AND id = $4
-          `, [claimToken, tenantId, locationId || tenantId, executionId]);
+          `, [claimToken, tenantId, locationId || tenantId, executionId, String(leaseDurationSeconds)]);
 
-          if (!resumeNodeId && existingExecution.resume_node_id) {
-            resumeNodeId = existingExecution.resume_node_id;
-          }
+          // Authoritative resume position strictly from database execution record
+          resumeNodeId = existingExecution.resume_node_id || null;
 
           await client.query('COMMIT');
-          console.info(`[WORKFLOW-RESUME] Claimed lease for execution ${executionId} (token: ${claimToken}, recovery: ${isRecovery})`);
+          console.info(`[WORKFLOW-RESUME] Claimed lease for execution ${executionId} (token: ${claimToken}, recovery: ${isRecovery}, duration: ${leaseDurationSeconds}s)`);
         } catch (dbErr) {
           await client.query('ROLLBACK').catch(() => {});
           if (dbErr instanceof PermanentJobError) throw dbErr;
@@ -1075,8 +1120,55 @@ export function createTrustedWorkerHandlers({
       }
 
       // -----------------------------------------------------------------
-      // STAGE 2: Execute Graph Walk Outside DB Transaction
+      // STAGE 2: Execute Graph Walk Outside DB Transaction with Heartbeat
       // -----------------------------------------------------------------
+      const leaseDurationSeconds = Math.max(1, Number(payload?.leaseDurationSeconds) || Number(process.env.OPERZA_WORKFLOW_RESUME_LEASE_SECONDS) || 60);
+      const heartbeatIntervalMs = Math.max(50, Number(payload?.heartbeatIntervalMs) || Number(process.env.OPERZA_WORKFLOW_RESUME_HEARTBEAT_MS) || Math.min(leaseDurationSeconds * 250, 15000));
+      const abortController = new AbortController();
+      let executionLeaseLost = false;
+      let heartbeatTimer = null;
+      let heartbeatBusy = false;
+
+      if (pool) {
+        heartbeatTimer = setInterval(async () => {
+          if (executionLeaseLost || heartbeatBusy || abortController.signal.aborted) return;
+          heartbeatBusy = true;
+          try {
+            const renewClient = await pool.connect();
+            try {
+              await renewClient.query(
+                "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)",
+                [tenantId, locationId || tenantId]
+              );
+              const renewRes = await renewClient.query(`
+                UPDATE workflow_executions SET
+                  resume_lease_until = now() + ($1 || ' seconds')::interval,
+                  updated_at = now()
+                WHERE agency_id = $2 AND location_id = $3 AND id = $4
+                  AND status = 'resuming'
+                  AND resume_lease_owner = $5
+                  AND now() < resume_lease_until
+                RETURNING id
+              `, [String(leaseDurationSeconds), tenantId, locationId || tenantId, executionId, claimToken]);
+
+              if (renewRes.rowCount === 0) {
+                console.warn(`[WORKFLOW-RESUME] Heartbeat renewal affected 0 rows for execution ${executionId}. Lease lost.`);
+                executionLeaseLost = true;
+                abortController.abort();
+                if (heartbeatTimer) clearInterval(heartbeatTimer);
+              }
+            } finally {
+              renewClient.release();
+            }
+          } catch (hbErr) {
+            console.error(`[WORKFLOW-RESUME] Heartbeat error for execution ${executionId}:`, hbErr.message);
+          } finally {
+            heartbeatBusy = false;
+          }
+        }, heartbeatIntervalMs);
+        heartbeatTimer?.unref?.();
+      }
+
       const restoredVariables = {
         ...(existingExecution?.state || payload.state || {}),
         ...(payload.callbackData ? { callbackData: payload.callbackData } : {})
@@ -1092,18 +1184,27 @@ export function createTrustedWorkerHandlers({
       });
 
       const deps = {
+        signal: abortController.signal,
         execution: {
           id: executionId,
           agencyId: tenantId,
           locationId: locationId || tenantId,
           workflowId: existingExecution?.workflow_id || payload.workflowId,
+          actorId: existingExecution?.trigger_event?.actorId || payload.actorId || 'system_worker',
           mode: payload.mode || 'live',
           workflowVersion: existingExecution?.workflow_version || flow?.version || 1
         },
         initialVariables: restoredVariables,
         resumeNodeId,
         crmActions: payload.crmActions || realCrmActions,
-        providerExecutor: async ({ invocation, node, context }) => {
+        aiHandler: payload.aiHandler || (async () => ({ text: 'ok' })),
+        providerExecutor: async ({ invocation, node, context, signal }) => {
+          if (executionLeaseLost || abortController.signal.aborted || signal?.aborted) {
+            throw Object.assign(new Error(`Execution ${executionId} aborted: resume lease lost`), {
+              code: 'RESUME_LEASE_LOST',
+              retryable: true
+            });
+          }
           if (payload.mode === 'dry_run') {
             return { ok: true, simulated: true, providerAccepted: false };
           }
@@ -1143,7 +1244,8 @@ export function createTrustedWorkerHandlers({
             consent: structuredConsent,
             tenantId,
             locationId: locationId || tenantId,
-            actionHash: invocation.actionHash
+            actionHash: invocation.actionHash,
+            signal: abortController.signal
           });
           if (!dispatchRes.ok) {
             throw Object.assign(new Error(`Provider dispatch rejected: ${dispatchRes.code}`), { code: dispatchRes.code });
@@ -1156,11 +1258,29 @@ export function createTrustedWorkerHandlers({
       try {
         resumeResult = await walkGraph(allNodes, { ...triggerContext, ...restoredVariables }, null, deps);
       } catch (graphErr) {
+        if (executionLeaseLost || graphErr?.code === 'RESUME_LEASE_LOST' || abortController.signal.aborted) {
+          console.warn(`[WORKFLOW-RESUME] Graph walk aborted due to lease loss for ${executionId}`);
+          return {
+            status: 'lease_lost',
+            executionId,
+            message: 'Worker lost resume lease during graph walk'
+          };
+        }
         console.error(`[WORKFLOW-RESUME] Graph walk error on resume for ${executionId}:`, graphErr.message);
         resumeResult = {
           finalStatus: 'failed',
           variables: restoredVariables,
           timeline: [{ nodeId: resumeNodeId || waitNodeId, status: 'failed', error: graphErr.message }]
+        };
+      } finally {
+        if (heartbeatTimer) clearInterval(heartbeatTimer);
+      }
+
+      if (executionLeaseLost || abortController.signal.aborted) {
+        return {
+          status: 'lease_lost',
+          executionId,
+          message: 'Worker lost resume lease before persisting outcome'
         };
       }
 
