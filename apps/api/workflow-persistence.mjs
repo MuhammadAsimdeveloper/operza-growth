@@ -310,6 +310,7 @@ export async function loadAuthoritativeWorkflowExecution({
   let client;
   try {
     client = await pgPool.connect();
+    await client.query('BEGIN');
     await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [
       String(agencyId),
       String(locationId)
@@ -319,11 +320,17 @@ export async function loadAuthoritativeWorkflowExecution({
              current_node_id, resume_node_id, wait_generation, wait_type, retry_at,
              workflow_version, workflow_snapshot, state, attempts, last_error_code,
              resume_lease_owner, resume_lease_until, resume_started_at, resume_token,
-             finished_at, created_at, updated_at
+             recovery_epoch, finished_at, created_at, updated_at
       FROM workflow_executions
       WHERE agency_id = $1 AND location_id = $2 AND id = $3
     `, [agencyId, locationId, executionId]);
+    await client.query('COMMIT');
     return res.rows[0] || null;
+  } catch (err) {
+    if (client) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
+    throw err;
   } finally {
     if (client) {
       client.release();

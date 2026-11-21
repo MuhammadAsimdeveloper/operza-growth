@@ -874,6 +874,7 @@ export function createTrustedWorkerHandlers({
       const claimToken = `${effectiveWorkerId}_${crypto.randomUUID()}`;
       let flow = null;
       let existingExecution = null;
+      let currentRecoveryEpoch = null;
 
       if (pool) {
         // -----------------------------------------------------------------
@@ -891,7 +892,7 @@ export function createTrustedWorkerHandlers({
           const execRes = await client.query(`
             SELECT id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
                    wait_generation, wait_type, retry_at, workflow_version, workflow_snapshot, state,
-                   trigger_event, attempts, resume_lease_owner, resume_lease_until,
+                   trigger_event, attempts, resume_lease_owner, resume_lease_until, recovery_epoch,
                    (now() < resume_lease_until) AS is_lease_active,
                    (now() >= retry_at) AS is_due
             FROM workflow_executions
@@ -1050,21 +1051,25 @@ export function createTrustedWorkerHandlers({
 
           // 10. Claim resume lease (configurable duration, default 60s)
           const leaseDurationSeconds = Math.max(1, Number(payload?.leaseDurationSeconds) || Number(process.env.OPERZA_WORKFLOW_RESUME_LEASE_SECONDS) || 60);
-          await client.query(`
+          const claimRes = await client.query(`
             UPDATE workflow_executions SET
               status = 'resuming',
               resume_lease_owner = $1,
               resume_lease_until = now() + ($5 || ' seconds')::interval,
               resume_started_at = now(),
+              recovery_epoch = CASE WHEN $6 = true THEN COALESCE(recovery_epoch, 0) + 1 ELSE COALESCE(recovery_epoch, 0) END,
               updated_at = now()
             WHERE agency_id = $2 AND location_id = $3 AND id = $4
-          `, [claimToken, tenantId, locationId || tenantId, executionId, String(leaseDurationSeconds)]);
+            RETURNING recovery_epoch
+          `, [claimToken, tenantId, locationId || tenantId, executionId, String(leaseDurationSeconds), isRecovery]);
+
+          currentRecoveryEpoch = claimRes.rows.length > 0 ? Number(claimRes.rows[0].recovery_epoch) : null;
 
           // Authoritative resume position strictly from database execution record
           resumeNodeId = existingExecution.resume_node_id || null;
 
           await client.query('COMMIT');
-          console.info(`[WORKFLOW-RESUME] Claimed lease for execution ${executionId} (token: ${claimToken}, recovery: ${isRecovery}, duration: ${leaseDurationSeconds}s)`);
+          console.info(`[WORKFLOW-RESUME] Claimed lease for execution ${executionId} (token: ${claimToken}, recovery: ${isRecovery}, epoch: ${currentRecoveryEpoch}, duration: ${leaseDurationSeconds}s)`);
         } catch (dbErr) {
           await client.query('ROLLBACK').catch(() => {});
           if (dbErr instanceof PermanentJobError) throw dbErr;
@@ -1127,43 +1132,77 @@ export function createTrustedWorkerHandlers({
       const abortController = new AbortController();
       let executionLeaseLost = false;
       let heartbeatTimer = null;
-      let heartbeatBusy = false;
+      let inFlightHeartbeat = null;
+      let isStoppingHeartbeat = false;
+
+      const performHeartbeatRenewal = async () => {
+        if (executionLeaseLost || isStoppingHeartbeat || abortController.signal.aborted) {
+          return;
+        }
+        let renewClient = null;
+        try {
+          renewClient = await pool.connect();
+          await renewClient.query('BEGIN');
+          await renewClient.query(
+            "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)",
+            [tenantId, locationId || tenantId]
+          );
+          const renewRes = await renewClient.query(`
+            UPDATE workflow_executions SET
+              resume_lease_until = now() + ($1 || ' seconds')::interval,
+              updated_at = now()
+            WHERE agency_id = $2 AND location_id = $3 AND id = $4
+              AND status = 'resuming'
+              AND resume_lease_owner = $5
+              AND ($6::int IS NULL OR recovery_epoch = $6::int)
+              AND now() < resume_lease_until
+            RETURNING id
+          `, [String(leaseDurationSeconds), tenantId, locationId || tenantId, executionId, claimToken, currentRecoveryEpoch]);
+
+          if (renewRes.rowCount !== 1) {
+            console.warn(`[WORKFLOW-RESUME] Heartbeat renewal affected ${renewRes.rowCount} rows for execution ${executionId}. Lease lost.`);
+            await renewClient.query('ROLLBACK').catch(() => {});
+            executionLeaseLost = true;
+            abortController.abort();
+            if (heartbeatTimer) {
+              clearInterval(heartbeatTimer);
+              heartbeatTimer = null;
+            }
+            return;
+          }
+
+          await renewClient.query('COMMIT');
+        } catch (hbErr) {
+          console.error(`[WORKFLOW-RESUME] Heartbeat error for execution ${executionId}:`, hbErr.message);
+          if (renewClient) {
+            await renewClient.query('ROLLBACK').catch(() => {});
+          }
+          executionLeaseLost = true;
+          abortController.abort();
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
+          }
+        } finally {
+          if (renewClient) {
+            renewClient.release();
+          }
+        }
+      };
 
       if (pool) {
-        heartbeatTimer = setInterval(async () => {
-          if (executionLeaseLost || heartbeatBusy || abortController.signal.aborted) return;
-          heartbeatBusy = true;
-          try {
-            const renewClient = await pool.connect();
-            try {
-              await renewClient.query(
-                "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)",
-                [tenantId, locationId || tenantId]
-              );
-              const renewRes = await renewClient.query(`
-                UPDATE workflow_executions SET
-                  resume_lease_until = now() + ($1 || ' seconds')::interval,
-                  updated_at = now()
-                WHERE agency_id = $2 AND location_id = $3 AND id = $4
-                  AND status = 'resuming'
-                  AND resume_lease_owner = $5
-                  AND now() < resume_lease_until
-                RETURNING id
-              `, [String(leaseDurationSeconds), tenantId, locationId || tenantId, executionId, claimToken]);
-
-              if (renewRes.rowCount === 0) {
-                console.warn(`[WORKFLOW-RESUME] Heartbeat renewal affected 0 rows for execution ${executionId}. Lease lost.`);
-                executionLeaseLost = true;
-                abortController.abort();
-                if (heartbeatTimer) clearInterval(heartbeatTimer);
-              }
-            } finally {
-              renewClient.release();
+        heartbeatTimer = setInterval(() => {
+          if (executionLeaseLost || isStoppingHeartbeat || abortController.signal.aborted) {
+            if (heartbeatTimer) {
+              clearInterval(heartbeatTimer);
+              heartbeatTimer = null;
             }
-          } catch (hbErr) {
-            console.error(`[WORKFLOW-RESUME] Heartbeat error for execution ${executionId}:`, hbErr.message);
-          } finally {
-            heartbeatBusy = false;
+            return;
+          }
+          if (!inFlightHeartbeat) {
+            inFlightHeartbeat = performHeartbeatRenewal().finally(() => {
+              inFlightHeartbeat = null;
+            });
           }
         }, heartbeatIntervalMs);
         heartbeatTimer?.unref?.();
@@ -1273,7 +1312,15 @@ export function createTrustedWorkerHandlers({
           timeline: [{ nodeId: resumeNodeId || waitNodeId, status: 'failed', error: graphErr.message }]
         };
       } finally {
-        if (heartbeatTimer) clearInterval(heartbeatTimer);
+        isStoppingHeartbeat = true;
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = null;
+        }
+        if (inFlightHeartbeat) {
+          await inFlightHeartbeat.catch(() => {});
+          inFlightHeartbeat = null;
+        }
       }
 
       if (executionLeaseLost || abortController.signal.aborted) {
@@ -1298,7 +1345,7 @@ export function createTrustedWorkerHandlers({
 
           // Verify that this worker still owns the resume lease
           const leaseVerify = await client.query(`
-            SELECT id, status, wait_generation, resume_lease_owner,
+            SELECT id, status, wait_generation, resume_lease_owner, recovery_epoch,
                    (now() < resume_lease_until) AS is_lease_valid
             FROM workflow_executions
             WHERE agency_id = $1 AND location_id = $2 AND id = $3
@@ -1315,10 +1362,11 @@ export function createTrustedWorkerHandlers({
           const isLeaseValid = currentExec.is_lease_valid;
           const isStatusResuming = currentExec.status === 'resuming';
           const isGenMatch = Number(currentExec.wait_generation) === resumeGeneration;
+          const isEpochMatch = currentRecoveryEpoch == null || Number(currentExec.recovery_epoch) === currentRecoveryEpoch;
 
-          if (!isOwner || !isLeaseValid || !isStatusResuming || !isGenMatch) {
+          if (!isOwner || !isLeaseValid || !isStatusResuming || !isGenMatch || !isEpochMatch) {
             await client.query('ROLLBACK').catch(() => {});
-            console.error(`[WORKFLOW-RESUME] Lease lost for execution ${executionId} (owner: ${isOwner}, valid: ${isLeaseValid}, status: ${currentExec.status}, gen: ${currentExec.wait_generation})`);
+            console.error(`[WORKFLOW-RESUME] Lease lost for execution ${executionId} (owner: ${isOwner}, valid: ${isLeaseValid}, status: ${currentExec.status}, gen: ${currentExec.wait_generation}, epoch: ${isEpochMatch})`);
             return {
               status: 'lease_lost',
               executionId,
@@ -1334,7 +1382,7 @@ export function createTrustedWorkerHandlers({
             const nextResumeNodeId = resumeResult.resumeNodeId || nextWaitStep?.resumeNodeId || null;
             const nextGeneration = resumeGeneration + 1;
 
-            await client.query(`
+            const updRes = await client.query(`
               UPDATE workflow_executions SET
                 status = 'waiting',
                 current_node_id = $2,
@@ -1348,7 +1396,14 @@ export function createTrustedWorkerHandlers({
                 resume_started_at = NULL,
                 updated_at = now()
               WHERE agency_id = $7 AND location_id = $8 AND id = $1
-            `, [executionId, nextWaitNodeId, nextResumeNodeId, nextRetryAt, nextGeneration, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
+                AND resume_lease_owner = $9
+                AND ($10::int IS NULL OR recovery_epoch = $10::int)
+            `, [executionId, nextWaitNodeId, nextResumeNodeId, nextRetryAt, nextGeneration, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId, claimToken, currentRecoveryEpoch]);
+
+            if (updRes.rowCount !== 1) {
+              await client.query('ROLLBACK').catch(() => {});
+              return { status: 'lease_lost', executionId, message: 'Concurrent worker stole execution lease during persistence' };
+            }
 
             const nextIdemKey = `idem_${sha256([tenantId, locationId || tenantId, 'workflow_wait_resume', `${executionId}_${nextWaitNodeId}_gen_${nextGeneration}`])}`;
             const outboxId = crypto.randomUUID();
@@ -1390,7 +1445,7 @@ export function createTrustedWorkerHandlers({
               existingExecution?.workflow_id || payload.workflowId, pausedNodeId, pausedNodeId, actionHash, expiresAt, actionHash
             ]);
 
-            await client.query(`
+            const updRes = await client.query(`
               UPDATE workflow_executions SET
                 status = 'waiting_approval',
                 current_node_id = $2,
@@ -1401,7 +1456,14 @@ export function createTrustedWorkerHandlers({
                 resume_started_at = NULL,
                 updated_at = now()
               WHERE agency_id = $4 AND location_id = $5 AND id = $1
-            `, [executionId, pausedNodeId, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
+                AND resume_lease_owner = $6
+                AND ($7::int IS NULL OR recovery_epoch = $7::int)
+            `, [executionId, pausedNodeId, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId, claimToken, currentRecoveryEpoch]);
+
+            if (updRes.rowCount !== 1) {
+              await client.query('ROLLBACK').catch(() => {});
+              return { status: 'lease_lost', executionId, message: 'Concurrent worker stole execution lease during persistence' };
+            }
 
           } else if (resumeResult.finalStatus === 'waiting_webhook') {
             const webhookStep = resumeResult.waitingStep || resumeResult.timeline.find(t => t.status === 'waiting_webhook');
@@ -1410,7 +1472,7 @@ export function createTrustedWorkerHandlers({
             const resumeToken = webhookStep?.resumeToken || webhookStep?.result?.resumeToken || null;
             const expiresAt = webhookStep?.expiresAt || webhookStep?.result?.expiresAt || null;
 
-            await client.query(`
+            const updRes = await client.query(`
               UPDATE workflow_executions SET
                 status = 'waiting_webhook',
                 current_node_id = $2,
@@ -1424,10 +1486,17 @@ export function createTrustedWorkerHandlers({
                 resume_started_at = NULL,
                 updated_at = now()
               WHERE agency_id = $7 AND location_id = $8 AND id = $1
-            `, [executionId, webhookNodeId, nextResumeNodeId, resumeToken, expiresAt, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
+                AND resume_lease_owner = $9
+                AND ($10::int IS NULL OR recovery_epoch = $10::int)
+            `, [executionId, webhookNodeId, nextResumeNodeId, resumeToken, expiresAt, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId, claimToken, currentRecoveryEpoch]);
+
+            if (updRes.rowCount !== 1) {
+              await client.query('ROLLBACK').catch(() => {});
+              return { status: 'lease_lost', executionId, message: 'Concurrent worker stole execution lease during persistence' };
+            }
 
           } else if (resumeResult.finalStatus === 'completed') {
-            await client.query(`
+            const updRes = await client.query(`
               UPDATE workflow_executions SET
                 status = 'completed',
                 current_node_id = NULL,
@@ -1442,11 +1511,18 @@ export function createTrustedWorkerHandlers({
                 state = $2::jsonb,
                 updated_at = now()
               WHERE agency_id = $3 AND location_id = $4 AND id = $1
-            `, [executionId, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
+                AND resume_lease_owner = $5
+                AND ($6::int IS NULL OR recovery_epoch = $6::int)
+            `, [executionId, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId, claimToken, currentRecoveryEpoch]);
+
+            if (updRes.rowCount !== 1) {
+              await client.query('ROLLBACK').catch(() => {});
+              return { status: 'lease_lost', executionId, message: 'Concurrent worker stole execution lease during persistence' };
+            }
 
           } else if (resumeResult.finalStatus === 'failed') {
             const failedStep = resumeResult.timeline.find(t => t.status === 'failed');
-            await client.query(`
+            const updRes = await client.query(`
               UPDATE workflow_executions SET
                 status = 'failed',
                 last_error_code = $2,
@@ -1457,11 +1533,18 @@ export function createTrustedWorkerHandlers({
                 state = $3::jsonb,
                 updated_at = now()
               WHERE agency_id = $4 AND location_id = $5 AND id = $1
-            `, [executionId, failedStep?.error || 'FAILED', JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
+                AND resume_lease_owner = $6
+                AND ($7::int IS NULL OR recovery_epoch = $7::int)
+            `, [executionId, failedStep?.error || 'FAILED', JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId, claimToken, currentRecoveryEpoch]);
+
+            if (updRes.rowCount !== 1) {
+              await client.query('ROLLBACK').catch(() => {});
+              return { status: 'lease_lost', executionId, message: 'Concurrent worker stole execution lease during persistence' };
+            }
 
           } else {
             // Unknown status — fail closed!
-            await client.query(`
+            const updRes = await client.query(`
               UPDATE workflow_executions SET
                 status = 'failed',
                 last_error_code = 'UNKNOWN_WORKFLOW_OUTCOME',
@@ -1472,7 +1555,14 @@ export function createTrustedWorkerHandlers({
                 state = $2::jsonb,
                 updated_at = now()
               WHERE agency_id = $3 AND location_id = $4 AND id = $1
-            `, [executionId, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
+                AND resume_lease_owner = $5
+                AND ($6::int IS NULL OR recovery_epoch = $6::int)
+            `, [executionId, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId, claimToken, currentRecoveryEpoch]);
+
+            if (updRes.rowCount !== 1) {
+              await client.query('ROLLBACK').catch(() => {});
+              return { status: 'lease_lost', executionId, message: 'Concurrent worker stole execution lease during persistence' };
+            }
           }
 
           // Persist executed steps

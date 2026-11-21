@@ -41,6 +41,9 @@ test('Durable Workflow Recovery, Resume Leases & Execution Ownership', async (t)
   const { default: pg } = await import('pg');
   const pool = new pg.Pool({ connectionString: dbUrl, max: 20 });
 
+  let workerPool = null;
+  let appPool = null;
+
   const tenantId = randomUUID();
   const locationId = randomUUID();
   const workflowId = randomUUID();
@@ -56,9 +59,39 @@ test('Durable Workflow Recovery, Resume Leases & Execution Ownership', async (t)
       await sleep(300);
     }
     try { rmSync(apiStorePath, { force: true }); } catch {}
+    if (workerPool) await workerPool.end().catch(() => {});
+    if (appPool) await appPool.end().catch(() => {});
     await pool.end();
     await pgServer.stop();
   });
+
+  async function verifyRoleSecurityPosture(rolePool, expectedRole) {
+    const client = await rolePool.connect();
+    try {
+      const res = await client.query(`
+        SELECT
+          current_user,
+          (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS is_superuser,
+          (SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user) AS bypass_rls,
+          (SELECT relrowsecurity FROM pg_class WHERE relname = 'workflow_executions') AS rls_enabled,
+          (SELECT relforcerowsecurity FROM pg_class WHERE relname = 'workflow_executions') AS force_rls_enabled,
+          has_table_privilege(current_user, 'workflow_executions', 'SELECT') AS can_select,
+          has_table_privilege(current_user, 'workflow_executions', 'UPDATE') AS can_update,
+          has_table_privilege(current_user, 'workflow_executions', 'INSERT') AS can_insert
+      `);
+      const row = res.rows[0];
+      assert.equal(row.current_user, expectedRole, `current_user must be ${expectedRole}`);
+      assert.equal(row.is_superuser, false, `${expectedRole} must NOT be a superuser`);
+      assert.equal(row.bypass_rls, false, `${expectedRole} must NOT have BYPASSRLS`);
+      assert.equal(row.rls_enabled, true, 'workflow_executions must have RLS enabled');
+      assert.equal(row.force_rls_enabled, true, 'workflow_executions must have FORCE RLS enabled');
+      assert.equal(row.can_select, true, `${expectedRole} must have SELECT privilege on workflow_executions`);
+      assert.equal(row.can_update, true, `${expectedRole} must have UPDATE privilege on workflow_executions`);
+      assert.equal(row.can_insert, true, `${expectedRole} must have INSERT privilege on workflow_executions`);
+    } finally {
+      client.release();
+    }
+  }
 
   // =========================================================================
   // TEST 1: Schema Setup & All Migrations (001 - 030)
@@ -115,6 +148,17 @@ test('Durable Workflow Recovery, Resume Leases & Execution Ownership', async (t)
     assert.equal(fnRes.rows.length, 1);
     assert.equal(fnRes.rows[0].owner, 'operza_auth_definer');
 
+    // Create dedicated connection pools for least-privilege roles
+    const workerUrl = new URL(dbUrl);
+    workerUrl.username = 'operza_worker';
+    workerUrl.password = 'operza_worker_secret';
+    workerPool = new pg.Pool({ connectionString: workerUrl.toString(), max: 20 });
+
+    const appUrl = new URL(dbUrl);
+    appUrl.username = 'operza_app';
+    appUrl.password = 'operza_app_secret';
+    appPool = new pg.Pool({ connectionString: appUrl.toString(), max: 20 });
+
     // Create test tenant fixtures
     await pool.query(`
       INSERT INTO agencies (id, name, slug)
@@ -130,15 +174,17 @@ test('Durable Workflow Recovery, Resume Leases & Execution Ownership', async (t)
   });
 
   // =========================================================================
-  // TEST 2: Resume lease heartbeat renewal keeps long graph execution valid
+  // TEST 2A: Valid worker heartbeat (operza_worker role under RLS)
   // =========================================================================
-  await t.test('2. Resume lease heartbeat renewal keeps long graph execution valid', async () => {
+  await t.test('2A. Valid worker heartbeat: operza_worker role with RLS keeps long execution valid', async () => {
+    await verifyRoleSecurityPosture(workerPool, 'operza_worker');
+
     const execId = randomUUID();
     const flowId = randomUUID();
 
     const flow = {
       id: flowId,
-      name: 'Heartbeat Renewal Flow',
+      name: 'Worker Role Heartbeat Renewal Flow',
       version: 1,
       nodes: [
         { id: 'w1', type: 'wait', config: { duration: 1 }, next: 'long_action' },
@@ -152,19 +198,27 @@ test('Durable Workflow Recovery, Resume Leases & Execution Ownership', async (t)
       ON CONFLICT DO NOTHING
     `, [flowId, tenantId, locationId, flow.name, JSON.stringify(flow.nodes)]);
 
-    await pool.query(`
-      INSERT INTO workflow_executions (
-        id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
-        wait_generation, wait_type, retry_at, workflow_version, workflow_snapshot, state,
-        created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, 'waiting', 'w1', 'long_action', 1, 'timed', now(), 1, $5::jsonb, '{}'::jsonb, now(), now())
-    `, [execId, tenantId, locationId, flowId, JSON.stringify(flow)]);
+    const workerClient = await workerPool.connect();
+    try {
+      await workerClient.query('BEGIN');
+      await workerClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await workerClient.query(`
+        INSERT INTO workflow_executions (
+          id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
+          wait_generation, wait_type, retry_at, workflow_version, workflow_snapshot, state,
+          created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, 'waiting', 'w1', 'long_action', 1, 'timed', now(), 1, $5::jsonb, '{}'::jsonb, now(), now())
+      `, [execId, tenantId, locationId, flowId, JSON.stringify(flow)]);
+      await workerClient.query('COMMIT');
+    } finally {
+      workerClient.release();
+    }
 
-    const handlers = createTrustedWorkerHandlers({ pool });
+    const handlers = createTrustedWorkerHandlers({ pool: workerPool });
 
     // Use short leaseDurationSeconds (1s) and heartbeatIntervalMs (150ms).
     // The aiHandler takes 1.5s total (> 1s lease duration).
-    // Heartbeat will renew lease periodically, allowing execution to complete!
+    // Heartbeat will renew lease periodically under operza_worker RLS, allowing execution to complete!
     const res = await handlers['workflow.wait.resume']({
       tenantId,
       locationId,
@@ -177,14 +231,85 @@ test('Durable Workflow Recovery, Resume Leases & Execution Ownership', async (t)
       requestType: 'manual',
       aiHandler: async () => {
         await sleep(1500); // 1.5s sleep > 1s lease duration
-        return { text: 'heartbeat_ok' };
+        return { text: 'heartbeat_worker_ok' };
       }
     }, { workerId: 'worker_heartbeat_long' });
 
-    assert.equal(res.status, 'completed', 'Execution must complete because heartbeat kept lease alive');
+    assert.equal(res.status, 'completed', 'Execution must complete because heartbeat kept lease alive under operza_worker');
 
     const execAfter = await loadAuthoritativeWorkflowExecution({
-      pgPool: pool,
+      pgPool: workerPool,
+      agencyId: tenantId,
+      locationId,
+      executionId: execId
+    });
+    assert.equal(execAfter.status, 'completed');
+    assert.equal(execAfter.resume_lease_owner, null);
+  });
+
+  // =========================================================================
+  // TEST 2B: App-role heartbeat (operza_app role under RLS)
+  // =========================================================================
+  await t.test('2B. App-role heartbeat: operza_app role with RLS permits correctly scoped renewal', async () => {
+    await verifyRoleSecurityPosture(appPool, 'operza_app');
+
+    const execId = randomUUID();
+    const flowId = randomUUID();
+
+    const flow = {
+      id: flowId,
+      name: 'App Role Heartbeat Renewal Flow',
+      version: 1,
+      nodes: [
+        { id: 'w1', type: 'wait', config: { duration: 1 }, next: 'long_action_app' },
+        { id: 'long_action_app', type: 'ai_agent', config: { prompt: 'long app work' } }
+      ]
+    };
+
+    await pool.query(`
+      INSERT INTO workflow_definitions (id, agency_id, location_id, name, status, trigger_type, nodes, version)
+      VALUES ($1, $2, $3, $4, 'published', 'manual', $5::jsonb, 1)
+      ON CONFLICT DO NOTHING
+    `, [flowId, tenantId, locationId, flow.name, JSON.stringify(flow.nodes)]);
+
+    const appClient = await appPool.connect();
+    try {
+      await appClient.query('BEGIN');
+      await appClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await appClient.query(`
+        INSERT INTO workflow_executions (
+          id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
+          wait_generation, wait_type, retry_at, workflow_version, workflow_snapshot, state,
+          created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, 'waiting', 'w1', 'long_action_app', 1, 'timed', now(), 1, $5::jsonb, '{}'::jsonb, now(), now())
+      `, [execId, tenantId, locationId, flowId, JSON.stringify(flow)]);
+      await appClient.query('COMMIT');
+    } finally {
+      appClient.release();
+    }
+
+    const handlers = createTrustedWorkerHandlers({ pool: appPool });
+
+    const res = await handlers['workflow.wait.resume']({
+      tenantId,
+      locationId,
+      executionId: execId,
+      waitNodeId: 'w1',
+      resumeNodeId: 'long_action_app',
+      resumeGeneration: 1,
+      leaseDurationSeconds: 1,
+      heartbeatIntervalMs: 150,
+      requestType: 'manual',
+      aiHandler: async () => {
+        await sleep(1200); // 1.2s sleep > 1s lease duration
+        return { text: 'heartbeat_app_ok' };
+      }
+    }, { workerId: 'app_heartbeat_worker' });
+
+    assert.equal(res.status, 'completed', 'Execution must complete because heartbeat kept lease alive under operza_app');
+
+    const execAfter = await loadAuthoritativeWorkflowExecution({
+      pgPool: appPool,
       agencyId: tenantId,
       locationId,
       executionId: execId
@@ -196,7 +321,9 @@ test('Durable Workflow Recovery, Resume Leases & Execution Ownership', async (t)
   // =========================================================================
   // TEST 3: Heartbeat renewal fails when owner changes; aborts stale execution
   // =========================================================================
-  await t.test('3. Heartbeat renewal fails when owner changes; aborts stale execution', async () => {
+  await t.test('3. Lease ownership changed: heartbeat renewal affects 0 rows and aborts execution', async () => {
+    await verifyRoleSecurityPosture(workerPool, 'operza_worker');
+
     const execId = randomUUID();
     const flowId = randomUUID();
 
@@ -216,25 +343,41 @@ test('Durable Workflow Recovery, Resume Leases & Execution Ownership', async (t)
       ON CONFLICT DO NOTHING
     `, [flowId, tenantId, locationId, flow.name, JSON.stringify(flow.nodes)]);
 
-    await pool.query(`
-      INSERT INTO workflow_executions (
-        id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
-        wait_generation, wait_type, retry_at, workflow_version, workflow_snapshot, state,
-        created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, 'waiting', 'w1', 'stolen_action', 1, 'timed', now(), 1, $5::jsonb, '{}'::jsonb, now(), now())
-    `, [execId, tenantId, locationId, flowId, JSON.stringify(flow)]);
+    const workerClient = await workerPool.connect();
+    try {
+      await workerClient.query('BEGIN');
+      await workerClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await workerClient.query(`
+        INSERT INTO workflow_executions (
+          id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
+          wait_generation, wait_type, retry_at, workflow_version, workflow_snapshot, state,
+          created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, 'waiting', 'w1', 'stolen_action', 1, 'timed', now(), 1, $5::jsonb, '{}'::jsonb, now(), now())
+      `, [execId, tenantId, locationId, flowId, JSON.stringify(flow)]);
+      await workerClient.query('COMMIT');
+    } finally {
+      workerClient.release();
+    }
 
-    const handlers = createTrustedWorkerHandlers({ pool });
+    const handlers = createTrustedWorkerHandlers({ pool: workerPool });
 
     // While worker is executing aiHandler (which sleeps 600ms), steal lease after 150ms
     setTimeout(async () => {
       try {
-        await pool.query(`
-          UPDATE workflow_executions
-          SET resume_lease_owner = 'worker_thief',
-              resume_lease_until = now() + interval '60 seconds'
-          WHERE id = $1
-        `, [execId]);
+        const thiefClient = await pool.connect();
+        try {
+          await thiefClient.query('BEGIN');
+          await thiefClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+          await thiefClient.query(`
+            UPDATE workflow_executions
+            SET resume_lease_owner = 'worker_thief',
+                resume_lease_until = now() + interval '60 seconds'
+            WHERE id = $1
+          `, [execId]);
+          await thiefClient.query('COMMIT');
+        } finally {
+          thiefClient.release();
+        }
       } catch {}
     }, 150);
 
@@ -259,6 +402,241 @@ test('Durable Workflow Recovery, Resume Leases & Execution Ownership', async (t)
     // Confirm database record was NOT overwritten by the victim
     const execCheck = await pool.query('SELECT status, resume_lease_owner FROM workflow_executions WHERE id = $1', [execId]);
     assert.equal(execCheck.rows[0].resume_lease_owner, 'worker_thief', 'Victim did not overwrite new owner');
+  });
+
+  // =========================================================================
+  // TEST 3D: Database heartbeat error fails closed
+  // =========================================================================
+  await t.test('3D. Database heartbeat error: worker fails closed and stops traversal', async () => {
+    await verifyRoleSecurityPosture(workerPool, 'operza_worker');
+
+    const execId = randomUUID();
+    const flowId = randomUUID();
+
+    const flow = {
+      id: flowId,
+      name: 'Heartbeat Error Flow',
+      version: 1,
+      nodes: [
+        { id: 'w1', type: 'wait', config: { duration: 1 }, next: 'step1' },
+        { id: 'step1', type: 'ai_agent', config: { prompt: 'step1 work' }, next: 'step2' },
+        { id: 'step2', type: 'set_variable', config: { name: 'step2_reached', value: true } }
+      ]
+    };
+
+    await pool.query(`
+      INSERT INTO workflow_definitions (id, agency_id, location_id, name, status, trigger_type, nodes, version)
+      VALUES ($1, $2, $3, $4, 'published', 'manual', $5::jsonb, 1)
+      ON CONFLICT DO NOTHING
+    `, [flowId, tenantId, locationId, flow.name, JSON.stringify(flow.nodes)]);
+
+    const workerClient = await workerPool.connect();
+    try {
+      await workerClient.query('BEGIN');
+      await workerClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await workerClient.query(`
+        INSERT INTO workflow_executions (
+          id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
+          wait_generation, wait_type, retry_at, workflow_version, workflow_snapshot, state,
+          created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, 'waiting', 'w1', 'step1', 1, 'timed', now(), 1, $5::jsonb, '{}'::jsonb, now(), now())
+      `, [execId, tenantId, locationId, flowId, JSON.stringify(flow)]);
+      await workerClient.query('COMMIT');
+    } finally {
+      workerClient.release();
+    }
+
+    // Pool wrapper that throws on heartbeat lease renewal
+    const failingWorkerPool = {
+      async connect() {
+        const client = await workerPool.connect();
+        const origQuery = client.query;
+        const origRelease = client.release;
+        client.query = async (sql, params) => {
+          if (typeof sql === 'string' && sql.includes('recovery_epoch = $6')) {
+            throw new Error('Simulated database heartbeat network failure');
+          }
+          return origQuery.call(client, sql, params);
+        };
+        client.release = (err) => {
+          client.query = origQuery;
+          client.release = origRelease;
+          return origRelease.call(client, err);
+        };
+        return client;
+      }
+    };
+
+    const handlers = createTrustedWorkerHandlers({ pool: failingWorkerPool });
+
+    const res = await handlers['workflow.wait.resume']({
+      tenantId,
+      locationId,
+      executionId: execId,
+      waitNodeId: 'w1',
+      resumeNodeId: 'step1',
+      resumeGeneration: 1,
+      leaseDurationSeconds: 1,
+      heartbeatIntervalMs: 80,
+      requestType: 'manual',
+      aiHandler: async () => {
+        await sleep(400); // Trigger heartbeat during step1
+        return { text: 'step1_done' };
+      }
+    }, { workerId: 'worker_hb_fail' });
+
+    assert.equal(res.status, 'lease_lost', 'Must report lease_lost when database heartbeat fails');
+
+    // Confirm step2 was NEVER executed and status was not marked completed
+    const execCheck = await pool.query('SELECT status, state FROM workflow_executions WHERE id = $1', [execId]);
+    assert.notEqual(execCheck.rows[0].status, 'completed', 'Execution must NOT be completed');
+    assert.equal(execCheck.rows[0].state?.step2_reached, undefined, 'Step 2 must not have executed');
+  });
+
+  // =========================================================================
+  // TEST 3E: Tenant context isolation & RLS enforcement
+  // =========================================================================
+  await t.test('3E. Tenant context isolation: no leakage across transactions & fail closed without context', async () => {
+    await verifyRoleSecurityPosture(workerPool, 'operza_worker');
+
+    const execId = randomUUID();
+    const otherTenantId = randomUUID();
+    const otherLocationId = randomUUID();
+
+    // Create other tenant fixtures
+    await pool.query(`
+      INSERT INTO agencies (id, name, slug) VALUES ($1, 'Other Agency', $2) ON CONFLICT DO NOTHING
+    `, [otherTenantId, `other-${otherTenantId}`]);
+    await pool.query(`
+      INSERT INTO locations (id, agency_id, name) VALUES ($1, $2, 'Other Loc') ON CONFLICT DO NOTHING
+    `, [otherLocationId, otherTenantId]);
+
+    // Insert target execution for tenantId/locationId
+    const test3eFlowId = randomUUID();
+    await pool.query(`
+      INSERT INTO workflow_definitions (id, agency_id, location_id, name, status, trigger_type, nodes, version)
+      VALUES ($1, $2, $3, 'Test 3E Flow', 'published', 'manual', '[]'::jsonb, 1)
+      ON CONFLICT DO NOTHING
+    `, [test3eFlowId, tenantId, locationId]);
+
+    await pool.query(`
+      INSERT INTO workflow_executions (
+        id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
+        wait_generation, wait_type, retry_at, workflow_version, workflow_snapshot, state,
+        resume_lease_owner, resume_lease_until, created_at, updated_at
+      ) VALUES ($1, $2, $3, $4, 'resuming', 'w1', 'step1', 1, 'timed', now(), 1, '{}'::jsonb, '{}'::jsonb, 'owner1', now() + interval '60s', now(), now())
+    `, [execId, tenantId, locationId, test3eFlowId]);
+
+    const client = await workerPool.connect();
+    try {
+      // 1. Transaction with tenant context: visible during transaction
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      const visibleCheck = await client.query("SELECT current_setting('app.agency_id', true) AS ag, current_setting('app.location_id', true) AS loc");
+      assert.equal(visibleCheck.rows[0].ag, tenantId);
+      assert.equal(visibleCheck.rows[0].loc, locationId);
+      await client.query('COMMIT');
+
+      // 2. Next transaction on SAME connection: settings must NOT leak!
+      await client.query('BEGIN');
+      const leakedCheck = await client.query("SELECT nullif(current_setting('app.agency_id', true), '') AS ag, nullif(current_setting('app.location_id', true), '') AS loc");
+      assert.equal(leakedCheck.rows[0].ag, null, 'Agency setting must not leak across transactions on reused connection');
+      assert.equal(leakedCheck.rows[0].loc, null, 'Location setting must not leak across transactions on reused connection');
+
+      // 3. Attempt update with missing context: affects 0 rows due to RLS!
+      const noContextUpd = await client.query(`
+        UPDATE workflow_executions SET resume_lease_until = now() + interval '120s' WHERE id = $1 RETURNING id
+      `, [execId]);
+      assert.equal(noContextUpd.rowCount, 0, 'Update without tenant context must affect 0 rows under RLS');
+      await client.query('ROLLBACK');
+
+      // 4. Attempt update with other tenant context: affects 0 rows due to RLS!
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [otherTenantId, otherLocationId]);
+      const otherContextUpd = await client.query(`
+        UPDATE workflow_executions SET resume_lease_until = now() + interval '120s' WHERE id = $1 RETURNING id
+      `, [execId]);
+      assert.equal(otherContextUpd.rowCount, 0, 'Cross-tenant update must affect 0 rows under RLS');
+      await client.query('ROLLBACK');
+    } finally {
+      client.release();
+    }
+  });
+
+  // =========================================================================
+  // TEST 3G: Heartbeat / Final-Persist Race Safety
+  // =========================================================================
+  await t.test('3G. Heartbeat/final-persist race: in-flight heartbeat settles cleanly before Stage 3 persistence', async () => {
+    await verifyRoleSecurityPosture(workerPool, 'operza_worker');
+
+    const execId = randomUUID();
+    const flowId = randomUUID();
+
+    const flow = {
+      id: flowId,
+      name: 'Race Safe Flow',
+      version: 1,
+      nodes: [
+        { id: 'w1', type: 'wait', config: { duration: 1 }, next: 'race_action' },
+        { id: 'race_action', type: 'ai_agent', config: { prompt: 'quick action' } }
+      ]
+    };
+
+    await pool.query(`
+      INSERT INTO workflow_definitions (id, agency_id, location_id, name, status, trigger_type, nodes, version)
+      VALUES ($1, $2, $3, $4, 'published', 'manual', $5::jsonb, 1)
+      ON CONFLICT DO NOTHING
+    `, [flowId, tenantId, locationId, flow.name, JSON.stringify(flow.nodes)]);
+
+    const workerClient = await workerPool.connect();
+    try {
+      await workerClient.query('BEGIN');
+      await workerClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await workerClient.query(`
+        INSERT INTO workflow_executions (
+          id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
+          wait_generation, wait_type, retry_at, workflow_version, workflow_snapshot, state,
+          created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, 'waiting', 'w1', 'race_action', 1, 'timed', now(), 1, $5::jsonb, '{}'::jsonb, now(), now())
+      `, [execId, tenantId, locationId, flowId, JSON.stringify(flow)]);
+      await workerClient.query('COMMIT');
+    } finally {
+      workerClient.release();
+    }
+
+    const handlers = createTrustedWorkerHandlers({ pool: workerPool });
+
+    // Fast heartbeat interval (50ms), action finishes in 120ms while heartbeat is firing
+    const res = await handlers['workflow.wait.resume']({
+      tenantId,
+      locationId,
+      executionId: execId,
+      waitNodeId: 'w1',
+      resumeNodeId: 'race_action',
+      resumeGeneration: 1,
+      leaseDurationSeconds: 2,
+      heartbeatIntervalMs: 50,
+      requestType: 'manual',
+      aiHandler: async () => {
+        await sleep(120);
+        return { text: 'race_done' };
+      }
+    }, { workerId: 'worker_race_test' });
+
+    assert.equal(res.status, 'completed', 'Execution must complete cleanly without racing');
+
+    const execAfter = await loadAuthoritativeWorkflowExecution({
+      pgPool: workerPool,
+      agencyId: tenantId,
+      locationId,
+      executionId: execId
+    });
+    assert.equal(execAfter.status, 'completed');
+    assert.equal(execAfter.resume_lease_owner, null);
+
+    // Verify all connections returned to pool
+    await sleep(100);
+    assert.equal(workerPool.waitingCount, 0, 'No queries should be waiting for connection');
   });
 
   // =========================================================================
@@ -426,6 +804,26 @@ test('Durable Workflow Recovery, Resume Leases & Execution Ownership', async (t)
     assert.notEqual(outboxRow.rows[0].status, 'delivered', 'Job must NOT be marked delivered on lease_lost');
     assert.equal(outboxRow.rows[0].status, 'pending', 'Job must remain pending for retry/recovery');
     assert.equal(outboxRow.rows[0].last_error_code, 'RESUME_LEASE_LOST');
+
+    // Scenario F: Verify a subsequent worker can recover and deliver the job once available
+    // Make job available immediately for recovery claim
+    await pool.query("UPDATE workflow_outbox SET available_at = now() - interval '1 second' WHERE id = $1", [jobId]);
+
+    const recoverHandlers = {
+      'workflow.test.lease_lost_event': async () => {
+        return { status: 'completed' };
+      }
+    };
+    const recoveryBatch = await runOutboxBatch({
+      repository: outboxRepo,
+      handlers: recoverHandlers,
+      workerId: 'worker_lease_recovery',
+      batchSize: 1
+    });
+    assert.equal(recoveryBatch.processed, 1);
+    assert.equal(recoveryBatch.results[0].status, 'delivered');
+    const outboxDelivered = await pool.query('SELECT status FROM workflow_outbox WHERE id = $1', [jobId]);
+    assert.equal(outboxDelivered.rows[0].status, 'delivered');
   });
 
   // =========================================================================
