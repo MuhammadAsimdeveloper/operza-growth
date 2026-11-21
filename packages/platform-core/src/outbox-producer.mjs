@@ -46,6 +46,7 @@ export async function produceWorkflowTriggerEvent({
   tenantId,
   locationId = 'default',
   workflowId,
+  executionId,
   triggerType = 'manual',
   payload = {},
   correlationId
@@ -63,24 +64,28 @@ export async function produceWorkflowTriggerEvent({
     tenantId,
     locationId,
     scope: 'workflow_trigger',
-    uniqueEntityId: `${workflowId}_${triggerType}`,
+    uniqueEntityId: executionId ? `${workflowId}_${triggerType}_${executionId}` : `${workflowId}_${triggerType}`,
     payloadHash
   });
+
+  const outboxPayload = {
+    tenantId,
+    locationId,
+    workflowId,
+    ...(executionId ? { executionId } : {}),
+    triggerType,
+    data: cleanPayload,
+    correlationId: correlationId || `corr_${crypto.randomUUID()}`,
+    enqueuedAt: new Date().toISOString()
+  };
 
   return repository.enqueue({
     tenantId,
     locationId,
+    executionId: executionId || null,
     eventType: 'workflow.trigger.enqueued',
     idempotencyKey,
-    payload: {
-      tenantId,
-      locationId,
-      workflowId,
-      triggerType,
-      data: cleanPayload,
-      correlationId: correlationId || `corr_${crypto.randomUUID()}`,
-      enqueuedAt: new Date().toISOString()
-    }
+    payload: outboxPayload
   });
 }
 
@@ -187,7 +192,9 @@ export async function produceWorkflowWaitResumeEvent({
   resumeNodeId,
   resumeGeneration = 1,
   availableAt,
-  correlationId
+  correlationId,
+  requestType = 'scheduled',
+  callbackData = null
 }) {
   if (!repository || typeof repository.enqueue !== 'function') {
     throw new TypeError('A valid outbox repository is required');
@@ -221,6 +228,8 @@ export async function produceWorkflowWaitResumeEvent({
       waitNodeId,
       resumeNodeId: resumeNodeId || null,
       resumeGeneration: generationNumber,
+      requestType,
+      callbackData,
       correlationId: correlationId || `corr_${crypto.randomUUID()}`,
       enqueuedAt: new Date().toISOString()
     }

@@ -36,7 +36,7 @@ try {
   await run('node', ['packages/db/scripts/wait-for-postgres.mjs']);
 
   // Step 1: Run migration runner
-  console.log('\n--- STEP 1: Running Migration Runner (001-028) ---');
+  console.log('\n--- STEP 1: Running Migration Runner (001-029) ---');
   await run('node', ['packages/db/scripts/migrate.mjs']);
 
   // Step 2: Run @operza/db tests with real PostgreSQL
@@ -48,6 +48,7 @@ try {
   await run('node', [
     '--test',
     'apps/api/test/workflow-wait-lifecycle.test.mjs',
+    'apps/api/test/workflow-recovery-and-leases.test.mjs',
     'apps/api/test/workflow-persistence-reliability.test.mjs',
     'apps/api/test/durable-workflow-and-postgres.test.mjs',
     'apps/api/test/auth-postgresql-authority.test.mjs',

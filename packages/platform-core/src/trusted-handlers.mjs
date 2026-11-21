@@ -257,6 +257,21 @@ export function createTrustedWorkerHandlers({
             [tenantId, locationId || tenantId]
           );
 
+          // Check if execution already exists in DB (e.g. pre-initialized by API)
+          const existingExecRes = await client.query(`
+            SELECT id, workflow_version, workflow_snapshot, status
+            FROM workflow_executions
+            WHERE agency_id = $1 AND location_id = $2 AND id = $3
+            FOR UPDATE
+          `, [tenantId, locationId || tenantId, executionId]);
+
+          if (existingExecRes.rows.length > 0 && existingExecRes.rows[0].workflow_snapshot) {
+            const existingSnapshot = typeof existingExecRes.rows[0].workflow_snapshot === 'string'
+              ? JSON.parse(existingExecRes.rows[0].workflow_snapshot)
+              : existingExecRes.rows[0].workflow_snapshot;
+            flow = existingSnapshot;
+          }
+
           if (!flow) {
             const defRes = await client.query(
               'SELECT id, agency_id, location_id, name, status, trigger_type, trigger_config, nodes, version FROM workflow_definitions WHERE agency_id = $1 AND id = $2',
@@ -281,16 +296,39 @@ export function createTrustedWorkerHandlers({
             throw new PermanentJobError(`Workflow definition ${workflowId} not found in database`, 'WORKFLOW_NOT_FOUND');
           }
 
-          // Initialize execution in PostgreSQL
+          const flowVersion = Number.isInteger(flow.version) && flow.version > 0 ? flow.version : 1;
+          const cleanSnapshot = {
+            id: flow.id,
+            name: flow.name || 'Untitled Workflow',
+            version: flowVersion,
+            triggerType: flow.triggerType || flow.trigger_type || 'manual',
+            triggerConfig: flow.triggerConfig || flow.trigger_config || {},
+            nodes: Array.isArray(flow.nodes) ? flow.nodes.map(n => {
+              const cleanNode = { ...n };
+              if (cleanNode.config) {
+                cleanNode.config = { ...cleanNode.config };
+                delete cleanNode.config.apiKey;
+                delete cleanNode.config.secret;
+                delete cleanNode.config.token;
+                delete cleanNode.config.password;
+              }
+              return cleanNode;
+            }) : []
+          };
+
+          // Initialize execution in PostgreSQL with pinned version and snapshot
           await client.query(`
             INSERT INTO workflow_executions (
               id, agency_id, location_id, workflow_id, status, trigger_event,
+              workflow_version, workflow_snapshot,
               worker_lease_id, heartbeat_at, attempts, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, 'running', $5::jsonb, $6, now(), 1, now(), now())
+            ) VALUES ($1, $2, $3, $4, 'running', $5::jsonb, $6, $7::jsonb, $8, now(), 1, now(), now())
             ON CONFLICT (agency_id, location_id, id) DO UPDATE SET
               status = 'running', worker_lease_id = EXCLUDED.worker_lease_id,
-              heartbeat_at = now(), updated_at = now()
-          `, [executionId, tenantId, locationId || tenantId, workflowId, JSON.stringify(triggerContext), workerId]);
+              heartbeat_at = now(), updated_at = now(),
+              workflow_version = COALESCE(workflow_executions.workflow_version, EXCLUDED.workflow_version),
+              workflow_snapshot = COALESCE(workflow_executions.workflow_snapshot, EXCLUDED.workflow_snapshot)
+          `, [executionId, tenantId, locationId || tenantId, workflowId, JSON.stringify(triggerContext), flowVersion, JSON.stringify(cleanSnapshot), workerId]);
           await client.query('COMMIT');
         } catch (dbErr) {
           await client.query('ROLLBACK').catch(() => {});
@@ -498,6 +536,8 @@ export function createTrustedWorkerHandlers({
             const webhookStep = graphResult.waitingStep || graphResult.timeline.find(t => t.status === 'waiting_webhook');
             const webhookNodeId = webhookStep?.nodeId || 'unknown_node';
             const resumeNodeId = graphResult.resumeNodeId || webhookStep?.resumeNodeId || null;
+            const resumeToken = webhookStep?.resumeToken || webhookStep?.result?.resumeToken || null;
+            const expiresAt = webhookStep?.expiresAt || webhookStep?.result?.expiresAt || null;
 
             await persistClient.query(`
               UPDATE workflow_executions SET
@@ -505,25 +545,41 @@ export function createTrustedWorkerHandlers({
                 current_node_id = $2,
                 resume_node_id = $3,
                 wait_type = 'webhook',
-                state = $4::jsonb,
+                resume_token = $4,
+                retry_at = $5::timestamptz,
+                state = $6::jsonb,
+                resume_lease_owner = NULL,
+                resume_lease_until = NULL,
+                resume_started_at = NULL,
                 updated_at = now()
-              WHERE agency_id = $5 AND location_id = $6 AND id = $1
-            `, [executionId, webhookNodeId, resumeNodeId, JSON.stringify(graphResult.variables || {}), tenantId, locationId || tenantId]);
+              WHERE agency_id = $7 AND location_id = $8 AND id = $1
+            `, [executionId, webhookNodeId, resumeNodeId, resumeToken, expiresAt, JSON.stringify(graphResult.variables || {}), tenantId, locationId || tenantId]);
           } else if (graphResult.finalStatus === 'completed') {
             await persistClient.query(`
               UPDATE workflow_executions SET
-                status = 'completed', current_node_id = NULL, resume_node_id = NULL, wait_type = NULL, finished_at = now(),
-                state = $2::jsonb, updated_at = now()
+                status = 'completed', current_node_id = NULL, resume_node_id = NULL, wait_type = NULL, retry_at = NULL,
+                resume_token = NULL, resume_lease_owner = NULL, resume_lease_until = NULL, resume_started_at = NULL,
+                finished_at = now(), state = $2::jsonb, updated_at = now()
               WHERE agency_id = $3 AND location_id = $4 AND id = $1
             `, [executionId, JSON.stringify(graphResult.variables || {}), tenantId, locationId || tenantId]);
-          } else {
+          } else if (graphResult.finalStatus === 'failed') {
             const failedStep = graphResult.timeline.find(t => t.status === 'failed');
             await persistClient.query(`
               UPDATE workflow_executions SET
                 status = 'failed', last_error_code = $2, finished_at = now(),
+                resume_lease_owner = NULL, resume_lease_until = NULL, resume_started_at = NULL,
                 state = $3::jsonb, updated_at = now()
               WHERE agency_id = $4 AND location_id = $5 AND id = $1
             `, [executionId, failedStep?.error || 'FAILED', JSON.stringify(graphResult.variables || {}), tenantId, locationId || tenantId]);
+          } else {
+            // Unknown outcome — fail closed!
+            await persistClient.query(`
+              UPDATE workflow_executions SET
+                status = 'failed', last_error_code = 'UNKNOWN_WORKFLOW_OUTCOME', finished_at = now(),
+                resume_lease_owner = NULL, resume_lease_until = NULL, resume_started_at = NULL,
+                state = $2::jsonb, updated_at = now()
+              WHERE agency_id = $3 AND location_id = $4 AND id = $1
+            `, [executionId, JSON.stringify(graphResult.variables || {}), tenantId, locationId || tenantId]);
           }
 
           // Persist each step into workflow_execution_steps
@@ -797,24 +853,32 @@ export function createTrustedWorkerHandlers({
 
     /**
      * Resumes a wait/delay-paused workflow execution from the node immediately following the wait node.
+     * Enforces lease-based execution ownership, atomic continuation state transitions,
+     * pinned snapshot preservation, and expired-lease recovery.
      */
     'workflow.wait.resume': async (payload, { job, workerId, lease }) => {
       const tenantId = payload?.tenantId || payload?.agencyId;
       const locationId = payload?.locationId;
       const executionId = payload?.executionId;
       const waitNodeId = payload?.waitNodeId;
-      const resumeGeneration = Number(payload?.resumeGeneration) || 1;
+      const resumeGeneration = Number(payload?.resumeGeneration) || 0;
+      const requestType = payload?.requestType || 'scheduled';
       let resumeNodeId = payload?.resumeNodeId;
 
-      if (!tenantId || !executionId || !waitNodeId) {
+      if (!tenantId || !executionId) {
         throw new PermanentJobError('Payload missing required wait resume references', 'INVALID_WAIT_RESUME_PAYLOAD');
       }
       if (lease?.lost) return { status: 'lease_lost' };
 
-      let flow = payload.flow || payload.workflowSnapshot || null;
+      const effectiveWorkerId = workerId || `worker_${crypto.randomUUID()}`;
+      const claimToken = `${effectiveWorkerId}_${crypto.randomUUID()}`;
+      let flow = null;
       let existingExecution = null;
 
       if (pool) {
+        // -----------------------------------------------------------------
+        // STAGE 1: Claim Resume Lease & Validate Authoritative DB State
+        // -----------------------------------------------------------------
         const client = await pool.connect();
         try {
           await client.query('BEGIN');
@@ -824,10 +888,16 @@ export function createTrustedWorkerHandlers({
           );
 
           // 1. Lock and load execution record
-          const execRes = await client.query(
-            'SELECT * FROM workflow_executions WHERE agency_id = $1 AND location_id = $2 AND id = $3 FOR UPDATE',
-            [tenantId, locationId || tenantId, executionId]
-          );
+          const execRes = await client.query(`
+            SELECT id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
+                   wait_generation, wait_type, retry_at, workflow_version, workflow_snapshot, state,
+                   trigger_event, attempts, resume_lease_owner, resume_lease_until,
+                   (now() < resume_lease_until) AS is_lease_active,
+                   (now() >= retry_at) AS is_due
+            FROM workflow_executions
+            WHERE agency_id = $1 AND location_id = $2 AND id = $3
+            FOR UPDATE
+          `, [tenantId, locationId || tenantId, executionId]);
 
           if (execRes.rows.length === 0) {
             await client.query('ROLLBACK').catch(() => {});
@@ -836,19 +906,22 @@ export function createTrustedWorkerHandlers({
 
           existingExecution = execRes.rows[0];
 
-          // 2. Validate execution state and generation
-          if (existingExecution.status !== 'waiting') {
+          // 2. Reject terminal or canceled executions
+          if (['completed', 'failed', 'canceled', 'dead_letter'].includes(existingExecution.status)) {
             await client.query('ROLLBACK').catch(() => {});
+            console.warn(`[WORKFLOW-RESUME] Stale continuation for terminal execution ${executionId} (${existingExecution.status})`);
             return {
               status: 'ignored_stale_state',
               executionId,
               currentStatus: existingExecution.status,
-              message: `Execution is not in waiting state (current: ${existingExecution.status})`
+              message: `Execution is already terminal (${existingExecution.status})`
             };
           }
 
+          // 3. Strict generation validation
           if (Number(existingExecution.wait_generation) !== resumeGeneration) {
             await client.query('ROLLBACK').catch(() => {});
+            console.warn(`[WORKFLOW-RESUME] Stale generation for execution ${executionId} (expected: ${existingExecution.wait_generation}, received: ${resumeGeneration})`);
             return {
               status: 'ignored_stale_generation',
               executionId,
@@ -858,53 +931,116 @@ export function createTrustedWorkerHandlers({
             };
           }
 
-          // 3. Mark execution as 'resuming'
+          // 4. Status & Lease verification
+          let isRecovery = false;
+          if (existingExecution.status === 'resuming') {
+            if (existingExecution.is_lease_active) {
+              await client.query('ROLLBACK').catch(() => {});
+              console.warn(`[WORKFLOW-RESUME] Active lease conflict for execution ${executionId} held by ${existingExecution.resume_lease_owner}`);
+              throw Object.assign(new Error(`Execution ${executionId} is currently resuming under active lease`), {
+                code: 'RESUME_LEASE_ACTIVE_CONFLICT',
+                retryable: true
+              });
+            }
+            isRecovery = true;
+            console.info(`[WORKFLOW-RESUME] Recovering expired resume lease for execution ${executionId} (previous owner: ${existingExecution.resume_lease_owner})`);
+          } else if (existingExecution.status !== 'waiting') {
+            await client.query('ROLLBACK').catch(() => {});
+            console.warn(`[WORKFLOW-RESUME] Ignored resume for execution ${executionId} in non-waiting status "${existingExecution.status}"`);
+            return {
+              status: 'ignored_stale_state',
+              executionId,
+              currentStatus: existingExecution.status,
+              message: `Execution is not in waiting state (current: ${existingExecution.status})`
+            };
+          }
+
+          // 5. Node mismatch validation
+          if (waitNodeId && existingExecution.current_node_id && waitNodeId !== existingExecution.current_node_id) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.warn(`[WORKFLOW-RESUME] Mismatched wait node for execution ${executionId} (expected: ${existingExecution.current_node_id}, received: ${waitNodeId})`);
+            return {
+              status: 'ignored_mismatched_node',
+              executionId,
+              expectedNode: existingExecution.current_node_id,
+              receivedNode: waitNodeId
+            };
+          }
+
+          // 6. Scheduled due time check
+          if (requestType !== 'manual' && requestType !== 'webhook' && !isRecovery) {
+            const jobAvailableAt = job?.availableAt || job?.available_at;
+            const isOutboxDue = jobAvailableAt ? (new Date(jobAvailableAt).getTime() <= Date.now()) : false;
+            if (existingExecution.retry_at && !existingExecution.is_due && !isOutboxDue) {
+              await client.query('ROLLBACK').catch(() => {});
+              throw Object.assign(new Error(`Continuation for ${executionId} claimed before due time ${existingExecution.retry_at}`), {
+                code: 'CONTINUATION_NOT_DUE',
+                retryable: true
+              });
+            }
+          }
+
+          // 7. Load pinned immutable workflow snapshot
+          if (existingExecution.workflow_snapshot) {
+            flow = typeof existingExecution.workflow_snapshot === 'string'
+              ? JSON.parse(existingExecution.workflow_snapshot)
+              : existingExecution.workflow_snapshot;
+          }
+
+          if (!flow || !Array.isArray(flow.nodes) || flow.nodes.length === 0) {
+            console.error(`[WORKFLOW-RESUME] Execution ${executionId} has missing or invalid pinned workflow snapshot`);
+            await client.query(`
+              UPDATE workflow_executions SET
+                status = 'failed',
+                last_error_code = 'INVALID_WORKFLOW_SNAPSHOT',
+                finished_at = now(),
+                resume_lease_owner = NULL,
+                resume_lease_until = NULL,
+                updated_at = now()
+              WHERE agency_id = $1 AND location_id = $2 AND id = $3
+            `, [tenantId, locationId || tenantId, executionId]);
+            await client.query('COMMIT');
+            throw new PermanentJobError(`Execution ${executionId} lacks valid pinned workflow snapshot`, 'INVALID_WORKFLOW_SNAPSHOT');
+          }
+
+          // 8. Claim resume lease (60 seconds)
           await client.query(`
             UPDATE workflow_executions SET
               status = 'resuming',
+              resume_lease_owner = $1,
+              resume_lease_until = now() + interval '60 seconds',
+              resume_started_at = now(),
               updated_at = now()
-            WHERE agency_id = $1 AND location_id = $2 AND id = $3
-          `, [tenantId, locationId || tenantId, executionId]);
-
-          // 4. Load workflow definition / snapshot
-          if (!flow) {
-            if (existingExecution.workflow_snapshot) {
-              flow = typeof existingExecution.workflow_snapshot === 'string'
-                ? JSON.parse(existingExecution.workflow_snapshot)
-                : existingExecution.workflow_snapshot;
-            } else if (existingExecution.workflow_id) {
-              const defRes = await client.query(
-                'SELECT nodes, name, version FROM workflow_definitions WHERE agency_id = $1 AND location_id = $2 AND id = $3',
-                [tenantId, locationId || tenantId, existingExecution.workflow_id]
-              );
-              if (defRes.rows.length > 0) {
-                flow = {
-                  id: existingExecution.workflow_id,
-                  name: defRes.rows[0].name,
-                  version: defRes.rows[0].version,
-                  nodes: typeof defRes.rows[0].nodes === 'string' ? JSON.parse(defRes.rows[0].nodes) : defRes.rows[0].nodes
-                };
-              }
-            }
-          }
+            WHERE agency_id = $2 AND location_id = $3 AND id = $4
+          `, [claimToken, tenantId, locationId || tenantId, executionId]);
 
           if (!resumeNodeId && existingExecution.resume_node_id) {
             resumeNodeId = existingExecution.resume_node_id;
           }
 
           await client.query('COMMIT');
+          console.info(`[WORKFLOW-RESUME] Claimed lease for execution ${executionId} (token: ${claimToken}, recovery: ${isRecovery})`);
         } catch (dbErr) {
           await client.query('ROLLBACK').catch(() => {});
           if (dbErr instanceof PermanentJobError) throw dbErr;
-          throw Object.assign(new Error(`Failed to lookup wait resume data in PostgreSQL: ${dbErr.message}`), {
-            code: 'WORKFLOW_WAIT_LOOKUP_FAILED'
+          if (dbErr.code === 'RESUME_LEASE_ACTIVE_CONFLICT' || dbErr.code === 'CONTINUATION_NOT_DUE') {
+            throw dbErr;
+          }
+          throw Object.assign(new Error(`Failed to claim resume lease in PostgreSQL: ${dbErr.message}`), {
+            code: 'WORKFLOW_WAIT_LOOKUP_FAILED',
+            retryable: true
           });
         } finally {
           client.release();
         }
       }
 
-      const allNodes = flow?.nodes || payload.nodes || [];
+      // Memory fallback flow
+      if (!flow) {
+        flow = payload.flow || payload.workflowSnapshot || { id: payload.workflowId, nodes: payload.nodes || [] };
+      }
+      const allNodes = flow?.nodes || [];
+
       if (!resumeNodeId) {
         const waitNode = allNodes.find(n => n.id === waitNodeId);
         if (waitNode?.next) {
@@ -921,7 +1057,9 @@ export function createTrustedWorkerHandlers({
             await client.query(`
               UPDATE workflow_executions SET
                 status = 'completed', current_node_id = NULL, resume_node_id = NULL,
-                wait_type = NULL, retry_at = NULL, finished_at = now(), updated_at = now()
+                wait_type = NULL, retry_at = NULL, resume_token = NULL,
+                resume_lease_owner = NULL, resume_lease_until = NULL, resume_started_at = NULL,
+                finished_at = now(), updated_at = now()
               WHERE agency_id = $1 AND location_id = $2 AND id = $3
             `, [tenantId, locationId || tenantId, executionId]);
             await client.query('COMMIT');
@@ -936,7 +1074,13 @@ export function createTrustedWorkerHandlers({
         };
       }
 
-      const restoredVariables = existingExecution?.state || payload.state || {};
+      // -----------------------------------------------------------------
+      // STAGE 2: Execute Graph Walk Outside DB Transaction
+      // -----------------------------------------------------------------
+      const restoredVariables = {
+        ...(existingExecution?.state || payload.state || {}),
+        ...(payload.callbackData ? { callbackData: payload.callbackData } : {})
+      };
       const triggerContext = existingExecution?.trigger_event || payload.triggerContext || {};
       const realCrmActions = createRealCrmActions({
         pool,
@@ -954,6 +1098,7 @@ export function createTrustedWorkerHandlers({
           locationId: locationId || tenantId,
           workflowId: existingExecution?.workflow_id || payload.workflowId,
           mode: payload.mode || 'live',
+          workflowVersion: existingExecution?.workflow_version || flow?.version || 1
         },
         initialVariables: restoredVariables,
         resumeNodeId,
@@ -1007,10 +1152,21 @@ export function createTrustedWorkerHandlers({
         }
       };
 
-      // 5. Resume Graph Walk starting from resumeNodeId
-      const resumeResult = await walkGraph(allNodes, { ...triggerContext, ...restoredVariables }, null, deps);
+      let resumeResult;
+      try {
+        resumeResult = await walkGraph(allNodes, { ...triggerContext, ...restoredVariables }, null, deps);
+      } catch (graphErr) {
+        console.error(`[WORKFLOW-RESUME] Graph walk error on resume for ${executionId}:`, graphErr.message);
+        resumeResult = {
+          finalStatus: 'failed',
+          variables: restoredVariables,
+          timeline: [{ nodeId: resumeNodeId || waitNodeId, status: 'failed', error: graphErr.message }]
+        };
+      }
 
-      // 6. Handle Completion, Failure, or Chained Wait
+      // -----------------------------------------------------------------
+      // STAGE 3: Verify Lease Ownership & Persist Outcome Atomically
+      // -----------------------------------------------------------------
       if (pool) {
         const client = await pool.connect();
         try {
@@ -1019,6 +1175,36 @@ export function createTrustedWorkerHandlers({
             "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)",
             [tenantId, locationId || tenantId]
           );
+
+          // Verify that this worker still owns the resume lease
+          const leaseVerify = await client.query(`
+            SELECT id, status, wait_generation, resume_lease_owner,
+                   (now() < resume_lease_until) AS is_lease_valid
+            FROM workflow_executions
+            WHERE agency_id = $1 AND location_id = $2 AND id = $3
+            FOR UPDATE
+          `, [tenantId, locationId || tenantId, executionId]);
+
+          if (leaseVerify.rows.length === 0) {
+            await client.query('ROLLBACK').catch(() => {});
+            return { status: 'lease_lost', executionId, message: 'Execution vanished before outcome persisted' };
+          }
+
+          const currentExec = leaseVerify.rows[0];
+          const isOwner = currentExec.resume_lease_owner === claimToken;
+          const isLeaseValid = currentExec.is_lease_valid;
+          const isStatusResuming = currentExec.status === 'resuming';
+          const isGenMatch = Number(currentExec.wait_generation) === resumeGeneration;
+
+          if (!isOwner || !isLeaseValid || !isStatusResuming || !isGenMatch) {
+            await client.query('ROLLBACK').catch(() => {});
+            console.error(`[WORKFLOW-RESUME] Lease lost for execution ${executionId} (owner: ${isOwner}, valid: ${isLeaseValid}, status: ${currentExec.status}, gen: ${currentExec.wait_generation})`);
+            return {
+              status: 'lease_lost',
+              executionId,
+              message: 'Worker lost resume lease or lease expired before outcome was persisted'
+            };
+          }
 
           if (resumeResult.finalStatus === 'waiting') {
             // Chained wait: increment wait_generation and enqueue next continuation
@@ -1037,6 +1223,9 @@ export function createTrustedWorkerHandlers({
                 wait_generation = $5,
                 wait_type = 'timed',
                 state = $6::jsonb,
+                resume_lease_owner = NULL,
+                resume_lease_until = NULL,
+                resume_started_at = NULL,
                 updated_at = now()
               WHERE agency_id = $7 AND location_id = $8 AND id = $1
             `, [executionId, nextWaitNodeId, nextResumeNodeId, nextRetryAt, nextGeneration, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
@@ -1051,6 +1240,7 @@ export function createTrustedWorkerHandlers({
               waitNodeId: nextWaitNodeId,
               resumeNodeId: nextResumeNodeId,
               resumeGeneration: nextGeneration,
+              requestType: 'scheduled',
               correlationId: payload.correlationId || `corr_${crypto.randomUUID()}`,
               enqueuedAt: new Date().toISOString()
             };
@@ -1086,9 +1276,35 @@ export function createTrustedWorkerHandlers({
                 current_node_id = $2,
                 wait_type = 'approval',
                 state = $3::jsonb,
+                resume_lease_owner = NULL,
+                resume_lease_until = NULL,
+                resume_started_at = NULL,
                 updated_at = now()
               WHERE agency_id = $4 AND location_id = $5 AND id = $1
             `, [executionId, pausedNodeId, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
+
+          } else if (resumeResult.finalStatus === 'waiting_webhook') {
+            const webhookStep = resumeResult.waitingStep || resumeResult.timeline.find(t => t.status === 'waiting_webhook');
+            const webhookNodeId = webhookStep?.nodeId || 'unknown_node';
+            const nextResumeNodeId = resumeResult.resumeNodeId || webhookStep?.resumeNodeId || null;
+            const resumeToken = webhookStep?.resumeToken || webhookStep?.result?.resumeToken || null;
+            const expiresAt = webhookStep?.expiresAt || webhookStep?.result?.expiresAt || null;
+
+            await client.query(`
+              UPDATE workflow_executions SET
+                status = 'waiting_webhook',
+                current_node_id = $2,
+                resume_node_id = $3,
+                wait_type = 'webhook',
+                resume_token = $4,
+                retry_at = $5::timestamptz,
+                state = $6::jsonb,
+                resume_lease_owner = NULL,
+                resume_lease_until = NULL,
+                resume_started_at = NULL,
+                updated_at = now()
+              WHERE agency_id = $7 AND location_id = $8 AND id = $1
+            `, [executionId, webhookNodeId, nextResumeNodeId, resumeToken, expiresAt, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
 
           } else if (resumeResult.finalStatus === 'completed') {
             await client.query(`
@@ -1098,22 +1314,45 @@ export function createTrustedWorkerHandlers({
                 resume_node_id = NULL,
                 wait_type = NULL,
                 retry_at = NULL,
+                resume_token = NULL,
+                resume_lease_owner = NULL,
+                resume_lease_until = NULL,
+                resume_started_at = NULL,
                 finished_at = now(),
                 state = $2::jsonb,
                 updated_at = now()
               WHERE agency_id = $3 AND location_id = $4 AND id = $1
             `, [executionId, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
-          } else {
+
+          } else if (resumeResult.finalStatus === 'failed') {
             const failedStep = resumeResult.timeline.find(t => t.status === 'failed');
             await client.query(`
               UPDATE workflow_executions SET
                 status = 'failed',
                 last_error_code = $2,
                 finished_at = now(),
+                resume_lease_owner = NULL,
+                resume_lease_until = NULL,
+                resume_started_at = NULL,
                 state = $3::jsonb,
                 updated_at = now()
               WHERE agency_id = $4 AND location_id = $5 AND id = $1
             `, [executionId, failedStep?.error || 'FAILED', JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
+
+          } else {
+            // Unknown status — fail closed!
+            await client.query(`
+              UPDATE workflow_executions SET
+                status = 'failed',
+                last_error_code = 'UNKNOWN_WORKFLOW_OUTCOME',
+                finished_at = now(),
+                resume_lease_owner = NULL,
+                resume_lease_until = NULL,
+                resume_started_at = NULL,
+                state = $2::jsonb,
+                updated_at = now()
+              WHERE agency_id = $3 AND location_id = $4 AND id = $1
+            `, [executionId, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
           }
 
           // Persist executed steps
@@ -1138,7 +1377,8 @@ export function createTrustedWorkerHandlers({
         } catch (pgErr) {
           await client.query('ROLLBACK').catch(() => {});
           throw Object.assign(new Error(`Failed to persist wait resume in PostgreSQL: ${pgErr.message}`), {
-            code: 'WORKFLOW_WAIT_PERSIST_FAILED'
+            code: 'WORKFLOW_WAIT_PERSIST_FAILED',
+            retryable: true
           });
         } finally {
           client.release();

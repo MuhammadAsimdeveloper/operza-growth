@@ -190,12 +190,18 @@ test('Durable Workflow Wait & Resume Lifecycle — PostgreSQL Integration', asyn
   });
 
   await t.test('4. Resuming from continuation executes from resume_node_id and finishes workflow', async () => {
-    // Advance available_at to now to simulate timer firing or manual tick
+    // Advance available_at and retry_at to now to simulate timer firing or manual tick
     await pool.query(`
       UPDATE workflow_outbox
       SET available_at = now() - interval '1 second'
       WHERE agency_id = $1 AND location_id = $2 AND execution_id = $3
       AND event_type = 'workflow.wait.resume'
+    `, [tenantId, locationId, executionId]);
+
+    await pool.query(`
+      UPDATE workflow_executions
+      SET retry_at = now() - interval '1 second'
+      WHERE agency_id = $1 AND location_id = $2 AND id = $3
     `, [tenantId, locationId, executionId]);
 
     const outboxRepo = createWorkflowOutboxRepository(pool);

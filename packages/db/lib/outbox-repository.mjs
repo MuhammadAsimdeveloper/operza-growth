@@ -133,7 +133,8 @@ export function createWorkflowOutboxRepository(pool) {
             "WHERE jobs.agency_id=eligible.agency_id AND jobs.location_id=eligible.location_id AND jobs.id=eligible.id " +
             "RETURNING jobs.id, jobs.agency_id AS \"agencyId\", jobs.location_id AS \"locationId\", jobs.execution_id AS \"executionId\", " +
             "jobs.event_type AS \"eventType\", jobs.event_type, jobs.payload, " +
-            "jobs.attempts, jobs.max_attempts AS \"maxAttempts\", jobs.lease_until AS \"leaseUntil\", jobs.idempotency_key AS \"idempotencyKey\"",
+            "jobs.attempts, jobs.max_attempts AS \"maxAttempts\", jobs.lease_until AS \"leaseUntil\", jobs.idempotency_key AS \"idempotencyKey\", " +
+            "jobs.available_at AS \"availableAt\"",
             [workerId, boundedLimit, boundedLeaseMs]
           );
           await client.query('COMMIT');

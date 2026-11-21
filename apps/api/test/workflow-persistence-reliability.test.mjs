@@ -635,13 +635,14 @@ test('Workflow Execution Persistence Reliability & Connection Error Handling', a
           return {
             rows: [{
               id: params[0],
-              status: 'waiting',
+              status: params[9] || 'waiting',
               current_node_id: params[1],
               resume_node_id: params[2],
               retry_at: params[3],
               wait_generation: params[4],
               wait_type: params[5],
-              state: JSON.parse(params[6])
+              resume_token: params[6],
+              state: params[7] ? JSON.parse(params[7]) : {}
             }]
           };
         }
