@@ -31,11 +31,11 @@ function fakePool({ duplicateEnqueue = false, duplicateReceipt = false } = {}) {
         if (duplicateReceipt) return { rowCount: 0, rows: [] };
         return { rowCount: 1, rows: [{ id: 'receipt_001', status: 'started', result: {} }] };
       }
-      if (sql.includes('SELECT id,status,result FROM workflow_action_receipts')) {
-        return { rowCount: 1, rows: [{ id: 'receipt_existing', status: 'succeeded', result: { provider: 'test' } }] };
+      if (sql.includes('FROM workflow_action_receipts') && sql.includes('SELECT')) {
+        return { rowCount: 1, rows: [{ id: 'receipt_existing', status: 'succeeded', result: { provider: 'test' }, lease_owner: null, lease_until: null }] };
       }
       if (sql.includes('UPDATE workflow_action_receipts')) {
-        return { rowCount: 1, rows: [{ id: 'receipt_001', status: 'succeeded', result: JSON.parse(params[3]) }] };
+        return { rowCount: 1, rows: [{ id: 'receipt_001', status: sql.includes('indeterminate') ? 'indeterminate' : (sql.includes('failed') ? 'failed' : 'succeeded'), result: params[3] ? JSON.parse(params[3]) : {} }] };
       }
       throw new Error('Unexpected SQL in fake outbox pool: ' + sql);
     },
@@ -124,6 +124,11 @@ test('action receipts are unique by action hash and completion never accepts cre
     actionHash, result: { dispatch: 'accepted' }, providerReceipt: 'provider-ref-001'
   });
   assert.equal(completed.status, 'succeeded');
+  const failed = await repo.failActionReceipt({
+    tenantId: identity.tenantId, locationId: identity.locationId,
+    actionHash, errorCode: 'DISPATCH_TIMEOUT', errorDetails: { message: 'Gateway timeout' }, indeterminate: true
+  });
+  assert.equal(failed.status, 'indeterminate');
   await assert.rejects(repo.completeActionReceipt({
     tenantId: identity.tenantId, locationId: identity.locationId,
     actionHash, result: {}, providerReceipt: 'Bearer secret-token'

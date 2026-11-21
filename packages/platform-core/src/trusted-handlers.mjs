@@ -1,8 +1,9 @@
 import crypto from 'node:crypto';
 import { PermanentJobError } from './durable-worker.mjs';
-import { getWorkflowActionDefinition } from '../../workflow-engine/src/action-governance.mjs';
+import { getWorkflowActionDefinition, computeActionHash } from '../../workflow-engine/src/action-governance.mjs';
 import { walkGraph } from '../../workflow-engine/src/engine.mjs';
 import { createProviderAdapterRegistry } from './provider-adapters.mjs';
+import { createWorkflowOutboxRepository } from '../../db/lib/outbox-repository.mjs';
 
 function sha256(data) {
   return crypto.createHash('sha256').update(JSON.stringify(data)).digest('hex');
@@ -73,7 +74,318 @@ export async function verifyAuthoritativeConsent({ pool, tenantId, locationId, c
   }
 }
 
-function createRealCrmActions({ pool, tenantId, locationId, payload, providerRegistry, secretResolver }) {
+export async function executeAtomicCrmAction({
+  pool,
+  outboxRepo,
+  tenantId,
+  locationId,
+  executionId,
+  workflowId,
+  nodeId,
+  actionType,
+  invocationKey,
+  input,
+  workerId,
+  mode = 'live',
+  mutationFn
+}) {
+  if (mode === 'dry_run') {
+    return { simulated: true, dryRun: true, actionType, nodeId };
+  }
+
+  if (!pool) {
+    return mutationFn(null);
+  }
+
+  const locId = locationId || tenantId;
+  const actionHash = computeActionHash({
+    tenantId,
+    locationId: locId,
+    workflowId: workflowId || 'unknown_workflow',
+    executionId: executionId || 'unknown_execution',
+    nodeId: nodeId || actionType,
+    actionType,
+    invocationKey: invocationKey || 'default',
+    input
+  });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)",
+      [tenantId, locId]
+    );
+
+    let claimResult = null;
+    if (outboxRepo) {
+      claimResult = await outboxRepo.claimActionReceipt({
+        client,
+        tenantId,
+        locationId: locId,
+        executionId: executionId || 'unknown_execution',
+        nodeId: nodeId || actionType,
+        actionHash,
+        providerKey: 'internal_crm',
+        workerId: workerId || 'system_worker',
+        leaseSeconds: 60
+      });
+
+      if (!claimResult.acquired) {
+        if (claimResult.status === 'succeeded') {
+          // Idempotent hit: return previously persisted result
+          await client.query('COMMIT');
+          return claimResult.result;
+        }
+        if (claimResult.status === 'indeterminate') {
+          await client.query('ROLLBACK');
+          throw Object.assign(new Error(`Action ${actionType} is in indeterminate state`), {
+            code: 'ACTION_INDETERMINATE',
+            retryable: false
+          });
+        }
+        if (claimResult.status === 'in_progress') {
+          await client.query('ROLLBACK');
+          throw Object.assign(new Error(`Action ${actionType} is already in progress by worker ${claimResult.leaseOwner}`), {
+            code: 'ACTION_ALREADY_IN_PROGRESS',
+            retryable: true
+          });
+        }
+        await client.query('ROLLBACK');
+        throw Object.assign(new Error(`Failed to claim action receipt for ${actionType}`), {
+          code: 'ACTION_CLAIM_FAILED',
+          retryable: true
+        });
+      }
+    }
+
+    // Perform CRM mutation inside transaction
+    const mutationResult = await mutationFn(client);
+
+    // Complete receipt inside transaction
+    if (outboxRepo) {
+      const safeResult = mutationResult && typeof mutationResult === 'object' ? mutationResult : { success: true };
+      const providerReceipt = typeof mutationResult?.id === 'string'
+        ? mutationResult.id
+        : (typeof mutationResult?.taskId === 'string'
+          ? mutationResult.taskId
+          : (typeof mutationResult?.opportunityId === 'string' ? mutationResult.opportunityId : null));
+
+      await outboxRepo.completeActionReceipt({
+        client,
+        tenantId,
+        locationId: locId,
+        actionHash,
+        result: safeResult,
+        providerReceipt,
+        outcomeDetails: { actionType, nodeId: nodeId || actionType, completedAt: new Date().toISOString() }
+      });
+    }
+
+    await client.query('COMMIT');
+    return mutationResult;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function executeDurableProviderAction({
+  pool,
+  outboxRepo,
+  tenantId,
+  locationId,
+  executionId,
+  node,
+  invocation,
+  context,
+  mode = 'live',
+  providerRegistry,
+  secretResolver,
+  workerId,
+  signal
+}) {
+  if (mode === 'dry_run') {
+    return { ok: true, simulated: true, providerAccepted: false };
+  }
+  const providerKey = invocation.providerKey;
+  const adapter = providerRegistry?.get(providerKey);
+  if (!adapter) {
+    throw new PermanentJobError(`Provider adapter not found: ${providerKey}`, 'PROVIDER_ADAPTER_UNAVAILABLE');
+  }
+
+  const locId = locationId || tenantId;
+  const actionHash = invocation.actionHash;
+  if (!actionHash || !/^[a-f0-9]{64}$/.test(actionHash)) {
+    throw new Error('Valid actionHash is required for provider execution');
+  }
+
+  // Pre-claim receipt before remote dispatch
+  if (outboxRepo && pool) {
+    const claim = await outboxRepo.claimActionReceipt({
+      tenantId,
+      locationId: locId,
+      executionId: executionId || 'unknown_execution',
+      nodeId: node.id,
+      actionHash,
+      providerKey,
+      workerId: workerId || 'system_worker',
+      leaseSeconds: 60
+    });
+
+    if (!claim.acquired) {
+      if (claim.status === 'succeeded') {
+        // Return stored result on duplicate dispatch without re-calling adapter
+        return claim.result || { ok: true, idempotencyReused: true, providerReceipt: claim.providerReceipt };
+      }
+      if (claim.status === 'indeterminate') {
+        throw Object.assign(new Error(`Action ${actionHash} for node ${node.id} is in indeterminate state`), {
+          code: 'ACTION_INDETERMINATE',
+          retryable: false
+        });
+      }
+      if (claim.status === 'in_progress') {
+        throw Object.assign(new Error(`Action ${actionHash} for node ${node.id} is already in progress`), {
+          code: 'ACTION_ALREADY_IN_PROGRESS',
+          retryable: true
+        });
+      }
+      throw Object.assign(new Error(`Failed to claim action receipt for node ${node.id}`), {
+        code: 'ACTION_CLAIM_FAILED',
+        retryable: true
+      });
+    }
+  }
+
+  // Resolve provider secret if needed
+  let secret = invocation.secret;
+  if (!secret && secretResolver) {
+    secret = await secretResolver.resolve(invocation.secretRef || `tenant_${tenantId}_${providerKey}`).catch(() => null);
+  }
+
+  // Verify authoritative consent
+  const channel = adapter.channel || (providerKey.startsWith('email') ? 'email' : (providerKey.startsWith('sms') ? 'sms' : (providerKey.startsWith('whatsapp') ? 'whatsapp' : null)));
+  let structuredConsent = null;
+  if (channel) {
+    const contactId = context?.contactId || context?.contact?.id || context?.to || context?.phone || context?.email;
+    const purpose = invocation.purpose || context?.purpose || 'transactional';
+    structuredConsent = await verifyAuthoritativeConsent({
+      pool,
+      tenantId,
+      locationId: locId,
+      contactId,
+      channel,
+      purpose,
+      suppliedConsent: typeof context?.consent === 'object' ? context.consent : null
+    });
+
+    if (!structuredConsent) {
+      if (outboxRepo && pool) {
+        await outboxRepo.failActionReceipt({
+          tenantId,
+          locationId: locId,
+          actionHash,
+          errorCode: 'CONSENT_REQUIRED',
+          indeterminate: false,
+          outcomeDetails: { channel, contactId }
+        }).catch(() => {});
+      }
+      throw new PermanentJobError(`Communication consent missing or revoked for contact ${contactId} on ${channel}`, 'CONSENT_REQUIRED');
+    }
+  }
+
+  // Dispatch to remote provider
+  let dispatchRes;
+  let dispatchErr = null;
+  try {
+    dispatchRes = await adapter.dispatch({
+      secret,
+      config: node.config,
+      payload: context,
+      consent: structuredConsent,
+      tenantId,
+      locationId: locId,
+      actionHash,
+      signal
+    });
+  } catch (err) {
+    dispatchErr = err;
+  }
+
+  if (dispatchErr) {
+    const isTimeout = dispatchErr.name === 'TimeoutError' || dispatchErr.name === 'AbortError' || /timeout|aborted/i.test(dispatchErr.message || '');
+    const errorCode = isTimeout ? 'PROVIDER_TIMEOUT_INDETERMINATE' : (dispatchErr.code || 'PROVIDER_DISPATCH_FAILED');
+    if (outboxRepo && pool) {
+      await outboxRepo.failActionReceipt({
+        tenantId,
+        locationId: locId,
+        actionHash,
+        errorCode,
+        indeterminate: isTimeout,
+        outcomeDetails: { message: dispatchErr.message }
+      }).catch(() => {});
+    }
+    throw dispatchErr;
+  }
+
+  if (!dispatchRes.ok) {
+    const isTimeout = dispatchRes.code === 'PROVIDER_TIMEOUT_INDETERMINATE';
+    if (outboxRepo && pool) {
+      await outboxRepo.failActionReceipt({
+        tenantId,
+        locationId: locId,
+        actionHash,
+        errorCode: dispatchRes.code || 'PROVIDER_DISPATCH_REJECTED',
+        indeterminate: isTimeout,
+        outcomeDetails: { code: dispatchRes.code, status: dispatchRes.status || dispatchRes.httpStatus }
+      }).catch(() => {});
+    }
+    throw Object.assign(new Error(`Provider dispatch rejected: ${dispatchRes.code}`), {
+      code: dispatchRes.code || 'PROVIDER_DISPATCH_FAILED'
+    });
+  }
+
+  // Succeeded: complete action receipt
+  if (outboxRepo && pool) {
+    const safeResult = {
+      ok: true,
+      provider: dispatchRes.provider || providerKey,
+      providerMessageId: dispatchRes.providerMessageId || dispatchRes.sid || dispatchRes.id || null,
+      httpStatus: dispatchRes.httpStatus || 200,
+      idempotencyKey: actionHash
+    };
+    await outboxRepo.completeActionReceipt({
+      tenantId,
+      locationId: locId,
+      actionHash,
+      result: safeResult,
+      providerReceipt: safeResult.providerMessageId,
+      outcomeDetails: { providerKey, nodeId: node.id }
+    });
+  }
+
+  return dispatchRes;
+}
+
+export function createRealCrmActions({
+  pool,
+  tenantId,
+  locationId,
+  executionId,
+  workflowId,
+  actorId,
+  workerId,
+  mode = 'live',
+  outboxRepository,
+  providerRegistry,
+  secretResolver,
+  payload
+}) {
+  const outboxRepo = outboxRepository || (pool ? createWorkflowOutboxRepository(pool) : null);
+  const locId = locationId || tenantId;
+
   return {
     sendEmail: async ({ to, subject, body, text, html }) => {
       const adapter = providerRegistry?.get('email.resend') || providerRegistry?.get('email.sendgrid');
@@ -82,7 +394,7 @@ function createRealCrmActions({ pool, tenantId, locationId, payload, providerReg
         const structuredConsent = await verifyAuthoritativeConsent({
           pool,
           tenantId,
-          locationId: locationId || tenantId,
+          locationId: locId,
           contactId: to,
           channel: 'email',
           purpose: 'transactional',
@@ -97,7 +409,7 @@ function createRealCrmActions({ pool, tenantId, locationId, payload, providerReg
           payload: { to, subject, text: text || body, html },
           consent: structuredConsent,
           tenantId,
-          locationId: locationId || tenantId
+          locationId: locId
         });
       }
     },
@@ -108,7 +420,7 @@ function createRealCrmActions({ pool, tenantId, locationId, payload, providerReg
         const structuredConsent = await verifyAuthoritativeConsent({
           pool,
           tenantId,
-          locationId: locationId || tenantId,
+          locationId: locId,
           contactId: to,
           channel: 'sms',
           purpose: 'transactional',
@@ -123,92 +435,312 @@ function createRealCrmActions({ pool, tenantId, locationId, payload, providerReg
           payload: { to, body: message || body },
           consent: structuredConsent,
           tenantId,
-          locationId: locationId || tenantId
+          locationId: locId
         });
       }
     },
-    addContactTag: async ({ contactId, tag }) => {
-      if (!pool) return;
+    addContactTag: async ({ contactId, tag, nodeId }) => {
       if (!contactId || !tag) throw Object.assign(new Error('contactId and tag are required'), { code: 'INVALID_TAG_PARAMS' });
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
-        const res = await client.query('SELECT body FROM location_records WHERE agency_id = $1 AND collection = $2 AND id = $3', [tenantId, 'contacts', contactId]);
-        if (res.rows.length === 0) {
-          await client.query('ROLLBACK');
-          throw Object.assign(new Error(`Contact ${contactId} not found in PostgreSQL`), { code: 'CONTACT_NOT_FOUND' });
+      return executeAtomicCrmAction({
+        pool,
+        outboxRepo,
+        tenantId,
+        locationId: locId,
+        executionId,
+        workflowId,
+        nodeId: nodeId || 'add_tag',
+        actionType: 'add_tag',
+        input: { contactId, tag },
+        workerId,
+        mode,
+        mutationFn: async (client) => {
+          if (!client) return { tagAdded: tag, contactId };
+          const res = await client.query(
+            'SELECT body FROM location_records WHERE agency_id = $1 AND location_id = $2 AND collection = $3 AND id = $4 FOR UPDATE',
+            [tenantId, locId, 'contacts', contactId]
+          );
+          if (res.rows.length === 0) {
+            throw Object.assign(new Error(`Contact ${contactId} not found in PostgreSQL`), { code: 'CONTACT_NOT_FOUND' });
+          }
+          const b = res.rows[0].body || {};
+          b.tags = Array.from(new Set([...(b.tags || []), tag]));
+          const updateRes = await client.query(
+            'UPDATE location_records SET body = $1::jsonb, updated_at = now() WHERE agency_id = $2 AND location_id = $3 AND collection = $4 AND id = $5',
+            [JSON.stringify(b), tenantId, locId, 'contacts', contactId]
+          );
+          if (updateRes.rowCount === 0) {
+            throw Object.assign(new Error(`Failed to update tags for contact ${contactId}`), { code: 'CONTACT_UPDATE_FAILED' });
+          }
+          return { tagAdded: tag, contactId };
         }
-        const b = res.rows[0].body || {};
-        b.tags = Array.from(new Set([...(b.tags || []), tag]));
-        const updateRes = await client.query('UPDATE location_records SET body = $1::jsonb, updated_at = now() WHERE agency_id = $2 AND collection = $3 AND id = $4', [JSON.stringify(b), tenantId, 'contacts', contactId]);
-        if (updateRes.rowCount === 0) {
-          await client.query('ROLLBACK');
-          throw Object.assign(new Error(`Failed to update tags for contact ${contactId}`), { code: 'CONTACT_UPDATE_FAILED' });
-        }
-        await client.query('COMMIT');
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-      } finally {
-        client.release();
-      }
+      });
     },
     createTask: async (taskData) => {
-      if (!pool) return;
-      const taskId = crypto.randomUUID();
-      const taskRecord = {
-        id: taskId,
-        agencyId: tenantId,
-        locationId: locationId || tenantId,
-        status: 'pending',
-        createdAt: new Date().toISOString(),
-        ...taskData
-      };
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
-        const insertRes = await client.query(`
-          INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
-          VALUES ($1, $2, $3, 'tasks', $4::jsonb, now(), now())
-        `, [taskId, tenantId, locationId || tenantId, JSON.stringify(taskRecord)]);
-        if (insertRes.rowCount === 0) {
-          await client.query('ROLLBACK');
-          throw Object.assign(new Error('Failed to insert task record in PostgreSQL'), { code: 'TASK_INSERT_FAILED' });
+      const { nodeId, ...taskPayload } = taskData || {};
+      return executeAtomicCrmAction({
+        pool,
+        outboxRepo,
+        tenantId,
+        locationId: locId,
+        executionId,
+        workflowId,
+        nodeId: nodeId || 'create_task',
+        actionType: 'create_task',
+        input: taskPayload,
+        workerId,
+        mode,
+        mutationFn: async (client) => {
+          const taskId = crypto.randomUUID();
+          const taskRecord = {
+            id: taskId,
+            agencyId: tenantId,
+            locationId: locId,
+            status: 'pending',
+            createdAt: new Date().toISOString(),
+            ...taskPayload
+          };
+          if (!client) return taskRecord;
+          const insertRes = await client.query(`
+            INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
+            VALUES ($1, $2, $3, 'tasks', $4::jsonb, now(), now())
+          `, [taskId, tenantId, locId, JSON.stringify(taskRecord)]);
+          if (insertRes.rowCount === 0) {
+            throw Object.assign(new Error('Failed to insert task record in PostgreSQL'), { code: 'TASK_INSERT_FAILED' });
+          }
+          return taskRecord;
         }
-        await client.query('COMMIT');
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-      } finally {
-        client.release();
-      }
-      return taskRecord;
+      });
     },
-    updateOpportunityStage: async ({ opportunityId, stage, stageId }) => {
-      if (!pool) return;
+    updateOpportunityStage: async ({ opportunityId, stage, stageId, nodeId }) => {
       if (!opportunityId) throw Object.assign(new Error('opportunityId is required'), { code: 'OPPORTUNITY_ID_REQUIRED' });
-      const client = await pool.connect();
-      try {
-        await client.query('BEGIN');
-        await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
-        const updateRes = await client.query(`
-          UPDATE opportunities
-          SET stage_id = COALESCE($1, stage_id), status = COALESCE($2, status), updated_at = now()
-          WHERE agency_id = $3 AND id = $4
-        `, [stageId || stage, stage || null, tenantId, opportunityId]);
-        if (updateRes.rowCount === 0) {
-          await client.query('ROLLBACK');
-          throw Object.assign(new Error(`Opportunity ${opportunityId} not found in PostgreSQL`), { code: 'OPPORTUNITY_NOT_FOUND' });
+      const stageInput = { opportunityId, stage: stage || null };
+      if (stageId !== undefined) stageInput.stageId = stageId;
+      return executeAtomicCrmAction({
+        pool,
+        outboxRepo,
+        tenantId,
+        locationId: locId,
+        executionId,
+        workflowId,
+        nodeId: nodeId || 'update_stage',
+        actionType: 'update_stage',
+        input: stageInput,
+        workerId,
+        mode,
+        mutationFn: async (client) => {
+          if (!client) return { opportunityId, stageUpdated: stage || stageId };
+          const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+          const validStageId = UUID_REGEX.test(stageId) ? stageId : (UUID_REGEX.test(stage) ? stage : null);
+          const updateRes = await client.query(`
+            UPDATE opportunities
+            SET stage_id = COALESCE($1::uuid, stage_id), status = COALESCE($2, status), updated_at = now()
+            WHERE agency_id = $3 AND location_id = $4 AND id = $5
+            RETURNING id
+          `, [validStageId, stage || null, tenantId, locId, opportunityId]);
+          if (updateRes.rowCount === 0) {
+            // Also check location_records collection 'opportunities'
+            const locUpdate = await client.query(`
+              SELECT body FROM location_records
+              WHERE agency_id = $1 AND location_id = $2 AND collection = 'opportunities' AND id = $3
+              FOR UPDATE
+            `, [tenantId, locId, opportunityId]);
+            if (locUpdate.rows.length === 0) {
+              throw Object.assign(new Error(`Opportunity ${opportunityId} not found in PostgreSQL`), { code: 'OPPORTUNITY_NOT_FOUND' });
+            }
+            const b = locUpdate.rows[0].body || {};
+            b.stage = stage || b.stage;
+            b.stageId = stageId || b.stageId;
+            b.status = stage || b.status;
+            await client.query(`
+              UPDATE location_records SET body = $1::jsonb, updated_at = now()
+              WHERE agency_id = $2 AND location_id = $3 AND collection = 'opportunities' AND id = $4
+            `, [JSON.stringify(b), tenantId, locId, opportunityId]);
+          }
+          return { opportunityId, stageUpdated: stage || stageId };
         }
-        await client.query('COMMIT');
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-      } finally {
-        client.release();
-      }
+      });
+    },
+    updateContact: async ({ contactId, fields, nodeId }) => {
+      if (!contactId) throw Object.assign(new Error('contactId is required'), { code: 'CONTACT_ID_REQUIRED' });
+      return executeAtomicCrmAction({
+        pool,
+        outboxRepo,
+        tenantId,
+        locationId: locId,
+        executionId,
+        workflowId,
+        nodeId: nodeId || 'update_contact',
+        actionType: 'update_contact',
+        input: { contactId, fields: fields || {} },
+        workerId,
+        mode,
+        mutationFn: async (client) => {
+          if (!client) return { contactUpdated: contactId, fields };
+          const res = await client.query(
+            'SELECT body FROM location_records WHERE agency_id = $1 AND location_id = $2 AND collection = $3 AND id = $4 FOR UPDATE',
+            [tenantId, locId, 'contacts', contactId]
+          );
+          if (res.rows.length === 0) {
+            throw Object.assign(new Error(`Contact ${contactId} not found in PostgreSQL`), { code: 'CONTACT_NOT_FOUND' });
+          }
+          const b = res.rows[0].body || {};
+          Object.assign(b, fields || {});
+          const updateRes = await client.query(
+            'UPDATE location_records SET body = $1::jsonb, updated_at = now() WHERE agency_id = $2 AND location_id = $3 AND collection = $4 AND id = $5',
+            [JSON.stringify(b), tenantId, locId, 'contacts', contactId]
+          );
+          if (updateRes.rowCount === 0) {
+            throw Object.assign(new Error(`Failed to update contact ${contactId}`), { code: 'CONTACT_UPDATE_FAILED' });
+          }
+          return { contactUpdated: contactId, fields };
+        }
+      });
+    },
+    createOpportunity: async ({ contactId, name, value, stage, pipelineId, nodeId }) => {
+      const oppPayload = { contactId, name: name || 'New Opportunity', value: Number(value) || 0, stage: stage || 'new', pipelineId: pipelineId || null };
+      return executeAtomicCrmAction({
+        pool,
+        outboxRepo,
+        tenantId,
+        locationId: locId,
+        executionId,
+        workflowId,
+        nodeId: nodeId || 'create_opportunity',
+        actionType: 'create_opportunity',
+        input: oppPayload,
+        workerId,
+        mode,
+        mutationFn: async (client) => {
+          const oppId = crypto.randomUUID();
+          const oppRecord = {
+            id: oppId,
+            agencyId: tenantId,
+            locationId: locId,
+            ...oppPayload,
+            status: 'open',
+            createdAt: new Date().toISOString()
+          };
+          if (!client) return oppRecord;
+          const insertRes = await client.query(`
+            INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
+            VALUES ($1, $2, $3, 'opportunities', $4::jsonb, now(), now())
+          `, [oppId, tenantId, locId, JSON.stringify(oppRecord)]);
+          if (insertRes.rowCount === 0) {
+            throw Object.assign(new Error('Failed to insert opportunity in PostgreSQL'), { code: 'OPPORTUNITY_INSERT_FAILED' });
+          }
+          return oppRecord;
+        }
+      });
+    },
+    assignContact: async ({ contactId, assignee, nodeId }) => {
+      if (!contactId || !assignee) throw Object.assign(new Error('contactId and assignee are required'), { code: 'INVALID_ASSIGN_PARAMS' });
+      return executeAtomicCrmAction({
+        pool,
+        outboxRepo,
+        tenantId,
+        locationId: locId,
+        executionId,
+        workflowId,
+        nodeId: nodeId || 'assign_to',
+        actionType: 'assign_to',
+        input: { contactId, assignee },
+        workerId,
+        mode,
+        mutationFn: async (client) => {
+          if (!client) return { assignedTo: assignee, contactId };
+          const res = await client.query(
+            'SELECT body FROM location_records WHERE agency_id = $1 AND location_id = $2 AND collection = $3 AND id = $4 FOR UPDATE',
+            [tenantId, locId, 'contacts', contactId]
+          );
+          if (res.rows.length === 0) {
+            throw Object.assign(new Error(`Contact ${contactId} not found in PostgreSQL`), { code: 'CONTACT_NOT_FOUND' });
+          }
+          const b = res.rows[0].body || {};
+          b.assignedTo = assignee;
+          b.ownerId = assignee;
+          const updateRes = await client.query(
+            'UPDATE location_records SET body = $1::jsonb, updated_at = now() WHERE agency_id = $2 AND location_id = $3 AND collection = $4 AND id = $5',
+            [JSON.stringify(b), tenantId, locId, 'contacts', contactId]
+          );
+          if (updateRes.rowCount === 0) {
+            throw Object.assign(new Error(`Failed to assign contact ${contactId}`), { code: 'CONTACT_ASSIGN_FAILED' });
+          }
+          return { assignedTo: assignee, contactId };
+        }
+      });
+    },
+    updateLeadScore: async ({ contactId, points, nodeId }) => {
+      if (!contactId) throw Object.assign(new Error('contactId is required'), { code: 'CONTACT_ID_REQUIRED' });
+      const pts = Number(points) || 10;
+      return executeAtomicCrmAction({
+        pool,
+        outboxRepo,
+        tenantId,
+        locationId: locId,
+        executionId,
+        workflowId,
+        nodeId: nodeId || 'lead_score',
+        actionType: 'lead_score',
+        input: { contactId, points: pts },
+        workerId,
+        mode,
+        mutationFn: async (client) => {
+          if (!client) return { contactId, pointsAdded: pts };
+          const res = await client.query(
+            'SELECT body FROM location_records WHERE agency_id = $1 AND location_id = $2 AND collection = $3 AND id = $4 FOR UPDATE',
+            [tenantId, locId, 'contacts', contactId]
+          );
+          if (res.rows.length === 0) {
+            throw Object.assign(new Error(`Contact ${contactId} not found in PostgreSQL`), { code: 'CONTACT_NOT_FOUND' });
+          }
+          const b = res.rows[0].body || {};
+          b.leadScore = (Number(b.leadScore) || 0) + pts;
+          const updateRes = await client.query(
+            'UPDATE location_records SET body = $1::jsonb, updated_at = now() WHERE agency_id = $2 AND location_id = $3 AND collection = $4 AND id = $5',
+            [JSON.stringify(b), tenantId, locId, 'contacts', contactId]
+          );
+          if (updateRes.rowCount === 0) {
+            throw Object.assign(new Error(`Failed to update lead score for contact ${contactId}`), { code: 'LEAD_SCORE_UPDATE_FAILED' });
+          }
+          return { contactId, pointsAdded: pts, currentScore: b.leadScore };
+        }
+      });
+    },
+    sendInternalNotification: async ({ title, message, channel, nodeId }) => {
+      const notifPayload = { title: title || 'Notification', message: message || '', channel: channel || 'in_app' };
+      return executeAtomicCrmAction({
+        pool,
+        outboxRepo,
+        tenantId,
+        locationId: locId,
+        executionId,
+        workflowId,
+        nodeId: nodeId || 'internal_notification',
+        actionType: 'internal_notification',
+        input: notifPayload,
+        workerId,
+        mode,
+        mutationFn: async (client) => {
+          const notifId = crypto.randomUUID();
+          const notifRecord = {
+            id: notifId,
+            agencyId: tenantId,
+            locationId: locId,
+            ...notifPayload,
+            read: false,
+            createdAt: new Date().toISOString()
+          };
+          if (!client) return notifRecord;
+          const insertRes = await client.query(`
+            INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
+            VALUES ($1, $2, $3, 'notifications', $4::jsonb, now(), now())
+          `, [notifId, tenantId, locId, JSON.stringify(notifRecord)]);
+          if (insertRes.rowCount === 0) {
+            throw Object.assign(new Error('Failed to insert internal notification in PostgreSQL'), { code: 'NOTIFICATION_INSERT_FAILED' });
+          }
+          return notifRecord;
+        }
+      });
     }
   };
 }
@@ -345,11 +877,20 @@ export function createTrustedWorkerHandlers({
         flow = { id: workflowId, name: 'Default Flow', nodes: payload.nodes || [] };
       }
 
+      const effectiveOutboxRepo = outboxRepository || (pool ? createWorkflowOutboxRepository(pool) : null);
+      const effectiveActorId = payload.actorId || payload.data?.actorId || payload.context?.actorId || 'system_worker';
+
       // Real CRM Actions connected to PostgreSQL location_records and opportunities
       const realCrmActions = createRealCrmActions({
         pool,
         tenantId,
         locationId: locationId || tenantId,
+        executionId,
+        workflowId,
+        actorId: effectiveActorId,
+        workerId,
+        mode,
+        outboxRepository: effectiveOutboxRepo,
         payload,
         providerRegistry,
         secretResolver
@@ -362,93 +903,29 @@ export function createTrustedWorkerHandlers({
           agencyId: tenantId,
           locationId: locationId || tenantId,
           workflowId,
+          actorId: effectiveActorId,
           mode,
           consent: typeof payload.consent === 'object' && payload.consent?.status === 'granted',
           approvedNodeId: payload.approvedNodeId || null,
           approvalEvidence: payload.approvalEvidence || null
         },
         crmActions: payload.crmActions || realCrmActions,
-        providerExecutor: async ({ invocation, node, context }) => {
-          if (mode === 'dry_run') {
-            return { ok: true, simulated: true, providerAccepted: false };
-          }
-          const providerKey = invocation.providerKey;
-          const adapter = providerRegistry?.get(providerKey);
-          if (!adapter) {
-            throw new PermanentJobError(`Provider adapter not found: ${providerKey}`, 'PROVIDER_ADAPTER_UNAVAILABLE');
-          }
-
-          let secret = invocation.secret;
-          if (!secret && secretResolver) {
-            secret = await secretResolver.resolve(invocation.secretRef || `tenant_${tenantId}_${providerKey}`).catch(() => null);
-          }
-
-          const channel = adapter.channel || (providerKey.startsWith('email') ? 'email' : (providerKey.startsWith('sms') ? 'sms' : 'whatsapp'));
-          const contactId = context?.contactId || context?.contact?.id || context?.to || context?.phone || context?.email;
-          const purpose = payload.purpose || 'transactional';
-
-          // Authoritative consent verification - never fabricate from boolean
-          const structuredConsent = await verifyAuthoritativeConsent({
+        providerExecutor: async ({ invocation, node, context, signal }) => {
+          return executeDurableProviderAction({
             pool,
+            outboxRepo: effectiveOutboxRepo,
             tenantId,
             locationId: locationId || tenantId,
-            contactId,
-            channel,
-            purpose,
-            suppliedConsent: payload.consent
+            executionId,
+            node,
+            invocation,
+            context,
+            mode,
+            providerRegistry,
+            secretResolver,
+            workerId,
+            signal
           });
-
-          if (!structuredConsent) {
-            throw new PermanentJobError(`Communication consent missing or revoked for contact ${contactId} on ${channel}`, 'CONSENT_REQUIRED');
-          }
-
-          const dispatchRes = await adapter.dispatch({
-            secret,
-            config: node.config,
-            payload: context,
-            consent: structuredConsent,
-            tenantId,
-            locationId: locationId || tenantId,
-            actionHash: invocation.actionHash
-          });
-
-          if (!dispatchRes.ok) {
-            throw Object.assign(new Error(`Provider dispatch rejected: ${dispatchRes.code}`), {
-              code: dispatchRes.code || 'PROVIDER_DISPATCH_FAILED'
-            });
-          }
-
-          if (pool) {
-            const validHash = /^[a-f0-9]{64}$/.test(invocation.actionHash || '')
-              ? invocation.actionHash
-              : sha256({ tenantId, executionId, node: node.id, ts: Date.now() });
-            const rcClient = await pool.connect();
-            try {
-              await rcClient.query('BEGIN');
-              await rcClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
-              await rcClient.query(`
-                INSERT INTO workflow_action_receipts (
-                  id, agency_id, location_id, execution_id, node_id, action_hash,
-                  provider_key, provider_receipt, status, result, created_at, updated_at
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'succeeded', $9::jsonb, now(), now())
-                ON CONFLICT (agency_id, location_id, action_hash) DO NOTHING
-              `, [
-                crypto.randomUUID(), tenantId, locationId || tenantId, executionId,
-                node.id, validHash, providerKey, dispatchRes.providerMessageId || null,
-                JSON.stringify(dispatchRes)
-              ]);
-              await rcClient.query('COMMIT');
-            } catch (err) {
-              await rcClient.query('ROLLBACK').catch(() => {});
-              throw Object.assign(new Error(`Failed to save action receipt in PostgreSQL: ${err.message}`), {
-                code: 'ACTION_RECEIPT_PERSIST_FAILED'
-              });
-            } finally {
-              rcClient.release();
-            }
-          }
-
-          return dispatchRes;
         }
       };
 
@@ -736,52 +1213,53 @@ export function createTrustedWorkerHandlers({
       const restoredVariables = existingExecution?.state || payload.state || {};
       const triggerContext = existingExecution?.trigger_event || payload.triggerContext || {};
 
+      const effectiveOutboxRepo = outboxRepository || (pool ? createWorkflowOutboxRepository(pool) : null);
+      const effectiveActorId = payload.actorId || payload.data?.actorId || existingExecution?.trigger_event?.actorId || 'system_worker';
+      const mode = payload.mode || 'live';
+
+      const realCrmActions = createRealCrmActions({
+        pool,
+        tenantId,
+        locationId: locationId || tenantId,
+        executionId,
+        workflowId: existingExecution?.workflow_id || payload.workflowId,
+        actorId: effectiveActorId,
+        workerId,
+        mode,
+        outboxRepository: effectiveOutboxRepo,
+        payload,
+        providerRegistry,
+        secretResolver
+      });
+
       const deps = {
         execution: {
           id: executionId,
           agencyId: tenantId,
           locationId: locationId || tenantId,
           workflowId: existingExecution?.workflow_id || payload.workflowId,
-          mode: payload.mode || 'live',
+          actorId: effectiveActorId,
+          mode,
           approvedNodeId: nodeId,
           approvalEvidence: payload.evidence || { approvedAt: new Date().toISOString() }
         },
-        providerExecutor: async ({ invocation, node, context }) => {
-          const adapter = providerRegistry?.get(invocation.providerKey);
-          if (!adapter) throw new PermanentJobError(`Provider adapter not found: ${invocation.providerKey}`, 'PROVIDER_ADAPTER_UNAVAILABLE');
-          const secret = secretResolver ? await secretResolver.resolve(`tenant_${tenantId}_${invocation.providerKey}`).catch(() => null) : null;
-
-          const channel = adapter.channel || (invocation.providerKey.startsWith('email') ? 'email' : (invocation.providerKey.startsWith('sms') ? 'sms' : 'whatsapp'));
-          const contactId = context?.contactId || context?.contact?.id || context?.to || context?.phone || context?.email;
-          const purpose = payload.purpose || 'transactional';
-
-          const structuredConsent = await verifyAuthoritativeConsent({
+        crmActions: payload.crmActions || realCrmActions,
+        providerExecutor: async ({ invocation, node, context, signal }) => {
+          return executeDurableProviderAction({
             pool,
+            outboxRepo: effectiveOutboxRepo,
             tenantId,
             locationId: locationId || tenantId,
-            contactId,
-            channel,
-            purpose,
-            suppliedConsent: payload.consent
+            executionId,
+            node,
+            invocation,
+            context,
+            mode,
+            providerRegistry,
+            secretResolver,
+            workerId,
+            signal
           });
-
-          if (!structuredConsent) {
-            throw new PermanentJobError(`Communication consent missing or revoked for contact ${contactId} on ${channel}`, 'CONSENT_REQUIRED');
-          }
-
-          const dispatchRes = await adapter.dispatch({
-            secret,
-            config: node.config,
-            payload: context,
-            consent: structuredConsent,
-            tenantId,
-            locationId: locationId || tenantId,
-            actionHash: invocation.actionHash
-          });
-          if (!dispatchRes.ok) {
-            throw Object.assign(new Error(`Provider dispatch rejected: ${dispatchRes.code}`), { code: dispatchRes.code });
-          }
-          return dispatchRes;
         }
       };
 
@@ -1250,10 +1728,20 @@ export function createTrustedWorkerHandlers({
         ...(payload.callbackData ? { callbackData: payload.callbackData } : {})
       };
       const triggerContext = existingExecution?.trigger_event || payload.triggerContext || {};
+      const effectiveOutboxRepo = outboxRepository || (pool ? createWorkflowOutboxRepository(pool) : null);
+      const effectiveActorId = existingExecution?.trigger_event?.actorId || payload.actorId || 'system_worker';
+      const resumeMode = payload.mode || 'live';
+
       const realCrmActions = createRealCrmActions({
         pool,
         tenantId,
         locationId: locationId || tenantId,
+        executionId,
+        workflowId: existingExecution?.workflow_id || payload.workflowId,
+        actorId: effectiveActorId,
+        workerId: effectiveWorkerId,
+        mode: resumeMode,
+        outboxRepository: effectiveOutboxRepo,
         payload,
         providerRegistry,
         secretResolver
@@ -1266,8 +1754,8 @@ export function createTrustedWorkerHandlers({
           agencyId: tenantId,
           locationId: locationId || tenantId,
           workflowId: existingExecution?.workflow_id || payload.workflowId,
-          actorId: existingExecution?.trigger_event?.actorId || payload.actorId || 'system_worker',
-          mode: payload.mode || 'live',
+          actorId: effectiveActorId,
+          mode: resumeMode,
           workflowVersion: existingExecution?.workflow_version || flow?.version || 1
         },
         initialVariables: restoredVariables,
@@ -1281,52 +1769,21 @@ export function createTrustedWorkerHandlers({
               retryable: true
             });
           }
-          if (payload.mode === 'dry_run') {
-            return { ok: true, simulated: true, providerAccepted: false };
-          }
-          const providerKey = invocation.providerKey;
-          const adapter = providerRegistry?.get(providerKey);
-          if (!adapter) {
-            throw new PermanentJobError(`Provider adapter not found: ${providerKey}`, 'PROVIDER_ADAPTER_UNAVAILABLE');
-          }
-
-          let secret = invocation.secret;
-          if (!secret && secretResolver) {
-            secret = await secretResolver.resolve(invocation.secretRef || `tenant_${tenantId}_${providerKey}`).catch(() => null);
-          }
-
-          const channel = adapter.channel || (providerKey.startsWith('email') ? 'email' : (providerKey.startsWith('sms') ? 'sms' : 'whatsapp'));
-          const contactId = context?.contactId || context?.contact?.id || context?.to || context?.phone || context?.email;
-          const purpose = payload.purpose || 'transactional';
-
-          const structuredConsent = await verifyAuthoritativeConsent({
+          return executeDurableProviderAction({
             pool,
+            outboxRepo: effectiveOutboxRepo,
             tenantId,
             locationId: locationId || tenantId,
-            contactId,
-            channel,
-            purpose,
-            suppliedConsent: typeof payload.consent === 'object' ? payload.consent : null
-          });
-
-          if (!structuredConsent) {
-            throw new PermanentJobError(`Communication consent missing or revoked for ${contactId} on ${channel}`, 'CONSENT_REQUIRED');
-          }
-
-          const dispatchRes = await adapter.dispatch({
-            secret,
-            config: node.config,
-            payload: context,
-            consent: structuredConsent,
-            tenantId,
-            locationId: locationId || tenantId,
-            actionHash: invocation.actionHash,
+            executionId,
+            node,
+            invocation,
+            context,
+            mode: resumeMode,
+            providerRegistry,
+            secretResolver,
+            workerId: effectiveWorkerId,
             signal: abortController.signal
           });
-          if (!dispatchRes.ok) {
-            throw Object.assign(new Error(`Provider dispatch rejected: ${dispatchRes.code}`), { code: dispatchRes.code });
-          }
-          return dispatchRes;
         }
       };
 
@@ -1716,12 +2173,71 @@ export function createTrustedWorkerHandlers({
       const isDryRun = payload.dryRun === true;
       const providerKey = payload.providerKey || actionDef?.providerKey;
       let providerResult = null;
+      const effectiveOutboxRepo = outboxRepository || (pool ? createWorkflowOutboxRepository(pool) : null);
+      const targetLocationId = payload.locationId || tenantId;
+
+      const actionHash = computeActionHash({
+        tenantId,
+        locationId: targetLocationId,
+        workflowId: payload.workflowId || 'unknown_workflow',
+        executionId: payload.executionId || 'unknown_execution',
+        nodeId: payload.actionId,
+        actionType,
+        invocationKey: payload.invocationKey || 'default',
+        input: payload.input || {}
+      });
 
       if (!isDryRun && providerKey) {
         const adapter = providerRegistry?.get(providerKey);
         if (!adapter) {
           throw new PermanentJobError(`Provider adapter not found: ${providerKey}`, 'PROVIDER_ADAPTER_UNAVAILABLE');
         }
+
+        // Pre-claim receipt before remote dispatch
+        if (effectiveOutboxRepo && pool && payload.executionId) {
+          const claim = await effectiveOutboxRepo.claimActionReceipt({
+            tenantId,
+            locationId: targetLocationId,
+            executionId: payload.executionId,
+            nodeId: payload.actionId,
+            actionHash,
+            providerKey,
+            workerId: workerId || 'system_worker',
+            leaseSeconds: 60
+          });
+
+          if (!claim.acquired) {
+            if (claim.status === 'succeeded') {
+              return {
+                status: 'completed',
+                actionId: payload.actionId,
+                actionReceipt: actionHash,
+                providerResult: claim.result,
+                sideEffectsDisabled: false,
+                idempotencyReused: true,
+                workerId,
+                executedAt: new Date().toISOString()
+              };
+            }
+            if (claim.status === 'indeterminate') {
+              throw Object.assign(new Error(`Action ${actionHash} for ${payload.actionId} is in indeterminate state`), {
+                code: 'ACTION_INDETERMINATE',
+                retryable: false
+              });
+            }
+            if (claim.status === 'in_progress') {
+              throw Object.assign(new Error(`Action ${actionHash} for ${payload.actionId} is already in progress`), {
+                code: 'ACTION_ALREADY_IN_PROGRESS',
+                retryable: true
+              });
+            }
+            throw Object.assign(new Error(`Failed to claim action receipt for ${payload.actionId}`), {
+              code: 'ACTION_CLAIM_FAILED',
+              retryable: true
+            });
+          }
+        }
+
         let secret = payload.secret;
         if (!secret && secretResolver) {
           secret = await secretResolver.resolve(payload.secretRef || `tenant_${tenantId}_${providerKey}`).catch(() => null);
@@ -1734,7 +2250,7 @@ export function createTrustedWorkerHandlers({
         const structuredConsent = await verifyAuthoritativeConsent({
           pool,
           tenantId,
-          locationId: payload.locationId || tenantId,
+          locationId: targetLocationId,
           contactId,
           channel,
           purpose,
@@ -1742,69 +2258,90 @@ export function createTrustedWorkerHandlers({
         });
 
         if (!structuredConsent) {
+          if (effectiveOutboxRepo && pool && payload.executionId) {
+            await effectiveOutboxRepo.failActionReceipt({
+              tenantId,
+              locationId: targetLocationId,
+              actionHash,
+              errorCode: 'CONSENT_REQUIRED',
+              indeterminate: false,
+              outcomeDetails: { channel, contactId }
+            }).catch(() => {});
+          }
           throw new PermanentJobError(`Communication consent missing or revoked for contact ${contactId} on ${channel}`, 'CONSENT_REQUIRED');
         }
 
-        const dispatchRes = await adapter.dispatch({
-          secret,
-          config: payload.config || {},
-          payload: payload.input || {},
-          consent: structuredConsent,
-          tenantId,
-          locationId: payload.locationId || tenantId,
-          actionHash: sha256({ tenantId, actionId: payload.actionId, input: payload.input })
-        });
+        let dispatchRes;
+        let dispatchErr = null;
+        try {
+          dispatchRes = await adapter.dispatch({
+            secret,
+            config: payload.config || {},
+            payload: payload.input || {},
+            consent: structuredConsent,
+            tenantId,
+            locationId: targetLocationId,
+            actionHash
+          });
+        } catch (err) {
+          dispatchErr = err;
+        }
+
+        if (dispatchErr) {
+          const isTimeout = dispatchErr.name === 'TimeoutError' || dispatchErr.name === 'AbortError' || /timeout|aborted/i.test(dispatchErr.message || '');
+          const errorCode = isTimeout ? 'PROVIDER_TIMEOUT_INDETERMINATE' : (dispatchErr.code || 'PROVIDER_DISPATCH_FAILED');
+          if (effectiveOutboxRepo && pool && payload.executionId) {
+            await effectiveOutboxRepo.failActionReceipt({
+              tenantId,
+              locationId: targetLocationId,
+              actionHash,
+              errorCode,
+              indeterminate: isTimeout,
+              outcomeDetails: { message: dispatchErr.message }
+            }).catch(() => {});
+          }
+          throw dispatchErr;
+        }
+
         if (!dispatchRes.ok) {
+          const isTimeout = dispatchRes.code === 'PROVIDER_TIMEOUT_INDETERMINATE';
+          if (effectiveOutboxRepo && pool && payload.executionId) {
+            await effectiveOutboxRepo.failActionReceipt({
+              tenantId,
+              locationId: targetLocationId,
+              actionHash,
+              errorCode: dispatchRes.code || 'PROVIDER_DISPATCH_REJECTED',
+              indeterminate: isTimeout,
+              outcomeDetails: { code: dispatchRes.code, status: dispatchRes.status || dispatchRes.httpStatus }
+            }).catch(() => {});
+          }
           throw Object.assign(new Error(`Provider dispatch rejected: ${dispatchRes.code}`), { code: dispatchRes.code });
         }
         providerResult = dispatchRes;
+
+        // Mark receipt succeeded
+        if (effectiveOutboxRepo && pool && payload.executionId) {
+          const safeResult = {
+            ok: true,
+            provider: dispatchRes.provider || providerKey,
+            providerMessageId: dispatchRes.providerMessageId || dispatchRes.sid || dispatchRes.id || null,
+            httpStatus: dispatchRes.httpStatus || 200,
+            idempotencyKey: actionHash
+          };
+          await effectiveOutboxRepo.completeActionReceipt({
+            tenantId,
+            locationId: targetLocationId,
+            actionHash,
+            result: safeResult,
+            providerReceipt: safeResult.providerMessageId,
+            outcomeDetails: { providerKey, actionId: payload.actionId }
+          });
+        }
       } else if (!isDryRun && actionDef?.risk === 'external_side_effect') {
         throw new PermanentJobError('External side effect action is missing a provider key', 'PROVIDER_KEY_REQUIRED');
       }
 
-      const actionReceipt = sha256({
-        tenantId,
-        actionId: payload.actionId,
-        input: payload.input || {},
-        idempotencyKey: job?.idempotencyKey || crypto.randomUUID()
-      });
-
-      if (pool && !isDryRun && providerResult && payload.executionId) {
-        const rcClient = await pool.connect();
-        try {
-          await rcClient.query('BEGIN');
-          let targetLocationId = payload.locationId;
-          if (!targetLocationId) {
-            const execLookup = await rcClient.query(
-              'SELECT location_id FROM workflow_executions WHERE agency_id = $1 AND id = $2',
-              [tenantId, payload.executionId]
-            );
-            if (execLookup.rows.length > 0) {
-              targetLocationId = execLookup.rows[0].location_id;
-            }
-          }
-          await rcClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, targetLocationId || tenantId]);
-          await rcClient.query(`
-            INSERT INTO workflow_action_receipts (
-              id, agency_id, location_id, execution_id, node_id, action_hash,
-              provider_key, provider_receipt, status, result, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'succeeded', $9::jsonb, now(), now())
-            ON CONFLICT (agency_id, location_id, action_hash) DO NOTHING
-          `, [
-            crypto.randomUUID(), tenantId, targetLocationId || tenantId, payload.executionId,
-            payload.actionId, actionReceipt, providerKey || 'generic',
-            providerResult?.providerMessageId || null, JSON.stringify(providerResult || {})
-          ]);
-          await rcClient.query('COMMIT');
-        } catch (err) {
-          await rcClient.query('ROLLBACK').catch(() => {});
-          throw Object.assign(new Error(`Failed to save action receipt in PostgreSQL: ${err.message}`), {
-            code: 'ACTION_RECEIPT_PERSIST_FAILED'
-          });
-        } finally {
-          rcClient.release();
-        }
-      }
+      const actionReceipt = actionHash;
 
       return {
         status: isDryRun ? 'simulated' : 'completed',

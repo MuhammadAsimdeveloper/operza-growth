@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer';
+import { createHmac } from 'node:crypto';
 import { generateDeterministicIdempotencyKey } from './outbox-producer.mjs';
 
 const META_VERSION = process.env.META_GRAPH_API_VERSION || 'v27.0';
@@ -72,7 +73,10 @@ export const resendEmailAdapter = Object.freeze({
       const data = await responseJson(res);
       if (!res.ok || typeof data.id !== 'string') return failure('PROVIDER_SEND_REJECTED', res.status);
       return { ok: true, providerAccepted: true, providerMessageId: data.id, provider: 'resend', httpStatus: res.status, idempotencyKey: key };
-    } catch { return failure('PROVIDER_REQUEST_FAILED'); }
+    } catch (err) {
+      const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError' || /timeout|aborted/i.test(err?.message || '');
+      return failure(isTimeout ? 'PROVIDER_TIMEOUT_INDETERMINATE' : 'PROVIDER_REQUEST_FAILED');
+    }
   }
 });
 
@@ -104,7 +108,10 @@ export const sendgridEmailAdapter = Object.freeze({
       });
       if (res.status !== 202) return failure('PROVIDER_SEND_REJECTED', res.status);
       return { ok: true, providerAccepted: true, providerMessageId: res.headers?.get?.('x-message-id') || null, provider: 'sendgrid', httpStatus: res.status };
-    } catch { return failure('PROVIDER_REQUEST_FAILED'); }
+    } catch (err) {
+      const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError' || /timeout|aborted/i.test(err?.message || '');
+      return failure(isTimeout ? 'PROVIDER_TIMEOUT_INDETERMINATE' : 'PROVIDER_REQUEST_FAILED');
+    }
   }
 });
 
@@ -134,7 +141,10 @@ export const twilioSmsAdapter = Object.freeze({
       const data = await responseJson(res);
       if (!res.ok || typeof data.sid !== 'string') return failure('PROVIDER_SEND_REJECTED', res.status);
       return { ok: true, providerAccepted: true, providerMessageId: data.sid, provider: 'twilio', httpStatus: res.status };
-    } catch { return failure('PROVIDER_REQUEST_FAILED'); }
+    } catch (err) {
+      const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError' || /timeout|aborted/i.test(err?.message || '');
+      return failure(isTimeout ? 'PROVIDER_TIMEOUT_INDETERMINATE' : 'PROVIDER_REQUEST_FAILED');
+    }
   }
 });
 
@@ -163,7 +173,56 @@ export const whatsappMetaAdapter = Object.freeze({
       const data = await responseJson(res), receipt = data.messages?.[0]?.id;
       if (!res.ok || typeof receipt !== 'string') return failure('PROVIDER_SEND_REJECTED', res.status);
       return { ok: true, providerAccepted: true, providerMessageId: receipt, provider: 'whatsapp.meta_cloud', httpStatus: res.status };
-    } catch { return failure('PROVIDER_REQUEST_FAILED'); }
+    } catch (err) {
+      const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError' || /timeout|aborted/i.test(err?.message || '');
+      return failure(isTimeout ? 'PROVIDER_TIMEOUT_INDETERMINATE' : 'PROVIDER_REQUEST_FAILED');
+    }
+  }
+});
+
+export const zapierWebhookAdapter = Object.freeze({
+  id: 'adapter-zapier-webhook-v1', providerKey: 'zapier', channel: 'webhook',
+  async verify({ config = {} } = {}) {
+    const zapUrl = config.webhookUrl || config.url || '';
+    if (!zapUrl || !zapUrl.startsWith('https://hooks.zapier.com/')) {
+      return { verified: false, code: 'INVALID_ZAPIER_URL' };
+    }
+    return { verified: true, accountId: 'zapier_hooks' };
+  },
+  async dispatch({ config = {}, payload = {}, secret, tenantId, locationId, actionHash, signal, fetchFn = globalThis.fetch } = {}) {
+    const zapUrl = config.webhookUrl || config.url || '';
+    if (!zapUrl || !zapUrl.startsWith('https://hooks.zapier.com/')) {
+      return failure('INVALID_ZAPIER_URL');
+    }
+    const key = makeIdempotencyKey({ tenantId, locationId, actionHash });
+    const secretKey = secret || config.signingSecret || tenantId || 'operza_zapier_secret';
+    const bodyStr = JSON.stringify(payload);
+    const signature = createHmac('sha256', secretKey).update(bodyStr).digest('hex');
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+        'X-Operza-Signature': `sha256=${signature}`
+      };
+      if (key) headers['Idempotency-Key'] = key;
+      const res = await (typeof fetchFn === 'function' ? fetchFn : globalThis.fetch)(zapUrl, {
+        method: 'POST',
+        headers,
+        body: bodyStr,
+        signal: signal || AbortSignal.timeout(10_000)
+      });
+      if (!res.ok) return failure('PROVIDER_SEND_REJECTED', res.status);
+      return {
+        ok: true,
+        providerAccepted: true,
+        providerMessageId: res.headers?.get?.('x-zapier-delivery-id') || ('zap_' + (actionHash ? actionHash.slice(0, 16) : 'msg')),
+        provider: 'zapier',
+        httpStatus: res.status,
+        idempotencyKey: key
+      };
+    } catch (err) {
+      const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError' || /timeout|aborted/i.test(err?.message || '');
+      return failure(isTimeout ? 'PROVIDER_TIMEOUT_INDETERMINATE' : 'PROVIDER_REQUEST_FAILED', 0);
+    }
   }
 });
 
@@ -179,6 +238,7 @@ export function createProviderAdapterRegistry(customAdapters = []) {
     [sendgridEmailAdapter.providerKey, sendgridEmailAdapter],
     [twilioSmsAdapter.providerKey, twilioSmsAdapter],
     [whatsappMetaAdapter.providerKey, whatsappMetaAdapter],
+    [zapierWebhookAdapter.providerKey, zapierWebhookAdapter],
     [stripePaymentAdapter.providerKey, stripePaymentAdapter]
   ]);
   for (const adapter of customAdapters) if (adapter?.providerKey) map.set(adapter.providerKey, adapter);
@@ -190,10 +250,18 @@ export function createProviderAdapterRegistry(customAdapters = []) {
       if (key === 'sendgrid') return map.get('email.sendgrid') || null;
       if (key === 'sms' || key === 'twilio') return map.get('sms.twilio') || null;
       if (key === 'whatsapp' || key === 'meta') return map.get('whatsapp.meta_cloud') || null;
+      if (key === 'zapier' || key === 'zapier_webhook' || key === 'automation.zapier.dispatch') return map.get('zapier') || null;
       if (key === 'stripe' || key === 'payments') return map.get('payments.stripe') || null;
       return null;
     },
     has(key) { return this.get(key) !== null; },
-    list() { return [...map.values()]; }
+    list() { return [...map.values()]; },
+    register(key, adapter) {
+      if (typeof key === 'string' && adapter) {
+        map.set(key, adapter);
+      } else if (key && key.providerKey) {
+        map.set(key.providerKey, key);
+      }
+    }
   };
 }

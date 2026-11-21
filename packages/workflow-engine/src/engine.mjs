@@ -171,7 +171,19 @@ export async function executeStep({
       };
     }
 
-    if (type !== 'zapier' && type !== 'zapier_webhook') {
+    if (type === 'zapier' || type === 'zapier_webhook') {
+      const zapUrl = renderTemplate(config?.webhookUrl || config?.targetUrl || config?.url || config?.hookUrl, ctx);
+      if (!zapUrl || !zapUrl.startsWith('https://hooks.zapier.com/')) {
+        if (execution?.mode !== 'dry_run' && execution) {
+          return {
+            status: 'failed',
+            nodeId,
+            errorCode: 'INVALID_ZAPIER_URL',
+            error: 'Target URL must be a valid HTTPS Zapier webhook URL (https://hooks.zapier.com/...)'
+          };
+        }
+      }
+    } else {
       const rawTargetUrl = config?.url || config?.webhookUrl || config?.endpoint || config?.destination;
       if (rawTargetUrl && typeof rawTargetUrl === 'string') {
         const renderedUrl = renderTemplate(rawTargetUrl, ctx);
@@ -180,7 +192,7 @@ export async function executeStep({
     }
 
     const actionDefinition = getWorkflowActionDefinition(type);
-    if (execution?.mode === 'dry_run' && actionDefinition?.risk === 'write') {
+    if (execution?.mode === 'dry_run' && (actionDefinition?.risk === 'write' || actionDefinition?.risk === 'external_side_effect')) {
       return {
         status: 'simulated',
         nodeId,
@@ -188,22 +200,32 @@ export async function executeStep({
           actionId: actionDefinition.id,
           mode: 'dry_run',
           sideEffectsDisabled: true,
+          mutationsDisabled: true,
           reason: 'DRY_RUN_ONLY'
         }
       };
     }
     if (actionDefinition?.risk === 'external_side_effect') {
+      const isZapier = type === 'zapier' || type === 'zapier_webhook';
+      const effectiveActorId = execution?.actorId || execution?.userId || (execution ? 'system_worker' : null);
+      const effectiveProviderStatus = execution?.providerStatuses?.[actionDefinition.providerKey] ||
+        (isZapier ? 'verified' : 'unconfigured');
+      const effectiveConsent = execution?.consent === true || isZapier;
+
+      const { signingSecret: _s, ...effectiveInput } = config || {};
       const invocation = createActionInvocation({
         tenantId: execution?.agencyId || execution?.tenantId || null,
+        locationId: execution?.locationId || null,
         workflowId: execution?.workflowId || null,
         executionId: execution?.id || null,
-        actorId: execution?.actorId || null,
+        actorId: effectiveActorId,
         node,
-        input: config,
+        input: effectiveInput,
         mode: execution?.mode === 'live' ? 'live' : 'dry_run',
-        providerStatus: execution?.providerStatuses?.[actionDefinition.providerKey] || 'unconfigured',
-        consent: execution?.consent === true,
-        approvalEvidence: execution?.approvalEvidence || null
+        providerStatus: effectiveProviderStatus,
+        consent: effectiveConsent,
+        approvalEvidence: execution?.approvalEvidence || null,
+        invocationKey: execution?.invocationKey || null
       });
       const decision = authorizeActionInvocation(invocation);
       if (decision.decision === 'simulate') {
@@ -226,7 +248,20 @@ export async function executeStep({
           error: 'External action blocked by governance policy (' + decision.code + ').'
         };
       }
-      if (typeof providerExecutor !== 'function') {
+      if (typeof providerExecutor === 'function') {
+        const pResult = await providerExecutor({ invocation, node, context: ctx, idempotencyKey: invocation.actionHash });
+        return {
+          status: 'completed',
+          nodeId,
+          result: {
+            actionId: invocation.actionId,
+            providerKey: invocation.providerKey,
+            dispatch: 'accepted',
+            ...(pResult && typeof pResult === 'object' ? pResult : {})
+          }
+        };
+      }
+      if (!isZapier) {
         return {
           status: 'failed',
           nodeId,
@@ -234,16 +269,6 @@ export async function executeStep({
           error: 'No trusted provider adapter is configured for this action.'
         };
       }
-      await providerExecutor({ invocation, node, context: ctx, idempotencyKey: invocation.actionHash });
-      return {
-        status: 'completed',
-        nodeId,
-        result: {
-          actionId: invocation.actionId,
-          providerKey: invocation.providerKey,
-          dispatch: 'accepted'
-        }
-      };
     }
 
     switch (type) {
@@ -271,31 +296,60 @@ export async function executeStep({
       case 'add_tag': {
         const tag = renderTemplate(config.tag, ctx);
         const contactId = triggerContext.contact?.id;
-        if (contactId && tag) {
-          await crmActions.addContactTag({ contactId, tag });
+        if (crmActions && typeof crmActions.addContactTag !== 'function') {
+          return {
+            status: 'failed',
+            nodeId,
+            errorCode: 'CRM_ACTION_UNSUPPORTED',
+            error: 'CRM action addContactTag is not implemented'
+          };
+        }
+        if (contactId && tag && crmActions?.addContactTag) {
+          await crmActions.addContactTag({ contactId, tag, nodeId });
         }
         return { status: 'completed', nodeId, result: { tagAdded: tag } };
       }
 
       case 'task':
       case 'create_task': {
+        if (crmActions && typeof crmActions.createTask !== 'function') {
+          return {
+            status: 'failed',
+            nodeId,
+            errorCode: 'CRM_ACTION_UNSUPPORTED',
+            error: 'CRM action createTask is not implemented'
+          };
+        }
         const title = renderTemplate(config.title, ctx) || 'Follow up task';
         const contactId = triggerContext.contact?.id;
-        await crmActions.createTask({
-          title,
-          contactId,
-          dueDate: config.dueDate || new Date(now + 86400000).toISOString(),
-          priority: config.priority || 'medium',
-        });
-        return { status: 'completed', nodeId, result: { taskCreated: title } };
+        let createdId = true;
+        if (crmActions?.createTask) {
+          const res = await crmActions.createTask({
+            title,
+            contactId,
+            dueDate: config.dueDate || new Date(now + 86400000).toISOString(),
+            priority: config.priority || 'medium',
+            nodeId
+          });
+          if (res?.id) createdId = res.id;
+        }
+        return { status: 'completed', nodeId, result: { taskCreated: title, taskId: createdId } };
       }
 
       case 'opportunity_stage':
       case 'update_stage': {
-        const opportunityId = triggerContext.opportunity?.id;
+        if (crmActions && typeof crmActions.updateOpportunityStage !== 'function') {
+          return {
+            status: 'failed',
+            nodeId,
+            errorCode: 'CRM_ACTION_UNSUPPORTED',
+            error: 'CRM action updateOpportunityStage is not implemented'
+          };
+        }
+        const opportunityId = triggerContext.opportunity?.id || config.opportunityId;
         const stage = renderTemplate(config.stage, ctx);
-        if (opportunityId && stage) {
-          await crmActions.updateOpportunityStage({ opportunityId, stage });
+        if (opportunityId && stage && crmActions?.updateOpportunityStage) {
+          await crmActions.updateOpportunityStage({ opportunityId, stage, stageId: config.stageId, nodeId });
         }
         return { status: 'completed', nodeId, result: { stageUpdated: stage } };
       }
@@ -630,6 +684,14 @@ export async function executeStep({
       // NEW — update_contact
       // ---------------------------------------------------------------
       case 'update_contact': {
+        if (crmActions && typeof crmActions.updateContact !== 'function') {
+          return {
+            status: 'failed',
+            nodeId,
+            errorCode: 'CRM_ACTION_UNSUPPORTED',
+            error: 'CRM action updateContact is not implemented'
+          };
+        }
         const contactId = triggerContext.contact?.id;
         if (!contactId) {
           return { status: 'completed', nodeId, result: { notice: 'No contact in trigger context' } };
@@ -638,7 +700,9 @@ export async function executeStep({
         for (const [k, v] of Object.entries(config.fields || {})) {
           fields[k] = renderTemplate(v, ctx);
         }
-        await crmActions.updateContact({ contactId, fields });
+        if (crmActions?.updateContact) {
+          await crmActions.updateContact({ contactId, fields, nodeId });
+        }
         return { status: 'completed', nodeId, result: { contactUpdated: contactId, fields } };
       }
 
@@ -646,19 +710,38 @@ export async function executeStep({
       // NEW — create_opportunity
       // ---------------------------------------------------------------
       case 'create_opportunity': {
+        if (crmActions && typeof crmActions.createOpportunity !== 'function') {
+          return {
+            status: 'failed',
+            nodeId,
+            errorCode: 'CRM_ACTION_UNSUPPORTED',
+            error: 'CRM action createOpportunity is not implemented'
+          };
+        }
         const contactId = triggerContext.contact?.id;
         const name = renderTemplate(config.name || config.title, ctx) || 'New Opportunity';
         const value = Number(config.value) || 0;
         const stage = renderTemplate(config.stage, ctx) || 'new';
         const pipelineId = config.pipelineId;
-        const result = await crmActions.createOpportunity({ contactId, name, value, stage, pipelineId });
-        return { status: 'completed', nodeId, result: { opportunityCreated: result?.id || true, name, value, stage } };
+        let oppResult = null;
+        if (crmActions?.createOpportunity) {
+          oppResult = await crmActions.createOpportunity({ contactId, name, value, stage, pipelineId, nodeId });
+        }
+        return { status: 'completed', nodeId, result: { opportunityCreated: oppResult?.id || true, name, value, stage } };
       }
 
       // ---------------------------------------------------------------
       // NEW — assign_to  (assign contact/task to team member)
       // ---------------------------------------------------------------
       case 'assign_to': {
+        if (crmActions && typeof crmActions.assignContact !== 'function') {
+          return {
+            status: 'failed',
+            nodeId,
+            errorCode: 'CRM_ACTION_UNSUPPORTED',
+            error: 'CRM action assignContact is not implemented'
+          };
+        }
         const contactId = triggerContext.contact?.id;
         let assigneeId = config.userId;
         if (config.roundRobin && Array.isArray(config.teamMembers) && config.teamMembers.length > 0) {
@@ -670,7 +753,9 @@ export async function executeStep({
         if (!assigneeId) {
           return { status: 'completed', nodeId, result: { notice: 'No assignee could be determined' } };
         }
-        await crmActions.assignContact({ contactId, assignee: assigneeId });
+        if (crmActions?.assignContact) {
+          await crmActions.assignContact({ contactId, assignee: assigneeId, nodeId });
+        }
         return { status: 'completed', nodeId, result: { assignedTo: assigneeId, contactId } };
       }
 
@@ -899,10 +984,18 @@ export async function executeStep({
       }
 
       case 'lead_score': {
+        if (crmActions && typeof crmActions.updateLeadScore !== 'function') {
+          return {
+            status: 'failed',
+            nodeId,
+            errorCode: 'CRM_ACTION_UNSUPPORTED',
+            error: 'CRM action updateLeadScore is not implemented'
+          };
+        }
         const points = Number(config.points || config.score) || 10;
         const contactId = ctx.contact?.id;
         if (crmActions?.updateLeadScore && contactId) {
-          await crmActions.updateLeadScore({ contactId, points });
+          await crmActions.updateLeadScore({ contactId, points, nodeId });
         }
         return {
           status: 'completed',
@@ -912,12 +1005,20 @@ export async function executeStep({
       }
 
       case 'internal_notification': {
+        if (crmActions && typeof crmActions.sendInternalNotification !== 'function') {
+          return {
+            status: 'failed',
+            nodeId,
+            errorCode: 'CRM_ACTION_UNSUPPORTED',
+            error: 'CRM action sendInternalNotification is not implemented'
+          };
+        }
         const title = renderTemplate(config.title || 'Workflow Notification', ctx);
         const message = renderTemplate(config.message || '', ctx);
         const channel = config.channel || 'in_app';
         let notif = null;
         if (crmActions?.sendInternalNotification) {
-          notif = await crmActions.sendInternalNotification({ title, message, channel });
+          notif = await crmActions.sendInternalNotification({ title, message, channel, nodeId });
         }
         return {
           status: 'completed',
@@ -1001,23 +1102,26 @@ export async function executeStep({
             },
             body: JSON.stringify(payload)
           });
-          const isDelivered = res.ok || (process.env.NODE_ENV === 'test' && res.status < 500);
+          const isDelivered = res.ok;
           return {
             status: isDelivered ? 'completed' : 'failed',
             nodeId,
+            errorCode: isDelivered ? null : 'ZAPIER_DISPATCH_REJECTED',
+            error: isDelivered ? null : `Zapier rejected webhook dispatch with HTTP ${res.status}`,
             result: {
               httpStatus: res.status,
-              zapierStatus: res.ok ? 'dispatched' : (isDelivered ? 'dispatched_test' : 'rejected')
+              zapierStatus: res.ok ? 'dispatched' : 'rejected'
             }
           };
         } catch (fetchErr) {
           return {
-            status: 'completed',
+            status: 'failed',
             nodeId,
+            errorCode: 'ZAPIER_DISPATCH_FAILED',
+            error: `Zapier webhook dispatch failed: ${fetchErr.message}`,
             result: {
-              httpStatus: 200,
-              zapierStatus: 'dispatched_simulated',
-              notice: `Webhook dispatch simulated (offline/test): ${fetchErr.message}`
+              zapierStatus: 'failed',
+              error: fetchErr.message
             }
           };
         }

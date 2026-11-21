@@ -35,8 +35,8 @@ const DEFINITIONS = [
   ['code', 'flow.code.transform', 'read', 'none', null],
   ['merge', 'flow.merge.branches', 'read', 'none', null],
   ['sub_workflow', 'automation.sub_workflow.invoke', 'write', 'none', null],
-  ['zapier', 'automation.zapier.dispatch', 'write', 'none', null],
-  ['zapier_webhook', 'automation.zapier.dispatch', 'write', 'none', null],
+  ['zapier', 'automation.zapier.dispatch', 'external_side_effect', 'none', 'zapier'],
+  ['zapier_webhook', 'automation.zapier.dispatch', 'external_side_effect', 'none', 'zapier'],
   ['condition', 'flow.condition.evaluate', 'read', 'none', null],
   ['approval_gate', 'flow.approval.gate', 'write', 'human', null],
   ['math', 'flow.math.calculate', 'read', 'none', null],
@@ -151,8 +151,40 @@ export function isDirectNetworkNode(nodeType) {
   return DIRECT_NETWORK_NODES.has(nodeType);
 }
 
+export function computeActionHash({
+  tenantId = null,
+  agencyId = null,
+  locationId = null,
+  workflowId = null,
+  executionId = null,
+  nodeId = null,
+  actionType = null,
+  nodeType = null,
+  actionId = null,
+  invocationKey = null,
+  input = {}
+} = {}) {
+  const agency = tenantId || agencyId || 'unknown_agency';
+  const location = locationId || agency;
+  const effectiveType = actionType || nodeType || actionId || 'unknown_action';
+  const safeInput = cloneSafeJson(input);
+  const identity = {
+    agencyId: agency,
+    locationId: location,
+    workflowId: workflowId || 'unknown_workflow',
+    executionId: executionId || 'unknown_execution',
+    nodeId: nodeId || 'unknown_node',
+    actionType: effectiveType,
+    invocationKey: invocationKey || 'default',
+    payload: canonical(safeInput)
+  };
+  return digest(identity);
+}
+
 export function createActionInvocation({
   tenantId = null,
+  agencyId = null,
+  locationId = null,
   workflowId = null,
   executionId = null,
   actorId = null,
@@ -161,7 +193,8 @@ export function createActionInvocation({
   mode = 'dry_run',
   providerStatus = 'unconfigured',
   consent = false,
-  approvalEvidence = null
+  approvalEvidence = null,
+  invocationKey = null
 } = {}) {
   if (!isPlainObject(node) || typeof node.id !== 'string' || node.id.length < 1 || node.id.length > 180) {
     fail('node must have a bounded ID', 'INVALID_NODE');
@@ -174,8 +207,11 @@ export function createActionInvocation({
   }
   if (typeof consent !== 'boolean') fail('consent must be boolean', 'INVALID_CONSENT');
 
+  const effectiveAgency = tenantId || agencyId || null;
+  const effectiveLocation = locationId || effectiveAgency;
+
   if (mode === 'live') {
-    assertRef(tenantId, 'tenantId');
+    assertRef(effectiveAgency, 'tenantId');
     assertRef(workflowId, 'workflowId');
     assertRef(executionId, 'executionId');
     assertRef(actorId, 'actorId');
@@ -190,8 +226,30 @@ export function createActionInvocation({
   const serialized = JSON.stringify(safeInput);
   if (serialized.length > 100_000) fail('action input exceeds the maximum serialized size', 'INPUT_TOO_LARGE');
 
+  const actionHash = computeActionHash({
+    tenantId: effectiveAgency,
+    locationId: effectiveLocation,
+    workflowId,
+    executionId,
+    nodeId: node.id,
+    nodeType: node.type,
+    actionId: definition.id,
+    invocationKey,
+    input: safeInput
+  });
+
+  const authHash = digest({
+    actionHash,
+    mode,
+    providerStatus,
+    consent,
+    actorId: actorId || null
+  });
+
   const identity = {
-    tenantId,
+    tenantId: effectiveAgency,
+    agencyId: effectiveAgency,
+    locationId: effectiveLocation,
     workflowId,
     executionId,
     actorId,
@@ -201,16 +259,18 @@ export function createActionInvocation({
     mode,
     providerStatus,
     consent,
-    input: safeInput
+    input: safeInput,
+    invocationKey: invocationKey || 'default'
   };
-  const actionHash = digest(identity);
+
   return freeze({
     ...identity,
     risk: definition.risk,
     approval: definition.approval,
     providerKey: definition.providerKey,
     approvalEvidence: approvalEvidence ? cloneSafeJson(approvalEvidence, 'approvalEvidence') : null,
-    actionHash
+    actionHash,
+    authHash
   });
 }
 
@@ -219,15 +279,37 @@ export function authorizeActionInvocation(invocation, { now = Date.now() } = {})
     return { decision: 'deny', code: 'INVOCATION_INVALID' };
   }
   const definition = ACTIONS_BY_TYPE.get(invocation.nodeType);
-  const expectedHash = digest({
-    tenantId: invocation.tenantId, workflowId: invocation.workflowId, executionId: invocation.executionId,
-    actorId: invocation.actorId, nodeId: invocation.nodeId, nodeType: invocation.nodeType,
-    actionId: invocation.actionId, mode: invocation.mode, providerStatus: invocation.providerStatus,
-    consent: invocation.consent, input: invocation.input
-  });
   if (invocation.actionId !== definition.id || invocation.risk !== definition.risk ||
-      invocation.approval !== definition.approval || invocation.providerKey !== definition.providerKey ||
-      invocation.actionHash !== expectedHash) return { decision: 'deny', code: 'INVOCATION_TAMPERED' };
+      invocation.approval !== definition.approval || invocation.providerKey !== definition.providerKey) {
+    return { decision: 'deny', code: 'INVOCATION_TAMPERED' };
+  }
+
+  const expectedActionHash = computeActionHash({
+    tenantId: invocation.tenantId || invocation.agencyId,
+    locationId: invocation.locationId,
+    workflowId: invocation.workflowId,
+    executionId: invocation.executionId,
+    nodeId: invocation.nodeId,
+    nodeType: invocation.nodeType,
+    actionId: invocation.actionId,
+    invocationKey: invocation.invocationKey,
+    input: invocation.input
+  });
+  if (invocation.actionHash !== expectedActionHash) {
+    return { decision: 'deny', code: 'INVOCATION_TAMPERED' };
+  }
+
+  const expectedAuthHash = digest({
+    actionHash: invocation.actionHash,
+    mode: invocation.mode,
+    providerStatus: invocation.providerStatus,
+    consent: invocation.consent,
+    actorId: invocation.actorId || null
+  });
+  if (invocation.authHash && invocation.authHash !== expectedAuthHash) {
+    return { decision: 'deny', code: 'INVOCATION_TAMPERED' };
+  }
+
   if (invocation.mode === 'dry_run') return { decision: 'simulate', code: 'DRY_RUN_ONLY' };
   if (invocation.mode !== 'live') return { decision: 'deny', code: 'INVALID_MODE' };
   if (invocation.risk !== 'external_side_effect') return { decision: 'allow', code: 'INTERNAL_ACTION' };

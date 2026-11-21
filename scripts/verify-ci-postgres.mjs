@@ -1,5 +1,11 @@
 import { spawn } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { IsolatedTestPostgres } from '../packages/db/lib/test-postgres-server.mjs';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, '..');
 
 console.log('=====================================================');
 console.log('🚀 Phase 20.2.5 Real PostgreSQL CI Verification Script');
@@ -19,6 +25,7 @@ function run(cmd, args, env = {}) {
     const isWindowsCmd = process.platform === 'win32' && (cmd === 'npm' || cmd.endsWith('.cmd') || cmd.endsWith('.bat'));
     const executable = isWindowsCmd ? (cmd.endsWith('.cmd') ? cmd : `${cmd}.cmd`) : cmd;
     const child = spawn(executable, args, {
+      cwd: repoRoot,
       stdio: 'inherit',
       shell: isWindowsCmd,
       env: { ...process.env, ...env }
@@ -36,7 +43,7 @@ try {
   await run('node', ['packages/db/scripts/wait-for-postgres.mjs']);
 
   // Step 1: Run migration runner
-  console.log('\n--- STEP 1: Running Migration Runner (001-030) ---');
+  console.log('\n--- STEP 1: Running Migration Runner (001-031) ---');
   await run('node', ['packages/db/scripts/migrate.mjs']);
 
   // Step 2: Run @operza/db tests with real PostgreSQL
@@ -47,6 +54,7 @@ try {
   console.log('\n--- STEP 3: Running Workflow Persistence & API Integration Tests ---');
   await run('node', [
     '--test',
+    'packages/platform-core/test/action-receipt-idempotency.test.mjs',
     'apps/api/test/workflow-wait-lifecycle.test.mjs',
     'apps/api/test/workflow-recovery-and-leases.test.mjs',
     'apps/api/test/workflow-persistence-reliability.test.mjs',

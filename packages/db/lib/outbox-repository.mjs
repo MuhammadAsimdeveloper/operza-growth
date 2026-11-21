@@ -192,38 +192,84 @@ export function createWorkflowOutboxRepository(pool) {
       });
     },
 
-    async claimActionReceipt({ tenantId, locationId, executionId, nodeId, actionHash, providerKey = null } = {}) {
+    async claimActionReceipt({ client: providedClient, tenantId, locationId, executionId, nodeId, actionHash, providerKey = null, workerId = null, leaseSeconds = 30 } = {}) {
       assertRef(tenantId, 'tenantId');
       assertRef(locationId, 'locationId');
       assertRef(executionId, 'executionId');
       assertRef(nodeId, 'nodeId');
       if (!HASH.test(actionHash || '')) throw new TypeError('actionHash must be a SHA-256 digest');
+
+      const execute = async (client) => {
+        await client.query(
+          "SELECT set_config('app.agency_id',$1,true), set_config('app.location_id',$2,true)",
+          [tenantId, locationId]
+        );
+        const leaseSecs = Math.max(1, Math.min(3600, Number(leaseSeconds) || 30));
+        const inserted = await client.query(
+          "INSERT INTO workflow_action_receipts " +
+            "(id,agency_id,location_id,execution_id,node_id,action_hash,provider_key,status,lease_owner,lease_until,started_at,attempts) " +
+          "VALUES ($1,$2,$3,$4,$5,$6,$7,'started',$8,clock_timestamp() + ($9 * interval '1 second'),clock_timestamp(),1) " +
+          "ON CONFLICT (agency_id,location_id,action_hash) DO NOTHING " +
+          "RETURNING id,status,result,lease_owner,lease_until",
+          [randomUUID(), tenantId, locationId, executionId, nodeId, actionHash, providerKey, workerId, leaseSecs]
+        );
+        if (inserted.rowCount) {
+          return { acquired: true, status: 'started', receipt: inserted.rows[0] };
+        }
+        const existing = await client.query(
+          "SELECT id,status,result,lease_owner,lease_until,attempts,provider_receipt,last_error_code " +
+          "FROM workflow_action_receipts " +
+          "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 FOR UPDATE",
+          [tenantId, locationId, actionHash]
+        );
+        if (!existing.rowCount) {
+          return { acquired: false, receipt: null };
+        }
+        const row = existing.rows[0];
+        if (row.status === 'succeeded') {
+          return { acquired: false, status: 'succeeded', result: row.result, providerReceipt: row.provider_receipt, receipt: row };
+        }
+        if (row.status === 'started') {
+          const now = Date.now();
+          const leaseUntil = row.lease_until ? new Date(row.lease_until).getTime() : 0;
+          if (now < leaseUntil) {
+            return { acquired: false, status: 'in_progress', leaseOwner: row.lease_owner, leaseUntil: row.lease_until, receipt: row };
+          }
+          // Lease has expired - recover
+          const updated = await client.query(
+            "UPDATE workflow_action_receipts " +
+            "SET lease_owner=$4, lease_until=clock_timestamp() + ($5 * interval '1 second'), " +
+                "attempts=attempts + 1, updated_at=clock_timestamp() " +
+            "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 " +
+            "RETURNING id,status,result,lease_owner,lease_until",
+            [tenantId, locationId, actionHash, workerId, leaseSecs]
+          );
+          return { acquired: true, recovered: true, status: 'started', receipt: updated.rows[0] || row };
+        }
+        if (row.status === 'indeterminate') {
+          return { acquired: false, status: 'indeterminate', lastErrorCode: row.last_error_code, receipt: row };
+        }
+        // Failed: reclaim for retry
+        const updated = await client.query(
+          "UPDATE workflow_action_receipts " +
+          "SET status='started', lease_owner=$4, lease_until=clock_timestamp() + ($5 * interval '1 second'), " +
+              "attempts=attempts + 1, updated_at=clock_timestamp() " +
+          "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 " +
+          "RETURNING id,status,result,lease_owner,lease_until",
+          [tenantId, locationId, actionHash, workerId, leaseSecs]
+        );
+        return { acquired: true, retried: true, status: 'started', receipt: updated.rows[0] || row };
+      };
+
+      if (providedClient) {
+        return execute(providedClient);
+      }
       return withClient(async client => {
         await client.query('BEGIN');
         try {
-          await client.query(
-            "SELECT set_config('app.agency_id',$1,true), set_config('app.location_id',$2,true)",
-            [tenantId, locationId]
-          );
-          const inserted = await client.query(
-            "INSERT INTO workflow_action_receipts " +
-              "(id,agency_id,location_id,execution_id,node_id,action_hash,provider_key,status) " +
-            "VALUES ($1,$2,$3,$4,$5,$6,$7,'started') " +
-            "ON CONFLICT (agency_id,location_id,action_hash) DO NOTHING " +
-            "RETURNING id,status,result",
-            [randomUUID(),tenantId,locationId,executionId,nodeId,actionHash,providerKey]
-          );
-          if (inserted.rowCount) {
-            await client.query('COMMIT');
-            return { acquired: true, receipt: inserted.rows[0] };
-          }
-          const existing = await client.query(
-            "SELECT id,status,result FROM workflow_action_receipts " +
-            "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 FOR UPDATE",
-            [tenantId,locationId,actionHash]
-          );
+          const result = await execute(client);
           await client.query('COMMIT');
-          return { acquired: false, receipt: existing.rows[0] || null };
+          return result;
         } catch (error) {
           await client.query('ROLLBACK').catch(() => {});
           throw error;
@@ -231,35 +277,110 @@ export function createWorkflowOutboxRepository(pool) {
       });
     },
 
-    async completeActionReceipt({ tenantId, locationId, actionHash, result = {}, providerReceipt = null } = {}) {
+    async completeActionReceipt({ client: providedClient, tenantId, locationId, actionHash, result = {}, providerReceipt = null, outcomeDetails = {} } = {}) {
       if (!HASH.test(actionHash || '')) throw new TypeError('actionHash must be a SHA-256 digest');
       validatePayload(result);
+      validatePayload(outcomeDetails);
       if (Buffer.byteLength(JSON.stringify(result)) > 8_192) throw new TypeError('Receipt result exceeds 8 KB');
-      if (providerReceipt != null && (typeof providerReceipt !== 'string' || providerReceipt.length > 180 || /bearer\\s|token|secret|key=/i.test(providerReceipt))) {
+      if (Buffer.byteLength(JSON.stringify(outcomeDetails)) > 8_192) throw new TypeError('Receipt outcome details exceeds 8 KB');
+      if (providerReceipt != null && (typeof providerReceipt !== 'string' || providerReceipt.length > 180 || /bearer\s|token|secret|key=/i.test(providerReceipt))) {
         throw Object.assign(new TypeError('Provider receipt must be a non-secret reference'), { code: 'INVALID_PROVIDER_RECEIPT' });
+      }
+
+      const execute = async (client) => {
+        await client.query(
+          "SELECT set_config('app.agency_id',$1,true), set_config('app.location_id',$2,true)",
+          [tenantId, locationId]
+        );
+        const updated = await client.query(
+          "UPDATE workflow_action_receipts SET status='succeeded', result=$4::jsonb, " +
+            "provider_receipt=$5, outcome_details=$6::jsonb, completed_at=clock_timestamp(), updated_at=clock_timestamp() " +
+          "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 " +
+          "RETURNING id,status,result,provider_receipt,completed_at",
+          [tenantId, locationId, actionHash, JSON.stringify(result), providerReceipt || null, JSON.stringify(outcomeDetails)]
+        );
+        if (!updated.rowCount) throw Object.assign(new Error('Action receipt not found'), { code: 'ACTION_RECEIPT_NOT_FOUND' });
+        return updated.rows[0];
+      };
+
+      if (providedClient) {
+        return execute(providedClient);
       }
       return withClient(async client => {
         await client.query('BEGIN');
         try {
-          await client.query(
-            "SELECT set_config('app.agency_id',$1,true), set_config('app.location_id',$2,true)",
-            [tenantId, locationId]
-          );
-          const updated = await client.query(
-            "UPDATE workflow_action_receipts SET status='succeeded', result=$4::jsonb, " +
-              "provider_receipt=$5, updated_at=now() " +
-            "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 AND status='started' " +
-            "RETURNING id,status,result",
-            [tenantId,locationId,actionHash,JSON.stringify(result),providerReceipt || null]
-          );
-          if (!updated.rowCount) throw Object.assign(new Error('Action receipt not found'), { code: 'ACTION_RECEIPT_NOT_FOUND' });
+          const res = await execute(client);
           await client.query('COMMIT');
-          return updated.rows[0];
+          return res;
         } catch (error) {
           await client.query('ROLLBACK').catch(() => {});
           throw error;
         }
       });
+    },
+
+    async failActionReceipt({ client: providedClient, tenantId, locationId, actionHash, errorCode = 'ACTION_FAILED', errorDetails = {}, indeterminate = false } = {}) {
+      if (!HASH.test(actionHash || '')) throw new TypeError('actionHash must be a SHA-256 digest');
+      validatePayload(errorDetails);
+      if (Buffer.byteLength(JSON.stringify(errorDetails)) > 8_192) throw new TypeError('Receipt error details exceeds 8 KB');
+
+      const execute = async (client) => {
+        await client.query(
+          "SELECT set_config('app.agency_id',$1,true), set_config('app.location_id',$2,true)",
+          [tenantId, locationId]
+        );
+        const safeCode = typeof errorCode === 'string' && /^[A-Za-z0-9_.-]{1,80}$/.test(errorCode) ? errorCode : 'ACTION_FAILED';
+        const updated = await client.query(
+          "UPDATE workflow_action_receipts " +
+          "SET status=CASE WHEN $4::boolean=true THEN 'indeterminate' ELSE 'failed' END, " +
+              "last_error_code=$5, outcome_details=$6::jsonb, updated_at=clock_timestamp() " +
+          "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 " +
+          "RETURNING id,status,last_error_code,outcome_details",
+          [tenantId, locationId, actionHash, Boolean(indeterminate), safeCode, JSON.stringify(errorDetails)]
+        );
+        if (!updated.rowCount) throw Object.assign(new Error('Action receipt not found'), { code: 'ACTION_RECEIPT_NOT_FOUND' });
+        return updated.rows[0];
+      };
+
+      if (providedClient) {
+        return execute(providedClient);
+      }
+      return withClient(async client => {
+        await client.query('BEGIN');
+        try {
+          const res = await execute(client);
+          await client.query('COMMIT');
+          return res;
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw error;
+        }
+      });
+    },
+
+    async getActionReceipt({ client: providedClient, tenantId, locationId, actionHash } = {}) {
+      if (!HASH.test(actionHash || '')) throw new TypeError('actionHash must be a SHA-256 digest');
+      const execute = async (client) => {
+        await client.query(
+          "SELECT set_config('app.agency_id',$1,true), set_config('app.location_id',$2,true)",
+          [tenantId, locationId]
+        );
+        const res = await client.query(
+          "SELECT id, agency_id, location_id, execution_id, node_id, action_hash, " +
+                 "status, provider_key, provider_receipt, result, attempts, " +
+                 "lease_owner, lease_until, started_at, completed_at, last_error_code, outcome_details, " +
+                 "created_at, updated_at " +
+          "FROM workflow_action_receipts " +
+          "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3",
+          [tenantId, locationId, actionHash]
+        );
+        return res.rows[0] || null;
+      };
+
+      if (providedClient) {
+        return execute(providedClient);
+      }
+      return withClient(execute);
     }
   };
 }
