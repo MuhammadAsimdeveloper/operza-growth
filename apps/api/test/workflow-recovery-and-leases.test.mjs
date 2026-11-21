@@ -640,6 +640,321 @@ test('Durable Workflow Recovery, Resume Leases & Execution Ownership', async (t)
   });
 
   // =========================================================================
+  // TEST A: Heartbeat blocked across lease expiry (clock_timestamp prevents stale renewal)
+  // =========================================================================
+  await t.test('Test A — Heartbeat blocked across lease expiry (clock_timestamp prevents stale renewal)', async () => {
+    await verifyRoleSecurityPosture(workerPool, 'operza_worker');
+
+    const execId = randomUUID();
+    const flowId = randomUUID();
+
+    const flow = {
+      id: flowId,
+      name: 'Blocked Heartbeat Flow',
+      version: 1,
+      nodes: [
+        { id: 'w1', type: 'wait', config: { duration: 1 }, next: 'step1' },
+        { id: 'step1', type: 'ai_agent', config: { prompt: 'do work' }, next: 'step2' },
+        { id: 'step2', type: 'set_variable', config: { name: 'done', value: true } }
+      ]
+    };
+
+    await pool.query(`
+      INSERT INTO workflow_definitions (id, agency_id, location_id, name, status, trigger_type, nodes, version)
+      VALUES ($1, $2, $3, $4, 'published', 'manual', $5::jsonb, 1)
+      ON CONFLICT DO NOTHING
+    `, [flowId, tenantId, locationId, flow.name, JSON.stringify(flow.nodes)]);
+
+    const workerClient = await workerPool.connect();
+    try {
+      await workerClient.query('BEGIN');
+      await workerClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await workerClient.query(`
+        INSERT INTO workflow_executions (
+          id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
+          wait_generation, wait_type, retry_at, workflow_version, workflow_snapshot, state,
+          created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, 'waiting', 'w1', 'step1', 1, 'timed', now(), 1, $5::jsonb, '{}'::jsonb, now(), now())
+      `, [execId, tenantId, locationId, flowId, JSON.stringify(flow)]);
+      await workerClient.query('COMMIT');
+    } finally {
+      workerClient.release();
+    }
+
+    const lockClient = await pool.connect();
+    const handlers = createTrustedWorkerHandlers({ pool: workerPool });
+
+    // Start resume with 1 second lease and 80ms heartbeat interval
+    const resumePromise = handlers['workflow.wait.resume']({
+      tenantId,
+      locationId,
+      executionId: execId,
+      waitNodeId: 'w1',
+      resumeNodeId: 'step1',
+      resumeGeneration: 1,
+      leaseDurationSeconds: 1,
+      heartbeatIntervalMs: 80,
+      requestType: 'manual',
+      aiHandler: async () => {
+        // While step1 is executing, lock the row from outside so heartbeat renewal blocks
+        await lockClient.query('BEGIN');
+        await lockClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+        await lockClient.query('SELECT id FROM workflow_executions WHERE id = $1 FOR UPDATE', [execId]);
+
+        // Hold row lock until after the 1-second lease expires
+        await sleep(1300);
+
+        // Release the lock: heartbeat update unblocks, but lease has expired!
+        await lockClient.query('COMMIT');
+        return { text: 'step1_finished' };
+      }
+    }, { workerId: 'worker_hb_blocked' });
+
+    const res = await resumePromise;
+    lockClient.release();
+
+    assert.equal(res.status, 'lease_lost', 'Heartbeat must detect lease expired upon acquiring lock and report lease_lost');
+
+    const execCheck = await pool.query('SELECT status, state FROM workflow_executions WHERE id = $1', [execId]);
+    assert.notEqual(execCheck.rows[0].status, 'completed', 'Execution must NOT be marked completed');
+  });
+
+  // =========================================================================
+  // TEST B: Final persistence blocked across lease expiry (clock_timestamp prevents stale persistence)
+  // =========================================================================
+  await t.test('Test B — Final persistence blocked across lease expiry (clock_timestamp prevents stale persistence)', async () => {
+    await verifyRoleSecurityPosture(workerPool, 'operza_worker');
+
+    const execId = randomUUID();
+    const flowId = randomUUID();
+
+    const flow = {
+      id: flowId,
+      name: 'Blocked Final Persist Flow',
+      version: 1,
+      nodes: [
+        { id: 'w1', type: 'wait', config: { duration: 1 }, next: 'step_quick' },
+        { id: 'step_quick', type: 'ai_agent', config: { prompt: 'fast' } }
+      ]
+    };
+
+    await pool.query(`
+      INSERT INTO workflow_definitions (id, agency_id, location_id, name, status, trigger_type, nodes, version)
+      VALUES ($1, $2, $3, $4, 'published', 'manual', $5::jsonb, 1)
+      ON CONFLICT DO NOTHING
+    `, [flowId, tenantId, locationId, flow.name, JSON.stringify(flow.nodes)]);
+
+    const workerClient = await workerPool.connect();
+    try {
+      await workerClient.query('BEGIN');
+      await workerClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await workerClient.query(`
+        INSERT INTO workflow_executions (
+          id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
+          wait_generation, wait_type, retry_at, workflow_version, workflow_snapshot, state,
+          created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, 'waiting', 'w1', 'step_quick', 1, 'timed', now(), 1, $5::jsonb, '{}'::jsonb, now(), now())
+      `, [execId, tenantId, locationId, flowId, JSON.stringify(flow)]);
+      await workerClient.query('COMMIT');
+    } finally {
+      workerClient.release();
+    }
+
+    const lockClient = await pool.connect();
+    const handlers = createTrustedWorkerHandlers({ pool: workerPool });
+
+    const resumePromise = handlers['workflow.wait.resume']({
+      tenantId,
+      locationId,
+      executionId: execId,
+      waitNodeId: 'w1',
+      resumeNodeId: 'step_quick',
+      resumeGeneration: 1,
+      leaseDurationSeconds: 1,
+      heartbeatIntervalMs: 5000,
+      requestType: 'manual',
+      aiHandler: async () => {
+        // Acquire row lock before graph finishes so Stage 3 persistence blocks
+        await lockClient.query('BEGIN');
+        await lockClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+        await lockClient.query('SELECT id FROM workflow_executions WHERE id = $1 FOR UPDATE', [execId]);
+
+        // Release lock asynchronously in 1300ms after lease expires
+        setTimeout(async () => {
+          await lockClient.query('COMMIT');
+          lockClient.release();
+        }, 1300);
+
+        return { text: 'quick_done' };
+      }
+    }, { workerId: 'worker_persist_blocked' });
+
+    const res = await resumePromise;
+    assert.equal(res.status, 'lease_lost', 'Stage 3 persistence must be rejected when lease expired while blocked on row lock');
+
+    const execCheck = await pool.query('SELECT status FROM workflow_executions WHERE id = $1', [execId]);
+    assert.notEqual(execCheck.rows[0].status, 'completed', 'Execution must NOT be marked completed');
+  });
+
+  // =========================================================================
+  // TEST C: Old worker cannot complete an execution with no resume node
+  // =========================================================================
+  await t.test('Test C — Old worker cannot complete an execution with no resume node', async () => {
+    await verifyRoleSecurityPosture(workerPool, 'operza_worker');
+
+    const execId = randomUUID();
+    const flowId = randomUUID();
+
+    const flow = {
+      id: flowId,
+      name: 'No Resume Node Flow',
+      version: 1,
+      nodes: [
+        { id: 'w1', type: 'wait', config: { duration: 1 } }
+      ]
+    };
+
+    await pool.query(`
+      INSERT INTO workflow_definitions (id, agency_id, location_id, name, status, trigger_type, nodes, version)
+      VALUES ($1, $2, $3, $4, 'published', 'manual', $5::jsonb, 1)
+      ON CONFLICT DO NOTHING
+    `, [flowId, tenantId, locationId, flow.name, JSON.stringify(flow.nodes)]);
+
+    const workerClient = await workerPool.connect();
+    try {
+      await workerClient.query('BEGIN');
+      await workerClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await workerClient.query(`
+        INSERT INTO workflow_executions (
+          id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
+          wait_generation, wait_type, retry_at, workflow_version, workflow_snapshot, state,
+          created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, 'waiting', 'w1', NULL, 1, 'timed', now(), 1, $5::jsonb, '{}'::jsonb, now(), now())
+      `, [execId, tenantId, locationId, flowId, JSON.stringify(flow)]);
+      await workerClient.query('COMMIT');
+    } finally {
+      workerClient.release();
+    }
+
+    // Intercept Worker A's no-resume completion update: before it runs, Worker B reclaims and increments recovery_epoch
+    const interceptedPoolA = {
+      async connect() {
+        const client = await workerPool.connect();
+        const origQuery = client.query;
+        const origRelease = client.release;
+        client.query = async (sql, params) => {
+          if (typeof sql === 'string' && sql.includes("status = 'completed'") && sql.includes("resume_lease_owner = $4")) {
+            // Worker B reclaims execution and advances recovery epoch
+            await pool.query(`
+              UPDATE workflow_executions SET
+                status = 'resuming',
+                resume_lease_owner = 'worker_b_stealer',
+                recovery_epoch = recovery_epoch + 1,
+                resume_lease_until = clock_timestamp() + interval '60 seconds'
+              WHERE id = $1
+            `, [execId]);
+          }
+          return origQuery.call(client, sql, params);
+        };
+        client.release = (err) => {
+          client.query = origQuery;
+          client.release = origRelease;
+          return origRelease.call(client, err);
+        };
+        return client;
+      }
+    };
+
+    const handlersA = createTrustedWorkerHandlers({ pool: interceptedPoolA });
+    const resA = await handlersA['workflow.wait.resume']({
+      tenantId,
+      locationId,
+      executionId: execId,
+      waitNodeId: 'w1',
+      resumeNodeId: null,
+      resumeGeneration: 1,
+      leaseDurationSeconds: 10,
+      requestType: 'manual'
+    }, { workerId: 'worker_a_stale' });
+
+    assert.equal(resA.status, 'lease_lost', 'Worker A must detect lease lost and NOT return completed');
+
+    const check = await pool.query('SELECT status, resume_lease_owner, recovery_epoch FROM workflow_executions WHERE id = $1', [execId]);
+    assert.equal(check.rows[0].status, 'resuming', 'Execution must remain resuming under Worker B');
+    assert.equal(check.rows[0].resume_lease_owner, 'worker_b_stealer', 'Worker B must remain authoritative owner');
+    assert.equal(check.rows[0].recovery_epoch, 1, 'Recovery epoch must be preserved as 1');
+  });
+
+  // =========================================================================
+  // TEST D: Database NULL overrides snapshot next node
+  // =========================================================================
+  await t.test('Test D — Database NULL overrides snapshot next node', async () => {
+    await verifyRoleSecurityPosture(workerPool, 'operza_worker');
+
+    const execId = randomUUID();
+    const flowId = randomUUID();
+
+    // Snapshot has next: 'trap_node', but database resume_node_id will be NULL
+    const flow = {
+      id: flowId,
+      name: 'Null Overrides Next Flow',
+      version: 1,
+      nodes: [
+        { id: 'w1', type: 'wait', config: { duration: 1 }, next: 'trap_node' },
+        { id: 'trap_node', type: 'ai_agent', config: { prompt: 'should never run' } }
+      ]
+    };
+
+    await pool.query(`
+      INSERT INTO workflow_definitions (id, agency_id, location_id, name, status, trigger_type, nodes, version)
+      VALUES ($1, $2, $3, $4, 'published', 'manual', $5::jsonb, 1)
+      ON CONFLICT DO NOTHING
+    `, [flowId, tenantId, locationId, flow.name, JSON.stringify(flow.nodes)]);
+
+    const workerClient = await workerPool.connect();
+    try {
+      await workerClient.query('BEGIN');
+      await workerClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId]);
+      await workerClient.query(`
+        INSERT INTO workflow_executions (
+          id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
+          wait_generation, wait_type, retry_at, workflow_version, workflow_snapshot, state,
+          created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, 'waiting', 'w1', NULL, 1, 'timed', now(), 1, $5::jsonb, '{}'::jsonb, now(), now())
+      `, [execId, tenantId, locationId, flowId, JSON.stringify(flow)]);
+      await workerClient.query('COMMIT');
+    } finally {
+      workerClient.release();
+    }
+
+    let trapNodeExecuted = false;
+    const handlers = createTrustedWorkerHandlers({ pool: workerPool });
+
+    const res = await handlers['workflow.wait.resume']({
+      tenantId,
+      locationId,
+      executionId: execId,
+      waitNodeId: 'w1',
+      resumeNodeId: null,
+      resumeGeneration: 1,
+      leaseDurationSeconds: 60,
+      requestType: 'manual',
+      aiHandler: async () => {
+        trapNodeExecuted = true;
+        return { text: 'trap_ran' };
+      }
+    }, { workerId: 'worker_null_resume' });
+
+    assert.equal(res.status, 'completed', 'Execution must complete through no-resume path');
+    assert.equal(trapNodeExecuted, false, 'trap_node must NEVER be executed when resume_node_id is NULL');
+
+    const finalExec = await pool.query('SELECT status, current_node_id, resume_node_id FROM workflow_executions WHERE id = $1', [execId]);
+    assert.equal(finalExec.rows[0].status, 'completed');
+    assert.equal(finalExec.rows[0].current_node_id, null);
+    assert.equal(finalExec.rows[0].resume_node_id, null);
+  });
+
+  // =========================================================================
   // TEST 4: Old worker cannot persist after a new owner claims execution
   // =========================================================================
   await t.test('4. Old worker cannot persist after a new owner claims execution', async () => {

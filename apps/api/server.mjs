@@ -5148,7 +5148,7 @@ const server = createServer(async (req, res) => {
           const execRes = await client.query(`
             SELECT id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
                    wait_generation, wait_type, resume_token, retry_at, state, trigger_event,
-                   (retry_at IS NOT NULL AND now() > retry_at) AS is_expired
+                   (retry_at IS NOT NULL AND clock_timestamp() > retry_at) AS is_expired
             FROM workflow_executions
             WHERE agency_id = $1 AND location_id = $2 AND id = $3 AND resume_token = $4 AND status = 'waiting_webhook'
             FOR UPDATE
@@ -9246,7 +9246,7 @@ const server = createServer(async (req, res) => {
           const execRes = await client.query(
             `SELECT id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
                     wait_generation, wait_type, retry_at, resume_lease_owner, resume_lease_until,
-                    (now() < resume_lease_until) AS is_lease_active,
+                    (clock_timestamp() < resume_lease_until) AS is_lease_active,
                     created_at, updated_at
              FROM workflow_executions
              WHERE agency_id = $1 AND location_id = $2 AND id = $3
@@ -9289,8 +9289,8 @@ const server = createServer(async (req, res) => {
           // 4. Inspect workflow_outbox continuation for this execution and generation
           const outboxRes = await client.query(`
             SELECT id, status, available_at, lease_until, lease_owner, attempts,
-                   (available_at <= now()) AS is_due,
-                   (lease_until IS NOT NULL AND lease_until > now()) AS is_job_leased
+                   (available_at <= clock_timestamp()) AS is_due,
+                   (lease_until IS NOT NULL AND lease_until > clock_timestamp()) AS is_job_leased
             FROM workflow_outbox
             WHERE agency_id = $1 AND location_id = $2 AND execution_id = $3
               AND event_type = 'workflow.wait.resume'

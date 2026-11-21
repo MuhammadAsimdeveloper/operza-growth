@@ -893,8 +893,8 @@ export function createTrustedWorkerHandlers({
             SELECT id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
                    wait_generation, wait_type, retry_at, workflow_version, workflow_snapshot, state,
                    trigger_event, attempts, resume_lease_owner, resume_lease_until, recovery_epoch,
-                   (now() < resume_lease_until) AS is_lease_active,
-                   (now() >= retry_at) AS is_due
+                   (clock_timestamp() < resume_lease_until) AS is_lease_active,
+                   (clock_timestamp() >= retry_at) AS is_due
             FROM workflow_executions
             WHERE agency_id = $1 AND location_id = $2 AND id = $3
             FOR UPDATE
@@ -1055,15 +1055,25 @@ export function createTrustedWorkerHandlers({
             UPDATE workflow_executions SET
               status = 'resuming',
               resume_lease_owner = $1,
-              resume_lease_until = now() + ($5 || ' seconds')::interval,
-              resume_started_at = now(),
+              resume_lease_until = clock_timestamp() + ($5 || ' seconds')::interval,
+              resume_started_at = clock_timestamp(),
               recovery_epoch = CASE WHEN $6 = true THEN COALESCE(recovery_epoch, 0) + 1 ELSE COALESCE(recovery_epoch, 0) END,
-              updated_at = now()
+              updated_at = clock_timestamp()
             WHERE agency_id = $2 AND location_id = $3 AND id = $4
+              AND (status = 'waiting' OR status = 'resuming')
             RETURNING recovery_epoch
           `, [claimToken, tenantId, locationId || tenantId, executionId, String(leaseDurationSeconds), isRecovery]);
 
-          currentRecoveryEpoch = claimRes.rows.length > 0 ? Number(claimRes.rows[0].recovery_epoch) : null;
+          if (claimRes.rowCount !== 1) {
+            await client.query('ROLLBACK').catch(() => {});
+            return {
+              status: 'lease_lost',
+              executionId,
+              message: 'Failed to claim resume lease atomically (0 rows affected)'
+            };
+          }
+
+          currentRecoveryEpoch = Number(claimRes.rows[0].recovery_epoch);
 
           // Authoritative resume position strictly from database execution record
           resumeNodeId = existingExecution.resume_node_id || null;
@@ -1091,7 +1101,9 @@ export function createTrustedWorkerHandlers({
       }
       const allNodes = flow?.nodes || [];
 
-      if (!resumeNodeId) {
+      // If in PostgreSQL mode (pool exists), existingExecution.resume_node_id is strictly authoritative.
+      // If persisted resume_node_id is explicitly NULL, do NOT reconstruct another resume node from waitNode.next!
+      if (!pool && !resumeNodeId) {
         const waitNode = allNodes.find(n => n.id === waitNodeId);
         if (waitNode?.next) {
           resumeNodeId = Array.isArray(waitNode.next) ? waitNode.next[0] : waitNode.next;
@@ -1104,15 +1116,40 @@ export function createTrustedWorkerHandlers({
           try {
             await client.query('BEGIN');
             await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
-            await client.query(`
+            const completeRes = await client.query(`
               UPDATE workflow_executions SET
-                status = 'completed', current_node_id = NULL, resume_node_id = NULL,
-                wait_type = NULL, retry_at = NULL, resume_token = NULL,
-                resume_lease_owner = NULL, resume_lease_until = NULL, resume_started_at = NULL,
-                finished_at = now(), updated_at = now()
+                status = 'completed',
+                current_node_id = NULL,
+                resume_node_id = NULL,
+                wait_type = NULL,
+                retry_at = NULL,
+                resume_token = NULL,
+                resume_lease_owner = NULL,
+                resume_lease_until = NULL,
+                resume_started_at = NULL,
+                finished_at = clock_timestamp(),
+                updated_at = clock_timestamp()
               WHERE agency_id = $1 AND location_id = $2 AND id = $3
-            `, [tenantId, locationId || tenantId, executionId]);
+                AND status = 'resuming'
+                AND resume_lease_owner = $4
+                AND ($5::int IS NULL OR recovery_epoch = $5::int)
+                AND clock_timestamp() < resume_lease_until
+              RETURNING id
+            `, [tenantId, locationId || tenantId, executionId, claimToken, currentRecoveryEpoch]);
+
+            if (completeRes.rowCount !== 1) {
+              await client.query('ROLLBACK').catch(() => {});
+              console.warn(`[WORKFLOW-RESUME] No-resume completion update affected ${completeRes.rowCount} rows for execution ${executionId}. Lease lost.`);
+              return {
+                status: 'lease_lost',
+                executionId,
+                message: 'Lease expired or ownership lost before completing execution with no resume node'
+              };
+            }
             await client.query('COMMIT');
+          } catch (err) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw err;
           } finally {
             client.release();
           }
@@ -1149,13 +1186,13 @@ export function createTrustedWorkerHandlers({
           );
           const renewRes = await renewClient.query(`
             UPDATE workflow_executions SET
-              resume_lease_until = now() + ($1 || ' seconds')::interval,
-              updated_at = now()
+              resume_lease_until = clock_timestamp() + ($1 || ' seconds')::interval,
+              updated_at = clock_timestamp()
             WHERE agency_id = $2 AND location_id = $3 AND id = $4
               AND status = 'resuming'
               AND resume_lease_owner = $5
               AND ($6::int IS NULL OR recovery_epoch = $6::int)
-              AND now() < resume_lease_until
+              AND clock_timestamp() < resume_lease_until
             RETURNING id
           `, [String(leaseDurationSeconds), tenantId, locationId || tenantId, executionId, claimToken, currentRecoveryEpoch]);
 
@@ -1346,7 +1383,7 @@ export function createTrustedWorkerHandlers({
           // Verify that this worker still owns the resume lease
           const leaseVerify = await client.query(`
             SELECT id, status, wait_generation, resume_lease_owner, recovery_epoch,
-                   (now() < resume_lease_until) AS is_lease_valid
+                   (clock_timestamp() < resume_lease_until) AS is_lease_valid
             FROM workflow_executions
             WHERE agency_id = $1 AND location_id = $2 AND id = $3
             FOR UPDATE
@@ -1394,10 +1431,12 @@ export function createTrustedWorkerHandlers({
                 resume_lease_owner = NULL,
                 resume_lease_until = NULL,
                 resume_started_at = NULL,
-                updated_at = now()
+                updated_at = clock_timestamp()
               WHERE agency_id = $7 AND location_id = $8 AND id = $1
+                AND status = 'resuming'
                 AND resume_lease_owner = $9
                 AND ($10::int IS NULL OR recovery_epoch = $10::int)
+                AND clock_timestamp() < resume_lease_until
             `, [executionId, nextWaitNodeId, nextResumeNodeId, nextRetryAt, nextGeneration, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId, claimToken, currentRecoveryEpoch]);
 
             if (updRes.rowCount !== 1) {
@@ -1454,10 +1493,12 @@ export function createTrustedWorkerHandlers({
                 resume_lease_owner = NULL,
                 resume_lease_until = NULL,
                 resume_started_at = NULL,
-                updated_at = now()
+                updated_at = clock_timestamp()
               WHERE agency_id = $4 AND location_id = $5 AND id = $1
+                AND status = 'resuming'
                 AND resume_lease_owner = $6
                 AND ($7::int IS NULL OR recovery_epoch = $7::int)
+                AND clock_timestamp() < resume_lease_until
             `, [executionId, pausedNodeId, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId, claimToken, currentRecoveryEpoch]);
 
             if (updRes.rowCount !== 1) {
@@ -1484,10 +1525,12 @@ export function createTrustedWorkerHandlers({
                 resume_lease_owner = NULL,
                 resume_lease_until = NULL,
                 resume_started_at = NULL,
-                updated_at = now()
+                updated_at = clock_timestamp()
               WHERE agency_id = $7 AND location_id = $8 AND id = $1
+                AND status = 'resuming'
                 AND resume_lease_owner = $9
                 AND ($10::int IS NULL OR recovery_epoch = $10::int)
+                AND clock_timestamp() < resume_lease_until
             `, [executionId, webhookNodeId, nextResumeNodeId, resumeToken, expiresAt, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId, claimToken, currentRecoveryEpoch]);
 
             if (updRes.rowCount !== 1) {
@@ -1507,12 +1550,14 @@ export function createTrustedWorkerHandlers({
                 resume_lease_owner = NULL,
                 resume_lease_until = NULL,
                 resume_started_at = NULL,
-                finished_at = now(),
+                finished_at = clock_timestamp(),
                 state = $2::jsonb,
-                updated_at = now()
+                updated_at = clock_timestamp()
               WHERE agency_id = $3 AND location_id = $4 AND id = $1
+                AND status = 'resuming'
                 AND resume_lease_owner = $5
                 AND ($6::int IS NULL OR recovery_epoch = $6::int)
+                AND clock_timestamp() < resume_lease_until
             `, [executionId, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId, claimToken, currentRecoveryEpoch]);
 
             if (updRes.rowCount !== 1) {
@@ -1526,15 +1571,17 @@ export function createTrustedWorkerHandlers({
               UPDATE workflow_executions SET
                 status = 'failed',
                 last_error_code = $2,
-                finished_at = now(),
+                finished_at = clock_timestamp(),
                 resume_lease_owner = NULL,
                 resume_lease_until = NULL,
                 resume_started_at = NULL,
                 state = $3::jsonb,
-                updated_at = now()
+                updated_at = clock_timestamp()
               WHERE agency_id = $4 AND location_id = $5 AND id = $1
+                AND status = 'resuming'
                 AND resume_lease_owner = $6
                 AND ($7::int IS NULL OR recovery_epoch = $7::int)
+                AND clock_timestamp() < resume_lease_until
             `, [executionId, failedStep?.error || 'FAILED', JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId, claimToken, currentRecoveryEpoch]);
 
             if (updRes.rowCount !== 1) {
@@ -1548,15 +1595,17 @@ export function createTrustedWorkerHandlers({
               UPDATE workflow_executions SET
                 status = 'failed',
                 last_error_code = 'UNKNOWN_WORKFLOW_OUTCOME',
-                finished_at = now(),
+                finished_at = clock_timestamp(),
                 resume_lease_owner = NULL,
                 resume_lease_until = NULL,
                 resume_started_at = NULL,
                 state = $2::jsonb,
-                updated_at = now()
+                updated_at = clock_timestamp()
               WHERE agency_id = $3 AND location_id = $4 AND id = $1
+                AND status = 'resuming'
                 AND resume_lease_owner = $5
                 AND ($6::int IS NULL OR recovery_epoch = $6::int)
+                AND clock_timestamp() < resume_lease_until
             `, [executionId, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId, claimToken, currentRecoveryEpoch]);
 
             if (updRes.rowCount !== 1) {
