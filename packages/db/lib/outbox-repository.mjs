@@ -52,7 +52,7 @@ export function createWorkflowOutboxRepository(pool) {
   }
 
   return {
-    async enqueue(input) {
+    async enqueue(input, options = {}) {
       assertRef(input?.tenantId, 'tenantId');
       assertRef(input?.locationId, 'locationId');
       if (input.executionId != null) assertRef(input.executionId, 'executionId');
@@ -68,9 +68,10 @@ export function createWorkflowOutboxRepository(pool) {
       const id = input.id || randomUUID();
       const priority = Number.isInteger(input.priority) ? Math.max(-10, Math.min(10, input.priority)) : 0;
       const maxAttempts = Number.isInteger(input.maxAttempts) ? Math.max(1, Math.min(25, input.maxAttempts)) : 5;
+      const availableAt = input.availableAt ? new Date(input.availableAt).toISOString() : null;
 
-      return withClient(async client => {
-        await client.query('BEGIN');
+      const executeEnqueue = async (client, isManagedTx) => {
+        if (!isManagedTx) await client.query('BEGIN');
         try {
           await client.query(
             "SELECT set_config('app.agency_id',$1,true), set_config('app.location_id',$2,true)",
@@ -78,31 +79,36 @@ export function createWorkflowOutboxRepository(pool) {
           );
           const inserted = await client.query(
             "INSERT INTO workflow_outbox " +
-            "(id, agency_id, location_id, execution_id, event_type, payload, idempotency_key, priority, max_attempts) " +
-            "VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9) " +
+            "(id, agency_id, location_id, execution_id, event_type, payload, idempotency_key, priority, max_attempts, available_at) " +
+            "VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8,$9, COALESCE($10::timestamptz, now())) " +
             "ON CONFLICT (agency_id, location_id, idempotency_key) DO NOTHING " +
-            "RETURNING id, event_type, status, attempts, created_at",
+            "RETURNING id, event_type, status, attempts, created_at, available_at",
             [id, input.tenantId, input.locationId, input.executionId || null, input.eventType,
-              JSON.stringify(payload), input.idempotencyKey, priority, maxAttempts]
+              JSON.stringify(payload), input.idempotencyKey, priority, maxAttempts, availableAt]
           );
           let row = inserted.rows[0];
           let deduplicated = false;
           if (!row) {
             const existing = await client.query(
-              "SELECT id, event_type, status, attempts, created_at FROM workflow_outbox " +
+              "SELECT id, event_type, status, attempts, created_at, available_at FROM workflow_outbox " +
               "WHERE agency_id=$1 AND location_id=$2 AND idempotency_key=$3",
               [input.tenantId, input.locationId, input.idempotencyKey]
             );
             row = existing.rows[0];
             deduplicated = true;
           }
-          await client.query('COMMIT');
+          if (!isManagedTx) await client.query('COMMIT');
           return { ...row, deduplicated };
         } catch (error) {
-          await client.query('ROLLBACK').catch(() => {});
+          if (!isManagedTx) await client.query('ROLLBACK').catch(() => {});
           throw error;
         }
-      });
+      };
+
+      if (options?.client) {
+        return executeEnqueue(options.client, true);
+      }
+      return withClient(client => executeEnqueue(client, false));
     },
 
     async claim({ workerId, limit = 10, leaseMs = 30_000 } = {}) {

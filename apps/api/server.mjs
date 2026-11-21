@@ -2264,27 +2264,30 @@ function startScheduleTriggerLoop() {
   setInterval(async () => {
     const now = new Date();
 
-    // 1. Resume timed delay workflows that have reached their retryAt threshold
-    state.workflowExecutions = state.workflowExecutions || [];
-    const waitingExecutions = state.workflowExecutions.filter(
-      ex => ex.status === 'waiting' && ex.retryAt && new Date(ex.retryAt) <= now
-    );
-    for (const ex of waitingExecutions) {
-      ex.status = 'resuming';
-      ex.currentNodeIndex = (ex.currentNodeIndex || 0) + 1;
-      await saveState();
-      const flow = ex.workflowSnapshot || (state.records.workflows || []).find(w => w.id === ex.workflowId);
-      if (flow) {
-        console.log(`[OPERZA DELAY] Resuming workflow execution ${ex.id} after wait period`);
-        executeWorkflowInstance({
-          flow,
-          agencyId: ex.agencyId,
-          locationId: ex.locationId,
-          triggerType: ex.triggerType,
-          triggerContext: ex.triggerContext,
-          existingExecution: ex,
-          mode: ex.mode || 'live'
-        }).catch(err => console.error(`[SCHEDULE LOOP RESUME ERROR] id=${ex.id}:`, err));
+    // 1. In local in-memory mode, resume timed delay workflows that have reached their retryAt threshold
+    // (In PostgreSQL mode, scheduled continuations are handled reliably by the outbox worker)
+    if (!platformDbEnabled) {
+      state.workflowExecutions = state.workflowExecutions || [];
+      const waitingExecutions = state.workflowExecutions.filter(
+        ex => ex.status === 'waiting' && ex.retryAt && new Date(ex.retryAt) <= now
+      );
+      for (const ex of waitingExecutions) {
+        ex.status = 'resuming';
+        ex.currentNodeIndex = (ex.currentNodeIndex || 0) + 1;
+        await saveState();
+        const flow = ex.workflowSnapshot || (state.records.workflows || []).find(w => w.id === ex.workflowId);
+        if (flow) {
+          console.log(`[OPERZA DELAY] Resuming workflow execution ${ex.id} after wait period`);
+          executeWorkflowInstance({
+            flow,
+            agencyId: ex.agencyId,
+            locationId: ex.locationId,
+            triggerType: ex.triggerType,
+            triggerContext: ex.triggerContext,
+            existingExecution: ex,
+            mode: ex.mode || 'live'
+          }).catch(err => console.error(`[SCHEDULE LOOP RESUME ERROR] id=${ex.id}:`, err));
+        }
       }
     }
 
@@ -8629,7 +8632,8 @@ const server = createServer(async (req, res) => {
           await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [agency.id, activeLocation.id]);
           const resExec = await client.query(`
             SELECT id, agency_id, location_id, workflow_id, status, trigger_event,
-                   current_node_id, state, attempts, last_error_code, finished_at, created_at, updated_at
+                   current_node_id, resume_node_id, wait_generation, wait_type, retry_at,
+                   state, attempts, last_error_code, finished_at, created_at, updated_at
             FROM workflow_executions
             WHERE agency_id = $1 AND location_id = $2
             ORDER BY created_at DESC
@@ -8643,6 +8647,10 @@ const server = createServer(async (req, res) => {
             status: row.status,
             triggerContext: row.trigger_event,
             currentNodeId: row.current_node_id,
+            resumeNodeId: row.resume_node_id,
+            waitGeneration: row.wait_generation,
+            waitType: row.wait_type,
+            retryAt: row.retry_at?.toISOString?.() || row.retry_at,
             state: row.state,
             attempts: row.attempts,
             lastErrorCode: row.last_error_code,
@@ -9073,6 +9081,105 @@ const server = createServer(async (req, res) => {
     // POST /api/workflows/runs/:id/tick — advance delayed/waiting workflow execution
     if (method === 'POST' && pathname.startsWith('/api/workflows/runs/') && pathname.endsWith('/tick')) {
       const runId = pathname.replace('/api/workflows/runs/', '').replace('/tick', '').trim();
+
+      if (pgPool) {
+        let client;
+        try {
+          client = await pgPool.connect();
+          await client.query('BEGIN');
+          await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [
+            agency.id,
+            activeLocation.id
+          ]);
+
+          const execRes = await client.query(
+            `SELECT id, agency_id, location_id, workflow_id, status, current_node_id, resume_node_id,
+                    wait_generation, wait_type, retry_at, workflow_snapshot, state, trigger_event,
+                    created_at, updated_at
+             FROM workflow_executions
+             WHERE agency_id = $1 AND location_id = $2 AND id = $3
+             FOR UPDATE`,
+            [agency.id, activeLocation.id, runId]
+          );
+
+          if (execRes.rows.length === 0) {
+            await client.query('ROLLBACK').catch(() => {});
+            return sendJson(res, 404, { error: 'Workflow execution not found' });
+          }
+
+          const row = execRes.rows[0];
+          if (row.status !== 'waiting') {
+            await client.query('ROLLBACK').catch(() => {});
+            return sendJson(res, 409, { error: `Cannot tick execution in status "${row.status}". Must be "waiting".` });
+          }
+
+          // Transition execution status to 'resuming'
+          await client.query(
+            `UPDATE workflow_executions
+             SET status = 'resuming', updated_at = now()
+             WHERE agency_id = $1 AND location_id = $2 AND id = $3`,
+            [agency.id, activeLocation.id, runId]
+          );
+
+          // Enqueue resumption event into workflow_outbox with available_at = now()
+          const waitGen = Number(row.wait_generation) || 1;
+          const waitNode = row.current_node_id || 'wait';
+          const idemKey = `idem_${crypto.createHash('sha256').update(JSON.stringify([
+            agency.id,
+            activeLocation.id,
+            'workflow_wait_resume',
+            `${runId}_${waitNode}_gen_${waitGen}_manual_${Date.now()}`
+          ])).digest('hex')}`;
+
+          const outboxPayload = {
+            tenantId: agency.id,
+            locationId: activeLocation.id,
+            workflowId: row.workflow_id,
+            executionId: runId,
+            waitNodeId: row.current_node_id,
+            resumeNodeId: row.resume_node_id,
+            resumeGeneration: waitGen,
+            correlationId: `corr_${randomUUID()}`,
+            enqueuedAt: new Date().toISOString()
+          };
+
+          await client.query(
+            `INSERT INTO workflow_outbox (
+               id, agency_id, location_id, execution_id, event_type, payload,
+               idempotency_key, priority, max_attempts, available_at
+             ) VALUES ($1, $2, $3, $4, 'workflow.wait.resume', $5::jsonb, $6, 5, 5, now())
+             ON CONFLICT (agency_id, location_id, idempotency_key) DO NOTHING`,
+            [randomUUID(), agency.id, activeLocation.id, runId, JSON.stringify(outboxPayload), idemKey]
+          );
+
+          await client.query('COMMIT');
+
+          return sendJson(res, 200, {
+            success: true,
+            message: 'Execution continuation enqueued for worker execution',
+            execution: publicWorkflowExecution({
+              id: runId,
+              agencyId: agency.id,
+              locationId: activeLocation.id,
+              workflowId: row.workflow_id,
+              status: 'resuming',
+              currentNodeId: row.current_node_id,
+              resumeNodeId: row.resume_node_id,
+              waitGeneration: waitGen,
+              createdAt: row.created_at,
+              updatedAt: new Date().toISOString()
+            })
+          });
+        } catch (dbErr) {
+          if (client) await client.query('ROLLBACK').catch(() => {});
+          console.error('[WORKFLOW-TICK] PG error:', dbErr.message);
+          return sendJson(res, 500, { error: 'Failed to advance execution in database: ' + dbErr.message });
+        } finally {
+          if (client) client.release();
+        }
+      }
+
+      // Fallback for local memory mode
       const run = (state.workflowExecutions || []).find(
         w => w.id === runId && w.agencyId === agency.id && w.locationId === activeLocation.id
       );
@@ -9107,6 +9214,56 @@ const server = createServer(async (req, res) => {
     // GET /api/workflows/runs/:runId/nodes — inspect steps and execution timeline
     if (method === 'GET' && pathname.startsWith('/api/workflows/runs/') && pathname.endsWith('/nodes')) {
       const runId = pathname.replace('/api/workflows/runs/', '').replace('/nodes', '').trim();
+
+      if (pgPool) {
+        let client;
+        try {
+          client = await pgPool.connect();
+          await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [agency.id, activeLocation.id]);
+          const runRes = await client.query(`
+            SELECT id, agency_id, location_id, workflow_id, status, retry_at, resume_node_id,
+                   wait_generation, wait_type, created_at, finished_at
+            FROM workflow_executions
+            WHERE agency_id = $1 AND location_id = $2 AND id = $3
+          `, [agency.id, activeLocation.id, runId]);
+
+          if (runRes.rows.length > 0) {
+            const row = runRes.rows[0];
+            const stepsRes = await client.query(`
+              SELECT node_id, attempt, status, details, error_code, started_at, finished_at
+              FROM workflow_execution_steps
+              WHERE agency_id = $1 AND location_id = $2 AND execution_id = $3
+              ORDER BY started_at ASC
+            `, [agency.id, activeLocation.id, runId]);
+            await client.query('COMMIT');
+
+            return sendJson(res, 200, {
+              executionId: row.id,
+              workflowId: row.workflow_id,
+              status: row.status,
+              retryAt: row.retry_at,
+              resumeNodeId: row.resume_node_id,
+              waitGeneration: row.wait_generation,
+              waitType: row.wait_type,
+              steps: stepsRes.rows.map(s => ({
+                nodeId: s.node_id,
+                status: s.status,
+                details: s.details,
+                errorCode: s.error_code,
+                startedAt: s.started_at,
+                finishedAt: s.finished_at
+              })),
+              createdAt: row.created_at,
+              finishedAt: row.finished_at
+            });
+          }
+        } catch (pgErr) {
+          if (client) await client.query('ROLLBACK').catch(() => {});
+        } finally {
+          if (client) client.release();
+        }
+      }
+
       const run = (state.workflowExecutions || []).find(
         w => w.id === runId && w.agencyId === agency.id && w.locationId === activeLocation.id
       );

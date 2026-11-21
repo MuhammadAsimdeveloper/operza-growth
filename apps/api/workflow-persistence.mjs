@@ -57,11 +57,15 @@ export async function persistInitialWorkflowExecution({
       String(effectiveAgencyId),
       String(effectiveLocationId)
     ]);
+    const workflowVersion = Number.isInteger(flow?.version) && flow.version > 0 ? flow.version : (execution?.workflowVersion || 1);
+    const workflowSnapshot = flow ? JSON.stringify(flow) : (execution?.workflowSnapshot ? JSON.stringify(execution.workflowSnapshot) : null);
+
     const res = await client.query(`
       INSERT INTO workflow_executions (
         id, agency_id, location_id, workflow_id, status, trigger_event,
+        workflow_version, workflow_snapshot, wait_generation,
         attempts, created_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, 0, now(), now())
+      ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb, 0, 0, now(), now())
       ON CONFLICT (agency_id, location_id, id) DO NOTHING
       RETURNING *
     `, [
@@ -70,7 +74,9 @@ export async function persistInitialWorkflowExecution({
       effectiveLocationId,
       flow.id,
       execution.status,
-      JSON.stringify(triggerContext || {})
+      JSON.stringify(triggerContext || {}),
+      workflowVersion,
+      workflowSnapshot
     ]);
     await client.query('COMMIT');
     return res.rows[0] || null;
@@ -180,6 +186,112 @@ export async function persistCompletedWorkflowExecution({
     }
     console.warn('[WORKFLOW-EXEC-PERSIST] DB update warning:', pgErr.message);
     return null;
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+}
+
+export async function persistWaitingWorkflowExecution({
+  pgPool,
+  agencyId,
+  locationId,
+  executionId,
+  waitNodeId,
+  resumeNodeId,
+  retryAt,
+  waitGeneration = 1,
+  waitType = 'timed',
+  variables = {},
+  isStagingOrProd = false,
+  platformDbEnabled = false
+}) {
+  if (!pgPool) return null;
+  if (!agencyId || !locationId || !executionId) {
+    if (isStagingOrProd || platformDbEnabled) {
+      throw Object.assign(new Error('persistWaitingWorkflowExecution requires agencyId, locationId, and executionId'), {
+        code: 'WORKFLOW_EXECUTION_LOCATION_REQUIRED'
+      });
+    }
+    return null;
+  }
+
+  let client;
+  try {
+    client = await pgPool.connect();
+    await client.query('BEGIN');
+    await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [
+      String(agencyId),
+      String(locationId)
+    ]);
+    const res = await client.query(`
+      UPDATE workflow_executions SET
+        status = 'waiting',
+        current_node_id = $2,
+        resume_node_id = $3,
+        retry_at = $4::timestamptz,
+        wait_generation = $5,
+        wait_type = $6,
+        state = $7::jsonb,
+        updated_at = now()
+      WHERE agency_id = $8 AND location_id = $9 AND id = $1
+      RETURNING *
+    `, [
+      executionId,
+      waitNodeId,
+      resumeNodeId || null,
+      retryAt ? new Date(retryAt).toISOString() : null,
+      Number(waitGeneration) || 1,
+      waitType,
+      JSON.stringify(variables || {}),
+      agencyId,
+      locationId
+    ]);
+    await client.query('COMMIT');
+    return res.rows[0] || null;
+  } catch (pgErr) {
+    if (client) {
+      await client.query('ROLLBACK').catch(() => {});
+    }
+    if (isStagingOrProd || platformDbEnabled) {
+      throw Object.assign(new Error(`Failed to update waiting workflow execution in PostgreSQL: ${pgErr.message}`), {
+        code: 'WORKFLOW_WAITING_PERSIST_FAILED'
+      });
+    }
+    console.warn('[WORKFLOW-WAITING-PERSIST] DB update warning:', pgErr.message);
+    return null;
+  } finally {
+    if (client) {
+      client.release();
+    }
+  }
+}
+
+export async function loadAuthoritativeWorkflowExecution({
+  pgPool,
+  agencyId,
+  locationId,
+  executionId
+}) {
+  if (!pgPool || !agencyId || !locationId || !executionId) return null;
+
+  let client;
+  try {
+    client = await pgPool.connect();
+    await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [
+      String(agencyId),
+      String(locationId)
+    ]);
+    const res = await client.query(`
+      SELECT id, agency_id, location_id, workflow_id, status, trigger_event,
+             current_node_id, resume_node_id, wait_generation, wait_type, retry_at,
+             workflow_version, workflow_snapshot, state, attempts, last_error_code,
+             finished_at, created_at, updated_at
+      FROM workflow_executions
+      WHERE agency_id = $1 AND location_id = $2 AND id = $3
+    `, [agencyId, locationId, executionId]);
+    return res.rows[0] || null;
   } finally {
     if (client) {
       client.release();

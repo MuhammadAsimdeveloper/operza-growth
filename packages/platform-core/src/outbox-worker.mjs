@@ -11,7 +11,7 @@ export function createMemoryOutboxRepository({ initialJobs = [] } = {}) {
   const idempotencyIndex = new Set(initialJobs.map(j => `${j.tenantId}:${j.idempotencyKey}`));
 
   return {
-    async enqueue({ tenantId, locationId = 'default', eventType, idempotencyKey, payload = {} }) {
+    async enqueue({ tenantId, locationId = 'default', executionId = null, eventType, idempotencyKey, payload = {}, availableAt = null }, options = {}) {
       if (!tenantId || !eventType || !idempotencyKey) {
         throw new TypeError('tenantId, eventType, and idempotencyKey are required');
       }
@@ -21,7 +21,7 @@ export function createMemoryOutboxRepository({ initialJobs = [] } = {}) {
         // Find existing job
         for (const job of jobs.values()) {
           if (job.tenantId === tenantId && job.idempotencyKey === idempotencyKey) {
-            return { id: job.id, deduplicated: true, status: job.status };
+            return { id: job.id, deduplicated: true, status: job.status, availableAt: job.availableAt };
           }
         }
       }
@@ -30,7 +30,9 @@ export function createMemoryOutboxRepository({ initialJobs = [] } = {}) {
       const job = {
         id,
         tenantId,
+        agencyId: tenantId,
         locationId,
+        executionId,
         eventType,
         idempotencyKey,
         payload: structuredClone(payload),
@@ -38,7 +40,7 @@ export function createMemoryOutboxRepository({ initialJobs = [] } = {}) {
         attempts: 0,
         workerId: null,
         leaseExpiresAt: null,
-        availableAt: new Date().toISOString(),
+        availableAt: availableAt ? new Date(availableAt).toISOString() : new Date().toISOString(),
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         lastError: null,
@@ -47,7 +49,7 @@ export function createMemoryOutboxRepository({ initialJobs = [] } = {}) {
 
       jobs.set(id, job);
       idempotencyIndex.add(dedupeKey);
-      return { id, deduplicated: false, status: 'pending' };
+      return { id, deduplicated: false, status: 'pending', availableAt: job.availableAt };
     },
 
     async claim({ workerId, limit = 10, leaseMs = 30_000 } = {}) {
@@ -58,7 +60,7 @@ export function createMemoryOutboxRepository({ initialJobs = [] } = {}) {
       for (const job of jobs.values()) {
         if (claimed.length >= limit) break;
 
-        const isPending = job.status === 'pending';
+        const isPending = job.status === 'pending' && (!job.availableAt || new Date(job.availableAt).getTime() <= now);
         const isExpiredLease = job.status === 'claimed' && job.leaseExpiresAt && new Date(job.leaseExpiresAt).getTime() < now;
         const isRetryReady = job.status === 'retry' && job.availableAt && new Date(job.availableAt).getTime() <= now;
 
@@ -68,7 +70,7 @@ export function createMemoryOutboxRepository({ initialJobs = [] } = {}) {
           job.attempts = (job.attempts || 0) + 1;
           job.leaseExpiresAt = new Date(now + leaseMs).toISOString();
           job.updatedAt = new Date(now).toISOString();
-          claimed.push({ ...job });
+          claimed.push({ ...job, agencyId: job.tenantId });
         }
       }
 

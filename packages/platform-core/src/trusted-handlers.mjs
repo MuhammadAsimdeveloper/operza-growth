@@ -73,6 +73,146 @@ export async function verifyAuthoritativeConsent({ pool, tenantId, locationId, c
   }
 }
 
+function createRealCrmActions({ pool, tenantId, locationId, payload, providerRegistry, secretResolver }) {
+  return {
+    sendEmail: async ({ to, subject, body, text, html }) => {
+      const adapter = providerRegistry?.get('email.resend') || providerRegistry?.get('email.sendgrid');
+      if (adapter) {
+        const secret = secretResolver ? await secretResolver.resolve(`tenant_${tenantId}_email`).catch(() => null) : null;
+        const structuredConsent = await verifyAuthoritativeConsent({
+          pool,
+          tenantId,
+          locationId: locationId || tenantId,
+          contactId: to,
+          channel: 'email',
+          purpose: 'transactional',
+          suppliedConsent: typeof payload?.consent === 'object' ? payload.consent : null
+        });
+        if (!structuredConsent) {
+          throw new PermanentJobError(`Communication consent missing or revoked for ${to} on email`, 'CONSENT_REQUIRED');
+        }
+        return adapter.dispatch({
+          secret,
+          config: { senderEmail: 'notifications@operza.io', senderName: 'Operza Automation' },
+          payload: { to, subject, text: text || body, html },
+          consent: structuredConsent,
+          tenantId,
+          locationId: locationId || tenantId
+        });
+      }
+    },
+    sendSms: async ({ to, message, body }) => {
+      const adapter = providerRegistry?.get('sms.twilio');
+      if (adapter) {
+        const secret = secretResolver ? await secretResolver.resolve(`tenant_${tenantId}_sms`).catch(() => null) : null;
+        const structuredConsent = await verifyAuthoritativeConsent({
+          pool,
+          tenantId,
+          locationId: locationId || tenantId,
+          contactId: to,
+          channel: 'sms',
+          purpose: 'transactional',
+          suppliedConsent: typeof payload?.consent === 'object' ? payload.consent : null
+        });
+        if (!structuredConsent) {
+          throw new PermanentJobError(`Communication consent missing or revoked for ${to} on sms`, 'CONSENT_REQUIRED');
+        }
+        return adapter.dispatch({
+          secret,
+          config: { accountId: 'AC00000000000000000000000000000000', fromNumber: '+15005550006' },
+          payload: { to, body: message || body },
+          consent: structuredConsent,
+          tenantId,
+          locationId: locationId || tenantId
+        });
+      }
+    },
+    addContactTag: async ({ contactId, tag }) => {
+      if (!pool) return;
+      if (!contactId || !tag) throw Object.assign(new Error('contactId and tag are required'), { code: 'INVALID_TAG_PARAMS' });
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
+        const res = await client.query('SELECT body FROM location_records WHERE agency_id = $1 AND collection = $2 AND id = $3', [tenantId, 'contacts', contactId]);
+        if (res.rows.length === 0) {
+          await client.query('ROLLBACK');
+          throw Object.assign(new Error(`Contact ${contactId} not found in PostgreSQL`), { code: 'CONTACT_NOT_FOUND' });
+        }
+        const b = res.rows[0].body || {};
+        b.tags = Array.from(new Set([...(b.tags || []), tag]));
+        const updateRes = await client.query('UPDATE location_records SET body = $1::jsonb, updated_at = now() WHERE agency_id = $2 AND collection = $3 AND id = $4', [JSON.stringify(b), tenantId, 'contacts', contactId]);
+        if (updateRes.rowCount === 0) {
+          await client.query('ROLLBACK');
+          throw Object.assign(new Error(`Failed to update tags for contact ${contactId}`), { code: 'CONTACT_UPDATE_FAILED' });
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+    },
+    createTask: async (taskData) => {
+      if (!pool) return;
+      const taskId = crypto.randomUUID();
+      const taskRecord = {
+        id: taskId,
+        agencyId: tenantId,
+        locationId: locationId || tenantId,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+        ...taskData
+      };
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
+        const insertRes = await client.query(`
+          INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
+          VALUES ($1, $2, $3, 'tasks', $4::jsonb, now(), now())
+        `, [taskId, tenantId, locationId || tenantId, JSON.stringify(taskRecord)]);
+        if (insertRes.rowCount === 0) {
+          await client.query('ROLLBACK');
+          throw Object.assign(new Error('Failed to insert task record in PostgreSQL'), { code: 'TASK_INSERT_FAILED' });
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+      return taskRecord;
+    },
+    updateOpportunityStage: async ({ opportunityId, stage, stageId }) => {
+      if (!pool) return;
+      if (!opportunityId) throw Object.assign(new Error('opportunityId is required'), { code: 'OPPORTUNITY_ID_REQUIRED' });
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
+        const updateRes = await client.query(`
+          UPDATE opportunities
+          SET stage_id = COALESCE($1, stage_id), status = COALESCE($2, status), updated_at = now()
+          WHERE agency_id = $3 AND id = $4
+        `, [stageId || stage, stage || null, tenantId, opportunityId]);
+        if (updateRes.rowCount === 0) {
+          await client.query('ROLLBACK');
+          throw Object.assign(new Error(`Opportunity ${opportunityId} not found in PostgreSQL`), { code: 'OPPORTUNITY_NOT_FOUND' });
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+    }
+  };
+}
+
 /**
  * Creates trusted allow-listed event handlers for the Operza Durable Outbox Worker,
  * with real PostgreSQL-backed workflow graph execution and registered provider adapters.
@@ -81,7 +221,8 @@ export function createTrustedWorkerHandlers({
   pool = null,
   secretResolver = null,
   providerRegistry = createProviderAdapterRegistry(),
-  customHandlers = {}
+  customHandlers = {},
+  outboxRepository = null
 } = {}) {
   const handlers = {
     /**
@@ -167,143 +308,14 @@ export function createTrustedWorkerHandlers({
       }
 
       // Real CRM Actions connected to PostgreSQL location_records and opportunities
-      const realCrmActions = {
-        sendEmail: async ({ to, subject, body, text, html }) => {
-          const adapter = providerRegistry?.get('email.resend') || providerRegistry?.get('email.sendgrid');
-          if (adapter) {
-            const secret = secretResolver ? await secretResolver.resolve(`tenant_${tenantId}_email`).catch(() => null) : null;
-            const structuredConsent = await verifyAuthoritativeConsent({
-              pool,
-              tenantId,
-              locationId: locationId || tenantId,
-              contactId: to,
-              channel: 'email',
-              purpose: 'transactional',
-              suppliedConsent: typeof payload.consent === 'object' ? payload.consent : null
-            });
-            if (!structuredConsent) {
-              throw new PermanentJobError(`Communication consent missing or revoked for ${to} on email`, 'CONSENT_REQUIRED');
-            }
-            return adapter.dispatch({
-              secret,
-              config: { senderEmail: 'notifications@operza.io', senderName: 'Operza Automation' },
-              payload: { to, subject, text: text || body, html },
-              consent: structuredConsent,
-              tenantId,
-              locationId: locationId || tenantId
-            });
-          }
-        },
-        sendSms: async ({ to, message, body }) => {
-          const adapter = providerRegistry?.get('sms.twilio');
-          if (adapter) {
-            const secret = secretResolver ? await secretResolver.resolve(`tenant_${tenantId}_sms`).catch(() => null) : null;
-            const structuredConsent = await verifyAuthoritativeConsent({
-              pool,
-              tenantId,
-              locationId: locationId || tenantId,
-              contactId: to,
-              channel: 'sms',
-              purpose: 'transactional',
-              suppliedConsent: typeof payload.consent === 'object' ? payload.consent : null
-            });
-            if (!structuredConsent) {
-              throw new PermanentJobError(`Communication consent missing or revoked for ${to} on sms`, 'CONSENT_REQUIRED');
-            }
-            return adapter.dispatch({
-              secret,
-              config: { accountId: 'AC00000000000000000000000000000000', fromNumber: '+15005550006' },
-              payload: { to, body: message || body },
-              consent: structuredConsent,
-              tenantId,
-              locationId: locationId || tenantId
-            });
-          }
-        },
-        addContactTag: async ({ contactId, tag }) => {
-          if (!pool) return;
-          if (!contactId || !tag) throw Object.assign(new Error('contactId and tag are required'), { code: 'INVALID_TAG_PARAMS' });
-          const client = await pool.connect();
-          try {
-            await client.query('BEGIN');
-            await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
-            const res = await client.query('SELECT body FROM location_records WHERE agency_id = $1 AND collection = $2 AND id = $3', [tenantId, 'contacts', contactId]);
-            if (res.rows.length === 0) {
-              await client.query('ROLLBACK');
-              throw Object.assign(new Error(`Contact ${contactId} not found in PostgreSQL`), { code: 'CONTACT_NOT_FOUND' });
-            }
-            const b = res.rows[0].body || {};
-            b.tags = Array.from(new Set([...(b.tags || []), tag]));
-            const updateRes = await client.query('UPDATE location_records SET body = $1::jsonb, updated_at = now() WHERE agency_id = $2 AND collection = $3 AND id = $4', [JSON.stringify(b), tenantId, 'contacts', contactId]);
-            if (updateRes.rowCount === 0) {
-              await client.query('ROLLBACK');
-              throw Object.assign(new Error(`Failed to update tags for contact ${contactId}`), { code: 'CONTACT_UPDATE_FAILED' });
-            }
-            await client.query('COMMIT');
-          } catch (err) {
-            await client.query('ROLLBACK').catch(() => {});
-            throw err;
-          } finally {
-            client.release();
-          }
-        },
-        createTask: async (taskData) => {
-          if (!pool) return;
-          const taskId = crypto.randomUUID();
-          const taskRecord = {
-            id: taskId,
-            agencyId: tenantId,
-            locationId: locationId || tenantId,
-            status: 'pending',
-            createdAt: new Date().toISOString(),
-            ...taskData
-          };
-          const client = await pool.connect();
-          try {
-            await client.query('BEGIN');
-            await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
-            const insertRes = await client.query(`
-              INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
-              VALUES ($1, $2, $3, 'tasks', $4::jsonb, now(), now())
-            `, [taskId, tenantId, locationId || tenantId, JSON.stringify(taskRecord)]);
-            if (insertRes.rowCount === 0) {
-              await client.query('ROLLBACK');
-              throw Object.assign(new Error('Failed to insert task record in PostgreSQL'), { code: 'TASK_INSERT_FAILED' });
-            }
-            await client.query('COMMIT');
-          } catch (err) {
-            await client.query('ROLLBACK').catch(() => {});
-            throw err;
-          } finally {
-            client.release();
-          }
-          return taskRecord;
-        },
-        updateOpportunityStage: async ({ opportunityId, stage, stageId }) => {
-          if (!pool) return;
-          if (!opportunityId) throw Object.assign(new Error('opportunityId is required'), { code: 'OPPORTUNITY_ID_REQUIRED' });
-          const client = await pool.connect();
-          try {
-            await client.query('BEGIN');
-            await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
-            const updateRes = await client.query(`
-              UPDATE opportunities
-              SET stage_id = COALESCE($1, stage_id), status = COALESCE($2, status), updated_at = now()
-              WHERE agency_id = $3 AND id = $4
-            `, [stageId || stage, stage || null, tenantId, opportunityId]);
-            if (updateRes.rowCount === 0) {
-              await client.query('ROLLBACK');
-              throw Object.assign(new Error(`Opportunity ${opportunityId} not found in PostgreSQL`), { code: 'OPPORTUNITY_NOT_FOUND' });
-            }
-            await client.query('COMMIT');
-          } catch (err) {
-            await client.query('ROLLBACK').catch(() => {});
-            throw err;
-          } finally {
-            client.release();
-          }
-        }
-      };
+      const realCrmActions = createRealCrmActions({
+        pool,
+        tenantId,
+        locationId: locationId || tenantId,
+        payload,
+        providerRegistry,
+        secretResolver
+      });
 
       // 2. Build Execution Dependencies & Provider Executor
       const deps = {
@@ -436,14 +448,71 @@ export function createTrustedWorkerHandlers({
             // Update execution to waiting_approval
             await persistClient.query(`
               UPDATE workflow_executions SET
-                status = 'waiting_approval', current_node_id = $2,
+                status = 'waiting_approval', current_node_id = $2, wait_type = 'approval',
                 state = $3::jsonb, updated_at = now()
               WHERE agency_id = $4 AND location_id = $5 AND id = $1
             `, [executionId, pausedNodeId, JSON.stringify(graphResult.variables || {}), tenantId, locationId || tenantId]);
+          } else if (graphResult.finalStatus === 'waiting') {
+            const waitingStep = graphResult.waitingStep || graphResult.timeline.find(t => t.status === 'waiting');
+            const waitingNodeId = waitingStep?.nodeId || 'unknown_node';
+            const retryAt = waitingStep?.retryAt || waitingStep?.result?.retryAt || new Date(Date.now() + 60000).toISOString();
+            const resumeNodeId = graphResult.resumeNodeId || waitingStep?.resumeNodeId || null;
+            const waitGeneration = 1;
+
+            // Atomically update execution to waiting
+            await persistClient.query(`
+              UPDATE workflow_executions SET
+                status = 'waiting',
+                current_node_id = $2,
+                resume_node_id = $3,
+                retry_at = $4::timestamptz,
+                wait_generation = $5,
+                wait_type = 'timed',
+                state = $6::jsonb,
+                updated_at = now()
+              WHERE agency_id = $7 AND location_id = $8 AND id = $1
+            `, [executionId, waitingNodeId, resumeNodeId, retryAt, waitGeneration, JSON.stringify(graphResult.variables || {}), tenantId, locationId || tenantId]);
+
+            // Enqueue workflow.wait.resume into workflow_outbox within the SAME transaction
+            const idemKey = `idem_${sha256([tenantId, locationId || tenantId, 'workflow_wait_resume', `${executionId}_${waitingNodeId}_gen_${waitGeneration}`])}`;
+            const outboxPayload = {
+              tenantId,
+              locationId: locationId || tenantId,
+              workflowId,
+              executionId,
+              waitNodeId: waitingNodeId,
+              resumeNodeId,
+              resumeGeneration: waitGeneration,
+              correlationId: payload.correlationId || `corr_${crypto.randomUUID()}`,
+              enqueuedAt: new Date().toISOString()
+            };
+
+            await persistClient.query(`
+              INSERT INTO workflow_outbox (
+                id, agency_id, location_id, execution_id, event_type, payload,
+                idempotency_key, priority, max_attempts, available_at
+              ) VALUES ($1, $2, $3, $4, 'workflow.wait.resume', $5::jsonb, $6, 0, 5, $7::timestamptz)
+              ON CONFLICT (agency_id, location_id, idempotency_key) DO NOTHING
+            `, [crypto.randomUUID(), tenantId, locationId || tenantId, executionId, JSON.stringify(outboxPayload), idemKey, retryAt]);
+          } else if (graphResult.finalStatus === 'waiting_webhook') {
+            const webhookStep = graphResult.waitingStep || graphResult.timeline.find(t => t.status === 'waiting_webhook');
+            const webhookNodeId = webhookStep?.nodeId || 'unknown_node';
+            const resumeNodeId = graphResult.resumeNodeId || webhookStep?.resumeNodeId || null;
+
+            await persistClient.query(`
+              UPDATE workflow_executions SET
+                status = 'waiting_webhook',
+                current_node_id = $2,
+                resume_node_id = $3,
+                wait_type = 'webhook',
+                state = $4::jsonb,
+                updated_at = now()
+              WHERE agency_id = $5 AND location_id = $6 AND id = $1
+            `, [executionId, webhookNodeId, resumeNodeId, JSON.stringify(graphResult.variables || {}), tenantId, locationId || tenantId]);
           } else if (graphResult.finalStatus === 'completed') {
             await persistClient.query(`
               UPDATE workflow_executions SET
-                status = 'completed', current_node_id = NULL, finished_at = now(),
+                status = 'completed', current_node_id = NULL, resume_node_id = NULL, wait_type = NULL, finished_at = now(),
                 state = $2::jsonb, updated_at = now()
               WHERE agency_id = $3 AND location_id = $4 AND id = $1
             `, [executionId, JSON.stringify(graphResult.variables || {}), tenantId, locationId || tenantId]);
@@ -459,7 +528,7 @@ export function createTrustedWorkerHandlers({
 
           // Persist each step into workflow_execution_steps
           for (const step of graphResult.timeline) {
-            const stepStatus = ['running', 'completed', 'failed', 'waiting_approval', 'skipped'].includes(step.status)
+            const stepStatus = ['running', 'completed', 'failed', 'waiting', 'waiting_approval', 'waiting_webhook', 'skipped'].includes(step.status)
               ? step.status
               : (step.status === 'simulated' ? 'completed' : 'completed');
             await persistClient.query(`
@@ -483,6 +552,34 @@ export function createTrustedWorkerHandlers({
         } finally {
           persistClient.release();
         }
+      }
+
+      if (!pool && outboxRepository && graphResult.finalStatus === 'waiting') {
+        const waitingStep = graphResult.waitingStep || graphResult.timeline.find(t => t.status === 'waiting');
+        const waitingNodeId = waitingStep?.nodeId || 'unknown_node';
+        const retryAt = waitingStep?.retryAt || waitingStep?.result?.retryAt || new Date(Date.now() + 60000).toISOString();
+        const resumeNodeId = graphResult.resumeNodeId || waitingStep?.resumeNodeId || null;
+        const waitGeneration = 1;
+        const idemKey = `idem_${sha256([tenantId, locationId || tenantId, 'workflow_wait_resume', `${executionId}_${waitingNodeId}_gen_${waitGeneration}`])}`;
+        await outboxRepository.enqueue({
+          tenantId,
+          locationId: locationId || tenantId,
+          executionId,
+          eventType: 'workflow.wait.resume',
+          idempotencyKey: idemKey,
+          availableAt: retryAt,
+          payload: {
+            tenantId,
+            locationId: locationId || tenantId,
+            workflowId,
+            executionId,
+            waitNodeId: waitingNodeId,
+            resumeNodeId,
+            resumeGeneration: waitGeneration,
+            correlationId: payload.correlationId || `corr_${crypto.randomUUID()}`,
+            enqueuedAt: new Date().toISOString()
+          }
+        });
       }
 
       if (graphResult.finalStatus === 'failed') {
@@ -693,6 +790,403 @@ export function createTrustedWorkerHandlers({
         nodeId,
         finalStatus: resumeResult.finalStatus,
         stepsExecuted: resumeResult.timeline.length,
+        workerId,
+        resumedAt: new Date().toISOString()
+      };
+    },
+
+    /**
+     * Resumes a wait/delay-paused workflow execution from the node immediately following the wait node.
+     */
+    'workflow.wait.resume': async (payload, { job, workerId, lease }) => {
+      const tenantId = payload?.tenantId || payload?.agencyId;
+      const locationId = payload?.locationId;
+      const executionId = payload?.executionId;
+      const waitNodeId = payload?.waitNodeId;
+      const resumeGeneration = Number(payload?.resumeGeneration) || 1;
+      let resumeNodeId = payload?.resumeNodeId;
+
+      if (!tenantId || !executionId || !waitNodeId) {
+        throw new PermanentJobError('Payload missing required wait resume references', 'INVALID_WAIT_RESUME_PAYLOAD');
+      }
+      if (lease?.lost) return { status: 'lease_lost' };
+
+      let flow = payload.flow || payload.workflowSnapshot || null;
+      let existingExecution = null;
+
+      if (pool) {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query(
+            "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)",
+            [tenantId, locationId || tenantId]
+          );
+
+          // 1. Lock and load execution record
+          const execRes = await client.query(
+            'SELECT * FROM workflow_executions WHERE agency_id = $1 AND location_id = $2 AND id = $3 FOR UPDATE',
+            [tenantId, locationId || tenantId, executionId]
+          );
+
+          if (execRes.rows.length === 0) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw new PermanentJobError(`Execution ${executionId} not found`, 'EXECUTION_NOT_FOUND');
+          }
+
+          existingExecution = execRes.rows[0];
+
+          // 2. Validate execution state and generation
+          if (existingExecution.status !== 'waiting') {
+            await client.query('ROLLBACK').catch(() => {});
+            return {
+              status: 'ignored_stale_state',
+              executionId,
+              currentStatus: existingExecution.status,
+              message: `Execution is not in waiting state (current: ${existingExecution.status})`
+            };
+          }
+
+          if (Number(existingExecution.wait_generation) !== resumeGeneration) {
+            await client.query('ROLLBACK').catch(() => {});
+            return {
+              status: 'ignored_stale_generation',
+              executionId,
+              expectedGeneration: existingExecution.wait_generation,
+              receivedGeneration: resumeGeneration,
+              message: `Wait generation mismatch (expected: ${existingExecution.wait_generation}, received: ${resumeGeneration})`
+            };
+          }
+
+          // 3. Mark execution as 'resuming'
+          await client.query(`
+            UPDATE workflow_executions SET
+              status = 'resuming',
+              updated_at = now()
+            WHERE agency_id = $1 AND location_id = $2 AND id = $3
+          `, [tenantId, locationId || tenantId, executionId]);
+
+          // 4. Load workflow definition / snapshot
+          if (!flow) {
+            if (existingExecution.workflow_snapshot) {
+              flow = typeof existingExecution.workflow_snapshot === 'string'
+                ? JSON.parse(existingExecution.workflow_snapshot)
+                : existingExecution.workflow_snapshot;
+            } else if (existingExecution.workflow_id) {
+              const defRes = await client.query(
+                'SELECT nodes, name, version FROM workflow_definitions WHERE agency_id = $1 AND location_id = $2 AND id = $3',
+                [tenantId, locationId || tenantId, existingExecution.workflow_id]
+              );
+              if (defRes.rows.length > 0) {
+                flow = {
+                  id: existingExecution.workflow_id,
+                  name: defRes.rows[0].name,
+                  version: defRes.rows[0].version,
+                  nodes: typeof defRes.rows[0].nodes === 'string' ? JSON.parse(defRes.rows[0].nodes) : defRes.rows[0].nodes
+                };
+              }
+            }
+          }
+
+          if (!resumeNodeId && existingExecution.resume_node_id) {
+            resumeNodeId = existingExecution.resume_node_id;
+          }
+
+          await client.query('COMMIT');
+        } catch (dbErr) {
+          await client.query('ROLLBACK').catch(() => {});
+          if (dbErr instanceof PermanentJobError) throw dbErr;
+          throw Object.assign(new Error(`Failed to lookup wait resume data in PostgreSQL: ${dbErr.message}`), {
+            code: 'WORKFLOW_WAIT_LOOKUP_FAILED'
+          });
+        } finally {
+          client.release();
+        }
+      }
+
+      const allNodes = flow?.nodes || payload.nodes || [];
+      if (!resumeNodeId) {
+        const waitNode = allNodes.find(n => n.id === waitNodeId);
+        if (waitNode?.next) {
+          resumeNodeId = Array.isArray(waitNode.next) ? waitNode.next[0] : waitNode.next;
+        }
+      }
+
+      if (!resumeNodeId) {
+        if (pool) {
+          const client = await pool.connect();
+          try {
+            await client.query('BEGIN');
+            await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantId, locationId || tenantId]);
+            await client.query(`
+              UPDATE workflow_executions SET
+                status = 'completed', current_node_id = NULL, resume_node_id = NULL,
+                wait_type = NULL, retry_at = NULL, finished_at = now(), updated_at = now()
+              WHERE agency_id = $1 AND location_id = $2 AND id = $3
+            `, [tenantId, locationId || tenantId, executionId]);
+            await client.query('COMMIT');
+          } finally {
+            client.release();
+          }
+        }
+        return {
+          status: 'completed',
+          executionId,
+          message: 'No subsequent nodes after wait node; workflow completed'
+        };
+      }
+
+      const restoredVariables = existingExecution?.state || payload.state || {};
+      const triggerContext = existingExecution?.trigger_event || payload.triggerContext || {};
+      const realCrmActions = createRealCrmActions({
+        pool,
+        tenantId,
+        locationId: locationId || tenantId,
+        payload,
+        providerRegistry,
+        secretResolver
+      });
+
+      const deps = {
+        execution: {
+          id: executionId,
+          agencyId: tenantId,
+          locationId: locationId || tenantId,
+          workflowId: existingExecution?.workflow_id || payload.workflowId,
+          mode: payload.mode || 'live',
+        },
+        initialVariables: restoredVariables,
+        resumeNodeId,
+        crmActions: payload.crmActions || realCrmActions,
+        providerExecutor: async ({ invocation, node, context }) => {
+          if (payload.mode === 'dry_run') {
+            return { ok: true, simulated: true, providerAccepted: false };
+          }
+          const providerKey = invocation.providerKey;
+          const adapter = providerRegistry?.get(providerKey);
+          if (!adapter) {
+            throw new PermanentJobError(`Provider adapter not found: ${providerKey}`, 'PROVIDER_ADAPTER_UNAVAILABLE');
+          }
+
+          let secret = invocation.secret;
+          if (!secret && secretResolver) {
+            secret = await secretResolver.resolve(invocation.secretRef || `tenant_${tenantId}_${providerKey}`).catch(() => null);
+          }
+
+          const channel = adapter.channel || (providerKey.startsWith('email') ? 'email' : (providerKey.startsWith('sms') ? 'sms' : 'whatsapp'));
+          const contactId = context?.contactId || context?.contact?.id || context?.to || context?.phone || context?.email;
+          const purpose = payload.purpose || 'transactional';
+
+          const structuredConsent = await verifyAuthoritativeConsent({
+            pool,
+            tenantId,
+            locationId: locationId || tenantId,
+            contactId,
+            channel,
+            purpose,
+            suppliedConsent: typeof payload.consent === 'object' ? payload.consent : null
+          });
+
+          if (!structuredConsent) {
+            throw new PermanentJobError(`Communication consent missing or revoked for ${contactId} on ${channel}`, 'CONSENT_REQUIRED');
+          }
+
+          const dispatchRes = await adapter.dispatch({
+            secret,
+            config: node.config,
+            payload: context,
+            consent: structuredConsent,
+            tenantId,
+            locationId: locationId || tenantId,
+            actionHash: invocation.actionHash
+          });
+          if (!dispatchRes.ok) {
+            throw Object.assign(new Error(`Provider dispatch rejected: ${dispatchRes.code}`), { code: dispatchRes.code });
+          }
+          return dispatchRes;
+        }
+      };
+
+      // 5. Resume Graph Walk starting from resumeNodeId
+      const resumeResult = await walkGraph(allNodes, { ...triggerContext, ...restoredVariables }, null, deps);
+
+      // 6. Handle Completion, Failure, or Chained Wait
+      if (pool) {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query(
+            "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)",
+            [tenantId, locationId || tenantId]
+          );
+
+          if (resumeResult.finalStatus === 'waiting') {
+            // Chained wait: increment wait_generation and enqueue next continuation
+            const nextWaitStep = resumeResult.waitingStep || resumeResult.timeline.find(t => t.status === 'waiting');
+            const nextWaitNodeId = nextWaitStep?.nodeId || 'unknown_node';
+            const nextRetryAt = nextWaitStep?.retryAt || nextWaitStep?.result?.retryAt || new Date(Date.now() + 60000).toISOString();
+            const nextResumeNodeId = resumeResult.resumeNodeId || nextWaitStep?.resumeNodeId || null;
+            const nextGeneration = resumeGeneration + 1;
+
+            await client.query(`
+              UPDATE workflow_executions SET
+                status = 'waiting',
+                current_node_id = $2,
+                resume_node_id = $3,
+                retry_at = $4::timestamptz,
+                wait_generation = $5,
+                wait_type = 'timed',
+                state = $6::jsonb,
+                updated_at = now()
+              WHERE agency_id = $7 AND location_id = $8 AND id = $1
+            `, [executionId, nextWaitNodeId, nextResumeNodeId, nextRetryAt, nextGeneration, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
+
+            const nextIdemKey = `idem_${sha256([tenantId, locationId || tenantId, 'workflow_wait_resume', `${executionId}_${nextWaitNodeId}_gen_${nextGeneration}`])}`;
+            const outboxId = crypto.randomUUID();
+            const outboxPayload = {
+              tenantId,
+              locationId: locationId || tenantId,
+              workflowId: existingExecution?.workflow_id || payload.workflowId,
+              executionId,
+              waitNodeId: nextWaitNodeId,
+              resumeNodeId: nextResumeNodeId,
+              resumeGeneration: nextGeneration,
+              correlationId: payload.correlationId || `corr_${crypto.randomUUID()}`,
+              enqueuedAt: new Date().toISOString()
+            };
+
+            await client.query(`
+              INSERT INTO workflow_outbox (
+                id, agency_id, location_id, execution_id, event_type, payload,
+                idempotency_key, priority, max_attempts, available_at
+              ) VALUES ($1, $2, $3, $4, 'workflow.wait.resume', $5::jsonb, $6, 0, 5, $7::timestamptz)
+              ON CONFLICT (agency_id, location_id, idempotency_key) DO NOTHING
+            `, [outboxId, tenantId, locationId || tenantId, executionId, JSON.stringify(outboxPayload), nextIdemKey, nextRetryAt]);
+
+          } else if (resumeResult.finalStatus === 'waiting_approval') {
+            const pausedStep = resumeResult.timeline.find(t => t.status === 'waiting_approval');
+            const pausedNodeId = pausedStep?.nodeId || 'unknown_node';
+            const actionHash = sha256({ tenantId, executionId, nodeId: pausedNodeId });
+            const expiresAt = new Date(Date.now() + 7 * 86400000).toISOString();
+
+            await client.query(`
+              INSERT INTO workflow_approvals (
+                id, agency_id, location_id, execution_id, workflow_id, node_id,
+                action_id, action_hash, status, requested_at, expires_at, request_checksum
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', now(), $9, $10)
+              ON CONFLICT (agency_id, location_id, execution_id, node_id) WHERE status = 'pending' DO NOTHING
+            `, [
+              crypto.randomUUID(), tenantId, locationId || tenantId, executionId,
+              existingExecution?.workflow_id || payload.workflowId, pausedNodeId, pausedNodeId, actionHash, expiresAt, actionHash
+            ]);
+
+            await client.query(`
+              UPDATE workflow_executions SET
+                status = 'waiting_approval',
+                current_node_id = $2,
+                wait_type = 'approval',
+                state = $3::jsonb,
+                updated_at = now()
+              WHERE agency_id = $4 AND location_id = $5 AND id = $1
+            `, [executionId, pausedNodeId, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
+
+          } else if (resumeResult.finalStatus === 'completed') {
+            await client.query(`
+              UPDATE workflow_executions SET
+                status = 'completed',
+                current_node_id = NULL,
+                resume_node_id = NULL,
+                wait_type = NULL,
+                retry_at = NULL,
+                finished_at = now(),
+                state = $2::jsonb,
+                updated_at = now()
+              WHERE agency_id = $3 AND location_id = $4 AND id = $1
+            `, [executionId, JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
+          } else {
+            const failedStep = resumeResult.timeline.find(t => t.status === 'failed');
+            await client.query(`
+              UPDATE workflow_executions SET
+                status = 'failed',
+                last_error_code = $2,
+                finished_at = now(),
+                state = $3::jsonb,
+                updated_at = now()
+              WHERE agency_id = $4 AND location_id = $5 AND id = $1
+            `, [executionId, failedStep?.error || 'FAILED', JSON.stringify(resumeResult.variables || {}), tenantId, locationId || tenantId]);
+          }
+
+          // Persist executed steps
+          for (const step of resumeResult.timeline) {
+            const stepStatus = ['running', 'completed', 'failed', 'waiting', 'waiting_approval', 'waiting_webhook', 'skipped'].includes(step.status)
+              ? step.status
+              : (step.status === 'simulated' ? 'completed' : 'completed');
+            await client.query(`
+              INSERT INTO workflow_execution_steps (
+                id, agency_id, location_id, execution_id, node_id, attempt,
+                status, details, error_code, started_at, finished_at
+              ) VALUES ($1, $2, $3, $4, $5, 1, $6, $7::jsonb, $8, $9, $10)
+              ON CONFLICT (agency_id, location_id, id) DO NOTHING
+            `, [
+              crypto.randomUUID(), tenantId, locationId || tenantId, executionId,
+              step.nodeId, stepStatus, JSON.stringify(step.result || {}),
+              step.error || null, step.startedAt, step.finishedAt
+            ]);
+          }
+
+          await client.query('COMMIT');
+        } catch (pgErr) {
+          await client.query('ROLLBACK').catch(() => {});
+          throw Object.assign(new Error(`Failed to persist wait resume in PostgreSQL: ${pgErr.message}`), {
+            code: 'WORKFLOW_WAIT_PERSIST_FAILED'
+          });
+        } finally {
+          client.release();
+        }
+      }
+
+      if (!pool && outboxRepository && resumeResult.finalStatus === 'waiting') {
+        const nextWaitStep = resumeResult.waitingStep || resumeResult.timeline.find(t => t.status === 'waiting');
+        const nextWaitNodeId = nextWaitStep?.nodeId || 'unknown_node';
+        const nextRetryAt = nextWaitStep?.retryAt || nextWaitStep?.result?.retryAt || new Date(Date.now() + 60000).toISOString();
+        const nextResumeNodeId = resumeResult.resumeNodeId || nextWaitStep?.resumeNodeId || null;
+        const nextGen = resumeGeneration + 1;
+        const idemKey = `idem_${sha256([tenantId, locationId || tenantId, 'workflow_wait_resume', `${executionId}_${nextWaitNodeId}_gen_${nextGen}`])}`;
+        await outboxRepository.enqueue({
+          tenantId,
+          locationId: locationId || tenantId,
+          executionId,
+          eventType: 'workflow.wait.resume',
+          idempotencyKey: idemKey,
+          availableAt: nextRetryAt,
+          payload: {
+            tenantId,
+            locationId: locationId || tenantId,
+            workflowId: existingExecution?.workflow_id || payload.workflowId,
+            executionId,
+            waitNodeId: nextWaitNodeId,
+            resumeNodeId: nextResumeNodeId,
+            resumeGeneration: nextGen,
+            correlationId: payload.correlationId || `corr_${crypto.randomUUID()}`,
+            enqueuedAt: new Date().toISOString()
+          }
+        });
+      }
+
+      if (resumeResult.finalStatus === 'failed') {
+        const failedStep = resumeResult.timeline.find(t => t.status === 'failed');
+        throw Object.assign(new Error(`Workflow execution failed on resume: ${failedStep?.error || 'WORKFLOW_FAILED'}`), {
+          code: failedStep?.error || 'WORKFLOW_EXECUTION_FAILED',
+          retryable: false
+        });
+      }
+
+      return {
+        status: resumeResult.finalStatus,
+        executionId,
+        resumeNodeId,
+        stepsExecuted: resumeResult.timeline.length,
+        timeline: resumeResult.timeline,
         workerId,
         resumedAt: new Date().toISOString()
       };

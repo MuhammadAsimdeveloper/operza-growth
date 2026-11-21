@@ -5,7 +5,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readdir, readFile } from 'node:fs/promises';
 import { IsolatedTestPostgres } from '../../../packages/db/lib/test-postgres-server.mjs';
-import { persistInitialWorkflowExecution, persistCompletedWorkflowExecution } from '../workflow-persistence.mjs';
+import {
+  persistInitialWorkflowExecution,
+  persistCompletedWorkflowExecution,
+  persistWaitingWorkflowExecution,
+  loadAuthoritativeWorkflowExecution
+} from '../workflow-persistence.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -615,5 +620,88 @@ test('Workflow Execution Persistence Reliability & Connection Error Handling', a
       isStagingOrProd: false
     });
     assert.equal(resDevAgencyConflict, null, 'Dev mode conflict must return null');
+  });
+
+  await t.test('Scenario 10: persistWaitingWorkflowExecution & loadAuthoritativeWorkflowExecution reliability', async () => {
+    let released = false;
+    let queryArgs = null;
+
+    const fakeClient = {
+      query: async (sql, params) => {
+        if (typeof sql === 'string' && sql.trim() === 'BEGIN') return {};
+        if (typeof sql === 'string' && sql.includes('set_config')) return {};
+        if (typeof sql === 'string' && sql.includes('UPDATE workflow_executions SET')) {
+          queryArgs = params;
+          return {
+            rows: [{
+              id: params[0],
+              status: 'waiting',
+              current_node_id: params[1],
+              resume_node_id: params[2],
+              retry_at: params[3],
+              wait_generation: params[4],
+              wait_type: params[5],
+              state: JSON.parse(params[6])
+            }]
+          };
+        }
+        if (typeof sql === 'string' && sql.trim() === 'COMMIT') return {};
+        return { rows: [] };
+      },
+      release: () => {
+        released = true;
+      }
+    };
+
+    const fakePool = {
+      connect: async () => fakeClient
+    };
+
+    const agencyId = randomUUID();
+    const locationId = randomUUID();
+    const executionId = randomUUID();
+    const waitNodeId = 'wait_delay_step';
+    const resumeNodeId = 'next_action_step';
+    const retryAt = new Date(Date.now() + 300_000).toISOString();
+
+    const row = await persistWaitingWorkflowExecution({
+      pgPool: fakePool,
+      agencyId,
+      locationId,
+      executionId,
+      waitNodeId,
+      resumeNodeId,
+      retryAt,
+      waitGeneration: 2,
+      waitType: 'timed',
+      variables: { counter: 42 },
+      platformDbEnabled: true
+    });
+
+    assert.ok(row);
+    assert.equal(row.status, 'waiting');
+    assert.equal(row.current_node_id, waitNodeId);
+    assert.equal(row.resume_node_id, resumeNodeId);
+    assert.equal(row.wait_generation, 2);
+    assert.equal(row.wait_type, 'timed');
+    assert.equal(row.state.counter, 42);
+    assert.equal(released, true);
+
+    // Missing arguments fail closed in platformDbEnabled mode
+    await assert.rejects(
+      async () => {
+        await persistWaitingWorkflowExecution({
+          pgPool: fakePool,
+          agencyId: null,
+          locationId,
+          executionId,
+          platformDbEnabled: true
+        });
+      },
+      (err) => {
+        assert.equal(err.code, 'WORKFLOW_EXECUTION_LOCATION_REQUIRED');
+        return true;
+      }
+    );
   });
 });

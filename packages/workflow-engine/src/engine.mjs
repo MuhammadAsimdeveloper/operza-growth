@@ -1065,17 +1065,19 @@ function buildNodeMap(nodes) {
  */
 export async function walkGraph(nodes, triggerContext, stepExecutor, deps = {}) {
   const nodeMap = buildNodeMap(nodes);
-  const timeline = [];
-  const variables = {};
-  const visited = new Set();
+  const timeline = Array.isArray(deps.initialTimeline) ? [...deps.initialTimeline] : [];
+  const variables = deps.initialVariables && typeof deps.initialVariables === 'object' ? { ...deps.initialVariables } : {};
+  const visited = new Set(Array.isArray(deps.visitedNodeIds) ? deps.visitedNodeIds : []);
 
-  // Find the entry node — either marked entrypoint, or first in list
-  let entryId = nodes.find(n => n.entrypoint)?.id || nodes[0]?.id;
-  if (!entryId) return { timeline, variables, finalStatus: 'completed' };
+  // Find the entry node — explicit resume/start node, marked entrypoint, or first in list
+  let entryId = deps.resumeNodeId || deps.startNodeId || nodes.find(n => n.entrypoint)?.id || nodes[0]?.id;
+  if (!entryId) return { timeline, variables, finalStatus: 'completed', waitingStep: null, resumeNodeId: null };
 
   // Queue: supports parallel paths
   const queue = [entryId];
   let finalStatus = 'completed';
+  let waitingStep = null;
+  let nextResumeNodeId = null;
 
   while (queue.length > 0) {
     const currentId = queue.shift();
@@ -1128,10 +1130,30 @@ export async function walkGraph(nodes, triggerContext, stepExecutor, deps = {}) 
     }
 
     // Handle waiting / failed statuses
-    if (stepResult.status === 'waiting' || stepResult.status === 'waiting_approval') {
+    if (stepResult.status === 'waiting' || stepResult.status === 'waiting_approval' || stepResult.status === 'waiting_webhook') {
       finalStatus = stepResult.status;
-      // Do not continue graph — the scheduler will resume later
-      continue;
+      // Determine what node to execute when resumed
+      let calculatedResumeNodeId = null;
+      if (stepResult.selectedBranch && node.branches) {
+        calculatedResumeNodeId = node.branches[stepResult.selectedBranch] || null;
+      } else if (node.next) {
+        calculatedResumeNodeId = Array.isArray(node.next) ? (node.next[0] || null) : node.next;
+      }
+      nextResumeNodeId = calculatedResumeNodeId;
+      waitingStep = {
+        nodeId: node.id,
+        nodeName: node.name || node.id,
+        nodeType: node.type,
+        status: stepResult.status,
+        retryAt: stepResult.retryAt || null,
+        resumeToken: stepResult.resumeToken || null,
+        resumeUrl: stepResult.resumeUrl || null,
+        expiresAt: stepResult.expiresAt || null,
+        resumeNodeId: calculatedResumeNodeId,
+        result: stepResult.result || null,
+      };
+      // Do not continue graph — the scheduler or worker will resume later
+      break;
     }
     if (stepResult.status === 'failed') {
       finalStatus = 'failed';
@@ -1206,7 +1228,7 @@ export async function walkGraph(nodes, triggerContext, stepExecutor, deps = {}) 
     }
   }
 
-  return { timeline, variables, finalStatus };
+  return { timeline, variables, finalStatus, waitingStep, resumeNodeId: nextResumeNodeId };
 }
 
 // ---------------------------------------------------------------------------
@@ -1247,3 +1269,4 @@ export function buildExecutionTimeline(execution) {
 }
 
 export { validateJsonSchema, normalizeActionSchemas } from './action-governance.mjs';
+export * from './execution-state.mjs';

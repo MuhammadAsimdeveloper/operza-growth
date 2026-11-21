@@ -172,3 +172,57 @@ export async function produceConnectorActionEvent({
     }
   });
 }
+
+/**
+ * Transactional producer to enqueue a scheduled workflow continuation after a wait or delay node.
+ */
+export async function produceWorkflowWaitResumeEvent({
+  repository,
+  client,
+  tenantId,
+  locationId = 'default',
+  workflowId,
+  executionId,
+  waitNodeId,
+  resumeNodeId,
+  resumeGeneration = 1,
+  availableAt,
+  correlationId
+}) {
+  if (!repository || typeof repository.enqueue !== 'function') {
+    throw new TypeError('A valid outbox repository is required');
+  }
+  if (!tenantId || !executionId || !waitNodeId) {
+    throw new TypeError('tenantId, executionId, and waitNodeId are required');
+  }
+
+  const generationNumber = Number(resumeGeneration) || 1;
+  const idempotencyKey = generateDeterministicIdempotencyKey({
+    tenantId,
+    locationId,
+    scope: 'workflow_wait_resume',
+    uniqueEntityId: `${executionId}_${waitNodeId}_gen_${generationNumber}`
+  });
+
+  const options = client ? { client } : {};
+
+  return repository.enqueue({
+    tenantId,
+    locationId,
+    executionId,
+    eventType: 'workflow.wait.resume',
+    idempotencyKey,
+    availableAt: availableAt ? new Date(availableAt).toISOString() : new Date().toISOString(),
+    payload: {
+      tenantId,
+      locationId,
+      workflowId,
+      executionId,
+      waitNodeId,
+      resumeNodeId: resumeNodeId || null,
+      resumeGeneration: generationNumber,
+      correlationId: correlationId || `corr_${crypto.randomUUID()}`,
+      enqueuedAt: new Date().toISOString()
+    }
+  }, options);
+}
