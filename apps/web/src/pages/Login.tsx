@@ -104,7 +104,7 @@ export default function Login() {
         title="Sign In to Agency Workspace — Operza"
         description="Securely sign in to your Operza multi-tenant agency CRM workspace and client portal."
         canonical="/login"
-        robots="index, follow"
+        robots="noindex, nofollow"
       />
       <div style={styles.container}>
         {/* Brand */}

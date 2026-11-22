@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../lib/api';
+import { SEO } from '../components/SEO';
 
 interface ProductItem {
   id: string;
@@ -165,6 +166,7 @@ export default function PublicCheckout() {
 
   return (
     <div style={styles.pageContainer}>
+      <SEO title="Checkout" description="Operza Secure Checkout" robots="noindex, nofollow" />
       <div style={styles.checkoutWrapper}>
         {/* Left Side: Order Summary */}
         <div style={styles.summaryPane}>

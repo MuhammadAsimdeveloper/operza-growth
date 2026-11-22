@@ -1,5 +1,5 @@
 # Operza Production Robots.txt
-# Crawler configuration for Googlebot, Bingbot, DuckDuckBot, and AI crawlers
+# Crawler configuration for Googlebot, Bingbot, DuckDuckBot, and AI search crawlers
 
 User-agent: *
 Allow: /
@@ -8,12 +8,14 @@ Allow: /pricing
 Allow: /about
 Allow: /docs
 Allow: /blog
-Allow: /login
-Allow: /signup
 Allow: /f/
 Allow: /review/
 Allow: /funnel/
 Allow: /v/
+
+# Disallow login and signup ingress (transactional / authentication)
+Disallow: /login
+Disallow: /signup
 
 # Disallow transactional customer payment links and private bookings
 Disallow: /book/

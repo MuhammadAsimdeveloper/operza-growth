@@ -5,6 +5,7 @@ import { currency, fullDate } from '../lib/format';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, Avatar } from '../components/ui';
+import { SEO } from '../components/SEO';
 
 interface PortalData {
   contact: {
@@ -258,6 +259,7 @@ export default function PublicPortal() {
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)', color: 'var(--text)' }}>
+      <SEO title="Client Portal" description="Client Portal" robots="noindex, nofollow" />
       {/* Top Navigation Bar */}
       <header style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, zIndex: 100 }}>
         <div style={{ maxWidth: 1140, margin: '0 auto', padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>

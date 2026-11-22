@@ -85,7 +85,7 @@ export default function Pricing() {
           'CRM software pricing',
           'white-label CRM software',
           'agency management software',
-          'all-in-one business management software',
+          'unified agency management software',
           'marketing agency CRM',
           'affordable agency crm alternative',
         ]}
@@ -229,7 +229,7 @@ export default function Pricing() {
                 <li><span style={styles.checkIcon}>✓</span> High-Throughput BullMQ Worker Concurrency</li>
                 <li><span style={styles.checkIcon}>✓</span> Custom Payment Gateways &amp; Merchant Routing</li>
                 <li><span style={styles.checkIcon}>✓</span> Full REST API &amp; Webhook Gateway Access</li>
-                <li><span style={styles.checkIcon}>✓</span> 99.99% Uptime SLA &amp; HIPAA BAA Compliance</li>
+                <li><span style={styles.checkIcon}>✓</span> Dedicated Deployment Support &amp; PostgreSQL Row-Level Security</li>
                 <li><span style={styles.checkIcon}>✓</span> Dedicated Slack Connect Channel Onboarding</li>
               </ul>
               <Link

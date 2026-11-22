@@ -371,6 +371,72 @@ test('OPERZA GROWTH — Workflow Action Receipt & Idempotency Suite (Scenarios 1
     assert.equal(receipt.last_error_code, 'PROVIDER_RECOVERY_UNCERTAIN');
   });
 
+  await t.test('Scenario 10B: Persisted provider identity is authoritative and rejects provider mismatch', async () => {
+    const mismatchHash = crypto.createHash('sha256').update('scenario_10b_mismatch_' + randomUUID()).digest('hex');
+    await outboxRepo.claimActionReceipt({
+      tenantId: tenantA,
+      locationId: locationA,
+      executionId: fencingExecId,
+      nodeId: 'node_10b',
+      actionHash: mismatchHash,
+      providerKey: 'email.sendgrid',
+      workerId: 'worker_sg',
+      leaseSeconds: 1
+    });
+
+    await new Promise(r => setTimeout(r, 1100));
+
+    // Caller attempts to claim as resend to bypass SendGrid recovery restrictions
+    await assert.rejects(async () => {
+      await outboxRepo.claimActionReceipt({
+        tenantId: tenantA,
+        locationId: locationA,
+        executionId: fencingExecId,
+        nodeId: 'node_10b',
+        actionHash: mismatchHash,
+        providerKey: 'email.resend',
+        workerId: 'worker_fraud',
+        leaseSeconds: 60,
+        hasVerifiedIdempotency: true
+      });
+    }, (err) => err.code === 'PROVIDER_MISMATCH');
+  });
+
+  await t.test('Scenario 10C: Missing provider identity in claim cannot bypass unverified provider restrictions', async () => {
+    const bypassHash = crypto.createHash('sha256').update('scenario_10c_bypass_' + randomUUID()).digest('hex');
+    await outboxRepo.claimActionReceipt({
+      tenantId: tenantA,
+      locationId: locationA,
+      executionId: fencingExecId,
+      nodeId: 'node_10c',
+      actionHash: bypassHash,
+      providerKey: 'email.sendgrid',
+      workerId: 'worker_sg_crashed',
+      leaseSeconds: 1
+    });
+
+    await new Promise(r => setTimeout(r, 1100));
+
+    // Caller omits providerKey and declares hasVerifiedIdempotency: true
+    const reclaim = await outboxRepo.claimActionReceipt({
+      tenantId: tenantA,
+      locationId: locationA,
+      executionId: fencingExecId,
+      nodeId: 'node_10c',
+      actionHash: bypassHash,
+      providerKey: null,
+      workerId: 'worker_bypass',
+      leaseSeconds: 60,
+      hasVerifiedIdempotency: true
+    });
+
+    // Must still use authoritative persisted provider identity (SendGrid) and mark indeterminate
+    assert.equal(reclaim.acquired, false);
+    assert.equal(reclaim.status, 'indeterminate');
+    assert.equal(reclaim.disposition, 'uncertain_expired');
+    assert.equal(reclaim.lastErrorCode, 'PROVIDER_RECOVERY_UNCERTAIN');
+  });
+
   await t.test('Scenario 11: Provider with verified idempotency (Resend): retains same stable idempotency key on retry', async () => {
     const resendHash = crypto.createHash('sha256').update('scenario_11_resend_' + randomUUID()).digest('hex');
     const claim = await outboxRepo.claimActionReceipt({

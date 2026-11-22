@@ -184,33 +184,30 @@ const COMPARISON_ROWS = [
   },
 ];
 
-const TESTIMONIALS = [
+const ARCHITECTURE_HIGHLIGHTS = [
   {
-    quote:
-      'We replaced HubSpot, Zapier, and PandaDoc in a single 48-hour sprint. Our monthly software bill plummeted from $1,150 to $79, and onboarding a new retainer client now takes 4 minutes via snapshot replication.',
-    name: 'Marcus Vance',
-    role: 'Managing Partner',
-    agency: 'Vance Performance Media',
-    clients: '18 client sub-accounts',
-    verified: true,
+    title: 'PostgreSQL Kernel Isolation',
+    description:
+      'Multi-tenant boundaries are enforced directly in the database engine using Row-Level Security (RLS) policies scoped per transaction. Cross-tenant data leakage is prevented at the SQL layer, not in brittle application middleware.',
+    tag: 'Database Security',
+    icon: 'shield',
+    metric: 'Fail-Closed RLS',
   },
   {
-    quote:
-      'The strict PostgreSQL Row-Level Security was our primary requirement. We manage healthcare and legal marketing clients who cannot risk cross-tenant data leaks. Operza’s fail-closed isolation gives our enterprise clients complete peace of mind.',
-    name: 'Elena Rostova',
-    role: 'VP of Technology & RevOps',
-    agency: 'Starlight Growth Group',
-    clients: '32 client sub-accounts',
-    verified: true,
+    title: 'Durable Outbox & Idempotent Actions',
+    description:
+      'Every external message, webhook, and CRM mutation is tracked with transactional outbox state, execution receipts, and cryptographic action hashing. Worker crashes or network retries never produce duplicate charges or messages.',
+    tag: 'Execution Engine',
+    icon: 'check',
+    metric: 'Idempotency Fencing',
   },
   {
-    quote:
-      'Zero per-seat taxes completely transformed our margins. Our 14 media buyers and account managers are all on the platform without us having to ration logins or pay $75 per seat every single month.',
-    name: 'David Chen',
-    role: 'Founder & CEO',
-    agency: 'Omnia Acquisition Labs',
-    clients: '12 client sub-accounts',
-    verified: true,
+    title: 'Predictable Infrastructure Economics',
+    description:
+      'Eliminate the per-seat penalty that punishes agency growth. Operza provides unlimited team members, unified communications, and snapshot blueprint provisioning with zero artificial seat taxes.',
+    tag: 'Agency Margins',
+    icon: 'zap',
+    metric: 'Unlimited Team Seats',
   },
 ];
 
@@ -1155,7 +1152,7 @@ export default function Home() {
               </div>
 
               <div style={{ marginBottom: 24 }}>
-                <div style={{ fontSize: 13, color: '#94a3b8' }}>Operza All-In-One Cost:</div>
+                <div style={{ fontSize: 13, color: '#94a3b8' }}>Operza Unified Platform Cost:</div>
                 <div style={{ fontSize: 28, fontWeight: 800, color: '#34d399' }}>
                   ${(operzaActualCost * 12).toLocaleString()} / year (${operzaActualCost}/mo)
                 </div>
@@ -1186,40 +1183,42 @@ export default function Home() {
       </section>
 
       {/* ──────────────────────────────────────────────────────────────────
-          7. VERIFIED TESTIMONIALS (Authentic, Metric-Driven Case Studies)
+          7. ARCHITECTURAL CAPABILITIES (Fail-Closed Multi-Tenancy & Integrity)
           ────────────────────────────────────────────────────────────────── */}
       <section className="funnel-section-alt">
         <div className="funnel-container">
           <div className="funnel-section-header">
             <div className="funnel-tag">
-              <Icon name="check" size={13} />
-              <span>VERIFIED AGENCY RESULTS</span>
+              <Icon name="shield" size={13} />
+              <span>CORE SYSTEM ARCHITECTURE</span>
             </div>
-            <h2 className="funnel-heading">Trusted by High-Velocity Agency Founders</h2>
+            <h2 className="funnel-heading">Engineered for Agency Reliability &amp; Data Integrity</h2>
             <p className="funnel-subhead">
-              Read how marketing and digital agency leaders eliminated tool sprawl and preserved their margins.
+              Explore the architectural standards behind Operza's durable workflows, relational isolation, and zero-tax agency pricing.
             </p>
           </div>
 
           <div className="funnel-grid-3">
-            {TESTIMONIALS.map((t, i) => (
+            {ARCHITECTURE_HIGHLIGHTS.map((h, i) => (
               <div key={i} className="card-premium" style={{ padding: 28, display: 'flex', flexDirection: 'column' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14 }}>
-                  {[...Array(5)].map((_, starIdx) => (
-                    <Icon key={starIdx} name="star" size={14} style={{ color: '#f59e0b', fill: '#f59e0b' }} />
-                  ))}
-                  <span style={styles.verifiedReviewPill}>Verified Agency</span>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                  <div style={{ display: 'inline-flex', padding: 8, borderRadius: 8, background: 'rgba(79, 70, 229, 0.1)', color: 'var(--accent)' }}>
+                    <Icon name={h.icon} size={20} />
+                  </div>
+                  <span style={styles.verifiedReviewPill}>{h.metric}</span>
                 </div>
 
-                <p style={{ fontSize: 14, color: 'var(--text)', lineHeight: 1.6, flex: 1, margin: '0 0 20px', fontStyle: 'italic' }}>
-                  "{t.quote}"
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+                  {h.tag}
+                </div>
+
+                <h3 style={{ fontSize: 17, fontWeight: 750, color: 'var(--text)', margin: '0 0 10px' }}>
+                  {h.title}
+                </h3>
+
+                <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.6, flex: 1, margin: 0 }}>
+                  {h.description}
                 </p>
-
-                <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14 }}>
-                  <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>{t.name}</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{t.role} · {t.agency}</div>
-                  <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 600, marginTop: 2 }}>{t.clients}</div>
-                </div>
               </div>
             ))}
           </div>

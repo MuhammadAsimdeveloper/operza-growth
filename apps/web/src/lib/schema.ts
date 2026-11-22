@@ -11,7 +11,7 @@ export const SCHEMA_ORGANIZATION = {
   url: 'https://operza.io',
   logo: 'https://operza.io/favicon.svg',
   description:
-    'All-in-one business operating system, multi-tenant agency CRM, and workflow automation platform designed for modern digital agencies.',
+    'Unified agency operating system, multi-tenant CRM, and workflow automation platform designed for modern digital agencies.',
   sameAs: [
     'https://twitter.com/operza_hq',
     'https://github.com/MuhammadAsimdeveloper/operza-growth',

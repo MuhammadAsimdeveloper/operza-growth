@@ -43,7 +43,61 @@ test('zapier node rejects invalid non-HTTPS Zapier hook in live mode', async () 
   assert.equal(res.errorCode, 'INVALID_ZAPIER_URL');
 });
 
-test('zapier node signs payload and posts in live mode', async () => {
+test('zapier node fails closed when consent is missing in live mode', async () => {
+  const node = {
+    id: 'node-zap-consent',
+    type: 'zapier',
+    config: {
+      webhookUrl: 'https://hooks.zapier.com/hooks/catch/123/xyz/',
+      eventName: 'contact.created'
+    }
+  };
+
+  const res = await executeStep({
+    node,
+    execution: {
+      mode: 'live',
+      id: 'exec-live-no-consent',
+      agencyId: 'agency-1',
+      workflowId: 'wf-consent',
+      providerStatuses: { zapier: 'verified' },
+      consent: false
+    },
+    triggerContext: { contact: { email: 'sarah@skynet.test' } }
+  });
+
+  assert.equal(res.status, 'failed');
+  assert.equal(res.errorCode, 'CONSENT_REQUIRED');
+});
+
+test('zapier node fails closed when provider is unverified in live mode', async () => {
+  const node = {
+    id: 'node-zap-unverified',
+    type: 'zapier',
+    config: {
+      webhookUrl: 'https://hooks.zapier.com/hooks/catch/123/xyz/',
+      eventName: 'contact.created'
+    }
+  };
+
+  const res = await executeStep({
+    node,
+    execution: {
+      mode: 'live',
+      id: 'exec-live-unverified',
+      agencyId: 'agency-1',
+      workflowId: 'wf-unverified',
+      consent: true,
+      providerStatuses: { zapier: 'unconfigured' }
+    },
+    triggerContext: { contact: { email: 'sarah@skynet.test' } }
+  });
+
+  assert.equal(res.status, 'failed');
+  assert.equal(res.errorCode, 'PROVIDER_UNVERIFIED');
+});
+
+test('zapier node signs payload and posts in live mode with consent and verified provider', async () => {
   const originalFetch = globalThis.fetch;
   let postedUrl = null;
   let postedHeaders = null;
@@ -69,7 +123,14 @@ test('zapier node signs payload and posts in live mode', async () => {
 
     const res = await executeStep({
       node,
-      execution: { mode: 'live', id: 'exec-live-3', agencyId: 'agency-1', workflowId: 'wf-3' },
+      execution: {
+        mode: 'live',
+        id: 'exec-live-3',
+        agencyId: 'agency-1',
+        workflowId: 'wf-3',
+        consent: true,
+        providerStatuses: { zapier: 'verified' }
+      },
       triggerContext: { contact: { email: 'sarah@skynet.test' } }
     });
 
@@ -80,6 +141,40 @@ test('zapier node signs payload and posts in live mode', async () => {
     assert.equal(postedHeaders['X-Operza-Execution-Id'], 'exec-live-3');
     assert.equal(postedBody.event, 'contact.created');
     assert.equal(postedBody.data.contact.email, 'sarah@skynet.test');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('zapier node dispatch rejection returns failed, never fake success', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 500 });
+
+  try {
+    const node = {
+      id: 'node-zap-fail',
+      type: 'zapier',
+      config: {
+        webhookUrl: 'https://hooks.zapier.com/hooks/catch/123/fail/',
+        eventName: 'contact.created'
+      }
+    };
+
+    const res = await executeStep({
+      node,
+      execution: {
+        mode: 'live',
+        id: 'exec-live-fail',
+        agencyId: 'agency-1',
+        workflowId: 'wf-fail',
+        consent: true,
+        providerStatuses: { zapier: 'verified' }
+      },
+      triggerContext: { contact: { email: 'sarah@skynet.test' } }
+    });
+
+    assert.equal(res.status, 'failed');
+    assert.equal(res.errorCode, 'ZAPIER_DISPATCH_REJECTED');
   } finally {
     globalThis.fetch = originalFetch;
   }

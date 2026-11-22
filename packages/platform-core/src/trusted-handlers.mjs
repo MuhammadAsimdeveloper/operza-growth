@@ -2179,11 +2179,13 @@ export function createTrustedWorkerHandlers({
         throw new PermanentJobError(`Action not registered: ${actionType}`, 'ACTION_NOT_REGISTERED');
       }
 
-      // Validate trusted actor identity
-      const actorId = payload.actorId || payload.requestedByActorId || payload.approvalEvidence?.approvedBy || payload.approvalEvidence?.approvedByActorId || job?.actor_id || job?.created_by || (payload.dryRun ? 'system_dry_run' : null);
-      if (payload.actorId !== undefined && (typeof payload.actorId !== 'string' || !payload.actorId.trim())) {
+      const rawActor = payload.actorId;
+      if (rawActor !== undefined && (typeof rawActor !== 'string' || !rawActor.trim())) {
         throw new PermanentJobError('Action execution requires trusted actor identity', 'ACTOR_IDENTITY_REQUIRED');
       }
+      const actorId = (typeof rawActor === 'string' && rawActor.trim())
+        ? rawActor.trim()
+        : (payload.requestedByActorId || payload.approvalEvidence?.approvedBy || payload.approvalEvidence?.approvedByActorId || job?.actor_id || job?.created_by || (payload.dryRun ? 'system_dry_run' : null));
       if (!actorId || typeof actorId !== 'string' || !actorId.trim()) {
         throw new PermanentJobError('Action execution requires trusted actor identity', 'ACTOR_IDENTITY_REQUIRED');
       }
@@ -2213,13 +2215,6 @@ export function createTrustedWorkerHandlers({
         if (evidence.status && evidence.status !== 'approved') {
           throw new PermanentJobError(`Approval evidence has non-approved status: ${evidence.status}`, 'APPROVAL_REJECTED');
         }
-        if (evidence.checksum) {
-          const { checksum, ...body } = evidence;
-          const expectedChecksum = crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
-          if (checksum !== expectedChecksum) {
-            throw new PermanentJobError('Approval evidence checksum mismatch or tampered', 'APPROVAL_TAMPERED');
-          }
-        }
         if (evidence.expiresAt) {
           const expiryMs = Date.parse(evidence.expiresAt);
           if (Number.isFinite(expiryMs) && expiryMs <= Date.now()) {
@@ -2231,6 +2226,22 @@ export function createTrustedWorkerHandlers({
         }
         if (evidence.actionHash && evidence.actionHash !== actionHash) {
           throw new PermanentJobError('Approval evidence is for a different action hash', 'APPROVAL_HASH_MISMATCH');
+        }
+        if (evidence.tenantId && evidence.tenantId !== tenantId) {
+          throw new PermanentJobError('Approval evidence tenant mismatch', 'APPROVAL_TENANT_MISMATCH');
+        }
+        if (evidence.workflowId && payload.workflowId && evidence.workflowId !== payload.workflowId) {
+          throw new PermanentJobError('Approval evidence workflow mismatch', 'APPROVAL_WORKFLOW_MISMATCH');
+        }
+        if (evidence.executionId && payload.executionId && evidence.executionId !== payload.executionId) {
+          throw new PermanentJobError('Approval evidence execution mismatch', 'APPROVAL_EXECUTION_MISMATCH');
+        }
+        if (evidence.checksum) {
+          const { checksum, ...body } = evidence;
+          const expectedChecksum = crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
+          if (checksum !== expectedChecksum) {
+            throw new PermanentJobError('Approval evidence checksum mismatch or tampered', 'APPROVAL_TAMPERED');
+          }
         }
         const requestedBy = evidence.requestedByActorId || evidence.requestedBy || payload.requestedByActorId || payload.actorId;
         const approvedBy = evidence.approvedByActorId || evidence.approvedBy;

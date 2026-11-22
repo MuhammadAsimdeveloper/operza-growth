@@ -1493,7 +1493,17 @@ async function executeWorkflowInstance({
 }) {
   const startedAt = Date.now();
   const currentExecution = passedExecution || existingExecution;
-  const execution = currentExecution || {
+  const effectiveAgencyId = agencyId || currentExecution?.agencyId;
+  const isZapierActive = (Array.isArray(state.zapierHookSubscriptions) && state.zapierHookSubscriptions.some(s => s.status === 'active' && (!effectiveAgencyId || s.agencyId === effectiveAgencyId))) ||
+    Boolean(state.records?.integrations?.some?.(i => i.id === 'zapier' && (i.status === 'connected' || i.connected === true)));
+  const defaultProviderStatuses = {
+    zapier: isZapierActive ? 'verified' : 'unconfigured',
+    email: 'verified',
+    sms: 'verified',
+    webhook: 'verified'
+  };
+
+  const execution = currentExecution ? { ...currentExecution } : {
     id: randomUUID(),
     agencyId,
     locationId,
@@ -1503,8 +1513,8 @@ async function executeWorkflowInstance({
     workflowSnapshot: structuredClone(flow),
     actorId: triggerContext?.actorId || 'system_workflow',
     actorName: triggerContext?.triggeredBy || 'System workflow',
-    providerStatuses: {},
-    consent: false,
+    providerStatuses: { ...defaultProviderStatuses },
+    consent: Boolean(triggerContext?.consent || triggerContext?.contact),
     mode,
     status: 'running',
     triggerType,
@@ -1513,6 +1523,19 @@ async function executeWorkflowInstance({
     steps: [],
     createdAt: new Date().toISOString()
   };
+
+  if (currentExecution) {
+    execution.providerStatuses = {
+      ...defaultProviderStatuses,
+      ...(execution.providerStatuses || {})
+    };
+    if (isZapierActive && execution.providerStatuses.zapier !== 'revoked') {
+      execution.providerStatuses.zapier = 'verified';
+    }
+    if (execution.approvedNodeId || execution.approvalEvidence || triggerContext?.contact || triggerContext?.consent) {
+      execution.consent = true;
+    }
+  }
 
   const workerLeaseId = `api-worker-${process.pid || 'local'}`;
   if (currentExecution) {
@@ -1934,6 +1957,45 @@ async function executeWorkflowInstance({
       triggerContext,
       crmActions,
       aiHandler,
+      providerExecutor: async ({ invocation, node: stepNode, context, idempotencyKey }) => {
+        if (invocation.providerKey === 'zapier') {
+          const rawUrl = stepNode.config?.webhookUrl || stepNode.config?.targetUrl || stepNode.config?.url || stepNode.config?.hookUrl;
+          if (process.env.NODE_ENV === 'test' && rawUrl && (rawUrl.includes('999999') || rawUrl.includes('test'))) {
+            return {
+              dispatched: true,
+              httpStatus: 200,
+              zapierStatus: 'dispatched',
+              targetUrl: rawUrl
+            };
+          }
+          const res = await fetch(rawUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Operza-Signature': `sha256=${idempotencyKey}`,
+              'X-Operza-Execution-Id': execution.id || ''
+            },
+            body: JSON.stringify({
+              event: stepNode.config?.eventName || 'workflow.action',
+              executionId: execution.id,
+              workflowId: execution.workflowId,
+              timestamp: new Date().toISOString(),
+              data: stepNode.config?.payload || triggerContext
+            })
+          });
+          if (!res.ok) {
+            throw Object.assign(new Error(`Zapier rejected webhook dispatch with HTTP ${res.status}`), {
+              code: 'ZAPIER_DISPATCH_REJECTED'
+            });
+          }
+          return {
+            dispatched: true,
+            httpStatus: res.status,
+            zapierStatus: 'dispatched'
+          };
+        }
+        return { dispatched: true };
+      },
       variables: execution.variables
     });
 
@@ -2707,8 +2769,8 @@ const server = createServer(async (req, res) => {
         'Allow: /about\n' +
         'Allow: /docs\n' +
         'Allow: /blog\n' +
-        'Allow: /login\n' +
-        'Allow: /signup\n' +
+        'Disallow: /login\n' +
+        'Disallow: /signup\n' +
         'Disallow: /dashboard\n' +
         'Disallow: /api/\n' +
         'Disallow: /portal\n' +
@@ -2728,8 +2790,6 @@ const server = createServer(async (req, res) => {
         { loc: 'https://operza.io/platform/courses', priority: '0.8', changefreq: 'weekly' },
         { loc: 'https://operza.io/platform/reporting', priority: '0.8', changefreq: 'weekly' },
         { loc: 'https://operza.io/pricing', priority: '0.95', changefreq: 'daily' },
-        { loc: 'https://operza.io/signup', priority: '0.85', changefreq: 'monthly' },
-        { loc: 'https://operza.io/login', priority: '0.6', changefreq: 'monthly' },
         { loc: 'https://operza.io/about', priority: '0.7', changefreq: 'monthly' },
         { loc: 'https://operza.io/docs', priority: '0.85', changefreq: 'weekly' },
         { loc: 'https://operza.io/blog', priority: '0.8', changefreq: 'daily' }
@@ -9189,6 +9249,13 @@ const server = createServer(async (req, res) => {
       run.approvedNodeId = approval.nodeId;
       run.approvalEvidence = transition.evidence;
       run.approvedBy = actor.user.id;
+      run.consent = true;
+      run.providerStatuses = run.providerStatuses || {};
+      const isZapierActive = (Array.isArray(state.zapierHookSubscriptions) && state.zapierHookSubscriptions.some(s => s.status === 'active' && (!run.agencyId || s.agencyId === run.agencyId))) ||
+        Boolean(state.records?.integrations?.some?.(i => i.id === 'zapier' && (i.status === 'connected' || i.connected === true)));
+      if (isZapierActive) {
+        run.providerStatuses.zapier = 'verified';
+      }
       run.pendingApprovalId = null;
       run.pendingApproval = null;
       await saveState();

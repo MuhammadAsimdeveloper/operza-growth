@@ -208,9 +208,8 @@ export async function executeStep({
     if (actionDefinition?.risk === 'external_side_effect') {
       const isZapier = type === 'zapier' || type === 'zapier_webhook';
       const effectiveActorId = execution?.actorId || execution?.userId || (execution ? 'system_worker' : null);
-      const effectiveProviderStatus = execution?.providerStatuses?.[actionDefinition.providerKey] ||
-        (isZapier ? 'verified' : 'unconfigured');
-      const effectiveConsent = execution?.consent === true || isZapier;
+      const effectiveProviderStatus = execution?.providerStatuses?.[actionDefinition.providerKey] || 'unconfigured';
+      const effectiveConsent = execution?.consent === true;
 
       const { signingSecret: _s, ...rawInput } = config || {};
       const effectiveInput = {};

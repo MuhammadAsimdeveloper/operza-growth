@@ -11,6 +11,7 @@ import { Modal } from './Modal';
 import { AppLauncherModal } from './AppLauncherModal';
 import { useStore } from '../lib/store';
 import { relative } from '../lib/format';
+import { SEO } from './SEO';
 
 interface NavEntry {
   to: string;
@@ -1278,6 +1279,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
 
   return (
     <div className={["shell", navOpen && "is-nav-open"].filter(Boolean).join(" ")}>
+      <SEO title="Agency Workspace" description="Operza Agency Workspace" robots="noindex, nofollow" />
       <Sidebar onNavigate={() => setNavOpen(false)} onOpenAppsLauncher={() => setAppsLauncherOpen(true)} />
       <div className="scrim" onClick={() => setNavOpen(false)} />
       <div className="main">

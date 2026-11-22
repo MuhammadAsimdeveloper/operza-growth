@@ -21,7 +21,7 @@ export default function PlatformCrm() {
         keywords={[
           'marketing agency CRM',
           'sales pipeline management software',
-          'all-in-one CRM software',
+          'unified agency CRM software',
           'lead management software',
           'CRM for digital marketing agencies',
         ]}

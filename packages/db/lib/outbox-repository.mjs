@@ -245,7 +245,8 @@ export function createWorkflowOutboxRepository(pool) {
           };
         }
         const existing = await client.query(
-          "SELECT id,status,result,lease_owner,lease_until,claim_token,attempts,provider_receipt,last_error_code " +
+          "SELECT id,status,result,lease_owner,lease_until,claim_token,attempts,provider_receipt,last_error_code,provider_key, " +
+                 "(clock_timestamp() < lease_until) AS is_lease_active " +
           "FROM workflow_action_receipts " +
           "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 FOR UPDATE",
           [tenantId, locationId, actionHash]
@@ -254,6 +255,15 @@ export function createWorkflowOutboxRepository(pool) {
           return { acquired: false, disposition: 'not_found', receipt: null };
         }
         const row = existing.rows[0];
+
+        // Authoritative provider identity: reject mismatched provider identities
+        if (providerKey && row.provider_key && providerKey !== row.provider_key) {
+          throw Object.assign(
+            new Error(`Requested provider (${providerKey}) does not match existing receipt provider (${row.provider_key})`),
+            { code: 'PROVIDER_MISMATCH' }
+          );
+        }
+
         if (row.status === 'succeeded') {
           return {
             acquired: false,
@@ -280,9 +290,8 @@ export function createWorkflowOutboxRepository(pool) {
           };
         }
         if (row.status === 'started') {
-          const now = Date.now();
-          const leaseUntil = row.lease_until ? new Date(row.lease_until).getTime() : 0;
-          if (now < leaseUntil) {
+          // Use authoritative clock_timestamp comparison from database
+          if (row.is_lease_active) {
             return {
               acquired: false,
               disposition: 'in_progress',
@@ -295,8 +304,15 @@ export function createWorkflowOutboxRepository(pool) {
               receipt: row
             };
           }
-          // Lease has expired - check provider-aware recovery
-          if (providerKey && providerKey !== 'internal_crm' && !hasVerifiedIdempotency) {
+          // Lease has expired - resolve authoritative provider identity and server-side capability
+          const authoritativeProviderKey = row.provider_key || providerKey;
+          const VERIFIED_PROVIDERS = new Set(['email.resend', 'resend']);
+          const isAuthoritativeVerified = authoritativeProviderKey
+            ? VERIFIED_PROVIDERS.has(authoritativeProviderKey)
+            : false;
+          const isSafeToReclaim = (authoritativeProviderKey === 'internal_crm' || !authoritativeProviderKey || isAuthoritativeVerified) && hasVerifiedIdempotency !== false;
+
+          if (!isSafeToReclaim) {
             // Unsafe to automatically reclaim without verified provider idempotency
             const marked = await client.query(
               "UPDATE workflow_action_receipts " +
@@ -439,8 +455,8 @@ export function createWorkflowOutboxRepository(pool) {
           throw Object.assign(new Error('Action receipt not found'), { code: 'ACTION_RECEIPT_NOT_FOUND' });
         }
         const existing = check.rows[0];
-        if (existing.status === 'succeeded') {
-          throw Object.assign(new Error('Action receipt is already succeeded and cannot be modified'), { code: 'ACTION_RECEIPT_TERMINAL' });
+        if (existing.status === 'succeeded' || existing.status === 'indeterminate' || existing.status === 'failed') {
+          throw Object.assign(new Error(`Action receipt is already terminal (status=${existing.status}) and cannot be modified`), { code: 'ACTION_RECEIPT_TERMINAL' });
         }
         throw Object.assign(
           new Error(`Action lease lost or expired for action ${actionHash} (status=${existing.status})`),

@@ -4,75 +4,75 @@ import { Icon } from '../../components/Icon';
 import { buildBreadcrumbSchema, SCHEMA_ORGANIZATION } from '../../lib/schema';
 import { trackEvent } from '../../lib/analytics';
 
-interface DatacenterNode {
-  city: string;
-  region: string;
+interface ArchitectureComponent {
+  layer: string;
+  technology: string;
   role: string;
-  latency: string;
-  status: 'Operational' | 'Active';
+  guarantee: string;
+  status: 'Verified' | 'Active';
 }
 
-const GLOBAL_NODES: DatacenterNode[] = [
-  { city: 'Ashburn, VA', region: 'US-East', role: 'Primary RLS Cluster & Orchestrator', latency: '12ms', status: 'Operational' },
-  { city: 'Frankfurt', region: 'EU-Central', role: 'GDPR Isolated Edge & Read Replica', latency: '21ms', status: 'Operational' },
-  { city: 'Singapore', region: 'AP-Southeast', role: 'High-Concurrency Telephony Ingress', latency: '34ms', status: 'Operational' },
-  { city: 'Tokyo', region: 'AP-Northeast', role: 'Edge CDN & Asset Minification', latency: '38ms', status: 'Operational' },
-  { city: 'London', region: 'EU-West', role: 'WebRTC Softphone Relay & SIP Trunk', latency: '19ms', status: 'Operational' },
-  { city: 'São Paulo', region: 'SA-East', role: 'South America Edge Gateway', latency: '54ms', status: 'Operational' },
+const ARCHITECTURE_COMPONENTS: ArchitectureComponent[] = [
+  { layer: 'Database Kernel', technology: 'PostgreSQL 16+', role: 'Row-Level Security (RLS) Multi-Tenant Policies', guarantee: 'Fail-Closed Isolation', status: 'Verified' },
+  { layer: 'Durable Queue', technology: 'Transactional Outbox', role: 'PostgreSQL-backed Event Bus & Idempotency Receipts', guarantee: 'Zero Action Duplication', status: 'Verified' },
+  { layer: 'Workflow Engine', technology: 'Async Worker Mesh', role: '2D Visual Flow Execution, Wait Delays & Resumptions', guarantee: 'Deterministic Recovery', status: 'Verified' },
+  { layer: 'API Gateway', technology: 'Node.js & Fastify', role: 'Type-Safe Ingress, Rate-Limiting & RBAC Authorization', guarantee: 'Strict Schema Validation', status: 'Verified' },
+  { layer: 'Deployment', technology: 'Docker & Compose', role: 'Self-Hosted or Cloud-Hosted Portable Containers', guarantee: '100% Data Sovereignty', status: 'Verified' },
+  { layer: 'Web Application', technology: 'Vite & React 18', role: 'Responsive Agency Workspace & Client Portal Interface', guarantee: 'Zero Per-Seat Tax', status: 'Verified' },
 ];
 
 const MILESTONES = [
   {
     year: 'Q1 2024',
     title: 'Kernel Architecture & PostgreSQL RLS Engine',
-    desc: 'Pioneered fail-closed multi-tenancy at the database row level, eliminating cross-tenant leakage vulnerabilities found in traditional ORMs.',
+    desc: 'Implemented fail-closed multi-tenancy at the database row level, eliminating cross-tenant leakage risks at the relational engine.',
   },
   {
     year: 'Q3 2024',
-    title: '2D Visual Automation Canvas & BullMQ Backbone',
-    desc: 'Shipped interactive node-and-wire flow builder with distributed Redis BullMQ worker concurrency and automatic jitter retries.',
+    title: '2D Visual Automation Canvas & Outbox Backbone',
+    desc: 'Shipped interactive node-and-wire flow builder with transactional outbox event logging, leases, and deterministic error handling.',
   },
   {
     year: 'Q1 2025',
-    title: 'Omnichannel Ingress & WebRTC Telephony Softphone',
-    desc: 'Unwrapped real-time bidirectional SMS, WhatsApp Cloud API, and browser-based WebRTC softphone calling with live SIP status verification.',
+    title: 'Omnichannel Ingress & Communication Consent',
+    desc: 'Delivered bidirectional SMS, WhatsApp Cloud API, and verified email communications with explicit recipient consent ledgers.',
   },
   {
     year: 'Q3 2025',
     title: 'White-Label Client Portal & Sub-Account Snapshots',
-    desc: 'Delivered custom CNAME client portals with digital contract e-signing and selective blueprint snapshot replication across accounts.',
+    desc: 'Shipped custom CNAME client portals with digital contract e-signing and template snapshot replication across agency client sub-accounts.',
   },
   {
     year: '2026',
-    title: 'Global Headless CMS, Website Builder & $35 Value Revolution',
-    desc: 'Democratized agency operations with multi-page visual website CMS, automated Let’s Encrypt edge SSL, and disruptive $35/mo pricing.',
+    title: 'Action Idempotency, Fencing & $35 Value Architecture',
+    desc: 'Hardened durable execution with provider-level idempotency receipts, separation of duties, and disruptive $35/mo agency pricing.',
   },
 ];
 
-const LEADERSHIP_TEAM = [
+const CORE_PILLARS = [
   {
-    name: 'Asim R.',
-    role: 'Founder & Chief Architect',
-    bio: 'Former distributed systems lead with 12+ years building high-throughput event streaming architectures and relational multi-tenant kernels.',
-    avatar: 'AR',
+    name: 'Relational Multi-Tenancy',
+    role: 'Database Kernel & Data Isolation',
+    bio: 'Fail-closed PostgreSQL Row-Level Security ensuring absolute tenant separation at the query layer with zero risk of ORM cross-tenant leakage.',
+    avatar: 'DB',
   },
   {
-    name: 'Elena Rostova',
-    role: 'VP of Product & Agency Operations',
-    bio: 'Scaled digital agency operations from boutique consultancy to an 8-figure powerhouse managing over 350 client sub-accounts.',
-    avatar: 'ER',
+    name: 'Transactional Outbox & Workers',
+    role: 'Reliability & Idempotency Mesh',
+    bio: 'Robust asynchronous execution preventing duplicate email/SMS dispatch and ensuring full recovery during network or worker interruptions.',
+    avatar: 'WQ',
   },
   {
-    name: 'Marcus Chen',
-    role: 'Head of Infrastructure & Reliability',
-    bio: 'PostgreSQL performance specialist, author of high-throughput Redis caching blueprints, and maintainer of mission-critical cloud topologies.',
-    avatar: 'MC',
+    name: 'Separation of Duties & Approvals',
+    role: 'Action Governance & Audit Trails',
+    bio: 'Explicit approval gates, anti-tampering checksums, and strict segregation between action requesters and authorizers.',
+    avatar: 'AG',
   },
   {
-    name: 'Sarah Lindqvist',
-    role: 'Head of Security & Compliance',
-    bio: 'Information security veteran overseeing SOC-2 Type II, HIPAA BAA governance, and zero-trust perimeter auditing across enterprise deployments.',
-    avatar: 'SL',
+    name: 'Agency Economics First',
+    role: 'Open-Architecture Pricing Model',
+    bio: 'Transparent fixed-tier subscriptions eliminating punitive per-seat licensing to enable agency team growth with predictable margins.',
+    avatar: 'OP',
   },
 ];
 
@@ -126,26 +126,26 @@ export default function About() {
             We built Operza as a unified, open-architecture operating system with zero per-seat tax.
           </p>
 
-          {/* Real Live Impact Telemetry Bar */}
+          {/* Factual Architectural Specifications */}
           <div style={styles.telemetryBar} className="card-3d-interactive">
             <div style={styles.telemetryItem}>
-              <div style={styles.telemetryNum}>14,200+</div>
-              <div style={styles.telemetryLabel}>Agency Sub-Accounts Powered</div>
+              <div style={styles.telemetryNum}>PostgreSQL RLS</div>
+              <div style={styles.telemetryLabel}>Fail-Closed Multi-Tenancy</div>
             </div>
             <div style={styles.telemetryDivider} />
             <div style={styles.telemetryItem}>
-              <div style={styles.telemetryNum}>99.99%</div>
-              <div style={styles.telemetryLabel}>Edge Cluster Uptime SLA</div>
+              <div style={styles.telemetryNum}>32 Migrations</div>
+              <div style={styles.telemetryLabel}>Versioned Relational Schema</div>
             </div>
             <div style={styles.telemetryDivider} />
             <div style={styles.telemetryItem}>
-              <div style={styles.telemetryNum}>&lt;20ms</div>
-              <div style={styles.telemetryLabel}>Median Query Latency</div>
+              <div style={styles.telemetryNum}>Durable Outbox</div>
+              <div style={styles.telemetryLabel}>Recoverable Job Execution</div>
             </div>
             <div style={styles.telemetryDivider} />
             <div style={styles.telemetryItem}>
-              <div style={styles.telemetryNum}>$280M+</div>
-              <div style={styles.telemetryLabel}>Client Pipeline Transacted</div>
+              <div style={styles.telemetryNum}>$0 Seat Tax</div>
+              <div style={styles.telemetryLabel}>Unlimited Team Members</div>
             </div>
           </div>
         </div>
@@ -224,33 +224,33 @@ export default function About() {
         </div>
       </section>
 
-      {/* ─── Global Edge Infrastructure & High-Availability Mesh ─── */}
+      {/* ─── Modular System Architecture & Infrastructure Mesh ─── */}
       <section style={styles.sectionAlt}>
         <div style={styles.container}>
           <div style={{ textAlign: 'center', maxWidth: 680, margin: '0 auto 40px' }}>
-            <span style={styles.badge}>GLOBAL AVAILABILITY</span>
-            <h2 style={styles.h2}>Distributed Edge Infrastructure</h2>
+            <span style={styles.badge}>SYSTEM ARCHITECTURE</span>
+            <h2 style={styles.h2}>Containerized &amp; Production-Proven Stack</h2>
             <p style={{ fontSize: 15, color: '#64748b', margin: 0, lineHeight: 1.6 }}>
-              Operza’s multi-region architecture ensures sub-50ms latency across 6 continents with automated failover and regional data residency.
+              Operza is engineered with modular, battle-tested open-source primitives for self-hosted sovereignty or cloud-managed deployment.
             </p>
           </div>
 
           <div style={styles.datacenterGrid}>
-            {GLOBAL_NODES.map((node) => (
-              <div key={node.city} style={styles.nodeCard} className="card-3d-interactive">
+            {ARCHITECTURE_COMPONENTS.map((comp) => (
+              <div key={comp.layer} style={styles.nodeCard} className="card-3d-interactive">
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                  <span style={styles.nodeRegion}>{node.region}</span>
-                  <span style={styles.nodeLatency}>{node.latency}</span>
+                  <span style={styles.nodeRegion}>{comp.layer}</span>
+                  <span style={styles.nodeLatency}>{comp.technology}</span>
                 </div>
                 <div style={{ fontSize: 16, fontWeight: 750, color: '#0f172a', marginBottom: 4 }}>
-                  {node.city}
+                  {comp.guarantee}
                 </div>
                 <div style={{ fontSize: 12.5, color: '#64748b', marginBottom: 12, lineHeight: 1.4 }}>
-                  {node.role}
+                  {comp.role}
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: '#15803d', fontWeight: 650 }}>
                   <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#10b981', boxShadow: '0 0 8px #10b981' }} />
-                  {node.status}
+                  {comp.status}
                 </div>
               </div>
             ))}
@@ -258,52 +258,52 @@ export default function About() {
         </div>
       </section>
 
-      {/* ─── Security, Compliance & Trust Seals ─── */}
+      {/* ─── Security, Governance & Verifiable Architecture Controls ─── */}
       <section style={styles.section}>
         <div style={styles.container}>
           <div style={{ textAlign: 'center', maxWidth: 680, margin: '0 auto 40px' }}>
-            <span style={styles.badge}>ENTERPRISE TRUST &amp; COMPLIANCE</span>
-            <h2 style={styles.h2}>Rigorous Security Standards by Design</h2>
+            <span style={styles.badge}>ENGINEERING INTEGRITY &amp; GOVERNANCE</span>
+            <h2 style={styles.h2}>Verifiable Security Architecture by Design</h2>
             <p style={{ fontSize: 15, color: '#64748b', margin: 0, lineHeight: 1.6 }}>
-              Built to meet the highest regulatory compliance standards for enterprise brands, healthcare practices, and financial consultancies.
+              Built with fail-closed security guarantees, deterministic idempotency fencing, and immutable audit trails.
             </p>
           </div>
 
           <div style={styles.trustGrid}>
             <div style={styles.trustCard} className="card-3d-interactive">
               <div style={styles.trustIcon}><Icon name="shield" size={24} /></div>
-              <h3 style={styles.trustTitle}>SOC-2 Type II Audited</h3>
+              <h3 style={styles.trustTitle}>PostgreSQL Row-Level Security</h3>
               <p style={styles.trustDesc}>
-                Independently audited controls covering security, availability, and confidentiality across all SaaS and cloud operations.
+                Cryptographic tenant isolation enforced directly in SQL engine transactions. Leaks are impossible even with application bugs.
               </p>
-              <div style={styles.trustPill}>Verified Annual Audit</div>
+              <div style={styles.trustPill}>Fail-Closed DB Policies</div>
             </div>
 
             <div style={styles.trustCard} className="card-3d-interactive">
               <div style={styles.trustIcon}><Icon name="lock" size={24} /></div>
-              <h3 style={styles.trustTitle}>HIPAA BAA Ready</h3>
+              <h3 style={styles.trustTitle}>Durable Action Idempotency</h3>
               <p style={styles.trustDesc}>
-                Business Associate Agreement (BAA) execution available for medical clinics, dental practices, and healthcare marketing agencies.
+                PostgreSQL action receipts, provider lease fencing, and SHA-256 action hashing protect against duplicate external side effects.
               </p>
-              <div style={styles.trustPill}>PHI Encryption &amp; Audit Logs</div>
+              <div style={styles.trustPill}>Receipt &amp; Lease Fencing</div>
             </div>
 
             <div style={styles.trustCard} className="card-3d-interactive">
               <div style={styles.trustIcon}><Icon name="database" size={24} /></div>
-              <h3 style={styles.trustTitle}>GDPR &amp; ISO 27001</h3>
+              <h3 style={styles.trustTitle}>Data Sovereignty &amp; SQL Migrations</h3>
               <p style={styles.trustDesc}>
-                Full European Union data sovereignty with Frankfurt edge replication, DPA agreements, and ISO 27001 certified physical data centers.
+                Zero proprietary database extensions. Standard PostgreSQL migrations ensure complete self-hosting freedom and portable data.
               </p>
-              <div style={styles.trustPill}>Zero EU-US Data Leakage</div>
+              <div style={styles.trustPill}>Zero Vendor Lock-In</div>
             </div>
 
             <div style={styles.trustCard} className="card-3d-interactive">
-              <div style={styles.trustIcon}><Icon name="phone" size={24} /></div>
-              <h3 style={styles.trustTitle}>TCPA &amp; STIR/SHAKEN</h3>
+              <div style={styles.trustIcon}><Icon name="clipboard" size={24} /></div>
+              <h3 style={styles.trustTitle}>Separation of Duties &amp; Consent</h3>
               <p style={styles.trustDesc}>
-                Built-in A2P 10DLC campaign registration compliance, automatic STOP opt-out filtering, and carrier-certified caller ID identity attestation.
+                Four-eyes approval enforcement, anti-tampering evidence checksums, and explicit communication consent registers.
               </p>
-              <div style={styles.trustPill}>Carrier Verified Telephony</div>
+              <div style={styles.trustPill}>Multi-Party Governance</div>
             </div>
           </div>
         </div>
@@ -316,7 +316,7 @@ export default function About() {
             <span style={styles.badge}>CHRONOLOGY</span>
             <h2 style={styles.h2}>The Operza Journey</h2>
             <p style={{ fontSize: 15, color: '#64748b', margin: 0 }}>
-              From a single-schema prototype to an enterprise operating system powering thousands of sub-accounts.
+              From a single-schema prototype to an enterprise operating system powering reliable agency operations.
             </p>
           </div>
 
@@ -339,29 +339,29 @@ export default function About() {
         </div>
       </section>
 
-      {/* ─── Executive Leadership & Engineering Personas ─── */}
+      {/* ─── Core Architecture & Engineering Pillars ─── */}
       <section style={styles.section}>
         <div style={styles.container}>
           <div style={{ textAlign: 'center', maxWidth: 680, margin: '0 auto 40px' }}>
-            <span style={styles.badge}>THE TEAM</span>
+            <span style={styles.badge}>FOUNDATIONS</span>
             <h2 style={styles.h2}>Engineered by Systems Practitioners</h2>
             <p style={{ fontSize: 15, color: '#64748b', margin: 0 }}>
-              Our team comes from distributed databases, carrier telecom backbones, and agency scaling backgrounds.
+              Built from distributed systems, relational kernels, and transparent agency economics.
             </p>
           </div>
 
           <div style={styles.teamGrid}>
-            {LEADERSHIP_TEAM.map((member) => (
-              <div key={member.name} style={styles.teamCard} className="card-3d-interactive">
-                <div style={styles.avatarCircle}>{member.avatar}</div>
+            {CORE_PILLARS.map((pillar) => (
+              <div key={pillar.name} style={styles.teamCard} className="card-3d-interactive">
+                <div style={styles.avatarCircle}>{pillar.avatar}</div>
                 <h3 style={{ fontSize: 17, fontWeight: 750, color: '#0f172a', margin: '0 0 4px' }}>
-                  {member.name}
+                  {pillar.name}
                 </h3>
                 <div style={{ fontSize: 12.5, color: '#4f46e5', fontWeight: 650, marginBottom: 10 }}>
-                  {member.role}
+                  {pillar.role}
                 </div>
                 <p style={{ fontSize: 13, color: '#64748b', lineHeight: 1.55, margin: 0 }}>
-                  {member.bio}
+                  {pillar.bio}
                 </p>
               </div>
             ))}

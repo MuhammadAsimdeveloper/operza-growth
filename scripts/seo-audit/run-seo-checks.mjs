@@ -60,14 +60,15 @@ const expectedPages = [
   'https://operza.io/pricing',
   'https://operza.io/about',
   'https://operza.io/docs',
-  'https://operza.io/blog',
-  'https://operza.io/login',
-  'https://operza.io/signup'
+  'https://operza.io/blog'
 ];
 
 for (const url of expectedPages) {
   assert(sitemapContent.includes(`<loc>${url}</loc>`), `sitemap includes canonical URL: ${url}`);
 }
+
+assert(!sitemapContent.includes('<loc>https://operza.io/login</loc>'), 'sitemap excludes transactional /login route');
+assert(!sitemapContent.includes('<loc>https://operza.io/signup</loc>'), 'sitemap excludes transactional /signup route');
 
 // Disallowed private paths check in sitemap
 const forbiddenInSitemap = [
@@ -80,7 +81,9 @@ const forbiddenInSitemap = [
   '/templates',
   '/portal/client',
   '/settings',
-  '/api/'
+  '/api/',
+  '/login',
+  '/signup'
 ];
 
 let privateRouteInSitemap = false;
@@ -98,7 +101,7 @@ const priorityMatches = sitemapContent.match(/<priority>/g) || [];
 const changefreqMatches = sitemapContent.match(/<changefreq>/g) || [];
 const lastmodMatches = sitemapContent.match(/<lastmod>/g) || [];
 
-assert(locMatches.length === 14, `sitemap contains exactly 14 URLs (found: ${locMatches.length})`);
+assert(locMatches.length === 12, `sitemap contains exactly 12 canonical public URLs (found: ${locMatches.length})`);
 assert(priorityMatches.length === locMatches.length, 'Every sitemap entry has a <priority> directive');
 assert(changefreqMatches.length === locMatches.length, 'Every sitemap entry has a <changefreq> directive');
 assert(lastmodMatches.length === locMatches.length, 'Every sitemap entry has a valid <lastmod> timestamp');

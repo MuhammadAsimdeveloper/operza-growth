@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../lib/api';
+import { SEO } from '../components/SEO';
 
 interface CalendarDetails {
   id: string;
@@ -141,6 +142,7 @@ export default function PublicBooking() {
 
   return (
     <div style={styles.pageContainer}>
+      <SEO title="Book Appointment" description="Schedule an appointment" robots="noindex, nofollow" />
       <div style={styles.bookingWrapper}>
         {/* Left Side: Calendar details and slot picker */}
         <div style={styles.calendarInfoPane}>

@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { useParams } from 'react-router-dom';
 import { api } from '../lib/api';
+import { SEO } from '../components/SEO';
 
 interface ReviewInfo {
   locationId: string;
@@ -135,6 +136,7 @@ export default function PublicReview() {
 
   return (
     <div style={styles.pageContainer}>
+      <SEO title="Leave a Review" description="Customer Review" robots="noindex, nofollow" />
       <div style={styles.card}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <span style={{ fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.06em', color: 'var(--text-3, #64748b)', fontWeight: 700 }}>
