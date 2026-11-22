@@ -121,16 +121,20 @@ test('action receipts are unique by action hash and completion never accepts cre
   assert.equal(duplicate.receipt.status, 'succeeded');
   const completed = await repo.completeActionReceipt({
     tenantId: identity.tenantId, locationId: identity.locationId,
-    actionHash, result: { dispatch: 'accepted' }, providerReceipt: 'provider-ref-001'
+    actionHash, claimToken: receipt.claimToken, result: { dispatch: 'accepted' }, providerReceipt: 'provider-ref-001'
   });
   assert.equal(completed.status, 'succeeded');
   const failed = await repo.failActionReceipt({
     tenantId: identity.tenantId, locationId: identity.locationId,
-    actionHash, errorCode: 'DISPATCH_TIMEOUT', errorDetails: { message: 'Gateway timeout' }, indeterminate: true
+    actionHash, claimToken: receipt.claimToken, errorCode: 'DISPATCH_TIMEOUT', errorDetails: { message: 'Gateway timeout' }, indeterminate: true
   });
   assert.equal(failed.status, 'indeterminate');
   await assert.rejects(repo.completeActionReceipt({
     tenantId: identity.tenantId, locationId: identity.locationId,
-    actionHash, result: {}, providerReceipt: 'Bearer secret-token'
+    actionHash, claimToken: receipt.claimToken, result: {}, providerReceipt: 'Bearer secret-token'
   }), { code: 'INVALID_PROVIDER_RECEIPT' });
+  await assert.rejects(repo.completeActionReceipt({
+    tenantId: identity.tenantId, locationId: identity.locationId,
+    actionHash, result: {}
+  }), { code: 'INVALID_CLAIM_TOKEN' });
 });

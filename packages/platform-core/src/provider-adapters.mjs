@@ -10,14 +10,95 @@ const emailRecipients = value => (Array.isArray(value) ? value : [value]).flatMa
 const consentOk = (consent, channel, payload) => consent?.status === 'granted' &&
   consent.channel === channel && consent.contactId && consent.contactId === payload?.contactId &&
   (!payload.purpose || consent.purpose === payload.purpose);
-const failure = (code, httpStatus = 0) => ({ ok: false, code, httpStatus: Number(httpStatus) || 0 });
+const failure = (code, httpStatus = 0, indeterminate = false, error = null) => ({
+  ok: false,
+  code,
+  httpStatus: Number(httpStatus) || 0,
+  indeterminate: Boolean(indeterminate),
+  error: error || code
+});
 const bearer = secret => ({ Authorization: 'Bearer ' + secret });
 const twilioAuth = (sid, token) => ({ Authorization: 'Basic ' + Buffer.from(sid + ':' + token).toString('base64') });
 
+/**
+ * Provider capability matrix defining documented idempotency support and safe recovery behaviors.
+ */
+export const PROVIDER_CAPABILITIES = Object.freeze({
+  'email.resend': Object.freeze({
+    providerKey: 'email.resend',
+    supportsIdempotencyKey: true,
+    idempotencyHeader: 'Idempotency-Key',
+    safeRetryAfterAmbiguous: true,
+    recoveryBehavior: 'retry_with_stable_key'
+  }),
+  'email.sendgrid': Object.freeze({
+    providerKey: 'email.sendgrid',
+    supportsIdempotencyKey: false,
+    idempotencyHeader: null,
+    safeRetryAfterAmbiguous: false,
+    recoveryBehavior: 'indeterminate_requires_reconciliation'
+  }),
+  'sms.twilio': Object.freeze({
+    providerKey: 'sms.twilio',
+    supportsIdempotencyKey: false,
+    idempotencyHeader: null,
+    safeRetryAfterAmbiguous: false,
+    recoveryBehavior: 'indeterminate_requires_reconciliation'
+  }),
+  'whatsapp.meta_cloud': Object.freeze({
+    providerKey: 'whatsapp.meta_cloud',
+    supportsIdempotencyKey: false,
+    idempotencyHeader: null,
+    safeRetryAfterAmbiguous: false,
+    recoveryBehavior: 'indeterminate_requires_reconciliation'
+  }),
+  'zapier': Object.freeze({
+    providerKey: 'zapier',
+    supportsIdempotencyKey: false,
+    idempotencyHeader: null,
+    safeRetryAfterAmbiguous: false,
+    recoveryBehavior: 'indeterminate_requires_reconciliation'
+  })
+});
+
+export function getProviderCapability(providerKey) {
+  if (!providerKey) return null;
+  if (PROVIDER_CAPABILITIES[providerKey]) return PROVIDER_CAPABILITIES[providerKey];
+  if (providerKey === 'resend' || providerKey === 'email') return PROVIDER_CAPABILITIES['email.resend'];
+  if (providerKey === 'sendgrid') return PROVIDER_CAPABILITIES['email.sendgrid'];
+  if (providerKey === 'sms' || providerKey === 'twilio') return PROVIDER_CAPABILITIES['sms.twilio'];
+  if (providerKey === 'whatsapp' || providerKey === 'meta') return PROVIDER_CAPABILITIES['whatsapp.meta_cloud'];
+  if (providerKey === 'zapier' || providerKey === 'zapier_webhook' || providerKey === 'automation.zapier.dispatch') return PROVIDER_CAPABILITIES['zapier'];
+  return {
+    providerKey,
+    supportsIdempotencyKey: false,
+    idempotencyHeader: null,
+    safeRetryAfterAmbiguous: false,
+    recoveryBehavior: 'indeterminate_requires_reconciliation'
+  };
+}
+
 async function request(fetchFn, url, options = {}) {
   if (typeof fetchFn !== 'function') throw new Error('fetch unavailable');
-  return fetchFn(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(10_000) });
+  const timeoutSignal = AbortSignal.timeout(10_000);
+  const combinedSignal = options.signal
+    ? (typeof AbortSignal.any === 'function' ? AbortSignal.any([options.signal, timeoutSignal]) : options.signal)
+    : timeoutSignal;
+  return fetchFn(url, { ...options, redirect: 'error', signal: combinedSignal });
 }
+
+function classifyNetworkError(err) {
+  const isTimeout = err?.name === 'TimeoutError' || /timeout/i.test(err?.message || '');
+  const isAbort = err?.name === 'AbortError' || /abort/i.test(err?.message || '');
+  if (isTimeout) {
+    return { code: 'PROVIDER_TIMEOUT_INDETERMINATE', indeterminate: true };
+  }
+  if (isAbort) {
+    return { code: 'WORKER_CANCELLED_INDETERMINATE', indeterminate: true };
+  }
+  return { code: 'PROVIDER_TRANSPORT_INDETERMINATE', indeterminate: true };
+}
+
 async function responseJson(res) {
   if (typeof res?.json === 'function') return res.json().catch(() => ({}));
   if (typeof res?.text === 'function') {
@@ -53,11 +134,11 @@ export const resendEmailAdapter = Object.freeze({
       return res.ok ? { verified: true, accountId: config.senderEmail || null } : { verified: false, code: 'PROVIDER_AUTH_FAILED', httpStatus: res.status };
     } catch { return { verified: false, code: 'PROVIDER_UNREACHABLE' }; }
   },
-  async dispatch({ secret, config = {}, payload = {}, consent, tenantId, locationId, actionHash, fetchFn = globalThis.fetch } = {}) {
-    if (!consentOk(consent, 'email', payload)) return failure('CONSENT_REQUIRED');
-    if (typeof secret !== 'string' || !secret.startsWith('re_')) return failure('INVALID_CREDENTIAL');
-    if (!config.senderEmail) return failure('SENDER_EMAIL_REQUIRED');
-    const input = validEmailPayload(payload); if (input.code) return failure(input.code);
+  async dispatch({ secret, config = {}, payload = {}, consent, tenantId, locationId, actionHash, signal, fetchFn = globalThis.fetch } = {}) {
+    if (!consentOk(consent, 'email', payload)) return failure('CONSENT_REQUIRED', 0, false);
+    if (typeof secret !== 'string' || !secret.startsWith('re_')) return failure('INVALID_CREDENTIAL', 0, false);
+    if (!config.senderEmail) return failure('SENDER_EMAIL_REQUIRED', 0, false);
+    const input = validEmailPayload(payload); if (input.code) return failure(input.code, 0, false);
     const key = makeIdempotencyKey({ tenantId, locationId, actionHash });
     const body = {
       from: config.senderName ? config.senderName + ' <' + config.senderEmail + '>' : config.senderEmail,
@@ -69,13 +150,18 @@ export const resendEmailAdapter = Object.freeze({
     try {
       const headers = { ...bearer(secret), 'Content-Type': 'application/json' };
       if (key) headers['Idempotency-Key'] = key;
-      const res = await request(fetchFn, 'https://api.resend.com/emails', { method: 'POST', headers, body: JSON.stringify(body) });
+      const res = await request(fetchFn, 'https://api.resend.com/emails', { method: 'POST', headers, body: JSON.stringify(body), signal });
       const data = await responseJson(res);
-      if (!res.ok || typeof data.id !== 'string') return failure('PROVIDER_SEND_REJECTED', res.status);
+      if (!res.ok || typeof data.id !== 'string') {
+        const isAuth = res.status === 401 || res.status === 403;
+        const isPayload = res.status === 400 || res.status === 422;
+        const code = isAuth ? 'PROVIDER_AUTH_FAILED' : (isPayload ? 'PROVIDER_PAYLOAD_REJECTED' : 'PROVIDER_SEND_REJECTED');
+        return failure(code, res.status, false, data?.message || code);
+      }
       return { ok: true, providerAccepted: true, providerMessageId: data.id, provider: 'resend', httpStatus: res.status, idempotencyKey: key };
     } catch (err) {
-      const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError' || /timeout|aborted/i.test(err?.message || '');
-      return failure(isTimeout ? 'PROVIDER_TIMEOUT_INDETERMINATE' : 'PROVIDER_REQUEST_FAILED');
+      const { code, indeterminate } = classifyNetworkError(err);
+      return failure(code, 0, indeterminate, err?.message);
     }
   }
 });
@@ -89,11 +175,11 @@ export const sendgridEmailAdapter = Object.freeze({
       return res.ok ? { verified: true, accountId: null } : { verified: false, code: 'PROVIDER_AUTH_FAILED', httpStatus: res.status };
     } catch { return { verified: false, code: 'PROVIDER_UNREACHABLE' }; }
   },
-  async dispatch({ secret, config = {}, payload = {}, consent, fetchFn = globalThis.fetch } = {}) {
-    if (!consentOk(consent, 'email', payload)) return failure('CONSENT_REQUIRED');
-    if (typeof secret !== 'string' || !secret.startsWith('SG.')) return failure('INVALID_CREDENTIAL');
-    if (!config.senderEmail) return failure('SENDER_EMAIL_REQUIRED');
-    const input = validEmailPayload(payload); if (input.code) return failure(input.code);
+  async dispatch({ secret, config = {}, payload = {}, consent, tenantId, locationId, actionHash, signal, fetchFn = globalThis.fetch } = {}) {
+    if (!consentOk(consent, 'email', payload)) return failure('CONSENT_REQUIRED', 0, false);
+    if (typeof secret !== 'string' || !secret.startsWith('SG.')) return failure('INVALID_CREDENTIAL', 0, false);
+    if (!config.senderEmail) return failure('SENDER_EMAIL_REQUIRED', 0, false);
+    const input = validEmailPayload(payload); if (input.code) return failure(input.code, 0, false);
     const content = [];
     if (input.text) content.push({ type: 'text/plain', value: input.text });
     if (input.html) content.push({ type: 'text/html', value: input.html });
@@ -104,13 +190,18 @@ export const sendgridEmailAdapter = Object.freeze({
     };
     try {
       const res = await request(fetchFn, 'https://api.sendgrid.com/v3/mail/send', {
-        method: 'POST', headers: { ...bearer(secret), 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        method: 'POST', headers: { ...bearer(secret), 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal
       });
-      if (res.status !== 202) return failure('PROVIDER_SEND_REJECTED', res.status);
+      if (res.status !== 202) {
+        const isAuth = res.status === 401 || res.status === 403;
+        const isPayload = res.status === 400 || res.status === 422;
+        const code = isAuth ? 'PROVIDER_AUTH_FAILED' : (isPayload ? 'PROVIDER_PAYLOAD_REJECTED' : 'PROVIDER_SEND_REJECTED');
+        return failure(code, res.status, false);
+      }
       return { ok: true, providerAccepted: true, providerMessageId: res.headers?.get?.('x-message-id') || null, provider: 'sendgrid', httpStatus: res.status };
     } catch (err) {
-      const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError' || /timeout|aborted/i.test(err?.message || '');
-      return failure(isTimeout ? 'PROVIDER_TIMEOUT_INDETERMINATE' : 'PROVIDER_REQUEST_FAILED');
+      const { code, indeterminate } = classifyNetworkError(err);
+      return failure(code, 0, indeterminate, err?.message);
     }
   }
 });
@@ -126,24 +217,30 @@ export const twilioSmsAdapter = Object.freeze({
       return res.ok ? { verified: true, accountId: data.sid || sid } : { verified: false, code: 'PROVIDER_AUTH_FAILED', httpStatus: res.status };
     } catch { return { verified: false, code: 'PROVIDER_UNREACHABLE' }; }
   },
-  async dispatch({ secret, config = {}, payload = {}, consent, fetchFn = globalThis.fetch } = {}) {
-    if (!consentOk(consent, 'sms', payload)) return failure('CONSENT_REQUIRED');
+  async dispatch({ secret, config = {}, payload = {}, consent, tenantId, locationId, actionHash, signal, fetchFn = globalThis.fetch } = {}) {
+    if (!consentOk(consent, 'sms', payload)) return failure('CONSENT_REQUIRED', 0, false);
     const sid = config.accountId || '', from = config.fromNumber || '';
     const to = String(payload.to || payload.phone || '').trim(), body = String(payload.body || payload.text || '').trim();
-    if (typeof secret !== 'string' || secret.length < 16 || !/^AC[0-9a-fA-F]{32}$/.test(sid)) return failure('INVALID_CREDENTIAL');
-    if (!/^\+[1-9]\d{7,14}$/.test(from) || !/^\+[1-9]\d{7,14}$/.test(to)) return failure('INVALID_PHONE_NUMBER');
-    if (!body || body.length > 1600) return failure('INVALID_MESSAGE_BODY');
+    if (typeof secret !== 'string' || secret.length < 16 || !/^AC[0-9a-fA-F]{32}$/.test(sid)) return failure('INVALID_CREDENTIAL', 0, false);
+    if (!/^\+[1-9]\d{7,14}$/.test(from) || !/^\+[1-9]\d{7,14}$/.test(to)) return failure('INVALID_PHONE_NUMBER', 0, false);
+    if (!body || body.length > 1600) return failure('INVALID_MESSAGE_BODY', 0, false);
     try {
       const res = await request(fetchFn, 'https://api.twilio.com/2010-04-01/Accounts/' + sid + '/Messages.json', {
         method: 'POST', headers: { ...twilioAuth(sid, secret), 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ To: to, From: from, Body: body })
+        body: new URLSearchParams({ To: to, From: from, Body: body }),
+        signal
       });
       const data = await responseJson(res);
-      if (!res.ok || typeof data.sid !== 'string') return failure('PROVIDER_SEND_REJECTED', res.status);
+      if (!res.ok || typeof data.sid !== 'string') {
+        const isAuth = res.status === 401 || res.status === 403;
+        const isPayload = res.status === 400;
+        const code = isAuth ? 'PROVIDER_AUTH_FAILED' : (isPayload ? 'PROVIDER_PAYLOAD_REJECTED' : 'PROVIDER_SEND_REJECTED');
+        return failure(code, res.status, false, data?.message || code);
+      }
       return { ok: true, providerAccepted: true, providerMessageId: data.sid, provider: 'twilio', httpStatus: res.status };
     } catch (err) {
-      const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError' || /timeout|aborted/i.test(err?.message || '');
-      return failure(isTimeout ? 'PROVIDER_TIMEOUT_INDETERMINATE' : 'PROVIDER_REQUEST_FAILED');
+      const { code, indeterminate } = classifyNetworkError(err);
+      return failure(code, 0, indeterminate, err?.message);
     }
   }
 });
@@ -159,23 +256,28 @@ export const whatsappMetaAdapter = Object.freeze({
       return res.ok ? { verified: true, accountId: data.id || phoneId } : { verified: false, code: 'PROVIDER_AUTH_FAILED', httpStatus: res.status };
     } catch { return { verified: false, code: 'PROVIDER_UNREACHABLE' }; }
   },
-  async dispatch({ secret, config = {}, payload = {}, consent, fetchFn = globalThis.fetch } = {}) {
-    if (!consentOk(consent, 'whatsapp', payload)) return failure('CONSENT_REQUIRED');
+  async dispatch({ secret, config = {}, payload = {}, consent, tenantId, locationId, actionHash, signal, fetchFn = globalThis.fetch } = {}) {
+    if (!consentOk(consent, 'whatsapp', payload)) return failure('CONSENT_REQUIRED', 0, false);
     const phoneId = config.phoneNumberId || '', to = String(payload.to || payload.phone || '').replace(/[^0-9]/g, '');
     const message = String(payload.text || payload.body || '').trim();
-    if (typeof secret !== 'string' || secret.length < 20 || !/^\d{5,32}$/.test(phoneId)) return failure('INVALID_CREDENTIAL');
-    if (!/^\d{8,15}$/.test(to) || !message || message.length > 4096) return failure('INVALID_MESSAGE_BODY');
+    if (typeof secret !== 'string' || secret.length < 20 || !/^\d{5,32}$/.test(phoneId)) return failure('INVALID_CREDENTIAL', 0, false);
+    if (!/^\d{8,15}$/.test(to) || !message || message.length > 4096) return failure('INVALID_MESSAGE_BODY', 0, false);
     try {
       const res = await request(fetchFn, 'https://graph.facebook.com/' + META_VERSION + '/' + encodeURIComponent(phoneId) + '/messages', {
         method: 'POST', headers: { ...bearer(secret), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'text', text: { preview_url: false, body: message } })
+        body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to, type: 'text', text: { preview_url: false, body: message } }),
+        signal
       });
       const data = await responseJson(res), receipt = data.messages?.[0]?.id;
-      if (!res.ok || typeof receipt !== 'string') return failure('PROVIDER_SEND_REJECTED', res.status);
+      if (!res.ok || typeof receipt !== 'string') {
+        const isAuth = res.status === 401 || res.status === 403;
+        const code = isAuth ? 'PROVIDER_AUTH_FAILED' : 'PROVIDER_SEND_REJECTED';
+        return failure(code, res.status, false, data?.error?.message || code);
+      }
       return { ok: true, providerAccepted: true, providerMessageId: receipt, provider: 'whatsapp.meta_cloud', httpStatus: res.status };
     } catch (err) {
-      const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError' || /timeout|aborted/i.test(err?.message || '');
-      return failure(isTimeout ? 'PROVIDER_TIMEOUT_INDETERMINATE' : 'PROVIDER_REQUEST_FAILED');
+      const { code, indeterminate } = classifyNetworkError(err);
+      return failure(code, 0, indeterminate, err?.message);
     }
   }
 });
@@ -192,7 +294,7 @@ export const zapierWebhookAdapter = Object.freeze({
   async dispatch({ config = {}, payload = {}, secret, tenantId, locationId, actionHash, signal, fetchFn = globalThis.fetch } = {}) {
     const zapUrl = config.webhookUrl || config.url || '';
     if (!zapUrl || !zapUrl.startsWith('https://hooks.zapier.com/')) {
-      return failure('INVALID_ZAPIER_URL');
+      return failure('INVALID_ZAPIER_URL', 0, false);
     }
     const key = makeIdempotencyKey({ tenantId, locationId, actionHash });
     const secretKey = secret || config.signingSecret || tenantId || 'operza_zapier_secret';
@@ -204,13 +306,15 @@ export const zapierWebhookAdapter = Object.freeze({
         'X-Operza-Signature': `sha256=${signature}`
       };
       if (key) headers['Idempotency-Key'] = key;
-      const res = await (typeof fetchFn === 'function' ? fetchFn : globalThis.fetch)(zapUrl, {
+      const res = await request(fetchFn, zapUrl, {
         method: 'POST',
         headers,
         body: bodyStr,
-        signal: signal || AbortSignal.timeout(10_000)
+        signal
       });
-      if (!res.ok) return failure('PROVIDER_SEND_REJECTED', res.status);
+      if (!res.ok) {
+        return failure('ZAPIER_DISPATCH_FAILED', res.status, false, `Zapier hook responded with status ${res.status}`);
+      }
       return {
         ok: true,
         providerAccepted: true,
@@ -220,8 +324,8 @@ export const zapierWebhookAdapter = Object.freeze({
         idempotencyKey: key
       };
     } catch (err) {
-      const isTimeout = err?.name === 'TimeoutError' || err?.name === 'AbortError' || /timeout|aborted/i.test(err?.message || '');
-      return failure(isTimeout ? 'PROVIDER_TIMEOUT_INDETERMINATE' : 'PROVIDER_REQUEST_FAILED', 0);
+      const { code, indeterminate } = classifyNetworkError(err);
+      return failure(code, 0, indeterminate, err?.message);
     }
   }
 });

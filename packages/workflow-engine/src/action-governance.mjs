@@ -23,6 +23,8 @@ const DEFINITIONS = [
   ['opportunity_stage', 'crm.opportunity.stage.update', 'write', 'none', null],
   ['update_stage', 'crm.opportunity.stage.update', 'write', 'none', null],
   ['update_contact', 'crm.contact.update', 'write', 'none', null],
+  ['create_contact', 'crm.contact.create', 'write', 'none', null],
+  ['contact_create', 'crm.contact.create', 'write', 'none', null],
   ['create_opportunity', 'crm.opportunity.create', 'write', 'none', null],
   ['assign_to', 'crm.contact.assign', 'write', 'none', null],
   ['whatsapp', 'communication.whatsapp.send', 'external_side_effect', 'human', 'whatsapp'],
@@ -57,6 +59,7 @@ const DEFINITIONS = [
 
 export const ACTION_CATALOG = Object.freeze(DEFINITIONS);
 const ACTIONS_BY_TYPE = new Map(DEFINITIONS.map(item => [item.nodeType, item]));
+const ACTIONS_BY_ID = new Map(DEFINITIONS.map(item => [item.id, item]));
 const DIRECT_NETWORK_NODES = new Set(['webhook', 'http_request', 'slack_notify']);
 
 function fail(message, code) {
@@ -127,7 +130,7 @@ function approvalBody(request) {
   return body;
 }
 
-function approvalEvidenceIsValid(evidence, invocation, now) {
+export function approvalEvidenceIsValid(evidence, invocation, now) {
   if (!evidence || evidence.status !== 'approved') return false;
   const { checksum, ...body } = evidence;
   if (!HASH.test(checksum || '') || digest(body) !== checksum) return false;
@@ -143,7 +146,7 @@ function approvalEvidenceIsValid(evidence, invocation, now) {
 }
 
 export function getWorkflowActionDefinition(nodeType) {
-  const definition = ACTIONS_BY_TYPE.get(nodeType);
+  const definition = ACTIONS_BY_TYPE.get(nodeType) || ACTIONS_BY_ID.get(nodeType);
   return definition ? { ...definition } : null;
 }
 

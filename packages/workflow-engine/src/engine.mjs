@@ -212,7 +212,21 @@ export async function executeStep({
         (isZapier ? 'verified' : 'unconfigured');
       const effectiveConsent = execution?.consent === true || isZapier;
 
-      const { signingSecret: _s, ...effectiveInput } = config || {};
+      const { signingSecret: _s, ...rawInput } = config || {};
+      const effectiveInput = {};
+      for (const [k, v] of Object.entries(rawInput)) {
+        if (typeof v === 'string') {
+          effectiveInput[k] = renderTemplate(v, ctx);
+        } else {
+          effectiveInput[k] = v;
+        }
+      }
+      if (ctx?.to && !effectiveInput.to) effectiveInput.to = ctx.to;
+      if (ctx?.subject && !effectiveInput.subject) effectiveInput.subject = ctx.subject;
+      if (ctx?.body && !effectiveInput.body) effectiveInput.body = ctx.body;
+      if (ctx?.message && !effectiveInput.message) effectiveInput.message = ctx.message;
+      if (ctx?.phone && !effectiveInput.phone) effectiveInput.phone = ctx.phone;
+
       const invocation = createActionInvocation({
         tenantId: execution?.agencyId || execution?.tenantId || null,
         locationId: execution?.locationId || null,
@@ -322,12 +336,16 @@ export async function executeStep({
         }
         const title = renderTemplate(config.title, ctx) || 'Follow up task';
         const contactId = triggerContext.contact?.id;
+        const executionTimestamp = execution?.startedAt
+          ? Date.parse(execution.startedAt)
+          : (execution?.createdAt ? Date.parse(execution.createdAt) : now);
+        const stableDueDate = config.dueDate || new Date(executionTimestamp + 86400000).toISOString();
         let createdId = true;
         if (crmActions?.createTask) {
           const res = await crmActions.createTask({
             title,
             contactId,
-            dueDate: config.dueDate || new Date(now + 86400000).toISOString(),
+            dueDate: stableDueDate,
             priority: config.priority || 'medium',
             nodeId
           });

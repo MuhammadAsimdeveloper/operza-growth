@@ -192,12 +192,28 @@ export function createWorkflowOutboxRepository(pool) {
       });
     },
 
-    async claimActionReceipt({ client: providedClient, tenantId, locationId, executionId, nodeId, actionHash, providerKey = null, workerId = null, leaseSeconds = 30 } = {}) {
+    async claimActionReceipt({
+      client: providedClient,
+      tenantId,
+      locationId,
+      executionId,
+      nodeId,
+      actionHash,
+      providerKey = null,
+      workerId = null,
+      leaseSeconds = 30,
+      forceClaimToken = null,
+      hasVerifiedIdempotency = false
+    } = {}) {
       assertRef(tenantId, 'tenantId');
       assertRef(locationId, 'locationId');
       assertRef(executionId, 'executionId');
       assertRef(nodeId, 'nodeId');
       if (!HASH.test(actionHash || '')) throw new TypeError('actionHash must be a SHA-256 digest');
+
+      const claimToken = typeof forceClaimToken === 'string' && forceClaimToken.trim()
+        ? forceClaimToken.trim()
+        : randomUUID();
 
       const execute = async (client) => {
         await client.query(
@@ -207,58 +223,153 @@ export function createWorkflowOutboxRepository(pool) {
         const leaseSecs = Math.max(1, Math.min(3600, Number(leaseSeconds) || 30));
         const inserted = await client.query(
           "INSERT INTO workflow_action_receipts " +
-            "(id,agency_id,location_id,execution_id,node_id,action_hash,provider_key,status,lease_owner,lease_until,started_at,attempts) " +
-          "VALUES ($1,$2,$3,$4,$5,$6,$7,'started',$8,clock_timestamp() + ($9 * interval '1 second'),clock_timestamp(),1) " +
+            "(id,agency_id,location_id,execution_id,node_id,action_hash,provider_key,status,lease_owner,lease_until,claim_token,started_at,attempts) " +
+          "VALUES ($1,$2,$3,$4,$5,$6,$7,'started',$8,clock_timestamp() + ($9 * interval '1 second'),$10,clock_timestamp(),1) " +
           "ON CONFLICT (agency_id,location_id,action_hash) DO NOTHING " +
-          "RETURNING id,status,result,lease_owner,lease_until",
-          [randomUUID(), tenantId, locationId, executionId, nodeId, actionHash, providerKey, workerId, leaseSecs]
+          "RETURNING id,status,result,lease_owner,lease_until,claim_token",
+          [randomUUID(), tenantId, locationId, executionId, nodeId, actionHash, providerKey, workerId, leaseSecs, claimToken]
         );
         if (inserted.rowCount) {
-          return { acquired: true, status: 'started', receipt: inserted.rows[0] };
+          const row = inserted.rows[0];
+          return {
+            acquired: true,
+            disposition: 'acquired',
+            status: 'started',
+            receiptId: row.id,
+            id: row.id,
+            actionHash,
+            claimToken,
+            leaseOwner: workerId,
+            leaseUntil: row.lease_until,
+            receipt: row
+          };
         }
         const existing = await client.query(
-          "SELECT id,status,result,lease_owner,lease_until,attempts,provider_receipt,last_error_code " +
+          "SELECT id,status,result,lease_owner,lease_until,claim_token,attempts,provider_receipt,last_error_code " +
           "FROM workflow_action_receipts " +
           "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 FOR UPDATE",
           [tenantId, locationId, actionHash]
         );
         if (!existing.rowCount) {
-          return { acquired: false, receipt: null };
+          return { acquired: false, disposition: 'not_found', receipt: null };
         }
         const row = existing.rows[0];
         if (row.status === 'succeeded') {
-          return { acquired: false, status: 'succeeded', result: row.result, providerReceipt: row.provider_receipt, receipt: row };
+          return {
+            acquired: false,
+            disposition: 'already_succeeded',
+            status: 'succeeded',
+            receiptId: row.id,
+            id: row.id,
+            actionHash,
+            result: row.result,
+            providerReceipt: row.provider_receipt,
+            receipt: row
+          };
+        }
+        if (row.status === 'indeterminate') {
+          return {
+            acquired: false,
+            disposition: 'indeterminate',
+            status: 'indeterminate',
+            receiptId: row.id,
+            id: row.id,
+            actionHash,
+            lastErrorCode: row.last_error_code,
+            receipt: row
+          };
         }
         if (row.status === 'started') {
           const now = Date.now();
           const leaseUntil = row.lease_until ? new Date(row.lease_until).getTime() : 0;
           if (now < leaseUntil) {
-            return { acquired: false, status: 'in_progress', leaseOwner: row.lease_owner, leaseUntil: row.lease_until, receipt: row };
+            return {
+              acquired: false,
+              disposition: 'in_progress',
+              status: 'in_progress',
+              receiptId: row.id,
+              id: row.id,
+              actionHash,
+              leaseOwner: row.lease_owner,
+              leaseUntil: row.lease_until,
+              receipt: row
+            };
           }
-          // Lease has expired - recover
+          // Lease has expired - check provider-aware recovery
+          if (providerKey && providerKey !== 'internal_crm' && !hasVerifiedIdempotency) {
+            // Unsafe to automatically reclaim without verified provider idempotency
+            const marked = await client.query(
+              "UPDATE workflow_action_receipts " +
+              "SET status='indeterminate', last_error_code='PROVIDER_RECOVERY_UNCERTAIN', " +
+                  "outcome_details=jsonb_build_object('error','Uncertain provider state after worker crash; automatic redispatch blocked','previous_lease_owner',lease_owner), " +
+                  "lease_owner=NULL, lease_until=NULL, claim_token=NULL, updated_at=clock_timestamp() " +
+              "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 AND status='started' AND lease_until <= clock_timestamp() " +
+              "RETURNING id,status,result,lease_owner,lease_until,last_error_code",
+              [tenantId, locationId, actionHash]
+            );
+            return {
+              acquired: false,
+              disposition: 'uncertain_expired',
+              status: 'indeterminate',
+              receiptId: row.id,
+              id: row.id,
+              actionHash,
+              lastErrorCode: 'PROVIDER_RECOVERY_UNCERTAIN',
+              receipt: marked.rows[0] || row
+            };
+          }
+
+          // Safe recovery (internal CRM or verified provider idempotency)
           const updated = await client.query(
             "UPDATE workflow_action_receipts " +
             "SET lease_owner=$4, lease_until=clock_timestamp() + ($5 * interval '1 second'), " +
-                "attempts=attempts + 1, updated_at=clock_timestamp() " +
-            "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 " +
-            "RETURNING id,status,result,lease_owner,lease_until",
-            [tenantId, locationId, actionHash, workerId, leaseSecs]
+                "claim_token=$6, attempts=attempts + 1, updated_at=clock_timestamp() " +
+            "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 AND status='started' AND lease_until <= clock_timestamp() " +
+            "RETURNING id,status,result,lease_owner,lease_until,claim_token",
+            [tenantId, locationId, actionHash, workerId, leaseSecs, claimToken]
           );
-          return { acquired: true, recovered: true, status: 'started', receipt: updated.rows[0] || row };
+          if (updated.rowCount) {
+            const upRow = updated.rows[0];
+            return {
+              acquired: true,
+              recovered: true,
+              disposition: 'recovered',
+              status: 'started',
+              receiptId: upRow.id,
+              id: upRow.id,
+              actionHash,
+              claimToken,
+              leaseOwner: workerId,
+              leaseUntil: upRow.lease_until,
+              receipt: upRow
+            };
+          }
+          return { acquired: false, disposition: 'recovery_contested', status: 'in_progress', receipt: row };
         }
-        if (row.status === 'indeterminate') {
-          return { acquired: false, status: 'indeterminate', lastErrorCode: row.last_error_code, receipt: row };
-        }
-        // Failed: reclaim for retry
+
+        // Failed status: reclaim for retry
         const updated = await client.query(
           "UPDATE workflow_action_receipts " +
           "SET status='started', lease_owner=$4, lease_until=clock_timestamp() + ($5 * interval '1 second'), " +
-              "attempts=attempts + 1, updated_at=clock_timestamp() " +
+              "claim_token=$6, attempts=attempts + 1, updated_at=clock_timestamp() " +
           "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 " +
-          "RETURNING id,status,result,lease_owner,lease_until",
-          [tenantId, locationId, actionHash, workerId, leaseSecs]
+          "RETURNING id,status,result,lease_owner,lease_until,claim_token",
+          [tenantId, locationId, actionHash, workerId, leaseSecs, claimToken]
         );
-        return { acquired: true, retried: true, status: 'started', receipt: updated.rows[0] || row };
+        const retRow = updated.rows[0] || row;
+        return {
+          acquired: true,
+          retried: true,
+          disposition: 'retried',
+          status: 'started',
+          receiptId: retRow.id,
+          id: retRow.id,
+          actionHash,
+          claimToken,
+          leaseOwner: workerId,
+          leaseUntil: retRow.lease_until,
+          receipt: retRow
+        };
       };
 
       if (providedClient) {
@@ -277,8 +388,20 @@ export function createWorkflowOutboxRepository(pool) {
       });
     },
 
-    async completeActionReceipt({ client: providedClient, tenantId, locationId, actionHash, result = {}, providerReceipt = null, outcomeDetails = {} } = {}) {
+    async completeActionReceipt({
+      client: providedClient,
+      tenantId,
+      locationId,
+      actionHash,
+      claimToken,
+      result = {},
+      providerReceipt = null,
+      outcomeDetails = {}
+    } = {}) {
       if (!HASH.test(actionHash || '')) throw new TypeError('actionHash must be a SHA-256 digest');
+      if (typeof claimToken !== 'string' || !claimToken.trim()) {
+        throw Object.assign(new TypeError('claimToken is required for receipt completion'), { code: 'INVALID_CLAIM_TOKEN' });
+      }
       validatePayload(result);
       validatePayload(outcomeDetails);
       if (Buffer.byteLength(JSON.stringify(result)) > 8_192) throw new TypeError('Receipt result exceeds 8 KB');
@@ -293,14 +416,36 @@ export function createWorkflowOutboxRepository(pool) {
           [tenantId, locationId]
         );
         const updated = await client.query(
-          "UPDATE workflow_action_receipts SET status='succeeded', result=$4::jsonb, " +
-            "provider_receipt=$5, outcome_details=$6::jsonb, completed_at=clock_timestamp(), updated_at=clock_timestamp() " +
-          "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 " +
+          "UPDATE workflow_action_receipts " +
+          "SET status='succeeded', result=$4::jsonb, provider_receipt=$5, outcome_details=$6::jsonb, " +
+              "lease_owner=NULL, lease_until=NULL, claim_token=NULL, " +
+              "completed_at=clock_timestamp(), updated_at=clock_timestamp() " +
+          "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 AND status='started' " +
+            "AND claim_token=$7 AND lease_until > clock_timestamp() " +
           "RETURNING id,status,result,provider_receipt,completed_at",
-          [tenantId, locationId, actionHash, JSON.stringify(result), providerReceipt || null, JSON.stringify(outcomeDetails)]
+          [tenantId, locationId, actionHash, JSON.stringify(result), providerReceipt || null, JSON.stringify(outcomeDetails), claimToken.trim()]
         );
-        if (!updated.rowCount) throw Object.assign(new Error('Action receipt not found'), { code: 'ACTION_RECEIPT_NOT_FOUND' });
-        return updated.rows[0];
+        if (updated.rowCount === 1) {
+          return updated.rows[0];
+        }
+
+        // Fencing inspection: why was the row not updated?
+        const check = await client.query(
+          "SELECT id, status, lease_owner, claim_token, lease_until FROM workflow_action_receipts " +
+          "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3",
+          [tenantId, locationId, actionHash]
+        );
+        if (!check.rowCount) {
+          throw Object.assign(new Error('Action receipt not found'), { code: 'ACTION_RECEIPT_NOT_FOUND' });
+        }
+        const existing = check.rows[0];
+        if (existing.status === 'succeeded') {
+          throw Object.assign(new Error('Action receipt is already succeeded and cannot be modified'), { code: 'ACTION_RECEIPT_TERMINAL' });
+        }
+        throw Object.assign(
+          new Error(`Action lease lost or expired for action ${actionHash} (status=${existing.status})`),
+          { code: 'ACTION_LEASE_LOST' }
+        );
       };
 
       if (providedClient) {
@@ -319,8 +464,20 @@ export function createWorkflowOutboxRepository(pool) {
       });
     },
 
-    async failActionReceipt({ client: providedClient, tenantId, locationId, actionHash, errorCode = 'ACTION_FAILED', errorDetails = {}, indeterminate = false } = {}) {
+    async failActionReceipt({
+      client: providedClient,
+      tenantId,
+      locationId,
+      actionHash,
+      claimToken,
+      errorCode = 'ACTION_FAILED',
+      errorDetails = {},
+      indeterminate = false
+    } = {}) {
       if (!HASH.test(actionHash || '')) throw new TypeError('actionHash must be a SHA-256 digest');
+      if (typeof claimToken !== 'string' || !claimToken.trim()) {
+        throw Object.assign(new TypeError('claimToken is required for receipt failure'), { code: 'INVALID_CLAIM_TOKEN' });
+      }
       validatePayload(errorDetails);
       if (Buffer.byteLength(JSON.stringify(errorDetails)) > 8_192) throw new TypeError('Receipt error details exceeds 8 KB');
 
@@ -333,13 +490,36 @@ export function createWorkflowOutboxRepository(pool) {
         const updated = await client.query(
           "UPDATE workflow_action_receipts " +
           "SET status=CASE WHEN $4::boolean=true THEN 'indeterminate' ELSE 'failed' END, " +
-              "last_error_code=$5, outcome_details=$6::jsonb, updated_at=clock_timestamp() " +
-          "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 " +
+              "last_error_code=$5, outcome_details=$6::jsonb, " +
+              "lease_owner=NULL, lease_until=NULL, claim_token=NULL, " +
+              "completed_at=CASE WHEN $4::boolean=true THEN completed_at ELSE clock_timestamp() END, " +
+              "updated_at=clock_timestamp() " +
+          "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3 AND status='started' " +
+            "AND claim_token=$7 AND lease_until > clock_timestamp() " +
           "RETURNING id,status,last_error_code,outcome_details",
-          [tenantId, locationId, actionHash, Boolean(indeterminate), safeCode, JSON.stringify(errorDetails)]
+          [tenantId, locationId, actionHash, Boolean(indeterminate), safeCode, JSON.stringify(errorDetails), claimToken.trim()]
         );
-        if (!updated.rowCount) throw Object.assign(new Error('Action receipt not found'), { code: 'ACTION_RECEIPT_NOT_FOUND' });
-        return updated.rows[0];
+        if (updated.rowCount === 1) {
+          return updated.rows[0];
+        }
+
+        // Fencing inspection
+        const check = await client.query(
+          "SELECT id, status, lease_owner, claim_token, lease_until FROM workflow_action_receipts " +
+          "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3",
+          [tenantId, locationId, actionHash]
+        );
+        if (!check.rowCount) {
+          throw Object.assign(new Error('Action receipt not found'), { code: 'ACTION_RECEIPT_NOT_FOUND' });
+        }
+        const existing = check.rows[0];
+        if (existing.status === 'succeeded' || existing.status === 'indeterminate') {
+          throw Object.assign(new Error(`Cannot fail terminal or indeterminate receipt (status=${existing.status})`), { code: 'ACTION_RECEIPT_TERMINAL' });
+        }
+        throw Object.assign(
+          new Error(`Action lease lost or expired for action ${actionHash} (status=${existing.status})`),
+          { code: 'ACTION_LEASE_LOST' }
+        );
       };
 
       if (providedClient) {
@@ -368,7 +548,7 @@ export function createWorkflowOutboxRepository(pool) {
         const res = await client.query(
           "SELECT id, agency_id, location_id, execution_id, node_id, action_hash, " +
                  "status, provider_key, provider_receipt, result, attempts, " +
-                 "lease_owner, lease_until, started_at, completed_at, last_error_code, outcome_details, " +
+                 "lease_owner, lease_until, claim_token, started_at, completed_at, last_error_code, outcome_details, " +
                  "created_at, updated_at " +
           "FROM workflow_action_receipts " +
           "WHERE agency_id=$1 AND location_id=$2 AND action_hash=$3",

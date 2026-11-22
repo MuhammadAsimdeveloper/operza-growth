@@ -1,8 +1,8 @@
 import crypto from 'node:crypto';
 import { PermanentJobError } from './durable-worker.mjs';
-import { getWorkflowActionDefinition, computeActionHash } from '../../workflow-engine/src/action-governance.mjs';
+import { getWorkflowActionDefinition, computeActionHash, approvalEvidenceIsValid } from '../../workflow-engine/src/action-governance.mjs';
 import { walkGraph } from '../../workflow-engine/src/engine.mjs';
-import { createProviderAdapterRegistry } from './provider-adapters.mjs';
+import { createProviderAdapterRegistry, getProviderCapability } from './provider-adapters.mjs';
 import { createWorkflowOutboxRepository } from '../../db/lib/outbox-repository.mjs';
 
 function sha256(data) {
@@ -118,6 +118,7 @@ export async function executeAtomicCrmAction({
     );
 
     let claimResult = null;
+    let claimToken = null;
     if (outboxRepo) {
       claimResult = await outboxRepo.claimActionReceipt({
         client,
@@ -130,6 +131,7 @@ export async function executeAtomicCrmAction({
         workerId: workerId || 'system_worker',
         leaseSeconds: 60
       });
+      claimToken = claimResult.claimToken;
 
       if (!claimResult.acquired) {
         if (claimResult.status === 'succeeded') {
@@ -176,6 +178,7 @@ export async function executeAtomicCrmAction({
         tenantId,
         locationId: locId,
         actionHash,
+        claimToken,
         result: safeResult,
         providerReceipt,
         outcomeDetails: { actionType, nodeId: nodeId || actionType, completedAt: new Date().toISOString() }
@@ -223,6 +226,9 @@ export async function executeDurableProviderAction({
   }
 
   // Pre-claim receipt before remote dispatch
+  const capability = getProviderCapability(providerKey);
+  const hasVerifiedIdempotency = capability?.safeRetryAfterAmbiguous === true;
+  let claimToken = null;
   if (outboxRepo && pool) {
     const claim = await outboxRepo.claimActionReceipt({
       tenantId,
@@ -232,8 +238,10 @@ export async function executeDurableProviderAction({
       actionHash,
       providerKey,
       workerId: workerId || 'system_worker',
-      leaseSeconds: 60
+      leaseSeconds: 60,
+      hasVerifiedIdempotency
     });
+    claimToken = claim.claimToken;
 
     if (!claim.acquired) {
       if (claim.status === 'succeeded') {
@@ -287,6 +295,7 @@ export async function executeDurableProviderAction({
           tenantId,
           locationId: locId,
           actionHash,
+          claimToken,
           errorCode: 'CONSENT_REQUIRED',
           indeterminate: false,
           outcomeDetails: { channel, contactId }
@@ -316,14 +325,16 @@ export async function executeDurableProviderAction({
 
   if (dispatchErr) {
     const isTimeout = dispatchErr.name === 'TimeoutError' || dispatchErr.name === 'AbortError' || /timeout|aborted/i.test(dispatchErr.message || '');
+    const isIndeterminate = dispatchErr.indeterminate === true || isTimeout;
     const errorCode = isTimeout ? 'PROVIDER_TIMEOUT_INDETERMINATE' : (dispatchErr.code || 'PROVIDER_DISPATCH_FAILED');
     if (outboxRepo && pool) {
       await outboxRepo.failActionReceipt({
         tenantId,
         locationId: locId,
         actionHash,
+        claimToken,
         errorCode,
-        indeterminate: isTimeout,
+        indeterminate: isIndeterminate,
         outcomeDetails: { message: dispatchErr.message }
       }).catch(() => {});
     }
@@ -332,18 +343,21 @@ export async function executeDurableProviderAction({
 
   if (!dispatchRes.ok) {
     const isTimeout = dispatchRes.code === 'PROVIDER_TIMEOUT_INDETERMINATE';
+    const isIndeterminate = dispatchRes.indeterminate === true || isTimeout;
     if (outboxRepo && pool) {
       await outboxRepo.failActionReceipt({
         tenantId,
         locationId: locId,
         actionHash,
+        claimToken,
         errorCode: dispatchRes.code || 'PROVIDER_DISPATCH_REJECTED',
-        indeterminate: isTimeout,
+        indeterminate: isIndeterminate,
         outcomeDetails: { code: dispatchRes.code, status: dispatchRes.status || dispatchRes.httpStatus }
       }).catch(() => {});
     }
     throw Object.assign(new Error(`Provider dispatch rejected: ${dispatchRes.code}`), {
-      code: dispatchRes.code || 'PROVIDER_DISPATCH_FAILED'
+      code: dispatchRes.code || 'PROVIDER_DISPATCH_FAILED',
+      indeterminate: isIndeterminate
     });
   }
 
@@ -360,6 +374,7 @@ export async function executeDurableProviderAction({
       tenantId,
       locationId: locId,
       actionHash,
+      claimToken,
       result: safeResult,
       providerReceipt: safeResult.providerMessageId,
       outcomeDetails: { providerKey, nodeId: node.id }
@@ -2151,7 +2166,7 @@ export function createTrustedWorkerHandlers({
     /**
      * Governed connector action execution (safe real dispatch).
      */
-    'workflow.action.execute': async (payload, { job, workerId, lease }) => {
+    'workflow.action.execute': async (payload, { job, workerId, lease, signal } = {}) => {
       const tenantId = payload?.tenantId || payload?.agencyId;
       if (!tenantId || !payload?.actionId) {
         throw new PermanentJobError('Payload missing required actionId or tenantId', 'INVALID_ACTION_PAYLOAD');
@@ -2160,22 +2175,28 @@ export function createTrustedWorkerHandlers({
 
       const actionType = payload.actionType || payload.nodeType || payload.actionId;
       const actionDef = getWorkflowActionDefinition(actionType);
-      if (actionDef) {
-        const isExternal = actionDef.risk === 'external_side_effect';
-        if (isExternal && actionDef.approval === 'human' && !payload.approved && !payload.approvalEvidence) {
-          throw new PermanentJobError('Action requires human approval before worker execution', 'APPROVAL_REQUIRED');
-        }
-        if (isExternal && !payload.consent && payload.dryRun === false) {
-          throw new PermanentJobError('Action requires explicit consent before live execution', 'CONSENT_REQUIRED');
+      if (!actionDef) {
+        throw new PermanentJobError(`Action not registered: ${actionType}`, 'ACTION_NOT_REGISTERED');
+      }
+
+      // Validate trusted actor identity
+      const actorId = payload.actorId || payload.requestedByActorId || payload.approvalEvidence?.approvedBy || payload.approvalEvidence?.approvedByActorId || job?.actor_id || job?.created_by || (payload.dryRun ? 'system_dry_run' : null);
+      if (payload.actorId !== undefined && (typeof payload.actorId !== 'string' || !payload.actorId.trim())) {
+        throw new PermanentJobError('Action execution requires trusted actor identity', 'ACTOR_IDENTITY_REQUIRED');
+      }
+      if (!actorId || typeof actorId !== 'string' || !actorId.trim()) {
+        throw new PermanentJobError('Action execution requires trusted actor identity', 'ACTOR_IDENTITY_REQUIRED');
+      }
+
+      const isExternal = actionDef.risk === 'external_side_effect';
+      if (isExternal && actionDef.approval === 'human') {
+        const evidence = payload.approvalEvidence;
+        if (!evidence || typeof evidence !== 'object') {
+          throw new PermanentJobError('Action requires valid human approval evidence before worker execution', 'APPROVAL_REQUIRED');
         }
       }
 
-      const isDryRun = payload.dryRun === true;
-      const providerKey = payload.providerKey || actionDef?.providerKey;
-      let providerResult = null;
-      const effectiveOutboxRepo = outboxRepository || (pool ? createWorkflowOutboxRepository(pool) : null);
       const targetLocationId = payload.locationId || tenantId;
-
       const actionHash = computeActionHash({
         tenantId,
         locationId: targetLocationId,
@@ -2187,13 +2208,70 @@ export function createTrustedWorkerHandlers({
         input: payload.input || {}
       });
 
+      if (isExternal && actionDef.approval === 'human') {
+        const evidence = payload.approvalEvidence;
+        if (evidence.status && evidence.status !== 'approved') {
+          throw new PermanentJobError(`Approval evidence has non-approved status: ${evidence.status}`, 'APPROVAL_REJECTED');
+        }
+        if (evidence.checksum) {
+          const { checksum, ...body } = evidence;
+          const expectedChecksum = crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
+          if (checksum !== expectedChecksum) {
+            throw new PermanentJobError('Approval evidence checksum mismatch or tampered', 'APPROVAL_TAMPERED');
+          }
+        }
+        if (evidence.expiresAt) {
+          const expiryMs = Date.parse(evidence.expiresAt);
+          if (Number.isFinite(expiryMs) && expiryMs <= Date.now()) {
+            throw new PermanentJobError('Approval evidence has expired', 'APPROVAL_EXPIRED');
+          }
+        }
+        if (evidence.nodeId && evidence.nodeId !== payload.actionId) {
+          throw new PermanentJobError('Approval evidence is for a different node', 'APPROVAL_NODE_MISMATCH');
+        }
+        if (evidence.actionHash && evidence.actionHash !== actionHash) {
+          throw new PermanentJobError('Approval evidence is for a different action hash', 'APPROVAL_HASH_MISMATCH');
+        }
+        const requestedBy = evidence.requestedByActorId || evidence.requestedBy || payload.requestedByActorId || payload.actorId;
+        const approvedBy = evidence.approvedByActorId || evidence.approvedBy;
+        if (!approvedBy || (typeof approvedBy === 'string' && !approvedBy.trim())) {
+          throw new PermanentJobError('Approval evidence missing approving actor', 'APPROVAL_APPROVER_MISSING');
+        }
+        if (requestedBy && approvedBy && requestedBy === approvedBy) {
+          throw new PermanentJobError('Self-approval is prohibited; requester cannot approve action', 'SELF_APPROVAL_PROHIBITED');
+        }
+      }
+
+      if (isExternal && !payload.consent && payload.dryRun === false) {
+        throw new PermanentJobError('Action requires explicit consent before live execution', 'CONSENT_REQUIRED');
+      }
+
+      const isDryRun = payload.dryRun === true;
+      const providerKey = payload.providerKey || actionDef?.providerKey;
+      let providerResult = null;
+      const effectiveOutboxRepo = outboxRepository || (pool ? createWorkflowOutboxRepository(pool) : null);
+
       if (!isDryRun && providerKey) {
         const adapter = providerRegistry?.get(providerKey);
         if (!adapter) {
           throw new PermanentJobError(`Provider adapter not found: ${providerKey}`, 'PROVIDER_ADAPTER_UNAVAILABLE');
         }
 
+        // Zapier target verification
+        if (adapter.providerKey === 'zapier' || providerKey.includes('zapier')) {
+          if (typeof adapter.verify === 'function') {
+            const verifyRes = await adapter.verify({ config: payload.config || payload.input || {} });
+            if (!verifyRes.verified) {
+              throw new PermanentJobError(`Zapier target verification failed: ${verifyRes.code || 'INVALID_ZAPIER_URL'}`, verifyRes.code || 'INVALID_ZAPIER_URL');
+            }
+          }
+        }
+
+        const capability = getProviderCapability(providerKey);
+        const hasVerifiedIdempotency = capability?.safeRetryAfterAmbiguous === true;
+
         // Pre-claim receipt before remote dispatch
+        let claimToken = null;
         if (effectiveOutboxRepo && pool && payload.executionId) {
           const claim = await effectiveOutboxRepo.claimActionReceipt({
             tenantId,
@@ -2203,8 +2281,10 @@ export function createTrustedWorkerHandlers({
             actionHash,
             providerKey,
             workerId: workerId || 'system_worker',
-            leaseSeconds: 60
+            leaseSeconds: 60,
+            hasVerifiedIdempotency
           });
+          claimToken = claim.claimToken;
 
           if (!claim.acquired) {
             if (claim.status === 'succeeded') {
@@ -2263,6 +2343,7 @@ export function createTrustedWorkerHandlers({
               tenantId,
               locationId: targetLocationId,
               actionHash,
+              claimToken,
               errorCode: 'CONSENT_REQUIRED',
               indeterminate: false,
               outcomeDetails: { channel, contactId }
@@ -2281,7 +2362,8 @@ export function createTrustedWorkerHandlers({
             consent: structuredConsent,
             tenantId,
             locationId: targetLocationId,
-            actionHash
+            actionHash,
+            signal
           });
         } catch (err) {
           dispatchErr = err;
@@ -2289,14 +2371,16 @@ export function createTrustedWorkerHandlers({
 
         if (dispatchErr) {
           const isTimeout = dispatchErr.name === 'TimeoutError' || dispatchErr.name === 'AbortError' || /timeout|aborted/i.test(dispatchErr.message || '');
+          const isIndeterminate = dispatchErr.indeterminate === true || isTimeout;
           const errorCode = isTimeout ? 'PROVIDER_TIMEOUT_INDETERMINATE' : (dispatchErr.code || 'PROVIDER_DISPATCH_FAILED');
           if (effectiveOutboxRepo && pool && payload.executionId) {
             await effectiveOutboxRepo.failActionReceipt({
               tenantId,
               locationId: targetLocationId,
               actionHash,
+              claimToken,
               errorCode,
-              indeterminate: isTimeout,
+              indeterminate: isIndeterminate,
               outcomeDetails: { message: dispatchErr.message }
             }).catch(() => {});
           }
@@ -2305,17 +2389,19 @@ export function createTrustedWorkerHandlers({
 
         if (!dispatchRes.ok) {
           const isTimeout = dispatchRes.code === 'PROVIDER_TIMEOUT_INDETERMINATE';
+          const isIndeterminate = dispatchRes.indeterminate === true || isTimeout;
           if (effectiveOutboxRepo && pool && payload.executionId) {
             await effectiveOutboxRepo.failActionReceipt({
               tenantId,
               locationId: targetLocationId,
               actionHash,
+              claimToken,
               errorCode: dispatchRes.code || 'PROVIDER_DISPATCH_REJECTED',
-              indeterminate: isTimeout,
+              indeterminate: isIndeterminate,
               outcomeDetails: { code: dispatchRes.code, status: dispatchRes.status || dispatchRes.httpStatus }
             }).catch(() => {});
           }
-          throw Object.assign(new Error(`Provider dispatch rejected: ${dispatchRes.code}`), { code: dispatchRes.code });
+          throw Object.assign(new Error(`Provider dispatch rejected: ${dispatchRes.code}`), { code: dispatchRes.code, indeterminate: isIndeterminate });
         }
         providerResult = dispatchRes;
 
@@ -2332,6 +2418,7 @@ export function createTrustedWorkerHandlers({
             tenantId,
             locationId: targetLocationId,
             actionHash,
+            claimToken,
             result: safeResult,
             providerReceipt: safeResult.providerMessageId,
             outcomeDetails: { providerKey, actionId: payload.actionId }

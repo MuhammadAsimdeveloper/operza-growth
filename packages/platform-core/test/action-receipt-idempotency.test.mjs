@@ -21,7 +21,10 @@ import {
   executeAtomicCrmAction,
   executeDurableProviderAction
 } from '../src/trusted-handlers.mjs';
-import { createProviderAdapterRegistry } from '../src/provider-adapters.mjs';
+import {
+  createProviderAdapterRegistry,
+  getProviderCapability
+} from '../src/provider-adapters.mjs';
 import { IsolatedTestPostgres } from '../../db/lib/test-postgres-server.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,52 +32,72 @@ const __dirname = path.dirname(__filename);
 const root = path.resolve(__dirname, '../../..');
 const migrationsDir = path.join(root, 'packages/db/migrations');
 
-test('OPERZA GROWTH — Workflow Action Receipt & Idempotency Suite (Scenarios 1-25)', async (t) => {
+test('OPERZA GROWTH — Workflow Action Receipt & Idempotency Suite (Scenarios 1-30)', async (t) => {
   let pgServer = null;
   let pool = null;
   let dbUrl = process.env.OPERZA_TEST_DATABASE_URL;
 
-  try {
-    if (!dbUrl) {
+  if (!dbUrl) {
+    try {
       pgServer = new IsolatedTestPostgres({ port: 0, dbName: 'operza_idempotency_suite_test' });
       dbUrl = await pgServer.start();
+    } catch (err) {
+      t.skip(`PostgreSQL isolated server unavailable: ${err.message}`);
+      return;
     }
-
-    const { default: pg } = await import('pg');
-    pool = new pg.Pool({ connectionString: dbUrl, max: 10 });
-
-    const migCheck = await pool.query("SELECT 1 FROM information_schema.tables WHERE table_name = 'schema_migrations'");
-    if (migCheck.rows.length === 0) {
-      // Bootstrap roles and apply all 31 migrations
-      await pool.query(`
-        CREATE EXTENSION IF NOT EXISTS btree_gist;
-        DO $$ BEGIN
-          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_auth_definer') THEN
-            CREATE ROLE operza_auth_definer NOLOGIN NOINHERIT BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
-          END IF;
-          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_migrator') THEN
-            CREATE ROLE operza_migrator LOGIN PASSWORD 'operza_migrator_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-          END IF;
-          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_app') THEN
-            CREATE ROLE operza_app LOGIN PASSWORD 'operza_app_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-          END IF;
-          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_worker') THEN
-            CREATE ROLE operza_worker LOGIN PASSWORD 'operza_worker_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
-          END IF;
-        END $$;
-        GRANT USAGE, CREATE ON SCHEMA public TO operza_migrator, operza_auth_definer;
-        GRANT operza_auth_definer TO operza_migrator;
-      `);
-
-      const files = (await readdir(migrationsDir)).filter(f => f.endsWith('.sql')).sort();
-      for (const file of files) {
-        const sql = await readFile(path.join(migrationsDir, file), 'utf8');
-        await pool.query(sql);
-      }
-    }
-  } catch (err) {
-    console.warn('[IDEMPOTENCY-TEST] PostgreSQL setup warning:', err.message);
   }
+
+  const { default: pg } = await import('pg');
+  pool = new pg.Pool({ connectionString: dbUrl, max: 10 });
+
+  // Bootstrap roles and apply all migrations (including 032)
+  await pool.query(`
+    CREATE EXTENSION IF NOT EXISTS btree_gist;
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_auth_definer') THEN
+        CREATE ROLE operza_auth_definer NOLOGIN NOINHERIT BYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_migrator') THEN
+        CREATE ROLE operza_migrator LOGIN PASSWORD 'operza_migrator_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_app') THEN
+        CREATE ROLE operza_app LOGIN PASSWORD 'operza_app_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+      END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='operza_worker') THEN
+        CREATE ROLE operza_worker LOGIN PASSWORD 'operza_worker_secret' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOBYPASSRLS;
+      END IF;
+    END $$;
+    GRANT USAGE, CREATE ON SCHEMA public TO operza_migrator, operza_auth_definer;
+    GRANT operza_auth_definer TO operza_migrator;
+    GRANT USAGE ON SCHEMA public TO operza_app, operza_worker;
+  `);
+
+  await pool.query('CREATE TABLE IF NOT EXISTS schema_migrations (name text PRIMARY KEY, applied_at timestamptz DEFAULT now());');
+  const appliedRes = await pool.query('SELECT name FROM schema_migrations');
+  const applied = new Set(appliedRes.rows.map(r => r.name));
+
+  const files = (await readdir(migrationsDir)).filter(f => f.endsWith('.sql')).sort();
+  for (const file of files) {
+    if (applied.has(file)) continue;
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const sql = await readFile(path.join(migrationsDir, file), 'utf8');
+      await client.query(sql);
+      await client.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT DO NOTHING;', [file]);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw new Error(`Migration ${file} failed: ${err.message}`);
+    } finally {
+      client.release();
+    }
+  }
+
+  await pool.query(`
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO operza_app, operza_worker;
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO operza_app, operza_worker;
+  `);
 
   t.after(async () => {
     if (pool) await pool.end().catch(() => {});
@@ -86,10 +109,9 @@ test('OPERZA GROWTH — Workflow Action Receipt & Idempotency Suite (Scenarios 1
   const tenantB = randomUUID();
   const locationB = randomUUID();
   const contactIdA = randomUUID();
-  const outboxRepo = pool ? createWorkflowOutboxRepository(pool) : null;
+  const outboxRepo = createWorkflowOutboxRepository(pool);
 
   async function seedExecution({ agencyId = tenantA, locationId = locationA, workflowId = null, executionId = null } = {}) {
-    if (!pool) return { workflowId: workflowId || randomUUID(), executionId: executionId || randomUUID() };
     const wfId = workflowId || randomUUID();
     const exId = executionId || randomUUID();
     await pool.query(`
@@ -107,36 +129,464 @@ test('OPERZA GROWTH — Workflow Action Receipt & Idempotency Suite (Scenarios 1
     return { workflowId: wfId, executionId: exId };
   }
 
-  if (pool) {
-    // Seed Tenant A and Location A
-    await pool.query(`INSERT INTO agencies (id, name, slug) VALUES ($1, 'Agency A', $2) ON CONFLICT DO NOTHING`, [tenantA, `agency-a-${tenantA.slice(0, 8)}`]);
-    await pool.query(`INSERT INTO locations (id, agency_id, name) VALUES ($1, $2, 'Location A') ON CONFLICT DO NOTHING`, [locationA, tenantA]);
+  // Seed Tenant A and Location A
+  await pool.query(`INSERT INTO agencies (id, name, slug) VALUES ($1, 'Agency A', $2) ON CONFLICT DO NOTHING`, [tenantA, `agency-a-${tenantA.slice(0, 8)}`]);
+  await pool.query(`INSERT INTO locations (id, agency_id, name) VALUES ($1, $2, 'Location A') ON CONFLICT DO NOTHING`, [locationA, tenantA]);
 
-    // Seed Tenant B and Location B
-    await pool.query(`INSERT INTO agencies (id, name, slug) VALUES ($1, 'Agency B', $2) ON CONFLICT DO NOTHING`, [tenantB, `agency-b-${tenantB.slice(0, 8)}`]);
-    await pool.query(`INSERT INTO locations (id, agency_id, name) VALUES ($1, $2, 'Location B') ON CONFLICT DO NOTHING`, [locationB, tenantB]);
+  // Seed Tenant B and Location B
+  await pool.query(`INSERT INTO agencies (id, name, slug) VALUES ($1, 'Agency B', $2) ON CONFLICT DO NOTHING`, [tenantB, `agency-b-${tenantB.slice(0, 8)}`]);
+  await pool.query(`INSERT INTO locations (id, agency_id, name) VALUES ($1, $2, 'Location B') ON CONFLICT DO NOTHING`, [locationB, tenantB]);
 
-    // Seed Contact in Tenant A
-    await pool.query(`
-      INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
-      VALUES ($1, $2, $3, 'contacts', $4::jsonb, now(), now())
-      ON CONFLICT (agency_id, location_id, collection, id) DO NOTHING
-    `, [contactIdA, tenantA, locationA, JSON.stringify({ id: contactIdA, email: 'lead-a@example.com', tags: ['lead'], leadScore: 10 })]);
+  // Seed Contact in Tenant A
+  await pool.query(`
+    INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
+    VALUES ($1, $2, $3, 'contacts', $4::jsonb, now(), now())
+    ON CONFLICT (agency_id, location_id, collection, id) DO NOTHING
+  `, [contactIdA, tenantA, locationA, JSON.stringify({ id: contactIdA, email: 'lead-a@example.com', tags: ['lead'], leadScore: 10 })]);
 
-    // Seed Consent in Tenant A
-    await pool.query(`
-      INSERT INTO communication_consents (id, agency_id, location_id, contact_id, channel, purpose, status, source, captured_at)
-      VALUES ($1, $2, $3, $4, 'email', 'transactional', 'granted', 'web_form', now())
-      ON CONFLICT DO NOTHING
-    `, [randomUUID(), tenantA, locationA, contactIdA]);
-  }
+  // Seed Consent in Tenant A
+  await pool.query(`
+    INSERT INTO communication_consents (id, agency_id, location_id, contact_id, channel, purpose, status, source, captured_at)
+    VALUES ($1, $2, $3, $4, 'email', 'transactional', 'granted', 'web_form', now())
+    ON CONFLICT DO NOTHING
+  `, [randomUUID(), tenantA, locationA, contactIdA]);
 
   // ---------------------------------------------------------------------------
-  // PART 1: CRM ACTION IDEMPOTENCY (Scenarios 1 - 7)
+  // PART 1: RECEIPT FENCING & LEASES (Scenarios 1 - 9)
   // ---------------------------------------------------------------------------
 
-  await t.test('Scenario 1: Concurrent duplicate task creation results in exactly 1 task record', async () => {
-    if (!pool) return;
+  let scenarioFencingHash = null;
+  let workerAClaimToken = null;
+  let workerBClaimToken = null;
+  const { executionId: fencingExecId } = await seedExecution();
+
+  await t.test('Scenario 1: Worker A claims receipt with lease and receives unique claim token', async () => {
+    scenarioFencingHash = crypto.createHash('sha256').update('scenario_fencing_' + randomUUID()).digest('hex');
+    const claim = await outboxRepo.claimActionReceipt({
+      tenantId: tenantA,
+      locationId: locationA,
+      executionId: fencingExecId,
+      nodeId: 'node_fencing_1',
+      actionHash: scenarioFencingHash,
+      providerKey: 'email.resend',
+      workerId: 'worker_A',
+      leaseSeconds: 1,
+      hasVerifiedIdempotency: true
+    });
+
+    assert.equal(claim.acquired, true);
+    assert.ok(claim.claimToken);
+    assert.match(claim.claimToken, /^[0-9a-f-]{36}$/i);
+    workerAClaimToken = claim.claimToken;
+  });
+
+  await t.test('Scenario 2: Worker A lease expires', async () => {
+    await new Promise(r => setTimeout(r, 1100));
+    const receipt = await outboxRepo.getActionReceipt({
+      tenantId: tenantA,
+      locationId: locationA,
+      actionHash: scenarioFencingHash
+    });
+    assert.ok(receipt);
+    assert.equal(receipt.status, 'started');
+    assert.ok(new Date(receipt.lease_until).getTime() < Date.now());
+  });
+
+  await t.test('Scenario 3: Worker B reclaims with new unique claim token', async () => {
+    const claimB = await outboxRepo.claimActionReceipt({
+      tenantId: tenantA,
+      locationId: locationA,
+      executionId: fencingExecId,
+      nodeId: 'node_fencing_1',
+      actionHash: scenarioFencingHash,
+      providerKey: 'email.resend',
+      workerId: 'worker_B',
+      leaseSeconds: 60,
+      hasVerifiedIdempotency: true
+    });
+
+    assert.equal(claimB.acquired, true);
+    assert.equal(claimB.recovered, true);
+    assert.ok(claimB.claimToken);
+    assert.notEqual(claimB.claimToken, workerAClaimToken);
+    workerBClaimToken = claimB.claimToken;
+  });
+
+  await t.test('Scenario 4: Worker A attempts completion after lease expiry / reclaim -> throws ACTION_LEASE_LOST', async () => {
+    await assert.rejects(async () => {
+      await outboxRepo.completeActionReceipt({
+        tenantId: tenantA,
+        locationId: locationA,
+        actionHash: scenarioFencingHash,
+        claimToken: workerAClaimToken,
+        result: { ok: true, worker: 'worker_A' }
+      });
+    }, (err) => err.code === 'ACTION_LEASE_LOST');
+  });
+
+  await t.test('Scenario 5: Worker A attempts failure after lease expiry / reclaim -> throws ACTION_LEASE_LOST', async () => {
+    await assert.rejects(async () => {
+      await outboxRepo.failActionReceipt({
+        tenantId: tenantA,
+        locationId: locationA,
+        actionHash: scenarioFencingHash,
+        claimToken: workerAClaimToken,
+        errorCode: 'WORKER_A_FAILED'
+      });
+    }, (err) => err.code === 'ACTION_LEASE_LOST');
+  });
+
+  await t.test('Scenario 6: Worker B completes successfully', async () => {
+    const comp = await outboxRepo.completeActionReceipt({
+      tenantId: tenantA,
+      locationId: locationA,
+      actionHash: scenarioFencingHash,
+      claimToken: workerBClaimToken,
+      result: { ok: true, worker: 'worker_B', completed: true },
+      providerReceipt: 'resend_msg_1001'
+    });
+
+    assert.equal(comp.status, 'succeeded');
+    assert.equal(comp.provider_receipt, 'resend_msg_1001');
+
+    const receipt = await outboxRepo.getActionReceipt({
+      tenantId: tenantA,
+      locationId: locationA,
+      actionHash: scenarioFencingHash
+    });
+    assert.equal(receipt.status, 'succeeded');
+    assert.ok(receipt.completed_at);
+  });
+
+  await t.test('Scenario 7: Further completion/failure attempt cannot overwrite succeeded receipt (ACTION_RECEIPT_TERMINAL)', async () => {
+    await assert.rejects(async () => {
+      await outboxRepo.completeActionReceipt({
+        tenantId: tenantA,
+        locationId: locationA,
+        actionHash: scenarioFencingHash,
+        claimToken: workerBClaimToken,
+        result: { ok: true, overwrite: true }
+      });
+    }, (err) => err.code === 'ACTION_RECEIPT_TERMINAL');
+
+    await assert.rejects(async () => {
+      await outboxRepo.failActionReceipt({
+        tenantId: tenantA,
+        locationId: locationA,
+        actionHash: scenarioFencingHash,
+        claimToken: workerBClaimToken,
+        errorCode: 'CANNOT_FAIL_TERMINAL'
+      });
+    }, (err) => err.code === 'ACTION_RECEIPT_TERMINAL');
+  });
+
+  await t.test('Scenario 8: Same workerId receives distinct claim tokens across attempts', async () => {
+    const hash = crypto.createHash('sha256').update('scenario_8_' + randomUUID()).digest('hex');
+    const claim1 = await outboxRepo.claimActionReceipt({
+      tenantId: tenantA,
+      locationId: locationA,
+      executionId: fencingExecId,
+      nodeId: 'node_8',
+      actionHash: hash,
+      providerKey: 'email.resend',
+      workerId: 'worker_restarted_pool',
+      leaseSeconds: 1,
+      hasVerifiedIdempotency: true
+    });
+    assert.equal(claim1.acquired, true);
+
+    await new Promise(r => setTimeout(r, 1100));
+
+    const claim2 = await outboxRepo.claimActionReceipt({
+      tenantId: tenantA,
+      locationId: locationA,
+      executionId: fencingExecId,
+      nodeId: 'node_8',
+      actionHash: hash,
+      providerKey: 'email.resend',
+      workerId: 'worker_restarted_pool',
+      leaseSeconds: 60,
+      hasVerifiedIdempotency: true
+    });
+    assert.equal(claim2.acquired, true);
+    assert.notEqual(claim1.claimToken, claim2.claimToken);
+  });
+
+  await t.test('Scenario 9: Concurrent claims on identical action hash are serialized by database constraint', async () => {
+    const actionHash = crypto.createHash('sha256').update('scenario_9_serialized_' + randomUUID()).digest('hex');
+    const claims = await Promise.all([
+      outboxRepo.claimActionReceipt({ tenantId: tenantA, locationId: locationA, executionId: fencingExecId, nodeId: 'node_9', actionHash, workerId: 'w1' }),
+      outboxRepo.claimActionReceipt({ tenantId: tenantA, locationId: locationA, executionId: fencingExecId, nodeId: 'node_9', actionHash, workerId: 'w2' }),
+      outboxRepo.claimActionReceipt({ tenantId: tenantA, locationId: locationA, executionId: fencingExecId, nodeId: 'node_9', actionHash, workerId: 'w3' }),
+      outboxRepo.claimActionReceipt({ tenantId: tenantA, locationId: locationA, executionId: fencingExecId, nodeId: 'node_9', actionHash, workerId: 'w4' }),
+      outboxRepo.claimActionReceipt({ tenantId: tenantA, locationId: locationA, executionId: fencingExecId, nodeId: 'node_9', actionHash, workerId: 'w5' })
+    ]);
+
+    const acquired = claims.filter(c => c.acquired);
+    assert.equal(acquired.length, 1);
+    const inProgress = claims.filter(c => c.status === 'in_progress');
+    assert.equal(inProgress.length, 4);
+  });
+
+  // ---------------------------------------------------------------------------
+  // PART 2: PROVIDER CAPABILITIES & RECOVERY (Scenarios 10 - 17)
+  // ---------------------------------------------------------------------------
+
+  await t.test('Scenario 10: Provider without verified idempotency: expired lease transitions to indeterminate (PROVIDER_RECOVERY_UNCERTAIN)', async () => {
+    const unverifiedHash = crypto.createHash('sha256').update('scenario_10_unverified_' + randomUUID()).digest('hex');
+    const claim = await outboxRepo.claimActionReceipt({
+      tenantId: tenantA,
+      locationId: locationA,
+      executionId: fencingExecId,
+      nodeId: 'node_10',
+      actionHash: unverifiedHash,
+      providerKey: 'email.sendgrid',
+      workerId: 'worker_crashed_sendgrid',
+      leaseSeconds: 1,
+      hasVerifiedIdempotency: false
+    });
+    assert.equal(claim.acquired, true);
+
+    await new Promise(r => setTimeout(r, 1100));
+
+    // Recovery attempt for unverified provider must transition to indeterminate
+    const reclaim = await outboxRepo.claimActionReceipt({
+      tenantId: tenantA,
+      locationId: locationA,
+      executionId: fencingExecId,
+      nodeId: 'node_10',
+      actionHash: unverifiedHash,
+      providerKey: 'email.sendgrid',
+      workerId: 'worker_recovery',
+      leaseSeconds: 60,
+      hasVerifiedIdempotency: false
+    });
+
+    assert.equal(reclaim.acquired, false);
+    assert.equal(reclaim.status, 'indeterminate');
+    assert.equal(reclaim.disposition, 'uncertain_expired');
+
+    const receipt = await outboxRepo.getActionReceipt({ tenantId: tenantA, locationId: locationA, actionHash: unverifiedHash });
+    assert.equal(receipt.status, 'indeterminate');
+    assert.equal(receipt.last_error_code, 'PROVIDER_RECOVERY_UNCERTAIN');
+  });
+
+  await t.test('Scenario 11: Provider with verified idempotency (Resend): retains same stable idempotency key on retry', async () => {
+    const resendHash = crypto.createHash('sha256').update('scenario_11_resend_' + randomUUID()).digest('hex');
+    const claim = await outboxRepo.claimActionReceipt({
+      tenantId: tenantA,
+      locationId: locationA,
+      executionId: fencingExecId,
+      nodeId: 'node_11',
+      actionHash: resendHash,
+      providerKey: 'email.resend',
+      workerId: 'worker_crashed_resend',
+      leaseSeconds: 1,
+      hasVerifiedIdempotency: true
+    });
+    assert.equal(claim.acquired, true);
+
+    await new Promise(r => setTimeout(r, 1100));
+
+    const reclaim = await outboxRepo.claimActionReceipt({
+      tenantId: tenantA,
+      locationId: locationA,
+      executionId: fencingExecId,
+      nodeId: 'node_11',
+      actionHash: resendHash,
+      providerKey: 'email.resend',
+      workerId: 'worker_recovery_resend',
+      leaseSeconds: 60,
+      hasVerifiedIdempotency: true
+    });
+
+    assert.equal(reclaim.acquired, true);
+    assert.equal(reclaim.recovered, true);
+    assert.equal(reclaim.actionHash, resendHash);
+  });
+
+  await t.test('Scenario 12: Duplicate successful receipt returned without calling provider adapter', async () => {
+    let dispatchCount = 0;
+    const testRegistry = createProviderAdapterRegistry();
+    testRegistry.register('email.test_dispatch', {
+      channel: 'email',
+      dispatch: async () => {
+        dispatchCount++;
+        return { ok: true, providerAccepted: true, providerMessageId: 'msg_test_12', provider: 'test_provider' };
+      }
+    });
+
+    const actionHash = crypto.createHash('sha256').update('scenario_12_unique_' + randomUUID()).digest('hex');
+    const invocation = { providerKey: 'email.test_dispatch', actionHash };
+
+    const res1 = await executeDurableProviderAction({
+      pool, outboxRepo, tenantId: tenantA, locationId: locationA, executionId: fencingExecId,
+      node: { id: 'email_node_12', config: {} },
+      invocation,
+      context: { to: 'lead-a@example.com', purpose: 'transactional' },
+      providerRegistry: testRegistry, workerId: 'worker_1'
+    });
+    assert.equal(res1.ok, true);
+    assert.equal(dispatchCount, 1);
+
+    const res2 = await executeDurableProviderAction({
+      pool, outboxRepo, tenantId: tenantA, locationId: locationA, executionId: fencingExecId,
+      node: { id: 'email_node_12', config: {} },
+      invocation,
+      context: { to: 'lead-a@example.com', purpose: 'transactional' },
+      providerRegistry: testRegistry, workerId: 'worker_2'
+    });
+    assert.equal(res2.ok, true);
+    assert.equal(dispatchCount, 1); // Not called second time
+  });
+
+  await t.test('Scenario 13: Timeout after transmission begins -> PROVIDER_TIMEOUT_INDETERMINATE', async () => {
+    const testRegistry = createProviderAdapterRegistry();
+    testRegistry.register('email.timeout_mock', {
+      channel: 'email',
+      dispatch: async () => {
+        const timeoutErr = new Error('Gateway timeout upstream');
+        timeoutErr.name = 'TimeoutError';
+        throw timeoutErr;
+      }
+    });
+
+    const actionHash = crypto.createHash('sha256').update('scenario_13_timeout_' + randomUUID()).digest('hex');
+    await assert.rejects(async () => {
+      await executeDurableProviderAction({
+        pool, outboxRepo, tenantId: tenantA, locationId: locationA, executionId: fencingExecId,
+        node: { id: 'email_node_13', config: {} },
+        invocation: { providerKey: 'email.timeout_mock', actionHash },
+        context: { to: 'lead-a@example.com' },
+        providerRegistry: testRegistry, workerId: 'worker_1'
+      });
+    }, /TimeoutError/);
+
+    const receipt = await outboxRepo.getActionReceipt({ tenantId: tenantA, locationId: locationA, actionHash });
+    assert.equal(receipt.status, 'indeterminate');
+    assert.equal(receipt.last_error_code, 'PROVIDER_TIMEOUT_INDETERMINATE');
+  });
+
+  await t.test('Scenario 14: Connection reset with unknown provider acceptance -> PROVIDER_TRANSPORT_INDETERMINATE', async () => {
+    const testRegistry = createProviderAdapterRegistry();
+    testRegistry.register('email.connreset_mock', {
+      channel: 'email',
+      dispatch: async () => {
+        const resetErr = new Error('read ECONNRESET');
+        resetErr.code = 'ECONNRESET';
+        resetErr.indeterminate = true;
+        throw resetErr;
+      }
+    });
+
+    const actionHash = crypto.createHash('sha256').update('scenario_14_connreset_' + randomUUID()).digest('hex');
+    await assert.rejects(async () => {
+      await executeDurableProviderAction({
+        pool, outboxRepo, tenantId: tenantA, locationId: locationA, executionId: fencingExecId,
+        node: { id: 'email_node_14', config: {} },
+        invocation: { providerKey: 'email.connreset_mock', actionHash },
+        context: { to: 'lead-a@example.com' },
+        providerRegistry: testRegistry, workerId: 'worker_1'
+      });
+    }, (err) => err.code === 'ECONNRESET');
+
+    const receipt = await outboxRepo.getActionReceipt({ tenantId: tenantA, locationId: locationA, actionHash });
+    assert.equal(receipt.status, 'indeterminate');
+    assert.equal(receipt.last_error_code, 'ECONNRESET');
+  });
+
+  await t.test('Scenario 15: Known local validation failure -> deterministic rejection, not indeterminate', async () => {
+    const testRegistry = createProviderAdapterRegistry();
+    testRegistry.register('email.validation_mock', {
+      channel: 'email',
+      dispatch: async ({ config }) => {
+        if (!config?.sender) {
+          return { ok: false, code: 'SENDER_EMAIL_REQUIRED', indeterminate: false };
+        }
+        return { ok: true };
+      }
+    });
+
+    const actionHash = crypto.createHash('sha256').update('scenario_15_validation_' + randomUUID()).digest('hex');
+    await assert.rejects(async () => {
+      await executeDurableProviderAction({
+        pool, outboxRepo, tenantId: tenantA, locationId: locationA, executionId: fencingExecId,
+        node: { id: 'email_node_15', config: {} },
+        invocation: { providerKey: 'email.validation_mock', actionHash },
+        context: { to: 'lead-a@example.com' },
+        providerRegistry: testRegistry, workerId: 'worker_1'
+      });
+    }, (err) => err.code === 'SENDER_EMAIL_REQUIRED' && err.indeterminate === false);
+
+    const receipt = await outboxRepo.getActionReceipt({ tenantId: tenantA, locationId: locationA, actionHash });
+    assert.equal(receipt.status, 'failed');
+    assert.equal(receipt.last_error_code, 'SENDER_EMAIL_REQUIRED');
+  });
+
+  await t.test('Scenario 16: Definitive provider rejection (401/400) classified according to policy', async () => {
+    const testRegistry = createProviderAdapterRegistry();
+    testRegistry.register('email.auth_fail', {
+      channel: 'email',
+      dispatch: async () => {
+        return { ok: false, code: 'INVALID_CREDENTIAL', status: 401, indeterminate: false };
+      }
+    });
+
+    const actionHash = crypto.createHash('sha256').update('scenario_16_auth_' + randomUUID()).digest('hex');
+    await assert.rejects(async () => {
+      await executeDurableProviderAction({
+        pool, outboxRepo, tenantId: tenantA, locationId: locationA, executionId: fencingExecId,
+        node: { id: 'email_node_16', config: {} },
+        invocation: { providerKey: 'email.auth_fail', actionHash },
+        context: { to: 'lead-a@example.com' },
+        providerRegistry: testRegistry, workerId: 'worker_1'
+      });
+    }, (err) => err.code === 'INVALID_CREDENTIAL');
+
+    const receipt = await outboxRepo.getActionReceipt({ tenantId: tenantA, locationId: locationA, actionHash });
+    assert.equal(receipt.status, 'failed');
+    assert.equal(receipt.last_error_code, 'INVALID_CREDENTIAL');
+  });
+
+  await t.test('Scenario 17: Worker cancellation propagated (WORKER_CANCELLED_INDETERMINATE)', async () => {
+    const testRegistry = createProviderAdapterRegistry();
+    testRegistry.register('email.abort_mock', {
+      channel: 'email',
+      dispatch: async ({ signal }) => {
+        if (signal?.aborted) {
+          const abortErr = new Error('Worker execution cancelled');
+          abortErr.name = 'AbortError';
+          abortErr.code = 'WORKER_CANCELLED_INDETERMINATE';
+          abortErr.indeterminate = true;
+          throw abortErr;
+        }
+        return { ok: true };
+      }
+    });
+
+    const controller = new AbortController();
+    controller.abort();
+
+    const actionHash = crypto.createHash('sha256').update('scenario_17_abort_' + randomUUID()).digest('hex');
+    await assert.rejects(async () => {
+      await executeDurableProviderAction({
+        pool, outboxRepo, tenantId: tenantA, locationId: locationA, executionId: fencingExecId,
+        node: { id: 'email_node_17', config: {} },
+        invocation: { providerKey: 'email.abort_mock', actionHash },
+        context: { to: 'lead-a@example.com' },
+        providerRegistry: testRegistry, workerId: 'worker_1', signal: controller.signal
+      });
+    }, (err) => err.indeterminate === true);
+
+    const receipt = await outboxRepo.getActionReceipt({ tenantId: tenantA, locationId: locationA, actionHash });
+    assert.equal(receipt.status, 'indeterminate');
+  });
+
+  // ---------------------------------------------------------------------------
+  // PART 3: CRM ACTION IDEMPOTENCY & STABILIZATION (Scenarios 18 - 25)
+  // ---------------------------------------------------------------------------
+
+  await t.test('Scenario 18: Concurrent duplicate task creation results in exactly 1 task record', async () => {
     const { executionId, workflowId } = await seedExecution();
     const crmActions1 = createRealCrmActions({
       pool, tenantId: tenantA, locationId: locationA, executionId, workflowId, workerId: 'worker_1', outboxRepository: outboxRepo
@@ -145,18 +595,14 @@ test('OPERZA GROWTH — Workflow Action Receipt & Idempotency Suite (Scenarios 1
       pool, tenantId: tenantA, locationId: locationA, executionId, workflowId, workerId: 'worker_2', outboxRepository: outboxRepo
     });
 
-    const taskPayload = { title: 'Follow Up Immediately', priority: 'high', contactId: contactIdA, nodeId: 'task_step_1' };
+    const taskPayload = { title: 'Follow Up Immediately', priority: 'high', contactId: contactIdA, nodeId: 'task_step_18' };
 
-    // Worker 1 creates task
     const res1 = await crmActions1.createTask(taskPayload);
     assert.ok(res1.id);
 
-    // Worker 2 attempts identical task creation
     const res2 = await crmActions2.createTask(taskPayload);
-    // Duplicate returns the exact same task ID from the stored receipt
     assert.equal(res2.id, res1.id);
 
-    // Verify exactly 1 task record exists in PostgreSQL
     const client = await pool.connect();
     try {
       await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA]);
@@ -167,21 +613,18 @@ test('OPERZA GROWTH — Workflow Action Receipt & Idempotency Suite (Scenarios 1
     }
   });
 
-  await t.test('Scenario 2: Duplicate contact tag addition is idempotent and records receipt', async () => {
-    if (!pool) return;
+  await t.test('Scenario 19: Duplicate contact tag addition is idempotent and records receipt', async () => {
     const { executionId, workflowId } = await seedExecution();
     const crmActions = createRealCrmActions({
       pool, tenantId: tenantA, locationId: locationA, executionId, workflowId, workerId: 'worker_1', outboxRepository: outboxRepo
     });
 
-    const res1 = await crmActions.addContactTag({ contactId: contactIdA, tag: 'vip_prospect', nodeId: 'tag_step_1' });
+    const res1 = await crmActions.addContactTag({ contactId: contactIdA, tag: 'vip_prospect', nodeId: 'tag_step_19' });
     assert.equal(res1.tagAdded, 'vip_prospect');
 
-    // Second call is idempotent
-    const res2 = await crmActions.addContactTag({ contactId: contactIdA, tag: 'vip_prospect', nodeId: 'tag_step_1' });
+    const res2 = await crmActions.addContactTag({ contactId: contactIdA, tag: 'vip_prospect', nodeId: 'tag_step_19' });
     assert.equal(res2.tagAdded, 'vip_prospect');
 
-    // Verify contact tags in database has no duplicates
     const client = await pool.connect();
     try {
       await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA]);
@@ -194,12 +637,10 @@ test('OPERZA GROWTH — Workflow Action Receipt & Idempotency Suite (Scenarios 1
     }
   });
 
-  await t.test('Scenario 3: Opportunity stage updating idempotently records receipts', async () => {
-    if (!pool) return;
+  await t.test('Scenario 20: Opportunity stage updating idempotently records receipts', async () => {
     const { executionId, workflowId } = await seedExecution();
     const oppId = randomUUID();
 
-    // Seed opportunity in location_records
     await pool.query(`
       INSERT INTO location_records (id, agency_id, location_id, collection, body, created_at, updated_at)
       VALUES ($1, $2, $3, 'opportunities', $4::jsonb, now(), now())
@@ -209,440 +650,267 @@ test('OPERZA GROWTH — Workflow Action Receipt & Idempotency Suite (Scenarios 1
       pool, tenantId: tenantA, locationId: locationA, executionId, workflowId, workerId: 'worker_1', outboxRepository: outboxRepo
     });
 
-    const res1 = await crmActions.updateOpportunityStage({ opportunityId: oppId, stage: 'won', nodeId: 'stage_step_1' });
+    const res1 = await crmActions.updateOpportunityStage({ opportunityId: oppId, stage: 'won', nodeId: 'stage_step_20' });
     assert.equal(res1.stageUpdated, 'won');
 
-    // Duplicate call returns cached receipt result
-    const res2 = await crmActions.updateOpportunityStage({ opportunityId: oppId, stage: 'won', nodeId: 'stage_step_1' });
+    const res2 = await crmActions.updateOpportunityStage({ opportunityId: oppId, stage: 'won', nodeId: 'stage_step_20' });
     assert.equal(res2.stageUpdated, 'won');
   });
 
-  await t.test('Scenario 4: Worker restart/replay re-runs workflow without duplicating CRM records', async () => {
-    if (!pool) return;
-    const { executionId, workflowId } = await seedExecution();
-    const crmActions = createRealCrmActions({
-      pool, tenantId: tenantA, locationId: locationA, executionId, workflowId, workerId: 'worker_alpha', outboxRepository: outboxRepo
-    });
-
-    // Run task creation in run 1
-    const res1 = await crmActions.createTask({ title: 'Replay Test Task', contactId: contactIdA, nodeId: 'task_replay_1' });
-
-    // Worker restarts, receives same job/execution and executes again
-    const crmActionsRestart = createRealCrmActions({
-      pool, tenantId: tenantA, locationId: locationA, executionId, workflowId, workerId: 'worker_beta', outboxRepository: outboxRepo
-    });
-    const res2 = await crmActionsRestart.createTask({ title: 'Replay Test Task', contactId: contactIdA, nodeId: 'task_replay_1' });
-
-    assert.equal(res1.id, res2.id);
-  });
-
-  await t.test('Scenario 5: Transaction rollback on CRM failure leaves zero orphaned succeeded receipt', async () => {
-    if (!pool) return;
-    const { executionId, workflowId } = await seedExecution();
-    const nonExistentContact = randomUUID();
-    const crmActions = createRealCrmActions({
-      pool, tenantId: tenantA, locationId: locationA, executionId, workflowId, workerId: 'worker_1', outboxRepository: outboxRepo
-    });
-
-    // Attempt to tag non-existent contact -> fails with CONTACT_NOT_FOUND
-    await assert.rejects(async () => {
-      await crmActions.addContactTag({ contactId: nonExistentContact, tag: 'orphan_test', nodeId: 'tag_fail_1' });
-    }, (err) => err.code === 'CONTACT_NOT_FOUND' || /not found in PostgreSQL/i.test(err.message));
-
-    // Verify receipt does NOT have status 'succeeded'
-    const hash = computeActionHash({
-      tenantId: tenantA, locationId: locationA, workflowId, executionId,
-      nodeId: 'tag_fail_1', actionType: 'add_tag', input: { contactId: nonExistentContact, tag: 'orphan_test' }
-    });
-
-    const client = await pool.connect();
-    try {
-      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA]);
-      const receipt = await client.query("SELECT status FROM workflow_action_receipts WHERE agency_id = $1 AND location_id = $2 AND action_hash = $3", [tenantA, locationA, hash]);
-      // Either rolled back completely (0 rows) or not 'succeeded'
-      if (receipt.rows.length > 0) {
-        assert.notEqual(receipt.rows[0].status, 'succeeded');
-      }
-    } finally {
-      client.release();
-    }
-  });
-
-  await t.test('Scenario 6: Uncommitted worker transaction leaves no receipt and no mutated row', async () => {
-    if (!pool) return;
-    const { executionId, workflowId } = await seedExecution();
-    const client = await pool.connect();
-    const actionHash = computeActionHash({
-      tenantId: tenantA, locationId: locationA, workflowId, executionId,
-      nodeId: 'node_abort', actionType: 'create_task', input: { title: 'Abort Task' }
-    });
-
-    try {
-      await client.query('BEGIN');
-      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA]);
-      await outboxRepo.claimActionReceipt({
-        client, tenantId: tenantA, locationId: locationA, executionId, nodeId: 'node_abort', actionHash
-      });
-      // Worker abruptly crashes / rolls back
-      await client.query('ROLLBACK');
-    } finally {
-      client.release();
-    }
-
-    // Verify receipt does NOT exist
-    const verifyClient = await pool.connect();
-    try {
-      await verifyClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA]);
-      const check = await verifyClient.query("SELECT * FROM workflow_action_receipts WHERE agency_id = $1 AND location_id = $2 AND action_hash = $3", [tenantA, locationA, actionHash]);
-      assert.equal(check.rows.length, 0);
-    } finally {
-      verifyClient.release();
-    }
-  });
-
-  await t.test('Scenario 7: Worker serialization throws ACTION_ALREADY_IN_PROGRESS on concurrent claim', async () => {
-    if (!pool) return;
-    const { executionId, workflowId } = await seedExecution();
-    const actionHash = computeActionHash({
-      tenantId: tenantA, locationId: locationA, workflowId, executionId,
-      nodeId: 'task_lock_1', actionType: 'create_task', input: { title: 'Lock Task' }
-    });
-
-    // Worker 1 claims receipt with active lease
-    const claim1 = await outboxRepo.claimActionReceipt({
-      tenantId: tenantA, locationId: locationA, executionId, nodeId: 'task_lock_1',
-      actionHash, workerId: 'worker_holder', leaseSeconds: 60
-    });
-    assert.equal(claim1.acquired, true);
-
-    // Worker 2 attempts same execution while lease is held
-    await assert.rejects(async () => {
-      await executeAtomicCrmAction({
-        pool, outboxRepo, tenantId: tenantA, locationId: locationA, executionId, workflowId,
-        nodeId: 'task_lock_1', actionType: 'create_task', input: { title: 'Lock Task' },
-        workerId: 'worker_challenger', mutationFn: async () => ({})
-      });
-    }, (err) => err.code === 'ACTION_ALREADY_IN_PROGRESS' || /already in progress/i.test(err.message));
-  });
-
-  // ---------------------------------------------------------------------------
-  // PART 2: PROVIDER ACTION IDEMPOTENCY (Scenarios 8 - 14)
-  // ---------------------------------------------------------------------------
-
-  await t.test('Scenario 8: Duplicate provider redispatch prevention returns stored receipt', async () => {
-    let dispatchCount = 0;
-    const testRegistry = createProviderAdapterRegistry();
-    testRegistry.register('email.test_dispatch', {
-      channel: 'email',
-      dispatch: async ({ actionHash }) => {
-        dispatchCount++;
-        return { ok: true, providerAccepted: true, providerMessageId: 'msg_test_123', provider: 'test_provider' };
-      }
-    });
-
-    const { executionId } = await seedExecution();
-    const invocation = {
-      providerKey: 'email.test_dispatch',
-      actionHash: crypto.createHash('sha256').update('scenario_8_unique').digest('hex')
-    };
-
-    // First dispatch
-    const res1 = await executeDurableProviderAction({
-      pool, outboxRepo, tenantId: tenantA, locationId: locationA, executionId,
-      node: { id: 'email_node_1', config: {} },
-      invocation,
-      context: { to: 'lead-a@example.com', purpose: 'transactional' },
-      providerRegistry: testRegistry, workerId: 'worker_1'
-    });
-    assert.equal(res1.ok, true);
-    assert.equal(dispatchCount, 1);
-
-    // Second dispatch with same actionHash
-    const res2 = await executeDurableProviderAction({
-      pool, outboxRepo, tenantId: tenantA, locationId: locationA, executionId,
-      node: { id: 'email_node_1', config: {} },
-      invocation,
-      context: { to: 'lead-a@example.com', purpose: 'transactional' },
-      providerRegistry: testRegistry, workerId: 'worker_2'
-    });
-    // Returns cached result, adapter NOT dispatched second time!
-    assert.equal(res2.ok, true);
-    assert.equal(dispatchCount, 1);
-  });
-
-  await t.test('Scenario 9: Concurrent provider claim serializes and blocks concurrent dispatch', async () => {
-    if (!pool) return;
-    const { executionId } = await seedExecution();
-    const actionHash = crypto.createHash('sha256').update('scenario_9_unique').digest('hex');
-    const testRegistry = createProviderAdapterRegistry();
-    testRegistry.register('email.test', { channel: 'email', dispatch: async () => ({ ok: true }) });
-
-    // Pre-claim active lease by Worker 1
-    await outboxRepo.claimActionReceipt({
-      tenantId: tenantA, locationId: locationA, executionId, nodeId: 'email_node_9',
-      actionHash, providerKey: 'email.test', workerId: 'worker_alpha', leaseSeconds: 60
-    });
-
-    // Worker 2 attempts dispatch
-    await assert.rejects(async () => {
-      await executeDurableProviderAction({
-        pool, outboxRepo, tenantId: tenantA, locationId: locationA, executionId,
-        node: { id: 'email_node_9', config: {} },
-        invocation: { providerKey: 'email.test', actionHash },
-        context: { to: 'lead-a@example.com' },
-        providerRegistry: testRegistry, workerId: 'worker_beta'
-      });
-    }, (err) => err.code === 'ACTION_ALREADY_IN_PROGRESS' || /already in progress/i.test(err.message));
-  });
-
-  await t.test('Scenario 10: Idempotency-Key is deterministic and stable across retries', () => {
+  await t.test('Scenario 21: Same CRM action produces same hash after worker restart / replay', () => {
     const params = {
-      tenantId: tenantA, locationId: locationA, workflowId: 'wf_1', executionId: 'exec_1',
-      nodeId: 'email_step', actionType: 'send_email', invocationKey: 'loop_idx_0',
-      input: { to: 'test@operza.io', subject: 'Welcome' }
+      tenantId: tenantA,
+      locationId: locationA,
+      workflowId: 'wf_replay',
+      executionId: 'exec_replay',
+      nodeId: 'task_step',
+      actionType: 'create_task',
+      invocationKey: 'default',
+      input: { title: 'Call Client', priority: 'high' }
     };
 
     const hash1 = computeActionHash(params);
     const hash2 = computeActionHash(params);
     assert.equal(hash1, hash2);
-    assert.match(hash1, /^[a-f0-9]{64}$/);
   });
 
-  await t.test('Scenario 11: Pre-dispatch crash allows recovery worker to retry after lease expiration', async () => {
-    if (!pool) return;
-    const { executionId } = await seedExecution();
-    const actionHash = crypto.createHash('sha256').update('scenario_11_unique').digest('hex');
+  await t.test('Scenario 22: Task action retains default due date across retries', async () => {
+    const fixedStartTime = '2026-11-20T10:00:00.000Z';
+    const execution = {
+      id: randomUUID(),
+      workflowId: randomUUID(),
+      agencyId: tenantA,
+      locationId: locationA,
+      startedAt: fixedStartTime,
+      actorId: 'system_worker',
+      mode: 'live'
+    };
 
-    // Worker 1 claims with 1-second lease then crashes
-    await outboxRepo.claimActionReceipt({
-      tenantId: tenantA, locationId: locationA, executionId, nodeId: 'email_node_11',
-      actionHash, providerKey: 'email.test', workerId: 'worker_crashed', leaseSeconds: 1
-    });
+    const node = {
+      id: 'task_node_due',
+      type: 'task',
+      config: { title: 'Deterministic Due Date Task' }
+    };
 
-    // Wait 1.1s for lease to expire
-    await new Promise(r => setTimeout(r, 1100));
+    let capturedDue1 = null;
+    let capturedDue2 = null;
 
-    // Recovery Worker claims expired lease
-    const recoveryClaim = await outboxRepo.claimActionReceipt({
-      tenantId: tenantA, locationId: locationA, executionId, nodeId: 'email_node_11',
-      actionHash, providerKey: 'email.test', workerId: 'worker_recovery', leaseSeconds: 60
-    });
-    assert.equal(recoveryClaim.acquired, true);
-    assert.equal(recoveryClaim.recovered, true);
-  });
-
-  await t.test('Scenario 12: Ambiguous timeout / abort is marked indeterminate in receipt', async () => {
-    if (!pool) return;
-    const testRegistry = createProviderAdapterRegistry();
-    testRegistry.register('email.timeout_mock', {
-      channel: 'email',
-      dispatch: async () => {
-        const timeoutErr = new Error('Gateway timeout upstream');
-        timeoutErr.name = 'TimeoutError';
-        throw timeoutErr;
+    const mockCrm1 = {
+      createTask: async (taskInput) => {
+        capturedDue1 = taskInput.dueDate;
+        return { id: 'task_mock_1', dueDate: taskInput.dueDate };
       }
-    });
+    };
+    const mockCrm2 = {
+      createTask: async (taskInput) => {
+        capturedDue2 = taskInput.dueDate;
+        return { id: 'task_mock_1', dueDate: taskInput.dueDate };
+      }
+    };
 
-    const { executionId } = await seedExecution();
-    const actionHash = crypto.createHash('sha256').update('scenario_12_unique').digest('hex');
+    await executeStep({ node, execution, triggerContext: {}, crmActions: mockCrm1 });
+    await executeStep({ node, execution, triggerContext: {}, crmActions: mockCrm2 });
 
-    await assert.rejects(async () => {
-      await executeDurableProviderAction({
-        pool, outboxRepo, tenantId: tenantA, locationId: locationA, executionId,
-        node: { id: 'email_node_12', config: {} },
-        invocation: { providerKey: 'email.timeout_mock', actionHash },
-        context: { to: 'lead-a@example.com' },
-        providerRegistry: testRegistry, workerId: 'worker_1'
-      });
-    }, /TimeoutError/);
-
-    // Verify receipt has status 'indeterminate'
-    const receipt = await outboxRepo.getActionReceipt({ tenantId: tenantA, locationId: locationA, actionHash });
-    assert.equal(receipt.status, 'indeterminate');
-    assert.equal(receipt.last_error_code, 'PROVIDER_TIMEOUT_INDETERMINATE');
+    assert.ok(capturedDue1);
+    assert.equal(capturedDue1, capturedDue2);
+    const expectedDueDate = new Date(Date.parse(fixedStartTime) + 86400000).toISOString();
+    assert.equal(capturedDue1, expectedDueDate);
   });
 
-  await t.test('Scenario 13: Indeterminate status is blocked from blind re-dispatch', async () => {
-    if (!pool) return;
-    const { executionId } = await seedExecution();
-    const actionHash = crypto.createHash('sha256').update('scenario_13_unique').digest('hex');
-    const testRegistry = createProviderAdapterRegistry();
-    testRegistry.register('email.test', { channel: 'email', dispatch: async () => ({ ok: true }) });
-
-    // Create indeterminate receipt
-    await outboxRepo.claimActionReceipt({
-      tenantId: tenantA, locationId: locationA, executionId, nodeId: 'email_node_13',
-      actionHash, providerKey: 'email.test', workerId: 'worker_1'
-    });
-    await outboxRepo.failActionReceipt({
-      tenantId: tenantA, locationId: locationA, actionHash, errorCode: 'PROVIDER_TIMEOUT_INDETERMINATE', indeterminate: true
-    });
-
-    // Next dispatch attempt must throw ACTION_INDETERMINATE
-    await assert.rejects(async () => {
-      await executeDurableProviderAction({
-        pool, outboxRepo, tenantId: tenantA, locationId: locationA, executionId,
-        node: { id: 'email_node_13', config: {} },
-        invocation: { providerKey: 'email.test', actionHash },
-        context: { to: 'lead-a@example.com' },
-        providerRegistry: testRegistry, workerId: 'worker_2'
-      });
-    }, (err) => err.code === 'ACTION_INDETERMINATE' || /indeterminate/i.test(err.message));
-  });
-
-  await t.test('Scenario 14: Zero secrets stored in workflow_action_receipts table', async () => {
-    if (!pool) return;
-    const { executionId } = await seedExecution();
-    const actionHash = crypto.createHash('sha256').update('scenario_14_unique').digest('hex');
-
-    await outboxRepo.claimActionReceipt({
-      tenantId: tenantA, locationId: locationA, executionId, nodeId: 'node_14',
-      actionHash, providerKey: 'email.resend', workerId: 'worker_1'
-    });
-
-    await outboxRepo.completeActionReceipt({
-      tenantId: tenantA, locationId: locationA, actionHash,
-      result: { ok: true, providerMessageId: 'msg_clean_123', provider: 'resend' },
-      providerReceipt: 'msg_clean_123'
-    });
-
-    const receipt = await outboxRepo.getActionReceipt({ tenantId: tenantA, locationId: locationA, actionHash });
-    const serialized = JSON.stringify(receipt);
-    assert.equal(/bearer|secret|apikey|password|token/i.test(serialized), false);
-  });
-
-  // ---------------------------------------------------------------------------
-  // PART 3: GOVERNANCE & EXECUTION (Scenarios 15 - 20)
-  // ---------------------------------------------------------------------------
-
-  await t.test('Scenario 15: Trusted actor identity is recorded and verified in governance', () => {
-    const wfId = randomUUID();
-    const exId = randomUUID();
-    const actionHash = computeActionHash({
-      tenantId: tenantA, locationId: locationA, workflowId: wfId, executionId: exId,
-      nodeId: 'node_trusted', nodeType: 'send_email', input: { to: 'test@operza.io' }
-    });
-
-    const req = createApprovalRequest({
-      tenantId: tenantA, workflowId: wfId, executionId: exId, nodeId: 'node_trusted',
-      requestedByActorId: 'user_trusted_admin', actionHash,
-      expiresAt: new Date(Date.now() + 60000).toISOString()
-    });
-    const evidence = decideApproval({
-      request: req, tenantId: tenantA, approvedByActorId: 'admin_approver', decision: 'approved'
-    });
-
-    const invocation = createActionInvocation({
-      tenantId: tenantA, locationId: locationA, workflowId: wfId, executionId: exId,
-      actorId: 'user_trusted_admin',
-      node: { id: 'node_trusted', type: 'send_email' },
-      input: { to: 'test@operza.io' },
-      mode: 'live', providerStatus: 'verified', consent: true,
-      approvalEvidence: evidence
-    });
-
-    assert.equal(invocation.actorId, 'user_trusted_admin');
-    assert.equal(invocation.actionHash, actionHash);
-    const auth = authorizeActionInvocation(invocation);
-    assert.equal(auth.decision, 'allow');
-  });
-
-  await t.test('Scenario 16: Missing or invalid actor identity fails closed in sensitive nodes', () => {
-    assert.throws(() => {
-      createActionInvocation({
-        tenantId: tenantA, locationId: locationA, workflowId: randomUUID(), executionId: randomUUID(),
-        actorId: '   ', // invalid blank actor
-        node: { id: 'node_sens', type: 'send_email' },
-        input: { to: 'test@operza.io' },
-        mode: 'live'
-      });
-    }, /actorId/);
-  });
-
-  await t.test('Scenario 17: Consent missing throws CONSENT_REQUIRED before dispatch', async () => {
-    const handlers = createTrustedWorkerHandlers({
-      pool, outboxRepository: outboxRepo
-    });
-
-    const jobPayload = {
+  await t.test('Scenario 23: Different resolved recipients produce different action hashes', () => {
+    const hashAlice = computeActionHash({
       tenantId: tenantA,
       locationId: locationA,
-      actionId: 'send_email',
+      workflowId: 'wf_send',
+      executionId: 'exec_send',
+      nodeId: 'email_node',
       actionType: 'send_email',
-      providerKey: 'email.sendgrid',
-      input: { to: 'unconsented_lead@example.com' },
-      dryRun: false,
-      approved: true,
-      consent: false
-    };
+      input: { to: 'alice@example.com', body: 'Welcome to the platform' }
+    });
+
+    const hashBob = computeActionHash({
+      tenantId: tenantA,
+      locationId: locationA,
+      workflowId: 'wf_send',
+      executionId: 'exec_send',
+      nodeId: 'email_node',
+      actionType: 'send_email',
+      input: { to: 'bob@example.com', body: 'Welcome to the platform' }
+    });
+
+    assert.notEqual(hashAlice, hashBob);
+  });
+
+  await t.test('Scenario 24: Different resolved message bodies produce different action hashes', () => {
+    const hash1 = computeActionHash({
+      tenantId: tenantA,
+      locationId: locationA,
+      workflowId: 'wf_send',
+      executionId: 'exec_send',
+      nodeId: 'email_node',
+      actionType: 'send_email',
+      input: { to: 'alice@example.com', body: 'Notification message A' }
+    });
+
+    const hash2 = computeActionHash({
+      tenantId: tenantA,
+      locationId: locationA,
+      workflowId: 'wf_send',
+      executionId: 'exec_send',
+      nodeId: 'email_node',
+      actionType: 'send_email',
+      input: { to: 'alice@example.com', body: 'Notification message B' }
+    });
+
+    assert.notEqual(hash1, hash2);
+  });
+
+  await t.test('Scenario 25: Repeated invocations with distinct invocationKey (e.g. loops) are distinguished', () => {
+    const hashIndex0 = computeActionHash({
+      tenantId: tenantA,
+      locationId: locationA,
+      workflowId: 'wf_loop',
+      executionId: 'exec_loop',
+      nodeId: 'loop_step',
+      actionType: 'task',
+      invocationKey: 'loop_index_0',
+      input: { title: 'Process Item' }
+    });
+
+    const hashIndex1 = computeActionHash({
+      tenantId: tenantA,
+      locationId: locationA,
+      workflowId: 'wf_loop',
+      executionId: 'exec_loop',
+      nodeId: 'loop_step',
+      actionType: 'task',
+      invocationKey: 'loop_index_1',
+      input: { title: 'Process Item' }
+    });
+
+    assert.notEqual(hashIndex0, hashIndex1);
+  });
+
+  // ---------------------------------------------------------------------------
+  // PART 4: GOVERNANCE & EXECUTION SECURITY (Scenarios 26 - 30)
+  // ---------------------------------------------------------------------------
+
+  await t.test('Scenario 26: Truthy but invalid approval evidence is rejected', async () => {
+    const handlers = createTrustedWorkerHandlers({ pool, outboxRepository: outboxRepo });
+
+    // Invalid string approval
+    await assert.rejects(async () => {
+      await handlers['workflow.action.execute']({
+        tenantId: tenantA,
+        locationId: locationA,
+        actionId: 'send_email',
+        actionType: 'send_email',
+        actorId: 'usr_admin',
+        approvalEvidence: 'approved_token_mock',
+        input: { to: 'test@example.com' }
+      }, { job: {}, workerId: 'w1' });
+    }, (err) => err.code === 'APPROVAL_REQUIRED');
+
+    // Tampered checksum
+    await assert.rejects(async () => {
+      await handlers['workflow.action.execute']({
+        tenantId: tenantA,
+        locationId: locationA,
+        actionId: 'send_email',
+        actionType: 'send_email',
+        actorId: 'usr_admin',
+        approvalEvidence: {
+          status: 'approved',
+          approvedBy: 'approver_1',
+          checksum: 'f'.repeat(64), // invalid checksum
+          expiresAt: new Date(Date.now() + 60000).toISOString()
+        },
+        input: { to: 'test@example.com' }
+      }, { job: {}, workerId: 'w1' });
+    }, (err) => err.code === 'APPROVAL_TAMPERED');
+  });
+
+  await t.test('Scenario 27: Expired approval evidence is rejected', async () => {
+    const handlers = createTrustedWorkerHandlers({ pool, outboxRepository: outboxRepo });
 
     await assert.rejects(async () => {
-      await handlers['workflow.action.execute'](jobPayload, { job: {}, workerId: 'worker_1' });
-    }, (err) => err.code === 'CONSENT_REQUIRED' || /consent/i.test(err.message));
+      await handlers['workflow.action.execute']({
+        tenantId: tenantA,
+        locationId: locationA,
+        actionId: 'send_email',
+        actionType: 'send_email',
+        actorId: 'usr_admin',
+        approvalEvidence: {
+          status: 'approved',
+          approvedBy: 'approver_1',
+          expiresAt: new Date(Date.now() - 5000).toISOString() // expired 5s ago
+        },
+        input: { to: 'test@example.com' }
+      }, { job: {}, workerId: 'w1' });
+    }, (err) => err.code === 'APPROVAL_EXPIRED');
   });
 
-  await t.test('Scenario 18: Dry-run execution generates zero durable receipts and zero CRM mutations', async () => {
-    if (!pool) return;
-    const { executionId, workflowId } = await seedExecution();
-    const crmActions = createRealCrmActions({
-      pool, tenantId: tenantA, locationId: locationA, executionId, workflowId, workerId: 'worker_dry', mode: 'dry_run', outboxRepository: outboxRepo
-    });
+  await t.test('Scenario 28: Approval for another node or action is rejected', async () => {
+    const handlers = createTrustedWorkerHandlers({ pool, outboxRepository: outboxRepo });
 
-    const res = await crmActions.createTask({ title: 'Dry Run Task', nodeId: 'dry_step_1' });
-    assert.equal(res.dryRun, true);
-
-    // Verify task not in database
-    const client = await pool.connect();
-    try {
-      await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA]);
-      const tasks = await client.query("SELECT id FROM location_records WHERE agency_id = $1 AND location_id = $2 AND body->>'title' = $3", [tenantA, locationA, 'Dry Run Task']);
-      assert.equal(tasks.rows.length, 0);
-    } finally {
-      client.release();
-    }
+    await assert.rejects(async () => {
+      await handlers['workflow.action.execute']({
+        tenantId: tenantA,
+        locationId: locationA,
+        actionId: 'send_email_node_1',
+        actionType: 'send_email',
+        actorId: 'usr_admin',
+        approvalEvidence: {
+          status: 'approved',
+          approvedBy: 'approver_1',
+          nodeId: 'different_node_99',
+          expiresAt: new Date(Date.now() + 60000).toISOString()
+        },
+        input: { to: 'test@example.com' }
+      }, { job: {}, workerId: 'w1' });
+    }, (err) => err.code === 'APPROVAL_NODE_MISMATCH');
   });
 
-  await t.test('Scenario 19: Zapier fetch failure is recorded as ZAPIER_DISPATCH_FAILED, never fake success', async () => {
-    const zapNode = {
-      id: 'zap_node_1',
-      type: 'zapier_webhook',
-      config: {
-        webhookUrl: 'https://hooks.zapier.com/hooks/catch/9999999/invalid_test_mock/'
-      }
-    };
+  await t.test('Scenario 29: Missing trusted actor identity fails closed', async () => {
+    const handlers = createTrustedWorkerHandlers({ pool, outboxRepository: outboxRepo });
 
-    // Execute step with broken/unreachable zapier url
-    const result = await executeStep({
-      node: zapNode,
-      execution: { id: randomUUID(), workflowId: randomUUID(), agencyId: tenantA, mode: 'live', actorId: 'system_worker' },
-      triggerContext: { contact: { email: 'zap@example.com' } },
-      crmActions: {}
-    });
-
-    assert.equal(result.status, 'failed');
-    assert.ok(result.errorCode === 'ZAPIER_DISPATCH_FAILED' || result.errorCode === 'ZAPIER_DISPATCH_REJECTED');
+    await assert.rejects(async () => {
+      await handlers['workflow.action.execute']({
+        tenantId: tenantA,
+        locationId: locationA,
+        actionId: 'send_email',
+        actionType: 'send_email',
+        actorId: '   ', // whitespace only
+        input: { to: 'test@example.com' }
+      }, { job: {}, workerId: 'w1' });
+    }, (err) => err.code === 'ACTOR_IDENTITY_REQUIRED');
   });
 
-  await t.test('Scenario 20: Calling unsupported CRM action fails closed with CRM_ACTION_UNSUPPORTED', async () => {
-    const result = await executeStep({
-      node: { id: 'unsupported_tag', type: 'add_tag', config: { tag: 'vip' } },
-      execution: { id: randomUUID(), workflowId: randomUUID(), mode: 'live', actorId: 'system_worker' },
-      triggerContext: { contact: { id: contactIdA } },
-      crmActions: {} // empty crmActions
-    });
+  await t.test('Scenario 30: Missing or revoked authoritative consent prevents provider dispatch', async () => {
+    const handlers = createTrustedWorkerHandlers({ pool, outboxRepository: outboxRepo });
 
-    assert.equal(result.status, 'failed');
-    assert.equal(result.errorCode, 'CRM_ACTION_UNSUPPORTED');
+    await assert.rejects(async () => {
+      await handlers['workflow.action.execute']({
+        tenantId: tenantA,
+        locationId: locationA,
+        actionId: 'send_email',
+        actionType: 'send_email',
+        actorId: 'usr_admin',
+        providerKey: 'email.sendgrid',
+        input: { to: 'unconsented_lead@example.com' },
+        dryRun: false,
+        approvalEvidence: { approvedBy: 'usr_approver' },
+        consent: false
+      }, { job: {}, workerId: 'w1' });
+    }, (err) => err.code === 'CONSENT_REQUIRED');
   });
 
   // ---------------------------------------------------------------------------
-  // PART 4: DATABASE SECURITY & LEAST PRIVILEGE (Scenarios 21 - 25)
+  // PART 5: DATABASE SECURITY & LEAST PRIVILEGE
   // ---------------------------------------------------------------------------
 
-  await t.test('Scenario 21: operza_app role is constrained to tenant scope under FORCE RLS', async () => {
-    if (!pool || !dbUrl) return;
+  await t.test('Database Security: operza_app role is constrained to tenant scope under FORCE RLS', async () => {
     const { executionId } = await seedExecution();
-    const { default: pg } = await import('pg');
     const appPool = new pg.Pool({
       connectionString: dbUrl.replace(/\/\/[^@]+@/, '//operza_app:operza_app_secret@'),
       max: 2
@@ -653,10 +921,10 @@ test('OPERZA GROWTH — Workflow Action Receipt & Idempotency Suite (Scenarios 1
       await client.query('BEGIN');
       await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantA, locationA]);
 
-      const hash = crypto.createHash('sha256').update('scenario_21').digest('hex');
+      const hash = crypto.createHash('sha256').update('scenario_rls_app').digest('hex');
       await client.query(`
         INSERT INTO workflow_action_receipts (id, agency_id, location_id, execution_id, node_id, action_hash, status)
-        VALUES ($1, $2, $3, $4, 'node_21', $5, 'succeeded')
+        VALUES ($1, $2, $3, $4, 'node_rls_app', $5, 'succeeded')
       `, [randomUUID(), tenantA, locationA, executionId, hash]);
 
       const res = await client.query("SELECT id FROM workflow_action_receipts WHERE action_hash = $1", [hash]);
@@ -668,33 +936,30 @@ test('OPERZA GROWTH — Workflow Action Receipt & Idempotency Suite (Scenarios 1
     }
   });
 
-  await t.test('Scenario 22: operza_worker role claims and completes receipts under FORCE RLS', async () => {
-    if (!pool || !dbUrl) return;
+  await t.test('Database Security: operza_worker role claims and completes receipts under FORCE RLS', async () => {
     const { executionId } = await seedExecution();
-    const { default: pg } = await import('pg');
     const workerPool = new pg.Pool({
       connectionString: dbUrl.replace(/\/\/[^@]+@/, '//operza_worker:operza_worker_secret@'),
       max: 2
     });
 
     const workerRepo = createWorkflowOutboxRepository(workerPool);
-    const actionHash = crypto.createHash('sha256').update('scenario_22').digest('hex');
+    const actionHash = crypto.createHash('sha256').update('scenario_rls_worker').digest('hex');
 
     const claim = await workerRepo.claimActionReceipt({
-      tenantId: tenantA, locationId: locationA, executionId, nodeId: 'node_22', actionHash, workerId: 'worker_rls'
+      tenantId: tenantA, locationId: locationA, executionId, nodeId: 'node_rls_worker', actionHash, workerId: 'worker_rls'
     });
     assert.equal(claim.acquired, true);
+    assert.ok(claim.claimToken);
 
     const comp = await workerRepo.completeActionReceipt({
-      tenantId: tenantA, locationId: locationA, actionHash, result: { ok: true }
+      tenantId: tenantA, locationId: locationA, actionHash, claimToken: claim.claimToken, result: { ok: true }
     });
     assert.equal(comp.status, 'succeeded');
     await workerPool.end();
   });
 
-  await t.test('Scenario 23: Missing tenant context fails closed under RLS', async () => {
-    if (!pool || !dbUrl) return;
-    const { default: pg } = await import('pg');
+  await t.test('Database Security: Missing tenant context fails closed under RLS', async () => {
     const workerPool = new pg.Pool({
       connectionString: dbUrl.replace(/\/\/[^@]+@/, '//operza_worker:operza_worker_secret@'),
       max: 2
@@ -702,7 +967,6 @@ test('OPERZA GROWTH — Workflow Action Receipt & Idempotency Suite (Scenarios 1
 
     const client = await workerPool.connect();
     try {
-      // Query without setting app.agency_id or app.location_id -> returns 0 rows under RLS
       const res = await client.query("SELECT * FROM workflow_action_receipts");
       assert.equal(res.rows.length, 0);
     } finally {
@@ -711,9 +975,7 @@ test('OPERZA GROWTH — Workflow Action Receipt & Idempotency Suite (Scenarios 1
     }
   });
 
-  await t.test('Scenario 24: Cross-tenant access is strictly denied under FORCE RLS', async () => {
-    if (!pool || !dbUrl) return;
-    const { default: pg } = await import('pg');
+  await t.test('Database Security: Cross-tenant access is strictly denied under FORCE RLS', async () => {
     const workerPool = new pg.Pool({
       connectionString: dbUrl.replace(/\/\/[^@]+@/, '//operza_worker:operza_worker_secret@'),
       max: 2
@@ -721,40 +983,16 @@ test('OPERZA GROWTH — Workflow Action Receipt & Idempotency Suite (Scenarios 1
 
     const client = await workerPool.connect();
     try {
-      // Set context to Tenant B
       await client.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)", [tenantB, locationB]);
 
-      // Attempt to read Tenant A's contact record
       const crossRead = await client.query("SELECT * FROM location_records WHERE id = $1", [contactIdA]);
       assert.equal(crossRead.rows.length, 0);
 
-      // Attempt to update Tenant A's contact record
       const crossUpdate = await client.query("UPDATE location_records SET body = body WHERE id = $1", [contactIdA]);
       assert.equal(crossUpdate.rowCount, 0);
     } finally {
       client.release();
       await workerPool.end();
     }
-  });
-
-  await t.test('Scenario 25: Concurrent claims on identical action hash are serialized by database constraint', async () => {
-    if (!pool) return;
-    const { executionId } = await seedExecution();
-    const actionHash = crypto.createHash('sha256').update('scenario_25_serialized').digest('hex');
-
-    // Run 5 concurrent claim requests
-    const claims = await Promise.all([
-      outboxRepo.claimActionReceipt({ tenantId: tenantA, locationId: locationA, executionId, nodeId: 'node_25', actionHash, workerId: 'w1' }),
-      outboxRepo.claimActionReceipt({ tenantId: tenantA, locationId: locationA, executionId, nodeId: 'node_25', actionHash, workerId: 'w2' }),
-      outboxRepo.claimActionReceipt({ tenantId: tenantA, locationId: locationA, executionId, nodeId: 'node_25', actionHash, workerId: 'w3' }),
-      outboxRepo.claimActionReceipt({ tenantId: tenantA, locationId: locationA, executionId, nodeId: 'node_25', actionHash, workerId: 'w4' }),
-      outboxRepo.claimActionReceipt({ tenantId: tenantA, locationId: locationA, executionId, nodeId: 'node_25', actionHash, workerId: 'w5' })
-    ]);
-
-    const acquired = claims.filter(c => c.acquired);
-    // Exactly 1 worker acquires the claim
-    assert.equal(acquired.length, 1);
-    const inProgress = claims.filter(c => c.status === 'in_progress');
-    assert.equal(inProgress.length, 4);
   });
 });

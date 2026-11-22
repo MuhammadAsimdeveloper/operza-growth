@@ -142,6 +142,7 @@ export async function produceConnectorActionEvent({
   tenantId,
   locationId = 'default',
   actionId,
+  actorId = 'system',
   input = {},
   dryRun = true
 }) {
@@ -171,6 +172,7 @@ export async function produceConnectorActionEvent({
       tenantId,
       locationId,
       actionId,
+      actorId,
       input: cleanInput,
       dryRun,
       enqueuedAt: new Date().toISOString()
