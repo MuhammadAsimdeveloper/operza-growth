@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import QRCode from 'qrcode';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 
@@ -7,62 +8,45 @@ import { num, relative } from '../lib/format';
 import { api } from '../lib/api';
 import type { QrCode } from '../lib/types';
 
-const GRID = 21;
+/** Scannable, RFC-compliant QR code component using qrcode engine */
+function QrGraphic({ target, seed, size = 104 }: { target?: string; seed?: string; size?: number }) {
+  const [svg, setSvg] = useState<string>('');
+  const qrTarget = target || (seed && (seed.startsWith('http') || seed.startsWith('/')) ? seed : `https://operza.io/qr/${encodeURIComponent(seed || 'preview')}`);
 
-/** Deterministic decorative QR pattern derived from a seed string. */
-function modulesFor(seed: string): boolean[] {
-  let h = 2166136261;
-  for (let i = 0; i < seed.length; i++) {
-    h ^= seed.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  const cells: boolean[] = new Array(GRID * GRID).fill(false);
-  let state = h >>> 0;
-  const rand = () => {
-    state ^= state << 13;
-    state ^= state >>> 17;
-    state ^= state << 5;
-    return (state >>> 0) / 4294967296;
-  };
-  const inFinder = (x: number, y: number) =>
-    (x < 8 && y < 8) || (x > GRID - 9 && y < 8) || (x < 8 && y > GRID - 9);
-  for (let y = 0; y < GRID; y++) {
-    for (let x = 0; x < GRID; x++) {
-      if (inFinder(x, y)) continue;
-      cells[y * GRID + x] = rand() > 0.52;
-    }
-  }
-  return cells;
-}
+  useEffect(() => {
+    let active = true;
+    QRCode.toString(qrTarget, {
+      type: 'svg',
+      width: size,
+      margin: 1,
+      errorCorrectionLevel: 'M'
+    }).then((svgString: string) => {
+      if (active) setSvg(svgString);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [qrTarget, size]);
 
-function QrGraphic({ seed, size = 104 }: { seed: string; size?: number }) {
-  const cells = useMemo(() => modulesFor(seed), [seed]);
-  const unit = size / GRID;
-  const finder = (ox: number, oy: number) => (
-    <g key={`${ox}-${oy}`}>
-      <rect x={ox * unit} y={oy * unit} width={unit * 7} height={unit * 7} fill="none" stroke="currentColor" strokeWidth={unit} />
-      <rect x={(ox + 2) * unit} y={(oy + 2) * unit} width={unit * 3} height={unit * 3} fill="currentColor" />
-    </g>
-  );
+  if (!svg) {
+    return (
+      <div
+        style={{
+          width: size,
+          height: size,
+          background: '#fff',
+          borderRadius: 4,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}
+      />
+    );
+  }
+
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="QR code preview">
-      <rect width={size} height={size} fill="#fff" />
-      {cells.map((on, i) =>
-        on ? (
-          <rect
-            key={i}
-            x={(i % GRID) * unit}
-            y={Math.floor(i / GRID) * unit}
-            width={unit}
-            height={unit}
-            fill="currentColor"
-          />
-        ) : null,
-      )}
-      {finder(0, 0)}
-      {finder(GRID - 7, 0)}
-      {finder(0, GRID - 7)}
-    </svg>
+    <div
+      style={{ width: size, height: size, display: 'inline-flex' }}
+      dangerouslySetInnerHTML={{ __html: svg }}
+    />
   );
 }
 
@@ -161,7 +145,7 @@ export default function QrCodes() {
         {qrCodes.map((q) => (
           <div key={q.id} className="card-premium qr-card">
             <div className="qr-card__art">
-              <QrGraphic seed={q.id + q.target} />
+              <QrGraphic target={q.target} seed={q.id + q.target} />
             </div>
             <div className="qr-card__body">
               <div style={{ fontSize: 13, fontWeight: 650 }}>{q.name}</div>
@@ -270,7 +254,7 @@ function NewQrModal({ onClose, onSubmit }: { onClose: () => void; onSubmit: (nam
         </div>
       </div>
       <div className="row" style={{ justifyContent: 'center', marginTop: 16, color: 'var(--text)' }}>
-        <QrGraphic seed={name || 'preview'} size={132} />
+        <QrGraphic target={target || '/calendars/public/discovery-strategy'} seed={name || 'preview'} size={132} />
       </div>
     </Modal>
   );

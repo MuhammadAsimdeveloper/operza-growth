@@ -2096,6 +2096,41 @@ async function runTests() {
       throw new Error(`Failed to create API key: ${JSON.stringify(createKeyRes.data)}`);
     }
     const testKeyId = createKeyRes.data.key.id;
+    const testSecretToken = createKeyRes.data.key.secretToken;
+
+    // Verify Bearer API Key authentication over HTTP
+    const apiKeyContactsRes = await fetch('http://localhost:4005/api/crm/contacts', {
+      headers: { Authorization: `Bearer ${testSecretToken}` }
+    });
+    console.log(`Bearer API Key Auth Status: ${apiKeyContactsRes.status}`);
+    if (apiKeyContactsRes.status !== 200) {
+      throw new Error(`Bearer API key authorization failed: expected 200, got ${apiKeyContactsRes.status}`);
+    }
+
+    // Verify scoped authorization enforcement: Read-only key cannot mutate contacts
+    const readOnlyKeyRes = await request('/api/developers/keys', {
+      method: 'POST',
+      body: JSON.stringify({
+        label: 'Read-only Contacts Auditor',
+        scopes: ['contacts:read']
+      })
+    });
+    const readOnlyToken = readOnlyKeyRes.data.key.secretToken;
+    const readOnlyId = readOnlyKeyRes.data.key.id;
+
+    const readOnlyWriteRes = await fetch('http://localhost:4005/api/crm/contacts', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${readOnlyToken}`
+      },
+      body: JSON.stringify({ name: 'Unauthorized Contact Via ReadOnly Key', email: 'unauth@test.io' })
+    });
+    console.log(`Scoped API Key Mutation Blocked Status: ${readOnlyWriteRes.status}`);
+    if (readOnlyWriteRes.status !== 403) {
+      throw new Error(`Expected 403 INSUFFICIENT_SCOPES for read-only API key, got ${readOnlyWriteRes.status}`);
+    }
+    await request(`/api/developers/keys/${readOnlyId}`, { method: 'DELETE' });
 
     // Register webhook endpoint
     const registerWebhookRes = await request('/api/developers/webhooks', {
