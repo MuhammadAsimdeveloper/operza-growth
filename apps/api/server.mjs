@@ -59,6 +59,7 @@ import { createSmartListView, matchesSmartListView, filterSmartListRecords, gene
 import { createDefaultLLMRuntime } from '../../packages/platform-core/src/llm-runtime/index.mjs';
 import { MultiAgentOrchestrator, AGENT_ROLES, OPERZA_KNOWLEDGE_BASE, MULTILINGUAL_GUIDELINES } from '../../packages/platform-core/src/multi-agent/index.mjs';
 import { CopilotService, RAGEngine, resolveAIProvider, COPILOT_TOOLS } from '../../packages/platform-core/src/copilot/index.mjs';
+import QRCode from 'qrcode';
 
 let secretResolver = null;
 let providerAdapterRegistry = createProviderAdapterRegistry();
@@ -339,47 +340,18 @@ function normalizePhone(p) {
   return String(p || '').replace(/\D/g, '');
 }
 
-function generateQrSvg(target, size = 256) {
-  const GRID = 21;
-  let h = 2166136261;
-  for (let i = 0; i < target.length; i++) {
-    h ^= target.charCodeAt(i);
-    h = Math.imul(h, 16777619);
+async function generateQrSvg(target, size = 256) {
+  try {
+    return await QRCode.toString(target, {
+      type: 'svg',
+      width: size,
+      margin: 2,
+      errorCorrectionLevel: 'M'
+    });
+  } catch (err) {
+    console.error('[QR] Failed to generate vector QR code:', err);
+    throw err;
   }
-  let stateVal = h >>> 0;
-  const rand = () => {
-    stateVal ^= stateVal << 13;
-    stateVal ^= stateVal >>> 17;
-    stateVal ^= stateVal << 5;
-    return (stateVal >>> 0) / 4294967296;
-  };
-  const inFinder = (x, y) =>
-    (x < 8 && y < 8) || (x > GRID - 9 && y < 8) || (x < 8 && y > GRID - 9);
-
-  const unit = size / GRID;
-  let rects = '';
-  for (let y = 0; y < GRID; y++) {
-    for (let x = 0; x < GRID; x++) {
-      if (inFinder(x, y)) continue;
-      if (rand() > 0.52) {
-        rects += `<rect x="${(x * unit).toFixed(1)}" y="${(y * unit).toFixed(1)}" width="${unit.toFixed(1)}" height="${unit.toFixed(1)}" fill="#111827"/>`;
-      }
-    }
-  }
-
-  const finder = (ox, oy) => `
-    <rect x="${(ox * unit).toFixed(1)}" y="${(oy * unit).toFixed(1)}" width="${(unit * 7).toFixed(1)}" height="${(unit * 7).toFixed(1)}" fill="none" stroke="#111827" stroke-width="${unit.toFixed(1)}"/>
-    <rect x="${((ox + 2) * unit).toFixed(1)}" y="${((oy + 2) * unit).toFixed(1)}" width="${(unit * 3).toFixed(1)}" height="${(unit * 3).toFixed(1)}" fill="#111827"/>
-  `;
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-  <rect width="${size}" height="${size}" fill="#ffffff"/>
-  ${finder(0, 0)}
-  ${finder(GRID - 7, 0)}
-  ${finder(0, GRID - 7)}
-  ${rects}
-</svg>`;
 }
 
 function resolveTokensHelper(text, agency, contact, userEmail) {
@@ -685,6 +657,30 @@ function isWebhookReplay(eventId) {
   return false;
 }
 
+const ALLOWED_ORIGINS_LIST = (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+
+if (process.env.PUBLIC_BASE_URL) {
+  try {
+    const pubOrigin = new URL(process.env.PUBLIC_BASE_URL).origin;
+    if (!ALLOWED_ORIGINS_LIST.includes(pubOrigin)) ALLOWED_ORIGINS_LIST.push(pubOrigin);
+  } catch {}
+}
+
+function getCorsOrigin(req) {
+  const reqOrigin = req?.headers?.origin;
+  if (!reqOrigin) return ALLOWED_ORIGINS_LIST[0] || 'http://localhost:5173';
+  if (ALLOWED_ORIGINS_LIST.includes(reqOrigin)) return reqOrigin;
+  if (process.env.NODE_ENV !== 'production') {
+    if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(reqOrigin)) {
+      return reqOrigin;
+    }
+  }
+  return ALLOWED_ORIGINS_LIST[0] || 'http://localhost:5173';
+}
+
 function sendJson(res, status, body, headers = {}) {
   if (res.headersSent) {
     return true;
@@ -694,9 +690,11 @@ function sendJson(res, status, body, headers = {}) {
     reqId = res.getHeader('x-request-id');
   } catch {}
 
+  const originHeader = headers['access-control-allow-origin'] || (res.req ? getCorsOrigin(res.req) : (ALLOWED_ORIGINS_LIST[0] || 'http://localhost:5173'));
+
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
-    'access-control-allow-origin': 'http://localhost:5173',
+    'access-control-allow-origin': originHeader,
     'access-control-allow-credentials': 'true',
     'access-control-allow-headers': 'content-type, x-operza-csrf, x-operza-location, x-request-id, idempotency-key',
     'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
@@ -1643,6 +1641,19 @@ async function executeWorkflowInstance({
   const crmActions = {
     sendEmail: async ({ to, subject, body }) => {
       console.log(`[OPERZA WORKFLOW EMAIL] To: ${to} | Subject: ${subject}`);
+
+      // Channel configuration honesty guard (Master Plan Task 0.6)
+      const hasEmailConfig = Boolean(
+        process.env.RESEND_API_KEY ||
+        process.env.SENDGRID_API_KEY ||
+        process.env.SMTP_HOST ||
+        (providerStatuses && (providerStatuses['email.resend'] === 'verified' || providerStatuses.resend === 'verified')) ||
+        process.env.NODE_ENV === 'test'
+      );
+      if (!hasEmailConfig) {
+        throw new Error('Email provider not configured for location (ChannelNotConfigured)');
+      }
+
       const contact = triggerContext.contact;
       const contactName = contact ? `${contact.firstName} ${contact.lastName}` : (to || 'Customer');
       let conv = (state.records.conversations || []).find(
@@ -1680,6 +1691,17 @@ async function executeWorkflowInstance({
     },
     sendSms: async ({ to, message }) => {
       console.log(`[OPERZA WORKFLOW SMS] To: ${to} | Message: ${message}`);
+
+      // Channel configuration honesty guard (Master Plan Task 0.6)
+      const hasSmsConfig = Boolean(
+        (process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN) ||
+        (providerStatuses && providerStatuses.twilio === 'verified') ||
+        process.env.NODE_ENV === 'test'
+      );
+      if (!hasSmsConfig) {
+        throw new Error('SMS provider not configured for location (ChannelNotConfigured)');
+      }
+
       const contact = triggerContext.contact;
       const contactName = contact ? `${contact.firstName} ${contact.lastName}` : (to || 'Customer');
       let conv = (state.records.conversations || []).find(
@@ -2719,6 +2741,7 @@ function parseCSV(text) {
 // ═══════════════════════════════════════════════════════════════════════
 
 const server = createServer(async (req, res) => {
+  res.req = req;
   const requestId = req.headers['x-request-id'] || randomUUID();
   res.setHeader('x-request-id', requestId);
   req.requestId = requestId;
@@ -2731,10 +2754,11 @@ const server = createServer(async (req, res) => {
   // ─── CORS Preflight ─────────────────────────────────────────────
   if (method === 'OPTIONS') {
     res.writeHead(204, {
-      'access-control-allow-origin': 'http://localhost:5173',
+      'access-control-allow-origin': getCorsOrigin(req),
       'access-control-allow-credentials': 'true',
       'access-control-allow-headers': 'content-type, x-operza-csrf, x-operza-location, x-request-id, idempotency-key',
       'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
+      'access-control-max-age': '86400',
       'x-request-id': requestId
     });
     res.end();
@@ -2861,6 +2885,9 @@ const server = createServer(async (req, res) => {
       if (!form) return sendJson(res, 404, { error: 'Form not found or unpublished' });
 
       const body = await readBody(req);
+      if (body.website || body.hp || body.company_fax) {
+        return sendJson(res, 400, { error: 'Bot submission rejected', code: 'BOT_SUBMISSION_REJECTED' });
+      }
       const answers = body.answers || {};
 
       let email = answers.email || answers.workEmail || answers.fld_email || '';
@@ -3432,6 +3459,9 @@ const server = createServer(async (req, res) => {
       if (!cal) return sendJson(res, 404, { error: 'Calendar not found or inactive' });
 
       const body = await readBody(req);
+      if (body.website || body.hp || body.company_fax) {
+        return sendJson(res, 400, { error: 'Bot submission rejected', code: 'BOT_SUBMISSION_REJECTED' });
+      }
       const { name, email, phone, date, timeSlot, notes } = body;
       if (!name || !email || !date || !timeSlot) {
         return sendJson(res, 400, { error: 'Name, email, date, and timeSlot are required.' });
@@ -3645,6 +3675,9 @@ const server = createServer(async (req, res) => {
       if (!link) return sendJson(res, 404, { error: 'Payment link not found or inactive' });
 
       const body = await readBody(req);
+      if (body.website || body.hp || body.company_fax) {
+        return sendJson(res, 400, { error: 'Bot submission rejected', code: 'BOT_SUBMISSION_REJECTED' });
+      }
       const { customerName, customerEmail, customerPhone } = body;
       if (!customerName || !customerEmail) {
         return sendJson(res, 400, { error: 'Customer name and email are required.' });
@@ -3706,6 +3739,49 @@ const server = createServer(async (req, res) => {
         }
       }
       const finalAmount = Math.max(0, link.amount - discountAmount);
+
+      // Enforce Payment Gateway & Method Validation (Master Plan Task 0.4)
+      if (finalAmount > 0) {
+        const { cardNumber, expiry, cvc, paymentMethodId, paymentToken } = body;
+        const hasCard = Boolean(cardNumber && expiry && cvc);
+        const hasToken = Boolean(paymentMethodId || paymentToken);
+
+        if (!hasCard && !hasToken) {
+          return sendJson(res, 400, {
+            error: 'Payment method is required for non-zero checkout. Please provide card details or a payment token.',
+            code: 'PAYMENT_METHOD_REQUIRED'
+          });
+        }
+
+        if (hasCard) {
+          const cleanCard = String(cardNumber).replace(/[\s-]/g, '');
+          if (!/^\d{13,19}$/.test(cleanCard)) {
+            return sendJson(res, 400, {
+              error: 'Invalid card number format.',
+              code: 'INVALID_CARD_NUMBER'
+            });
+          }
+          if (!/^\d{1,2}\/\d{2,4}$/.test(String(expiry).trim())) {
+            return sendJson(res, 400, {
+              error: 'Invalid expiry format (expected MM/YY).',
+              code: 'INVALID_CARD_EXPIRY'
+            });
+          }
+          if (!/^\d{3,4}$/.test(String(cvc).trim())) {
+            return sendJson(res, 400, {
+              error: 'Invalid CVC security code.',
+              code: 'INVALID_CARD_CVC'
+            });
+          }
+        }
+
+        if (process.env.NODE_ENV === 'production' && !process.env.STRIPE_SECRET_KEY && !process.env.TEST_PAYMENT_GATEWAY) {
+          return sendJson(res, 503, {
+            error: 'Payment processing gateway is not configured for this merchant.',
+            code: 'PAYMENTS_NOT_CONFIGURED'
+          });
+        }
+      }
 
       const orderId = randomUUID();
       const order = {
@@ -4371,7 +4447,7 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 404, { error: 'QR Code not found' });
       }
 
-      const svg = generateQrSvg(qr.target || 'https://operza.io', 256);
+      const svg = await generateQrSvg(qr.target || 'https://operza.io', 256);
       res.writeHead(200, {
         'Content-Type': 'image/svg+xml',
         'Cache-Control': 'public, max-age=3600'
@@ -4580,6 +4656,9 @@ const server = createServer(async (req, res) => {
         console.warn('[STRIPE WEBHOOK] Missing stripe-signature header');
         return sendJson(res, 400, { error: 'Missing stripe-signature header' });
       } else {
+        if (process.env.NODE_ENV === 'production' || process.env.WEBHOOKS_FAIL_CLOSED === 'true') {
+          return sendJson(res, 503, { error: 'Stripe webhook secret is not configured in production environment', code: 'WEBHOOK_SECRET_REQUIRED' });
+        }
         console.warn('[STRIPE WEBHOOK] No STRIPE_WEBHOOK_SECRET configured — skipping signature check');
       }
 
@@ -4631,9 +4710,11 @@ const server = createServer(async (req, res) => {
         try { payload = JSON.parse(rawBody.toString('utf8')); } catch { payload = {}; }
       }
 
+      const baseUrl = process.env.PUBLIC_BASE_URL || `http://${req.headers.host || 'localhost'}`;
+      const twilioUrl = `${baseUrl.replace(/\/$/, '')}${req.url}`;
+
       if (TWILIO_AUTH_TOKEN && twilioSig) {
         // Standard RFC HMAC-SHA1 signature verification for Twilio webhook ingress
-        const twilioUrl = `https://${req.headers.host || 'localhost'}${req.url}`;
         let sigData = twilioUrl;
         const sortedKeys = Object.keys(payload).sort();
         for (const k of sortedKeys) {
@@ -4648,6 +4729,9 @@ const server = createServer(async (req, res) => {
         console.warn('[TWILIO WEBHOOK] Missing x-twilio-signature header');
         return sendJson(res, 403, { error: 'Missing x-twilio-signature header' });
       } else {
+        if (process.env.NODE_ENV === 'production' || process.env.WEBHOOKS_FAIL_CLOSED === 'true') {
+          return sendJson(res, 503, { error: 'Twilio auth token is not configured in production environment', code: 'WEBHOOK_SECRET_REQUIRED' });
+        }
         console.warn('[TWILIO WEBHOOK] No TWILIO_AUTH_TOKEN configured — skipping signature check');
       }
 
@@ -5430,7 +5514,7 @@ const server = createServer(async (req, res) => {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',
         'connection': 'keep-alive',
-        'access-control-allow-origin': req.headers.origin || 'http://localhost:5173',
+        'access-control-allow-origin': getCorsOrigin(req),
         'access-control-allow-credentials': 'true'
       });
 
@@ -5506,7 +5590,7 @@ const server = createServer(async (req, res) => {
         'content-type': 'text/event-stream',
         'cache-control': 'no-cache',
         'connection': 'keep-alive',
-        'access-control-allow-origin': 'http://localhost:5173',
+        'access-control-allow-origin': getCorsOrigin(req),
         'access-control-allow-credentials': 'true'
       });
 
@@ -11279,6 +11363,15 @@ if (WebSocketServer) {
 // Start schedule trigger loop
 startScheduleTriggerLoop();
 console.log('⏰ Schedule trigger loop started (60s interval)');
+
+// Production Security Boot Guards (Master Plan Task 0.3)
+if (process.env.NODE_ENV === 'production') {
+  const secret = process.env.SESSION_SECRET || '';
+  if (!secret || secret === 'super-secret-session-key' || secret.length < 32) {
+    console.error('FATAL [SECURITY BOOT GUARD]: Insecure or default SESSION_SECRET in production. Minimum 32-character secret required.');
+    process.exit(1);
+  }
+}
 
 server.listen(port, host, () => {
   console.log(`🚀 Operza Unified API Server v2.0 running at http://${host}:${port}`);

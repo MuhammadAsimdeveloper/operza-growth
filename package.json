@@ -26,7 +26,7 @@
     "row-level-security",
     "multi-tenant",
     "typescript",
-    "react-19",
+    "react",
     "redis-queue"
   ],
   "workspaces": [

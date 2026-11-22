@@ -1084,13 +1084,31 @@ async function runTests() {
       throw new Error(`Coupon validation logic failed: ${JSON.stringify(validateRes.data)}`);
     }
 
-    // Apply coupon to public checkout: Starter Retainer ($1,500 - 20% discount = $1,200)
+    // Verify that non-zero checkout without payment method is rejected (Task 0.4)
+    const unauthenticatedCheckout = await request('/api/payments/checkout/starter-retainer', {
+      method: 'POST',
+      body: JSON.stringify({
+        customerName: 'Unpaid User',
+        customerEmail: 'unpaid@example.com',
+        customerPhone: '+1 555-0000',
+        couponCode: 'PROMO20'
+      })
+    });
+    if (unauthenticatedCheckout.status !== 400 || unauthenticatedCheckout.data.code !== 'PAYMENT_METHOD_REQUIRED') {
+      throw new Error(`Expected free checkout to be blocked with PAYMENT_METHOD_REQUIRED, got: ${unauthenticatedCheckout.status}`);
+    }
+    console.log('✅ Unbacked checkout properly rejected (PAYMENT_METHOD_REQUIRED enforced)');
+
+    // Apply coupon to public checkout: Starter Retainer ($1,500 - 20% discount = $1,200) with payment method
     const discountedCheckout = await request('/api/payments/checkout/starter-retainer', {
       method: 'POST',
       body: JSON.stringify({
         customerName: 'Maya Lin',
         customerEmail: 'maya@lin-arch.io',
         customerPhone: '+1 555-9090',
+        cardNumber: '4242 4242 4242 4242',
+        expiry: '12/28',
+        cvc: '123',
         couponCode: 'PROMO20'
       })
     });
