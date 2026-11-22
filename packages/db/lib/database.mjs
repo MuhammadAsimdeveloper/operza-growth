@@ -47,3 +47,6 @@ export async function withTenantTransaction(context, work) {
 
 export async function closePool() { if (pool) { const current = pool; pool = undefined; await current.end(); } }
 
+export { TenantTx, runInTenantTx, createTenantTxRunner } from './tenant-tx.mjs';
+export { createContactsRepository } from './contacts-repository.mjs';
+

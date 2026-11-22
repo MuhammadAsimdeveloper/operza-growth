@@ -21,7 +21,7 @@
 import { createServer } from 'node:http';
 import crypto, { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual, randomUUID, createHmac } from 'node:crypto';
 import { promisify } from 'node:util';
-import { readFile, mkdir, rename, writeFile, unlink } from 'node:fs/promises';
+import { readFile, mkdir, rename, writeFile, unlink, copyFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dns from 'node:dns/promises';
@@ -1236,7 +1236,27 @@ async function saveState() {
   writeQueue = writeQueue.then(async () => {
     const tempFile = `${dataFile}.${randomBytes(6).toString('hex')}.tmp`;
     await writeFile(tempFile, snapshot, 'utf8');
-    await rename(tempFile, dataFile);
+    let replaced = false;
+    for (let i = 0; i < 5; i++) {
+      try {
+        await rename(tempFile, dataFile);
+        replaced = true;
+        break;
+      } catch (rErr) {
+        if ((rErr.code === 'EPERM' || rErr.code === 'EBUSY') && i < 4) {
+          await new Promise(r => setTimeout(r, 20 * (i + 1)));
+        } else {
+          try {
+            await copyFile(tempFile, dataFile);
+            await unlink(tempFile).catch(() => {});
+            replaced = true;
+            break;
+          } catch {
+            throw rErr;
+          }
+        }
+      }
+    }
 
     if (pgPool) {
       try {
@@ -8634,6 +8654,7 @@ const server = createServer(async (req, res) => {
     if (await handleCrmRoutes(req, res, {
       method,
       pathname,
+      url,
       readBody,
       sendJson,
       state,
@@ -8644,7 +8665,13 @@ const server = createServer(async (req, res) => {
       agency,
       activeLocation,
       randomUUID,
-      parseCSV
+      parseCSV,
+      pgPool,
+      triggerWorkflowExecution,
+      dispatchZapierEvent,
+      zapierRepository,
+      syncRelationalWrite,
+      collections
     })) {
       return;
     }
