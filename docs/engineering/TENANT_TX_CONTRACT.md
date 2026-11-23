@@ -95,6 +95,11 @@ export function runInTenantTx<T>(
           [ Return Result / Re-throw Error ]
 ```
 
+6. **Error Isolation & Rollback Guarantees**:
+   - If an error occurs inside `work(tx)`, `ROLLBACK` is issued before releasing the client.
+   - If `ROLLBACK` fails, the original error is preserved and re-thrown without being masked by the secondary rollback failure.
+   - Context objects are frozen; properties cannot be mutated post-initialization.
+
 ---
 
 ## 5. Security & Isolation Guarantees

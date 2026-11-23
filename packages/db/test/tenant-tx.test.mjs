@@ -149,3 +149,105 @@ test('TenantTx properties are read-only and immutable', async () => {
     }, /Cannot set property/);
   });
 });
+
+test('runInTenantTx handles connection acquisition failure gracefully', async () => {
+  const pool = createMockPool({ shouldFailConnect: true });
+  const context = { agencyId: 'a1', locationId: 'l1', actorId: 'u1' };
+
+  await assert.rejects(
+    runInTenantTx(pool, context, async () => {}),
+    /Connection pool exhausted/
+  );
+  assert.equal(pool.isReleased, false);
+});
+
+test('runInTenantTx handles BEGIN failure and releases client', async () => {
+  const pool = createMockPool({
+    onQuery: (sql) => {
+      if (sql === 'BEGIN') throw new Error('BEGIN failed on database');
+      return { rows: [], rowCount: 0 };
+    }
+  });
+  const context = { agencyId: 'a1', locationId: 'l1', actorId: 'u1' };
+
+  await assert.rejects(
+    runInTenantTx(pool, context, async () => {}),
+    /BEGIN failed on database/
+  );
+  assert.equal(pool.isReleased, true);
+});
+
+test('runInTenantTx handles set_config failure, rolls back and releases client', async () => {
+  const pool = createMockPool({
+    onQuery: (sql) => {
+      if (sql.includes('set_config')) throw new Error('Tenant setting failed');
+      return { rows: [], rowCount: 0 };
+    }
+  });
+  const context = { agencyId: 'a1', locationId: 'l1', actorId: 'u1' };
+
+  await assert.rejects(
+    runInTenantTx(pool, context, async () => {}),
+    /Tenant setting failed/
+  );
+  assert.equal(pool.isReleased, true);
+  const sqls = pool.queryLog.map(q => q.sql);
+  assert.equal(sqls[0], 'BEGIN');
+  assert.ok(sqls[1].includes('set_config'));
+  assert.equal(sqls[2], 'ROLLBACK');
+});
+
+test('runInTenantTx handles COMMIT failure, rolls back and releases client', async () => {
+  const pool = createMockPool({
+    onQuery: (sql) => {
+      if (sql === 'COMMIT') throw new Error('Serialization failure on COMMIT');
+      return { rows: [], rowCount: 0 };
+    }
+  });
+  const context = { agencyId: 'a1', locationId: 'l1', actorId: 'u1' };
+
+  await assert.rejects(
+    runInTenantTx(pool, context, async () => {
+      return { ok: true };
+    }),
+    /Serialization failure on COMMIT/
+  );
+  assert.equal(pool.isReleased, true);
+  const sqls = pool.queryLog.map(q => q.sql);
+  assert.equal(sqls[sqls.length - 1], 'ROLLBACK');
+});
+
+test('runInTenantTx does not swallow original error when ROLLBACK itself fails', async () => {
+  const pool = createMockPool({
+    onQuery: (sql) => {
+      if (sql === 'ROLLBACK') throw new Error('Network dropped during ROLLBACK');
+      return { rows: [], rowCount: 0 };
+    }
+  });
+  const context = { agencyId: 'a1', locationId: 'l1', actorId: 'u1' };
+
+  await assert.rejects(
+    runInTenantTx(pool, context, async () => {
+      throw new Error('Original query exception');
+    }),
+    /Original query exception/
+  );
+  assert.equal(pool.isReleased, true);
+});
+
+test('runInTenantTx isolates tenant context from subsequent mutations of the input object', async () => {
+  const pool = createMockPool();
+  const context = { agencyId: 'original-agency', locationId: 'original-loc', actorId: 'original-user' };
+
+  await runInTenantTx(pool, context, async (tx) => {
+    // Mutate the original context object externally
+    context.agencyId = 'mutated-agency';
+    context.locationId = 'mutated-loc';
+    context.actorId = 'mutated-user';
+
+    assert.equal(tx.agencyId, 'original-agency');
+    assert.equal(tx.locationId, 'original-loc');
+    assert.equal(tx.actorId, 'original-user');
+    assert.equal(tx.context.agencyId, 'original-agency');
+  });
+});

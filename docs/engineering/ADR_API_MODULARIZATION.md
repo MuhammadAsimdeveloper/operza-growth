@@ -26,8 +26,10 @@ We decide to:
 2. **Establish the `TenantTx` Boundary**:
    Introduce a standardized, secure `TenantTx` transactional runner in `packages/db/lib/tenant-tx.mjs`. All database interactions in domain repositories must occur through an explicit, validated `TenantTx` containing `agencyId`, `locationId`, and `actorId`.
 3. **Execute One Clean Vertical Slice (Contacts Domain)**:
-   Extract a dedicated `ContactsRepository` in `packages/db/lib/contacts-repository.mjs`. All contact operations (CRUD, filtering, sorting, pagination, bulk operations) must execute through this repository via `TenantTx`.
-4. **Preserve Wire Compatibility**:
+   Extract a dedicated `ContactsRepository` in `packages/db/lib/contacts-repository.mjs` and dedicated router in `apps/api/routes/contacts.mjs`. All contact operations (CRUD, filtering, sorting, pagination, bulk operations, atomic merge, timeline, portal access) execute through this repository via `TenantTx`.
+4. **Authoritative Persistence (Zero Dual-Truth)**:
+   When `pgPool` is present, PostgreSQL is the sole authoritative persistence layer. JSON fallback/mirroring is prohibited for database-backed environments and strictly reserved for zero-config local development without a database (`!pgPool`).
+5. **Preserve Wire Compatibility**:
    Maintain 100% backward compatibility for all existing API routes (`GET/POST/PUT/DELETE /api/crm/contacts`, `/api/crm/contacts/bulk-tag`, etc.) and response payloads.
 
 ---

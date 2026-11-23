@@ -8303,25 +8303,6 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, blog });
     }
 
-    // Contact Client Portal Access Toggle
-    if (method === 'PUT' && pathname.startsWith('/api/crm/contacts/') && pathname.endsWith('/portal-access')) {
-      const contactId = pathname.replace('/api/crm/contacts/', '').replace('/portal-access', '').trim();
-      const contact = (state.records.contacts || []).find(c => c.id === contactId && c.agencyId === agency.id);
-      if (!contact) {
-        return sendJson(res, 404, { error: 'Contact not found' });
-      }
-
-      const body = await readBody(req);
-      const granted = body.portalAccess !== undefined ? Boolean(body.portalAccess) : true;
-      contact.portalAccess = granted;
-
-      await saveState();
-      broadcast('contact.portalAccess.updated', { contactId: contact.id, portalAccess: granted });
-      auditLog('contact.portal_access', actor, { contactId: contact.id, granted });
-
-      return sendJson(res, 200, { success: true, contactId: contact.id, portalAccess: granted });
-    }
-
     // ═════════════════════════════════════════════════════════════
     // ─── TELEPHONY CALL STATUS & HANDLED TOGGLE ─────────────────
     // ═════════════════════════════════════════════════════════════
