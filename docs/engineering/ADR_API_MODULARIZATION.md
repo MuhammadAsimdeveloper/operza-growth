@@ -31,6 +31,8 @@ We decide to:
    When `pgPool` is present, PostgreSQL is the sole authoritative persistence layer. JSON fallback/mirroring is prohibited for database-backed environments and strictly reserved for zero-config local development without a database (`!pgPool`).
 5. **Preserve Wire Compatibility**:
    Maintain 100% backward compatibility for all existing API routes (`GET/POST/PUT/DELETE /api/crm/contacts`, `/api/crm/contacts/bulk-tag`, etc.) and response payloads.
+6. **Modularize Opportunities Domain (Phase 1.3)**:
+   Extract `OpportunitiesRepository` in `packages/db/lib/opportunities-repository.mjs` and dedicated router in `apps/api/routes/opportunities.mjs`. All opportunity operations (CRUD, stage updates, summary aggregation, sorting allowlist) execute via `TenantTx` against the PostgreSQL `opportunities` table with forced RLS. Zero dual-writing to `state.records.opportunities` when `pgPool` is configured.
 
 ---
 

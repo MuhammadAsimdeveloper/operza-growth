@@ -43,6 +43,7 @@ This document provides a comprehensive structural mapping of the Operza Growth A
                       +---------------------------------------+
                       |          Domain Route Handlers        |
                       |   - apps/api/routes/contacts.mjs      |
+                      |   - apps/api/routes/opportunities.mjs |
                       |   - apps/api/routes/crm.mjs           |
                       |   - apps/api/routes/auth.mjs          |
                       |   - apps/api/routes/agency.mjs        |
@@ -157,12 +158,12 @@ Operza utilizes a managed `pg.Pool` with strict least-privilege role boundaries 
 
 ## 6. Modular Domain Architecture Evolution
 
-Phase 1.1 and 1.2 initiate the modular breakdown of the monolithic route handling:
+Phase 1.1 through 1.3 execute the modular breakdown of monolithic route handling:
 
 | Domain | Status | Target Module | Repository |
 |---|---|---|---|
 | **Contacts** | **Fully Modularized & Certified** | `apps/api/routes/contacts.mjs` | `ContactsRepository` with `TenantTx` (CRUD, merge, timeline, bulkTag, portal-access, import, export-csv) |
-| **Opportunities** | Phase 1.3 | `apps/api/routes/opportunities.mjs` | `OpportunitiesRepository` |
-| **Calendars & Appointments** | Phase 1.3 | `apps/api/routes/scheduling.mjs` | `SchedulingRepository` |
-| **Workflows & Executions** | Phase 1.4 | `apps/api/routes/workflows.mjs` | `WorkflowRepository` |
+| **Opportunities** | **Fully Modularized & Certified** | `apps/api/routes/opportunities.mjs` | `OpportunitiesRepository` with `TenantTx` (CRUD, stage updates, summary, sort allowlist) |
+| **Calendars & Appointments** | Phase 1.4 | `apps/api/routes/scheduling.mjs` | `SchedulingRepository` |
+| **Workflows & Executions** | Phase 1.5 | `apps/api/routes/workflows.mjs` | `WorkflowRepository` |
 | **Integrations & Secrets** | Completed (Phase 0) | `packages/platform-core/secret-vault.mjs` | `SecretVaultRepository` |

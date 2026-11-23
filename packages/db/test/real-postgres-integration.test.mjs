@@ -463,6 +463,91 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       auditClient.release();
     }
 
+    // 7. Phase 1.3 Pre-Flight: Real PostgreSQL ContactsRepository.merge & Opportunities Relational Re-link and Rollback Certification
+    const mergeClient = await pool.connect();
+    try {
+      await mergeClient.query('SET ROLE operza_app');
+      await mergeClient.query('BEGIN');
+      await mergeClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)", [agencyA, locA1, '00000000-0000-4000-8000-000000000001']);
+
+      const primaryContactId = randomUUID();
+      const secondaryContactId = randomUUID();
+      const relOppId = randomUUID();
+
+      // Seed primary contact in location_records
+      await mergeClient.query(`
+        INSERT INTO location_records (id, agency_id, location_id, collection, body, version, created_at, updated_at)
+        VALUES ($1, $2, $3, 'contacts', $4, 1, now(), now())
+      `, [primaryContactId, agencyA, locA1, JSON.stringify({ firstName: 'Primary', lastName: 'Leader', email: 'primary@lead.io' })]);
+
+      // Seed secondary contact in location_records
+      await mergeClient.query(`
+        INSERT INTO location_records (id, agency_id, location_id, collection, body, version, created_at, updated_at)
+        VALUES ($1, $2, $3, 'contacts', $4, 1, now(), now())
+      `, [secondaryContactId, agencyA, locA1, JSON.stringify({ firstName: 'Secondary', lastName: 'Dupe', email: 'dupe@lead.io' })]);
+
+      // Seed opportunity linked to secondary contact
+      await mergeClient.query(`
+        INSERT INTO opportunities (id, agency_id, location_id, pipeline_id, stage_id, contact_id, name, value, status)
+        VALUES ($1, $2, $3, 'p-real', 's-real', $4, 'Relational Merge Opportunity', 25000, 'open')
+      `, [relOppId, agencyA, locA1, secondaryContactId]);
+
+      // Wrap mergeClient in mock tx for ContactsRepository.merge
+      const mockTx = {
+        agencyId: agencyA,
+        locationId: locA1,
+        actorId: '00000000-0000-4000-8000-000000000001',
+        query: (sql, params) => mergeClient.query(sql, params)
+      };
+
+      const { createContactsRepository } = await import('../lib/contacts-repository.mjs');
+      const contactsRepo = createContactsRepository();
+
+      // Execute merge on real PostgreSQL
+      const merged = await contactsRepo.merge(mockTx, { primaryId: primaryContactId, mergeIds: [secondaryContactId] });
+      assert.equal(merged.id, primaryContactId);
+
+      // Verify on real PostgreSQL: Opportunity's contact_id is now updated to primaryContactId
+      const oppAfterMerge = await mergeClient.query('SELECT contact_id FROM opportunities WHERE id = $1', [relOppId]);
+      assert.equal(oppAfterMerge.rows[0].contact_id, primaryContactId, 'Opportunity contact_id must be re-linked to primary contact on real PostgreSQL');
+
+      // Verify on real PostgreSQL: Secondary contact is deleted
+      const secCheck = await mergeClient.query("SELECT * FROM location_records WHERE id = $1 AND collection = 'contacts'", [secondaryContactId]);
+      assert.equal(secCheck.rowCount, 0, 'Secondary contact must be deleted from location_records on real PostgreSQL');
+
+      // Rollback to leave database pristine
+      await mergeClient.query('ROLLBACK');
+
+      // Negative Rollback Test: Attempt merge with non-existent secondary contact -> must throw and leave opportunity untouched
+      await mergeClient.query('BEGIN');
+      await mergeClient.query("SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)", [agencyA, locA1, '00000000-0000-4000-8000-000000000001']);
+
+      const testPrimaryId = randomUUID();
+      const testOppId = randomUUID();
+      const nonExistentId = randomUUID();
+
+      await mergeClient.query(`
+        INSERT INTO location_records (id, agency_id, location_id, collection, body, version, created_at, updated_at)
+        VALUES ($1, $2, $3, 'contacts', $4, 1, now(), now())
+      `, [testPrimaryId, agencyA, locA1, JSON.stringify({ firstName: 'Test', lastName: 'Rollback', email: 'rollback@lead.io' })]);
+
+      await mergeClient.query(`
+        INSERT INTO opportunities (id, agency_id, location_id, pipeline_id, stage_id, contact_id, name, value, status)
+        VALUES ($1, $2, $3, 'p-real', 's-real', $4, 'Pre-Rollback Opp', 10000, 'open')
+      `, [testOppId, agencyA, locA1, testPrimaryId]);
+
+      await assert.rejects(
+        () => contactsRepo.merge(mockTx, { primaryId: testPrimaryId, mergeIds: [nonExistentId] }),
+        /CONTACT_NOT_FOUND/
+      );
+
+      await mergeClient.query('ROLLBACK');
+    } finally {
+      await mergeClient.query('ROLLBACK').catch(() => {});
+      await mergeClient.query('RESET ROLE').catch(() => {});
+      mergeClient.release();
+    }
+
     console.log('[REAL-PG-TEST] All real PostgreSQL RLS and least-privilege checks passed successfully.');
   } finally {
     await pool.end();

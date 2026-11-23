@@ -54,6 +54,7 @@ import { handleSystemRoutes } from './routes/system.mjs';
 import { handleAuthRoutes } from './routes/auth.mjs';
 import { handleAgencyRoutes } from './routes/agency.mjs';
 import { handleCrmRoutes } from './routes/crm.mjs';
+import { handleOpportunitiesRoutes } from './routes/opportunities.mjs';
 import { parseAndValidateCsvImport, exportContactsToCsv } from '../../packages/platform-core/src/csv-transfer.mjs';
 import { createSmartListView, matchesSmartListView, filterSmartListRecords, generateSmartListSql } from '../../packages/platform-core/src/crm-views-store.mjs';
 import { createDefaultLLMRuntime } from '../../packages/platform-core/src/llm-runtime/index.mjs';
@@ -8655,6 +8656,36 @@ const server = createServer(async (req, res) => {
       collections
     })) {
       return;
+    }
+    if (res.headersSent) {
+      return;
+    }
+
+    if (pathname.startsWith('/api/opportunities')) {
+      if (await handleOpportunitiesRoutes(req, res, {
+        method,
+        pathname,
+        url,
+        readBody,
+        sendJson,
+        state,
+        saveState,
+        auditLog,
+        broadcast,
+        actor,
+        agency,
+        activeLocation,
+        randomUUID,
+        parseCSV,
+        pgPool,
+        triggerWorkflowExecution,
+        dispatchZapierEvent,
+        zapierRepository,
+        syncRelationalWrite,
+        collections
+      })) {
+        return;
+      }
     }
     if (res.headersSent) {
       return;

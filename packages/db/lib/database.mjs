@@ -49,4 +49,5 @@ export async function closePool() { if (pool) { const current = pool; pool = und
 
 export { TenantTx, runInTenantTx, createTenantTxRunner } from './tenant-tx.mjs';
 export { createContactsRepository } from './contacts-repository.mjs';
+export { createOpportunitiesRepository } from './opportunities-repository.mjs';
 

@@ -9,6 +9,7 @@
 
 import { createSmartListView, filterSmartListRecords } from '../../../packages/platform-core/src/crm-views-store.mjs';
 import { handleContactsRoutes } from './contacts.mjs';
+import { handleOpportunitiesRoutes } from './opportunities.mjs';
 
 export async function handleCrmRoutes(req, res, ctx) {
   const {
@@ -39,6 +40,11 @@ export async function handleCrmRoutes(req, res, ctx) {
 
   // Delegate contacts domain operations to dedicated contacts router
   if (await handleContactsRoutes(req, res, ctx)) {
+    return true;
+  }
+
+  // Delegate opportunities domain operations to dedicated opportunities router
+  if (await handleOpportunitiesRoutes(req, res, ctx)) {
     return true;
   }
 
