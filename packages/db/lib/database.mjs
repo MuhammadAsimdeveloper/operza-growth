@@ -51,4 +51,5 @@ export { TenantTx, runInTenantTx, createTenantTxRunner } from './tenant-tx.mjs';
 export { createContactsRepository } from './contacts-repository.mjs';
 export { createOpportunitiesRepository } from './opportunities-repository.mjs';
 export { createSchedulingRepository } from './scheduling-repository.mjs';
+export { createWorkflowsRepository } from './workflows-repository.mjs';
 

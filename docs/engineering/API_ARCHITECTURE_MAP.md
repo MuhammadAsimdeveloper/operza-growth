@@ -165,5 +165,5 @@ Phase 1.1 through 1.3 execute the modular breakdown of monolithic route handling
 | **Contacts** | **Fully Modularized & Certified** | `apps/api/routes/contacts.mjs` | `ContactsRepository` with `TenantTx` (CRUD, merge, timeline, bulkTag, portal-access, import, export-csv) |
 | **Opportunities** | **Fully Modularized & Certified** | `apps/api/routes/opportunities.mjs` | `OpportunitiesRepository` with `TenantTx` (CRUD, stage updates, summary, sort allowlist) |
 | **Calendars & Appointments** | **Fully Modularized & Certified** | `apps/api/routes/scheduling.mjs` | `SchedulingRepository` with `TenantTx` (Calendars CRUD, Appointments CRUD, GiST Concurrency, Public Booking, 2-Way Sync) |
-| **Workflows & Executions** | Phase 1.5 | `apps/api/routes/workflows.mjs` | `WorkflowRepository` |
+| **Workflows & Executions** | **Fully Modularized & Certified** | `apps/api/routes/workflows.mjs` | `WorkflowsRepository` with `TenantTx` (Definitions CRUD, Executions, Steps, Approvals, Tick, Single-Node Testing) |
 | **Integrations & Secrets** | Completed (Phase 0) | `packages/platform-core/secret-vault.mjs` | `SecretVaultRepository` |

@@ -11,6 +11,7 @@ import { createSmartListView, filterSmartListRecords } from '../../../packages/p
 import { handleContactsRoutes } from './contacts.mjs';
 import { handleOpportunitiesRoutes } from './opportunities.mjs';
 import { handleSchedulingRoutes } from './scheduling.mjs';
+import { handleWorkflowsRoutes } from './workflows.mjs';
 
 export async function handleCrmRoutes(req, res, ctx) {
   const {
@@ -51,6 +52,11 @@ export async function handleCrmRoutes(req, res, ctx) {
 
   // Delegate scheduling domain operations to dedicated scheduling router
   if (await handleSchedulingRoutes(req, res, ctx)) {
+    return true;
+  }
+
+  // Delegate workflows domain operations to dedicated workflows router
+  if (await handleWorkflowsRoutes(req, res, ctx)) {
     return true;
   }
 
