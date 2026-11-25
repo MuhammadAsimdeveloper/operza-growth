@@ -33,6 +33,8 @@ We decide to:
    Maintain 100% backward compatibility for all existing API routes (`GET/POST/PUT/DELETE /api/crm/contacts`, `/api/crm/contacts/bulk-tag`, etc.) and response payloads.
 6. **Modularize Opportunities Domain (Phase 1.3)**:
    Extract `OpportunitiesRepository` in `packages/db/lib/opportunities-repository.mjs` and dedicated router in `apps/api/routes/opportunities.mjs`. All opportunity operations (CRUD, stage updates, summary aggregation, sorting allowlist) execute via `TenantTx` against the PostgreSQL `opportunities` table with forced RLS. Zero dual-writing to `state.records.opportunities` when `pgPool` is configured.
+7. **Modularize Scheduling Domain (Phase 1.4)**:
+   Extract `SchedulingRepository` in `packages/db/lib/scheduling-repository.mjs` and dedicated router in `apps/api/routes/scheduling.mjs`. All calendar and appointment operations (CRUD, GiST half-open interval concurrency isolation, public booking ingress, 2-way Google/Outlook sync) execute via `TenantTx` against `calendars` and `appointments` tables with forced RLS. Double-booking errors (`23P01`) map to HTTP 409 `SLOT_CONFLICT`. Zero dual-writing to `state.records.calendars` or `state.records.appointments` when `pgPool` is configured.
 
 ---
 

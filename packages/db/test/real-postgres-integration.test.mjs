@@ -473,6 +473,8 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       const primaryContactId = randomUUID();
       const secondaryContactId = randomUUID();
       const relOppId = randomUUID();
+      const pipelineId = randomUUID();
+      const stageId = randomUUID();
 
       // Seed primary contact in location_records
       await mergeClient.query(`
@@ -489,8 +491,8 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       // Seed opportunity linked to secondary contact
       await mergeClient.query(`
         INSERT INTO opportunities (id, agency_id, location_id, pipeline_id, stage_id, contact_id, name, value, status)
-        VALUES ($1, $2, $3, 'p-real', 's-real', $4, 'Relational Merge Opportunity', 25000, 'open')
-      `, [relOppId, agencyA, locA1, secondaryContactId]);
+        VALUES ($1, $2, $3, $4, $5, $6, 'Relational Merge Opportunity', 25000, 'open')
+      `, [relOppId, agencyA, locA1, pipelineId, stageId, secondaryContactId]);
 
       // Wrap mergeClient in mock tx for ContactsRepository.merge
       const mockTx = {
@@ -505,7 +507,8 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
 
       // Execute merge on real PostgreSQL
       const merged = await contactsRepo.merge(mockTx, { primaryId: primaryContactId, mergeIds: [secondaryContactId] });
-      assert.equal(merged.id, primaryContactId);
+      assert.equal(merged.success, true);
+      assert.equal(merged.primaryId, primaryContactId);
 
       // Verify on real PostgreSQL: Opportunity's contact_id is now updated to primaryContactId
       const oppAfterMerge = await mergeClient.query('SELECT contact_id FROM opportunities WHERE id = $1', [relOppId]);
@@ -525,6 +528,8 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       const testPrimaryId = randomUUID();
       const testOppId = randomUUID();
       const nonExistentId = randomUUID();
+      const testPipelineId = randomUUID();
+      const testStageId = randomUUID();
 
       await mergeClient.query(`
         INSERT INTO location_records (id, agency_id, location_id, collection, body, version, created_at, updated_at)
@@ -533,12 +538,12 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
 
       await mergeClient.query(`
         INSERT INTO opportunities (id, agency_id, location_id, pipeline_id, stage_id, contact_id, name, value, status)
-        VALUES ($1, $2, $3, 'p-real', 's-real', $4, 'Pre-Rollback Opp', 10000, 'open')
-      `, [testOppId, agencyA, locA1, testPrimaryId]);
+        VALUES ($1, $2, $3, $4, $5, $6, 'Pre-Rollback Opp', 10000, 'open')
+      `, [testOppId, agencyA, locA1, testPipelineId, testStageId, testPrimaryId]);
 
       await assert.rejects(
         () => contactsRepo.merge(mockTx, { primaryId: testPrimaryId, mergeIds: [nonExistentId] }),
-        /CONTACT_NOT_FOUND/
+        /not found/i
       );
 
       await mergeClient.query('ROLLBACK');

@@ -55,6 +55,7 @@ import { handleAuthRoutes } from './routes/auth.mjs';
 import { handleAgencyRoutes } from './routes/agency.mjs';
 import { handleCrmRoutes } from './routes/crm.mjs';
 import { handleOpportunitiesRoutes } from './routes/opportunities.mjs';
+import { handleSchedulingRoutes } from './routes/scheduling.mjs';
 import { parseAndValidateCsvImport, exportContactsToCsv } from '../../packages/platform-core/src/csv-transfer.mjs';
 import { createSmartListView, matchesSmartListView, filterSmartListRecords, generateSmartListSql } from '../../packages/platform-core/src/crm-views-store.mjs';
 import { createDefaultLLMRuntime } from '../../packages/platform-core/src/llm-runtime/index.mjs';
@@ -3433,318 +3434,33 @@ const server = createServer(async (req, res) => {
       return res.end();
     }
 
-    // Public Calendar Lookup
-    if (method === 'GET' && pathname.startsWith('/api/calendars/public/')) {
-      const idOrSlug = pathname.replace('/api/calendars/public/', '').trim();
-      let calendars = state.records.calendars || [];
-      let cal = calendars.find(c => (c.id === idOrSlug || c.slug === idOrSlug) && c.status !== 'inactive');
-      if (!cal && pgPool) {
-        try {
-          let calRes;
-          try {
-            calRes = await pgPool.query(
-              "SELECT * FROM lookup_public_calendar($1)",
-              [idOrSlug]
-            );
-          } catch {
-            calRes = await pgPool.query(
-              "SELECT * FROM calendars WHERE (id::text = $1 OR slug = $1) AND status != 'inactive' LIMIT 1",
-              [idOrSlug]
-            );
-          }
-          if (calRes.rows.length > 0) {
-            const row = calRes.rows[0];
-            cal = {
-              id: row.id,
-              agencyId: row.agency_id,
-              locationId: row.location_id,
-              name: row.name,
-              slug: row.slug,
-              durationMin: row.duration_min,
-              status: row.status,
-              availability: row.availability || []
-            };
-            state.records.calendars = state.records.calendars || [];
-            if (!state.records.calendars.some(c => c.id === cal.id)) {
-              state.records.calendars.push(cal);
-            }
-          }
-        } catch {}
-      }
-      if (!cal) return sendJson(res, 404, { error: 'Calendar not found or inactive' });
-
-      // Generate standard slots if query date is provided
-      const dateParam = url.searchParams.get('date');
-      let slots = ['09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30'];
-      if (dateParam) {
-        const bookedStarts = (state.records.appointments || [])
-          .filter(a => a.calendarId === cal.id && a.startsAt && a.startsAt.startsWith(dateParam) && a.status !== 'cancelled')
-          .map(a => a.startsAt.split('T')[1]?.slice(0, 5));
-
-        if (pgPool) {
-          try {
-            const client = await pgPool.connect();
-            try {
-              await client.query("SELECT set_config('app.agency_id', $1, true)", [String(cal.agencyId)]);
-              await client.query("SELECT set_config('app.location_id', $1, true)", [String(cal.locationId)]);
-              const pgAppts = await client.query(
-                "SELECT starts_at FROM appointments WHERE calendar_id = $1 AND starts_at::text LIKE $2 AND status != 'cancelled'",
-                [cal.id, `${dateParam}%`]
-              );
-              for (const r of pgAppts.rows) {
-                const tp = new Date(r.starts_at).toISOString().split('T')[1]?.slice(0, 5);
-                if (tp && !bookedStarts.includes(tp)) bookedStarts.push(tp);
-              }
-            } finally {
-              client.release();
-            }
-          } catch {}
-        }
-
-        // Filter out 2-way synced external busy blocks (e.g. Google Calendar / Outlook 365)
-        const externalBusy = (cal.externalBusyBlocks || [])
-          .filter(b => b.start && b.start.startsWith(dateParam))
-          .map(b => b.start.split('T')[1]?.slice(0, 5));
-
-        const blockedSet = new Set([...bookedStarts, ...externalBusy]);
-        slots = slots.filter(s => !blockedSet.has(s));
-      }
-
-      return sendJson(res, 200, {
-        id: cal.id,
-        name: cal.name,
-        slug: cal.slug,
-        color: cal.color || '#6366f1',
-        durationMin: cal.durationMin || 30,
-        description: cal.description || '',
-        availability: cal.availability || [],
-        availableSlots: slots,
-        slots
-      });
-    }
-
-    // Public Calendar Booking Ingress -> Create Appointment + Contact + Prep Task + Trigger Workflow
-    if (method === 'POST' && pathname.startsWith('/api/calendars/book/')) {
-      const idOrSlug = pathname.replace('/api/calendars/book/', '').trim();
-      let calendars = state.records.calendars || [];
-      let cal = calendars.find(c => (c.id === idOrSlug || c.slug === idOrSlug) && c.status !== 'inactive');
-      if (!cal && pgPool) {
-        try {
-          let calRes;
-          try {
-            calRes = await pgPool.query(
-              "SELECT * FROM lookup_public_calendar($1)",
-              [idOrSlug]
-            );
-          } catch {
-            calRes = await pgPool.query(
-              "SELECT * FROM calendars WHERE (id::text = $1 OR slug = $1) AND status != 'inactive' LIMIT 1",
-              [idOrSlug]
-            );
-          }
-          if (calRes.rows.length > 0) {
-            const row = calRes.rows[0];
-            cal = {
-              id: row.id,
-              agencyId: row.agency_id,
-              locationId: row.location_id,
-              name: row.name,
-              slug: row.slug,
-              durationMin: row.duration_min,
-              status: row.status,
-              availability: row.availability || []
-            };
-            state.records.calendars = state.records.calendars || [];
-            if (!state.records.calendars.some(c => c.id === cal.id)) {
-              state.records.calendars.push(cal);
-            }
-          }
-        } catch {}
-      }
-      if (!cal) return sendJson(res, 404, { error: 'Calendar not found or inactive' });
-
-      const body = await readBody(req);
-      if (body.website || body.hp || body.company_fax) {
-        return sendJson(res, 400, { error: 'Bot submission rejected', code: 'BOT_SUBMISSION_REJECTED' });
-      }
-      const { name, email, phone, date, timeSlot, notes } = body;
-      if (!name || !email || !date || !timeSlot) {
-        return sendJson(res, 400, { error: 'Name, email, date, and timeSlot are required.' });
-      }
-
-      const emailKey = String(email).toLowerCase().trim();
-      const nameParts = String(name).trim().split(/\s+/);
-      const firstName = nameParts[0] || 'Valued';
-      const lastName = nameParts.slice(1).join(' ') || 'Client';
-
-      let contact = (state.records.contacts || []).find(
-        c => c.agencyId === cal.agencyId && c.locationId === cal.locationId && c.email === emailKey
-      );
-
-      if (!contact) {
-        contact = {
-          id: randomUUID(),
-          agencyId: cal.agencyId,
-          locationId: cal.locationId,
-          firstName,
-          lastName,
-          email: emailKey,
-          phone: phone || '',
-          source: `Calendar: ${cal.name}`,
-          tags: ['booked-call', cal.slug || 'discovery'],
-          status: 'lead',
-          createdAt: new Date().toISOString()
-        };
-      } else {
-        contact.tags = contact.tags || [];
-        if (!contact.tags.includes('booked-call')) contact.tags.push('booked-call');
-        if (phone && !contact.phone) contact.phone = phone;
-      }
-
-      const apptId = randomUUID();
-      const startTime = `${date}T${timeSlot}:00.000Z`;
-      const durationMin = cal.durationMin || 30;
-      const endTime = new Date(new Date(startTime).getTime() + durationMin * 60000).toISOString();
-      const appointment = {
-        id: apptId,
-        agencyId: cal.agencyId,
-        locationId: cal.locationId,
-        calendarId: cal.id,
-        contactId: contact.id,
-        title: `${cal.name} with ${firstName} ${lastName}`,
-        contactName: `${firstName} ${lastName}`,
-        calendar: cal.name,
-        startsAt: startTime,
-        endsAt: endTime,
-        status: 'confirmed',
-        assignedTo: cal.roundRobin ? 'Growth Lead' : 'Lead Specialist',
-        notes: notes || '',
-        createdAt: new Date().toISOString()
-      };
-
-      // ─────────────────────────────────────────────────────────────
-      // Authoritative PostgreSQL Transactional Reservation
-      // ─────────────────────────────────────────────────────────────
-      if (pgPool) {
-        const client = await pgPool.connect();
-        try {
-          await client.query('BEGIN');
-          await client.query("SELECT set_config('app.agency_id', $1, true)", [String(cal.agencyId)]);
-          await client.query("SELECT set_config('app.location_id', $1, true)", [String(cal.locationId)]);
-
-          // Ensure parent agency and location exist in relational tables for FK integrity
-          await client.query(`
-            INSERT INTO agencies (id, name, slug)
-            VALUES ($1, 'Agency', $2)
-            ON CONFLICT (id) DO NOTHING
-          `, [cal.agencyId, 'agency-' + String(cal.agencyId).slice(0, 8)]);
-
-          await client.query(`
-            INSERT INTO locations (id, agency_id, name)
-            VALUES ($1, $2, 'Main Location')
-            ON CONFLICT (agency_id, id) DO NOTHING
-          `, [cal.locationId, cal.agencyId]);
-
-          // Synchronously reserve appointment with GiST exclusion constraint enforcement
-          await client.query(`
-            INSERT INTO appointments (
-              id, agency_id, location_id, calendar_id, contact_id, title, starts_at, ends_at, status, notes, created_at, updated_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'confirmed', $9, now(), now())
-          `, [
-            apptId,
-            cal.agencyId,
-            cal.locationId,
-            cal.id,
-            contact.id,
-            appointment.title,
-            startTime,
-            endTime,
-            notes || ''
-          ]);
-
-          await client.query('COMMIT');
-        } catch (dbErr) {
-          await client.query('ROLLBACK').catch(() => {});
-          if (dbErr.code === '23P01' || dbErr.message?.includes('exclude_overlapping_active_appointments')) {
-            return sendJson(res, 409, {
-              error: 'This time slot is no longer available. Please choose another time.',
-              code: 'SLOT_CONFLICT'
-            });
-          }
-          throw dbErr;
-        } finally {
-          client.release();
-        }
-      } else {
-        // Fallback for standalone in-memory mode without PostgreSQL configured
-        const isSlotConflict = (state.records.appointments || []).some(
-          a => a.calendarId === cal.id && a.startsAt.startsWith(date) && a.startsAt.includes(`T${timeSlot}:`) && a.status !== 'cancelled'
-        );
-        if (isSlotConflict) {
-          return sendJson(res, 409, { error: 'This time slot is no longer available. Please choose another time.' });
-        }
-      }
-
-      // Synchronize in-memory representation post-commit
-      state.records.contacts = state.records.contacts || [];
-      if (!state.records.contacts.some(c => c.id === contact.id)) {
-        state.records.contacts.push(contact);
-      }
-      state.records.appointments = state.records.appointments || [];
-      state.records.appointments.push(appointment);
-
-      const taskId = randomUUID();
-      const prepTask = {
-        id: taskId,
-        agencyId: cal.agencyId,
-        locationId: cal.locationId,
-        title: `Prepare discovery notes for ${firstName} ${lastName}`,
-        contactId: contact.id,
-        dueDate: startTime,
-        priority: 'high',
-        status: 'pending',
-        assignedTo: appointment.assignedTo,
-        notes: `Automated booking prep task. Meeting scheduled for ${date} at ${timeSlot}. Attendee notes: ${notes || 'None'}`,
-        createdAt: new Date().toISOString()
-      };
-      state.records.tasks = state.records.tasks || [];
-      state.records.tasks.push(prepTask);
-
-      await saveState();
-
-      broadcast('crm.appointment.created', { id: apptId, title: appointment.title, startsAt: startTime, contactId: contact.id });
-      broadcast('crm.task.created', { id: taskId, title: prepTask.title });
-
-      triggerWorkflowExecution({
-        agencyId: cal.agencyId,
-        locationId: cal.locationId,
-        triggerType: 'appointment',
-        triggerContext: { calendar: cal, appointment, contact, prepTask }
-      }).catch(err => console.error('Appointment workflow trigger failed:', err));
-
-      dispatchZapierEvent({
-        zapierRepository,
+    // Public Calendar Lookup & Booking Ingress (Delegated to Scheduling Router)
+    if (pathname.startsWith('/api/calendars/public/') || pathname.startsWith('/api/calendars/book/')) {
+      if (await handleSchedulingRoutes(req, res, {
+        method,
+        pathname,
+        url,
+        readBody,
+        sendJson,
         state,
-        agencyId: cal.agencyId,
-        locationId: cal.locationId,
-        event: 'appointment.booked',
-        data: {
-          appointmentId: appointment.id,
-          calendarName: cal.name,
-          contactName: `${firstName} ${lastName}`,
-          contactEmail: contact.email,
-          scheduledAt: appointment.startsAt,
-          status: appointment.status
-        }
-      }).catch(console.error);
-
-      return sendJson(res, 201, {
-        success: true,
-        message: 'Appointment successfully confirmed.',
-        appointment,
-        contact,
-        prepTask
-      });
+        saveState,
+        auditLog,
+        broadcast,
+        actor: undefined,
+        agency: undefined,
+        activeLocation: undefined,
+        randomUUID,
+        pgPool,
+        triggerWorkflowExecution,
+        dispatchZapierEvent,
+        zapierRepository,
+        syncRelationalWrite,
+        secretResolver,
+        effectiveVaultKey,
+        isProd
+      })) {
+        return;
+      }
     }
 
     // Public Payment Link Lookup
@@ -5626,6 +5342,26 @@ const server = createServer(async (req, res) => {
           });
         }
       }
+      if (pathname.startsWith('/api/crm/calendars') || (pathname.startsWith('/api/calendars') && !pathname.startsWith('/api/calendars/public') && !pathname.startsWith('/api/calendars/book'))) {
+        const requiredScope = (method === 'GET' || method === 'HEAD') ? 'calendars:read' : 'calendars:write';
+        if (!checkApiKeyScope(actor, requiredScope) && !checkApiKeyScope(actor, (method === 'GET' || method === 'HEAD') ? 'scheduling:read' : 'scheduling:write')) {
+          return sendJson(res, 403, {
+            error: `Insufficient API key scope. Required: '${requiredScope}'`,
+            code: 'INSUFFICIENT_SCOPES',
+            requiredScope
+          });
+        }
+      }
+      if (pathname.startsWith('/api/crm/appointments') || pathname.startsWith('/api/appointments')) {
+        const requiredScope = (method === 'GET' || method === 'HEAD') ? 'appointments:read' : 'appointments:write';
+        if (!checkApiKeyScope(actor, requiredScope) && !checkApiKeyScope(actor, (method === 'GET' || method === 'HEAD') ? 'scheduling:read' : 'scheduling:write')) {
+          return sendJson(res, 403, {
+            error: `Insufficient API key scope. Required: '${requiredScope}'`,
+            code: 'INSUFFICIENT_SCOPES',
+            requiredScope
+          });
+        }
+      }
       if (pathname.startsWith('/api/workflows') && method === 'POST') {
         if (!checkApiKeyScope(actor, 'workflows:trigger') && !checkApiKeyScope(actor, 'workflows:write')) {
           return sendJson(res, 403, {
@@ -7097,635 +6833,34 @@ const server = createServer(async (req, res) => {
     }
 
     // ═════════════════════════════════════════════════════════════
-    // ─── 2-WAY CALENDAR SYNC (Google Calendar & Outlook 365) ───
+    // ─── 2-WAY CALENDAR SYNC & OAUTH (DELEGATED TO SCHEDULING ROUTER) ───
     // ═════════════════════════════════════════════════════════════
-
-    // GET /api/calendars/:id/oauth/start — Begin Calendar OAuth flow (Google or Outlook)
-    if (method === 'GET' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/oauth/start')) {
-      const calId = pathname.replace('/api/calendars/', '').replace('/oauth/start', '').trim();
-      let calendars = state.records.calendars || [];
-      let cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
-      if (!cal && pgPool) {
-        const calRes = await pgPool.query('SELECT * FROM calendars WHERE agency_id = $1 AND id = $2', [agency.id, calId]);
-        if (calRes.rows.length > 0) {
-          const row = calRes.rows[0];
-          cal = {
-            id: row.id,
-            agencyId: row.agency_id,
-            locationId: row.location_id,
-            name: row.name,
-            slug: row.slug,
-            durationMin: row.duration_min,
-            status: row.status,
-            availability: row.availability || {},
-            externalSync: row.availability?.externalSync || null,
-            externalBusyBlocks: row.availability?.externalBusyBlocks || []
-          };
-          calendars.push(cal);
-        }
-      }
-      if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
-
-      if (!activeLocation?.id) {
-        return sendJson(res, 400, {
-          error: 'Active location is required for calendar operations',
-          code: 'LOCATION_REQUIRED'
-        });
-      }
-
-      const provider = url.searchParams.get('provider') || 'google_calendar';
-      const redirectUri = `${process.env.APP_BASE_URL || url.origin}/api/calendars/oauth/callback`;
-      let authorizationUrl = '';
-
-      const pkce = generatePKCE();
-      const stateNonce = crypto.randomUUID();
-      const expiresAt = Date.now() + 600_000;
-      const statePayload = {
-        tenantId: agency.id,
-        locationId: activeLocation.id,
-        actorId: actor?.user?.id || 'system',
-        calendarId: cal.id,
-        provider,
-        nonce: stateNonce,
-        expiresAt,
-        createdAt: Date.now()
-      };
-      const signedState = signOAuthState(statePayload, effectiveVaultKey);
-      const stateHash = crypto.createHash('sha256').update(signedState).digest('hex');
-
-      const oauthStore = pgPool
-        ? createPostgresOAuthStateStore(pgPool, { masterKey: effectiveVaultKey })
-        : (globalThis.__calendarOAuthMemoryStore = globalThis.__calendarOAuthMemoryStore || createMemoryOAuthStateStore());
-
-      await oauthStore.create({
-        stateHash,
-        tenantId: agency.id,
-        locationId: activeLocation.id,
-        actorId: actor?.user?.id || 'system',
-        codeVerifier: pkce.verifier,
-        expiresAt
-      });
-
-      if (provider === 'google_calendar' || provider === 'google') {
-        const clientId = process.env.GOOGLE_CLIENT_ID;
-        if (!clientId) {
-          return sendJson(res, 400, {
-            error: 'Google Calendar credentials are not configured on this server',
-            code: 'GOOGLE_CONFIG_MISSING'
-          });
-        }
-        authorizationUrl = googleCalendarAdapter.getAuthorizationUrl({
-          clientId,
-          redirectUri,
-          stateKey: effectiveVaultKey,
-          tenantId: agency.id,
-          locationId: activeLocation.id,
-          calendarId: cal.id,
-          codeChallenge: pkce.challenge,
-          state: signedState
-        });
-      } else if (provider === 'outlook' || provider === 'microsoft_graph') {
-        const clientId = process.env.MICROSOFT_CLIENT_ID || process.env.AZURE_AD_CLIENT_ID;
-        if (!clientId) {
-          return sendJson(res, 400, {
-            error: 'Microsoft Calendar credentials are not configured on this server',
-            code: 'MICROSOFT_CONFIG_MISSING'
-          });
-        }
-        authorizationUrl = microsoftGraphCalendarAdapter.getAuthorizationUrl({
-          clientId,
-          redirectUri,
-          stateKey: effectiveVaultKey,
-          tenantId: agency.id,
-          locationId: activeLocation.id,
-          calendarId: cal.id,
-          codeChallenge: pkce.challenge,
-          state: signedState
-        });
-      } else {
-        return sendJson(res, 400, { error: 'Unsupported calendar provider', code: 'UNSUPPORTED_PROVIDER' });
-      }
-
-      if (url.searchParams.get('redirect') === 'false') {
-        return sendJson(res, 200, { authorizationUrl, state: signedState });
-      }
-      res.writeHead(302, { Location: authorizationUrl, 'Cache-Control': 'no-store' });
-      res.end();
-      return;
-    }
-
-    // GET /api/calendars/oauth/callback — OAuth Callback for Google & Microsoft Calendar
-    if (method === 'GET' && pathname === '/api/calendars/oauth/callback') {
-      const stateParam = url.searchParams.get('state');
-      const code = url.searchParams.get('code');
-      const error = url.searchParams.get('error');
-
-      const destination = new URL('/calendars', process.env.APP_BASE_URL || process.env.FRONTEND_URL || url.origin);
-      if (error || !stateParam || !code) {
-        destination.searchParams.set('sync', 'denied');
-        if (error) destination.searchParams.set('reason', error);
-        res.writeHead(302, { Location: destination.toString(), 'Cache-Control': 'no-store' });
-        res.end();
+    if (pathname.startsWith('/api/calendars/') || pathname === '/api/calendars/oauth/callback') {
+      if (await handleSchedulingRoutes(req, res, {
+        method,
+        pathname,
+        url,
+        readBody,
+        sendJson,
+        state,
+        saveState,
+        auditLog,
+        broadcast,
+        actor,
+        agency,
+        activeLocation,
+        randomUUID,
+        pgPool,
+        triggerWorkflowExecution,
+        dispatchZapierEvent,
+        zapierRepository,
+        syncRelationalWrite,
+        secretResolver,
+        effectiveVaultKey,
+        isProd
+      })) {
         return;
       }
-
-      try {
-        const stateData = verifyOAuthState(stateParam, effectiveVaultKey);
-        if (!stateData?.calendarId || !stateData?.tenantId || !stateData?.locationId) {
-          throw Object.assign(new Error('Invalid state payload'), { code: 'OAUTH_STATE_INVALID' });
-        }
-        if (stateData.expiresAt && stateData.expiresAt <= Date.now()) {
-          throw Object.assign(new Error('OAuth state expired'), { code: 'OAUTH_STATE_EXPIRED' });
-        }
-
-        const stateHash = crypto.createHash('sha256').update(stateParam).digest('hex');
-        const oauthStore = pgPool
-          ? createPostgresOAuthStateStore(pgPool, { masterKey: effectiveVaultKey })
-          : (globalThis.__calendarOAuthMemoryStore = globalThis.__calendarOAuthMemoryStore || createMemoryOAuthStateStore());
-
-        const consumed = await oauthStore.consume({
-          stateHash,
-          tenantId: stateData.tenantId,
-          locationId: stateData.locationId
-        });
-
-        if (!consumed || !consumed.codeVerifier) {
-          throw Object.assign(new Error('OAuth state was already consumed or not found'), { code: 'OAUTH_STATE_CONSUMED' });
-        }
-        if (consumed.expiresAt && consumed.expiresAt <= Date.now()) {
-          throw Object.assign(new Error('OAuth state expired before token exchange'), { code: 'OAUTH_STATE_EXPIRED' });
-        }
-
-        const codeVerifier = consumed.codeVerifier;
-
-        let calendars = state.records.calendars || [];
-        let cal = calendars.find(c => c.id === stateData.calendarId && c.agencyId === stateData.tenantId);
-        if (!cal && pgPool) {
-          const calRes = await pgPool.query('SELECT * FROM calendars WHERE agency_id = $1 AND id = $2', [stateData.tenantId, stateData.calendarId]);
-          if (calRes.rows.length > 0) {
-            const row = calRes.rows[0];
-            cal = {
-              id: row.id,
-              agencyId: row.agency_id,
-              locationId: row.location_id,
-              name: row.name,
-              slug: row.slug,
-              durationMin: row.duration_min,
-              status: row.status,
-              availability: row.availability || {},
-              externalSync: row.availability?.externalSync || null,
-              externalBusyBlocks: row.availability?.externalBusyBlocks || []
-            };
-            calendars.push(cal);
-          }
-        }
-        if (!cal) throw new Error('Calendar not found');
-
-        let tokenData = {};
-        const redirectUri = `${process.env.APP_BASE_URL || url.origin}/api/calendars/oauth/callback`;
-
-        if (stateData.provider === 'google_calendar') {
-          tokenData = await googleCalendarAdapter.exchangeCode({
-            code,
-            clientId: process.env.GOOGLE_CLIENT_ID,
-            clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-            redirectUri,
-            codeVerifier,
-            fetchFn: globalThis.fetch
-          });
-        } else {
-          tokenData = await microsoftGraphCalendarAdapter.exchangeCode({
-            code,
-            clientId: process.env.MICROSOFT_CLIENT_ID || process.env.AZURE_AD_CLIENT_ID,
-            clientSecret: process.env.MICROSOFT_CLIENT_SECRET || process.env.AZURE_AD_CLIENT_SECRET,
-            redirectUri,
-            codeVerifier,
-            fetchFn: globalThis.fetch
-          });
-        }
-
-        const secretRef = `vault:${cal.agencyId}/${cal.locationId}/calendar_${cal.id}`;
-        if (secretResolver) {
-          await secretResolver.store(secretRef, JSON.stringify({
-            accessToken: tokenData.accessToken,
-            refreshToken: tokenData.refreshToken,
-            provider: stateData.provider,
-            email: tokenData.email || 'operator@operza.io'
-          }));
-        }
-
-        cal.externalSync = {
-          provider: stateData.provider,
-          email: tokenData.email || 'operator@operza.io',
-          calendarName: tokenData.calendarName || `${stateData.provider === 'google_calendar' ? 'Google' : 'Outlook'} Calendar`,
-          syncDirection: 'two_way',
-          status: 'active',
-          lastSyncAt: new Date().toISOString(),
-          connectedAt: new Date().toISOString(),
-          secretRef
-        };
-        delete cal.externalSync.accessToken;
-        delete cal.externalSync.refreshToken;
-
-        if (cal.availability) {
-          cal.availability.externalSync = { ...cal.externalSync };
-        }
-
-        await saveState();
-        await syncRelationalWrite('calendars', 'update', cal, cal.agencyId);
-
-        destination.searchParams.set('calendarId', cal.id);
-        destination.searchParams.set('sync', 'connected');
-        res.writeHead(302, { Location: destination.toString(), 'Cache-Control': 'no-store' });
-        res.end();
-        return;
-      } catch (cbErr) {
-        destination.searchParams.set('sync', 'failed');
-        destination.searchParams.set('reason', cbErr.message);
-        res.writeHead(302, { Location: destination.toString(), 'Cache-Control': 'no-store' });
-        res.end();
-        return;
-      }
-    }
-
-    // GET /api/calendars/:id/sync/calendars — List available calendars for selection
-    if (method === 'GET' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/sync/calendars')) {
-      const calId = pathname.replace('/api/calendars/', '').replace('/sync/calendars', '').trim();
-      let calendars = state.records.calendars || [];
-      let cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
-      if (!cal && pgPool) {
-        const calRes = await pgPool.query('SELECT * FROM calendars WHERE agency_id = $1 AND id = $2', [agency.id, calId]);
-        if (calRes.rows.length > 0) {
-          const row = calRes.rows[0];
-          cal = {
-            id: row.id,
-            agencyId: row.agency_id,
-            locationId: row.location_id,
-            name: row.name,
-            slug: row.slug,
-            durationMin: row.duration_min,
-            status: row.status,
-            availability: row.availability || {},
-            externalSync: row.availability?.externalSync || null,
-            externalBusyBlocks: row.availability?.externalBusyBlocks || []
-          };
-          calendars.push(cal);
-        }
-      }
-      if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
-      if (!cal.externalSync?.secretRef || !secretResolver) {
-        return sendJson(res, 400, { error: 'Calendar is not connected with vault secrets', code: 'CALENDAR_NOT_CONNECTED' });
-      }
-
-      const raw = await secretResolver.resolve(cal.externalSync.secretRef);
-      const creds = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      const isGoogle = cal.externalSync.provider === 'google_calendar' || cal.externalSync.provider === 'google';
-      const adapter = isGoogle ? googleCalendarAdapter : microsoftGraphCalendarAdapter;
-      const clientId = isGoogle ? process.env.GOOGLE_CLIENT_ID : (process.env.MICROSOFT_CLIENT_ID || process.env.AZURE_AD_CLIENT_ID);
-      const clientSecret = isGoogle ? process.env.GOOGLE_CLIENT_SECRET : (process.env.MICROSOFT_CLIENT_SECRET || process.env.AZURE_AD_CLIENT_SECRET);
-
-      const list = await adapter.listCalendars({
-        accessToken: creds?.accessToken,
-        refreshToken: creds?.refreshToken,
-        clientId,
-        clientSecret,
-        fetchFn: globalThis.fetch
-      });
-      return sendJson(res, 200, { calendars: list });
-    }
-
-    // Connect 2-Way External Calendar Sync
-    if (method === 'POST' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/sync/connect')) {
-      const calId = pathname.replace('/api/calendars/', '').replace('/sync/connect', '').trim();
-      let calendars = state.records.calendars || [];
-      let cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
-      if (!cal && pgPool) {
-        const calRes = await pgPool.query('SELECT * FROM calendars WHERE agency_id = $1 AND id = $2', [agency.id, calId]);
-        if (calRes.rows.length > 0) {
-          const row = calRes.rows[0];
-          cal = {
-            id: row.id,
-            agencyId: row.agency_id,
-            locationId: row.location_id,
-            name: row.name,
-            slug: row.slug,
-            durationMin: row.duration_min,
-            status: row.status,
-            availability: row.availability || {},
-            externalSync: row.availability?.externalSync || null,
-            externalBusyBlocks: row.availability?.externalBusyBlocks || []
-          };
-          calendars.push(cal);
-        }
-      }
-      if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
-
-      const body = await readBody(req);
-      const provider = body.provider || 'google_calendar';
-      const token = body.accessToken || body.apiKey || body.token;
-      const refreshToken = body.refreshToken;
-
-      let verification = { verified: true, calendarName: body.calendarName };
-      if (token || refreshToken) {
-        let adapter = null;
-        if (provider === 'google_calendar' || provider === 'google') {
-          adapter = googleCalendarAdapter;
-        } else if (provider === 'microsoft_graph' || provider === 'outlook') {
-          adapter = microsoftGraphCalendarAdapter;
-        } else {
-          return sendJson(res, 400, {
-            success: false,
-            code: 'UNSUPPORTED_CALENDAR_PROVIDER',
-            error: `Provider '${provider}' is not supported for calendar synchronization.`
-          });
-        }
-
-        verification = await adapter.verify({
-          accessToken: token,
-          refreshToken,
-          clientId: body.clientId,
-          clientSecret: body.clientSecret,
-          fetchFn: globalThis.fetch
-        });
-
-        if (!verification.verified) {
-          return sendJson(res, 401, {
-            success: false,
-            code: verification.code || 'CALENDAR_AUTH_FAILED',
-            error: 'Calendar provider rejected authorization: invalid or expired credentials'
-          });
-        }
-      } else if (!isProd && Array.isArray(body.busyBlocks)) {
-        verification = { verified: true, calendarName: body.calendarName || 'Simulated Calendar' };
-      } else {
-        return sendJson(res, 401, {
-          success: false,
-          code: 'CALENDAR_AUTH_FAILED',
-          error: 'Calendar provider authorization required: missing access token or refresh token'
-        });
-      }
-
-      const email = verification.email || body.email || actor?.user?.email || 'operator@operza.io';
-      const secretRef = `vault:${cal.agencyId}/${cal.locationId}/calendar_${cal.id}`;
-      if (secretResolver) {
-        await secretResolver.store(secretRef, JSON.stringify({
-          accessToken: verification.freshAccessToken || token,
-          refreshToken: refreshToken || null,
-          provider,
-          email
-        }));
-      }
-
-      cal.externalSync = {
-        provider,
-        email,
-        calendarName: verification.calendarName || body.calendarName || `${provider === 'google_calendar' ? 'Google' : 'Outlook'} Calendar (${email})`,
-        syncDirection: body.syncDirection || 'two_way',
-        status: 'active',
-        lastSyncAt: new Date().toISOString(),
-        connectedAt: new Date().toISOString(),
-        secretRef
-      };
-
-      // P1: Strip plaintext tokens from application state and calendar availability JSON
-      delete cal.externalSync.accessToken;
-      delete cal.externalSync.refreshToken;
-      delete cal.externalSync.apiKey;
-      delete cal.externalSync.token;
-      if (cal.availability) {
-        cal.availability.externalSync = { ...cal.externalSync };
-        delete cal.availability.externalSync.accessToken;
-        delete cal.availability.externalSync.refreshToken;
-      }
-
-      if (Array.isArray(body.busyBlocks)) {
-        cal.externalBusyBlocks = body.busyBlocks;
-      } else {
-        // Perform initial sync to ingest busy blocks
-        let syncClient = null;
-        let appts = state.records.appointments || [];
-        if (pgPool) {
-          syncClient = await pgPool.connect();
-          await syncClient.query('BEGIN');
-          await syncClient.query(
-            "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)",
-            [agency.id, activeLocation.id]
-          );
-          const pgAppts = await syncClient.query(`
-            SELECT id, agency_id as "agencyId", location_id as "locationId", calendar_id as "calendarId",
-                   title, starts_at as "startsAt", ends_at as "endsAt", status, notes, external_event_id as "externalEventId"
-            FROM appointments
-            WHERE agency_id = $1 AND location_id = $2 AND calendar_id = $3
-            ORDER BY starts_at ASC
-          `, [agency.id, activeLocation.id, cal.id]);
-          appts = pgAppts.rows;
-        }
-        try {
-          const syncResult = await executeCalendarSync({
-            calendar: cal,
-            appointments: appts,
-            syncDirection: cal.externalSync.syncDirection,
-            credentials: { accessToken: verification.freshAccessToken || token, refreshToken },
-            fetchFn: globalThis.fetch
-          });
-
-          if (syncClient && syncResult.exportedEvents?.length) {
-            for (const exp of syncResult.exportedEvents) {
-              const updateRes = await syncClient.query(`
-                UPDATE appointments
-                SET external_event_id = $1, updated_at = now()
-                WHERE agency_id = $2 AND location_id = $3 AND calendar_id = $4 AND id = $5
-              `, [exp.externalId, agency.id, activeLocation.id, cal.id, exp.appointmentId]);
-
-              if (updateRes.rowCount !== 1) {
-                throw Object.assign(new Error(`Failed to persist external event ID for appointment ${exp.appointmentId}: record not found or tenant mismatch`), {
-                  code: 'APPOINTMENT_EXTERNAL_ID_PERSIST_FAILED',
-                  appointmentId: exp.appointmentId
-                });
-              }
-            }
-          }
-
-          if (syncClient) {
-            await syncClient.query('COMMIT');
-          }
-          cal.externalBusyBlocks = syncResult.busyBlocks;
-          cal.externalSync.lastSyncAt = syncResult.lastSyncAt;
-        } catch (syncErr) {
-          if (syncClient) {
-            await syncClient.query('ROLLBACK').catch(() => {});
-          }
-          console.warn('[CALENDAR-SYNC] Initial busy block fetch warning:', syncErr.message);
-        } finally {
-          if (syncClient) {
-            syncClient.release();
-          }
-        }
-      }
-
-      cal.updatedAt = new Date().toISOString();
-      await saveState();
-      await syncRelationalWrite('calendars', 'update', cal, agency.id);
-
-      auditLog('calendar.sync.connected', actor, { calendarId: cal.id, provider, email });
-      broadcast('crm.calendar.synced', { calendarId: cal.id, externalSync: cal.externalSync });
-
-      return sendJson(res, 200, { success: true, externalSync: cal.externalSync, calendar: cal });
-    }
-
-    // Trigger Calendar Sync Now
-    if (method === 'POST' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/sync/now')) {
-      const calId = pathname.replace('/api/calendars/', '').replace('/sync/now', '').trim();
-      const calendars = state.records.calendars || [];
-      const cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
-      if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
-      if (!cal.externalSync || !['active', 'connected'].includes(cal.externalSync.status)) {
-        return sendJson(res, 400, { error: 'Calendar is not connected to an external provider', code: 'CALENDAR_NOT_CONNECTED' });
-      }
-
-      let credentials = {};
-      if (secretResolver && cal.externalSync.secretRef) {
-        const raw = await secretResolver.resolve(cal.externalSync.secretRef).catch(() => null);
-        if (raw) {
-          try { credentials = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { credentials = { accessToken: raw }; }
-        }
-      } else if (cal.externalSync.accessToken) {
-        credentials = { accessToken: cal.externalSync.accessToken, refreshToken: cal.externalSync.refreshToken };
-      }
-
-      let appts = state.records.appointments || [];
-      let syncClient = null;
-      if (pgPool) {
-        syncClient = await pgPool.connect();
-        await syncClient.query('BEGIN');
-        await syncClient.query(
-          "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true)",
-          [agency.id, activeLocation.id]
-        );
-        const pgAppts = await syncClient.query(`
-          SELECT id, agency_id as "agencyId", location_id as "locationId", calendar_id as "calendarId",
-                 title, starts_at as "startsAt", ends_at as "endsAt", status, notes, external_event_id as "externalEventId"
-          FROM appointments
-          WHERE agency_id = $1 AND location_id = $2 AND calendar_id = $3
-          ORDER BY starts_at ASC
-        `, [agency.id, activeLocation.id, cal.id]);
-        appts = pgAppts.rows;
-      }
-
-      try {
-        const syncResult = await executeCalendarSync({
-          calendar: cal,
-          appointments: appts,
-          syncDirection: cal.externalSync.syncDirection || 'two_way',
-          credentials,
-          fetchFn: globalThis.fetch
-        });
-
-        // Persist external_event_id on authoritative PostgreSQL appointment records
-        if (syncClient && syncResult.exportedEvents?.length) {
-          for (const exp of syncResult.exportedEvents) {
-            const updateRes = await syncClient.query(`
-              UPDATE appointments
-              SET external_event_id = $1, updated_at = now()
-              WHERE agency_id = $2 AND location_id = $3 AND calendar_id = $4 AND id = $5
-            `, [exp.externalId, agency.id, activeLocation.id, cal.id, exp.appointmentId]);
-
-            if (updateRes.rowCount !== 1) {
-              throw Object.assign(new Error(`Failed to persist external event ID for appointment ${exp.appointmentId}: record not found or tenant mismatch`), {
-                code: 'APPOINTMENT_EXTERNAL_ID_PERSIST_FAILED',
-                appointmentId: exp.appointmentId
-              });
-            }
-          }
-        }
-
-        if (syncClient) {
-          await syncClient.query('COMMIT');
-        }
-
-        cal.externalBusyBlocks = syncResult.busyBlocks;
-        cal.externalSync.lastSyncAt = syncResult.lastSyncAt;
-        cal.externalSync.status = 'active';
-        cal.updatedAt = new Date().toISOString();
-        await saveState();
-        await syncRelationalWrite('calendars', 'update', cal, agency.id);
-
-        return sendJson(res, 200, {
-          success: true,
-          calendarId: cal.id,
-          busyBlocksCount: cal.externalBusyBlocks.length,
-          lastSyncAt: cal.externalSync.lastSyncAt
-        });
-      } catch (err) {
-        if (syncClient) {
-          await syncClient.query('ROLLBACK').catch(() => {});
-        }
-        if (err.code === 'CALENDAR_AUTH_FAILED' || err.code === 'CALENDAR_UNAUTHORIZED') {
-          cal.externalSync.status = 'error';
-          cal.updatedAt = new Date().toISOString();
-          await saveState();
-          await syncRelationalWrite('calendars', 'update', cal, agency.id);
-          return sendJson(res, 401, { error: 'Calendar provider authorization expired', code: 'CALENDAR_AUTH_FAILED' });
-        }
-        if (err.code === 'APPOINTMENT_EXTERNAL_ID_PERSIST_FAILED') {
-          return sendJson(res, 500, { error: err.message, code: err.code });
-        }
-        return sendJson(res, 502, { error: err.message, code: err.code || 'CALENDAR_SYNC_FAILED' });
-      } finally {
-        if (syncClient) {
-          syncClient.release();
-        }
-      }
-    }
-
-    // Disconnect 2-Way Calendar Sync
-    if (method === 'POST' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/sync/disconnect')) {
-      const calId = pathname.replace('/api/calendars/', '').replace('/sync/disconnect', '').trim();
-      const calendars = state.records.calendars || [];
-      const cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
-      if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
-
-      cal.externalSync = { status: 'disconnected', provider: null };
-      cal.externalBusyBlocks = [];
-      cal.updatedAt = new Date().toISOString();
-      await saveState();
-      await syncRelationalWrite('calendars', 'update', cal, agency.id);
-
-      auditLog('calendar.sync.disconnected', actor, { calendarId: cal.id });
-      broadcast('crm.calendar.synced', { calendarId: cal.id, externalSync: cal.externalSync });
-
-      return sendJson(res, 200, { success: true, calendarId: cal.id, externalSync: cal.externalSync });
-    }
-
-    // Retrieve Calendar 2-Way Sync Status
-    if (method === 'GET' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/sync/status')) {
-      const calId = pathname.replace('/api/calendars/', '').replace('/sync/status', '').trim();
-      const calendars = state.records.calendars || [];
-      const cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
-      if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
-
-      return sendJson(res, 200, {
-        calendarId: cal.id,
-        externalSync: cal.externalSync || { status: 'disconnected', provider: null },
-        busyBlocksCount: (cal.externalBusyBlocks || []).length
-      });
-    }
-
-    // Ingest / Sync External Calendar Busy Time Blocks
-    if (method === 'POST' && pathname.startsWith('/api/calendars/') && pathname.endsWith('/sync/busy')) {
-      const calId = pathname.replace('/api/calendars/', '').replace('/sync/busy', '').trim();
-      const calendars = state.records.calendars || [];
-      const cal = calendars.find(c => c.id === calId && c.agencyId === agency.id);
-      if (!cal) return sendJson(res, 404, { error: 'Calendar not found' });
-
-      const body = await readBody(req);
-      const busyBlocks = Array.isArray(body.busyBlocks) ? body.busyBlocks : [];
-      cal.externalBusyBlocks = busyBlocks;
-      if (cal.externalSync) cal.externalSync.lastSyncAt = new Date().toISOString();
-      cal.updatedAt = new Date().toISOString();
-      await saveState();
-
-      return sendJson(res, 200, { success: true, calendarId: cal.id, busyBlocksCount: cal.externalBusyBlocks.length });
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -8653,7 +7788,10 @@ const server = createServer(async (req, res) => {
       dispatchZapierEvent,
       zapierRepository,
       syncRelationalWrite,
-      collections
+      collections,
+      secretResolver,
+      effectiveVaultKey,
+      isProd
     })) {
       return;
     }
@@ -8683,6 +7821,37 @@ const server = createServer(async (req, res) => {
         zapierRepository,
         syncRelationalWrite,
         collections
+      })) {
+        return;
+      }
+    }
+    if (res.headersSent) {
+      return;
+    }
+
+    if (pathname.startsWith('/api/appointments') || pathname.startsWith('/api/calendars')) {
+      if (await handleSchedulingRoutes(req, res, {
+        method,
+        pathname,
+        url,
+        readBody,
+        sendJson,
+        state,
+        saveState,
+        auditLog,
+        broadcast,
+        actor,
+        agency,
+        activeLocation,
+        randomUUID,
+        pgPool,
+        triggerWorkflowExecution,
+        dispatchZapierEvent,
+        zapierRepository,
+        syncRelationalWrite,
+        secretResolver,
+        effectiveVaultKey,
+        isProd
       })) {
         return;
       }
