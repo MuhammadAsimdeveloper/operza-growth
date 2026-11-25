@@ -12,6 +12,8 @@ import { handleContactsRoutes } from './contacts.mjs';
 import { handleOpportunitiesRoutes } from './opportunities.mjs';
 import { handleSchedulingRoutes } from './scheduling.mjs';
 import { handleWorkflowsRoutes } from './workflows.mjs';
+import { handlePipelinesRoutes } from './pipelines.mjs';
+import { handleFunnelsRoutes } from './funnels.mjs';
 
 export async function handleCrmRoutes(req, res, ctx) {
   const {
@@ -57,6 +59,16 @@ export async function handleCrmRoutes(req, res, ctx) {
 
   // Delegate workflows domain operations to dedicated workflows router
   if (await handleWorkflowsRoutes(req, res, ctx)) {
+    return true;
+  }
+
+  // Delegate pipelines domain operations to dedicated pipelines router
+  if (await handlePipelinesRoutes(req, res, ctx)) {
+    return true;
+  }
+
+  // Delegate funnels & websites domain operations to dedicated funnels router
+  if (await handleFunnelsRoutes(req, res, ctx)) {
     return true;
   }
 

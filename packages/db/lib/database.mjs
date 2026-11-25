@@ -52,4 +52,6 @@ export { createContactsRepository } from './contacts-repository.mjs';
 export { createOpportunitiesRepository } from './opportunities-repository.mjs';
 export { createSchedulingRepository } from './scheduling-repository.mjs';
 export { createWorkflowsRepository } from './workflows-repository.mjs';
+export { createPipelinesRepository } from './pipelines-repository.mjs';
+export { createFunnelsRepository } from './funnels-repository.mjs';
 

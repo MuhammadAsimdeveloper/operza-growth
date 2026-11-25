@@ -57,6 +57,8 @@ import { handleCrmRoutes } from './routes/crm.mjs';
 import { handleOpportunitiesRoutes } from './routes/opportunities.mjs';
 import { handleSchedulingRoutes } from './routes/scheduling.mjs';
 import { handleWorkflowsRoutes } from './routes/workflows.mjs';
+import { handlePipelinesRoutes } from './routes/pipelines.mjs';
+import { handleFunnelsRoutes } from './routes/funnels.mjs';
 import { parseAndValidateCsvImport, exportContactsToCsv } from '../../packages/platform-core/src/csv-transfer.mjs';
 import { createSmartListView, matchesSmartListView, filterSmartListRecords, generateSmartListSql } from '../../packages/platform-core/src/crm-views-store.mjs';
 import { createDefaultLLMRuntime } from '../../packages/platform-core/src/llm-runtime/index.mjs';
@@ -3682,57 +3684,24 @@ const server = createServer(async (req, res) => {
     // ═════════════════════════════════════════════════════════════
 
     if (method === 'POST' && pathname === '/api/funnels/checkout/one-click-upsell') {
-      const body = await readBody(req);
-      const product = body.product || body.upsellItem;
-      const { orderId, funnelId, pageId } = body;
-      if (!orderId || !product || (!product.price && !product.amount)) {
-        return sendJson(res, 400, { error: 'orderId and product/upsellItem with price are required for 1-click upsell' });
+      if (await handleFunnelsRoutes(req, res, {
+        method,
+        pathname,
+        url,
+        readBody,
+        sendJson,
+        state,
+        saveState,
+        auditLog,
+        broadcast,
+        actor: undefined,
+        agency: undefined,
+        activeLocation: undefined,
+        pgPool,
+        triggerWorkflowExecution
+      })) {
+        return;
       }
-
-      state.records.orders = state.records.orders || [];
-      const order = state.records.orders.find(o => o.id === orderId);
-      if (!order) return sendJson(res, 404, { error: 'Original order not found' });
-
-      const upsellPrice = Number(product.price || product.amount);
-      const upsellItem = {
-        id: product.id || randomUUID(),
-        name: product.name || 'Executive 1-Click Upsell',
-        price: upsellPrice,
-        amount: upsellPrice,
-        quantity: 1,
-        type: 'one_click_upsell'
-      };
-
-      order.items = Array.isArray(order.items) ? [...order.items, upsellItem] : [upsellItem];
-      order.amount = (Number(order.amount) || 0) + upsellPrice;
-      order.hasUpsell = true;
-      order.updatedAt = new Date().toISOString();
-
-      state.records.payments = state.records.payments || [];
-      const payment = {
-        id: randomUUID(),
-        agencyId: order.agencyId,
-        locationId: order.locationId,
-        contactId: order.contactId,
-        orderId: order.id,
-        amount: upsellPrice,
-        currency: order.currency || 'USD',
-        status: 'succeeded',
-        method: 'stripe_tokenized_1click',
-        createdAt: new Date().toISOString()
-      };
-      state.records.payments.push(payment);
-      await saveState();
-
-      auditLog('funnel.upsell.purchased', null, { orderId: order.id, amount: upsellPrice, itemName: upsellItem.name });
-      broadcast('crm.order.updated', { orderId: order.id, amount: order.amount, hasUpsell: true });
-
-      return sendJson(res, 200, {
-        success: true,
-        upsellGranted: true,
-        order,
-        payment
-      });
     }
 
     // Public / Checkout Coupon Validation Engine
@@ -3994,206 +3963,48 @@ const server = createServer(async (req, res) => {
       return res.end(html);
     }
 
-    // Public Funnel/Site Lookup & Visit Tracker
+    // Public Funnel/Site Lookup & Visit Tracker (Delegated to Funnels Router)
     if (method === 'GET' && (pathname.startsWith('/api/funnels/public/') || pathname.startsWith('/api/websites/public/'))) {
-      const slugOrId = pathname.replace(/^\/api\/(funnels|websites)\/public\//, '').trim();
-      const pageSlug = url.searchParams.get('pageSlug');
-
-      state.records.websites = state.records.websites || [];
-      const site = state.records.websites.find(w =>
-        w.id === slugOrId ||
-        (w.slug && w.slug.toLowerCase() === slugOrId.toLowerCase()) ||
-        (w.domain && w.domain.toLowerCase() === slugOrId.toLowerCase()) ||
-        ((w.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-') === slugOrId.toLowerCase())
-      );
-
-      if (!site) {
-        return sendJson(res, 404, { error: 'Funnel or website not found' });
+      if (await handleFunnelsRoutes(req, res, {
+        method,
+        pathname,
+        url,
+        readBody,
+        sendJson,
+        state,
+        saveState,
+        auditLog,
+        broadcast,
+        actor: undefined,
+        agency: undefined,
+        activeLocation: undefined,
+        pgPool,
+        triggerWorkflowExecution
+      })) {
+        return;
       }
-
-      // Track visit
-      site.visits = (site.visits || 0) + 1;
-      if (Array.isArray(site.pages)) {
-        if (pageSlug) {
-          const targetPage = site.pages.find(p => p.slug === pageSlug || p.path === pageSlug || p.path === `/${pageSlug}`);
-          if (targetPage) targetPage.visits = (targetPage.visits || 0) + 1;
-        } else if (site.pages[0]) {
-          site.pages[0].visits = (site.pages[0].visits || 0) + 1;
-        }
-      }
-      await saveState();
-
-      return sendJson(res, 200, {
-        id: site.id,
-        name: site.name,
-        kind: site.kind || 'funnel',
-        published: site.published,
-        visits: site.visits,
-        optins: site.optins || 0,
-        pages: site.pages || [],
-        globalHeader: site.globalHeader || null,
-        globalFooter: site.globalFooter || null,
-        checkout: site.checkout || null
-      });
     }
 
-    // Public Funnel & Hosted Website Opt-in Lead Ingress
+    // Public Funnel & Hosted Website Opt-in Lead Ingress (Delegated to Funnels Router)
     if (method === 'POST' && (pathname.startsWith('/api/funnels/optin/') || pathname.startsWith('/api/websites/optin/'))) {
-      const slugOrId = pathname.replace(/^\/api\/(funnels|websites)\/optin\//, '').trim();
-      state.records.websites = state.records.websites || [];
-      const site = state.records.websites.find(w =>
-        w.id === slugOrId ||
-        (w.slug && w.slug.toLowerCase() === slugOrId.toLowerCase()) ||
-        (w.domain && w.domain.toLowerCase() === slugOrId.toLowerCase()) ||
-        ((w.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-') === slugOrId.toLowerCase())
-      );
-
-      if (!site) {
-        return sendJson(res, 404, { error: 'Funnel or website not found' });
+      if (await handleFunnelsRoutes(req, res, {
+        method,
+        pathname,
+        url,
+        readBody,
+        sendJson,
+        state,
+        saveState,
+        auditLog,
+        broadcast,
+        actor: undefined,
+        agency: undefined,
+        activeLocation: undefined,
+        pgPool,
+        triggerWorkflowExecution
+      })) {
+        return;
       }
-
-      const body = await readBody(req);
-      const { firstName, lastName, email, phone, company, pageSlug, bumpAccepted } = body;
-      if (!firstName && !email) {
-        return sendJson(res, 400, { error: 'First name or email is required' });
-      }
-
-      site.optins = (site.optins || 0) + 1;
-      if (Array.isArray(site.pages) && pageSlug) {
-        const targetPage = site.pages.find(p => p.slug === pageSlug || p.path === pageSlug || p.path === `/${pageSlug}`);
-        if (targetPage) targetPage.optins = (targetPage.optins || 0) + 1;
-      }
-
-      const agencyId = site.agencyId || state.agencies[0]?.id;
-      const locationId = site.locationId || state.locations[0]?.id;
-
-      const isWebsite = site.kind === 'website';
-      const defaultTag = isWebsite ? 'website-lead' : 'funnel-lead';
-      const defaultSource = isWebsite ? `Hosted Website (${site.name})` : `Funnel: ${site.name}`;
-
-      // Upsert contact
-      state.records.contacts = state.records.contacts || [];
-      let contact = email
-        ? state.records.contacts.find(c => c.agencyId === agencyId && c.email && c.email.toLowerCase() === email.toLowerCase())
-        : null;
-
-      if (!contact) {
-        contact = {
-          id: randomUUID(),
-          agencyId,
-          locationId,
-          firstName: firstName || 'Lead',
-          lastName: lastName || '',
-          email: (email || '').toLowerCase().trim(),
-          phone: phone || '',
-          company: company || (isWebsite ? site.name : ''),
-          source: defaultSource,
-          tags: [defaultTag, site.name],
-          status: 'lead',
-          notes: body.message ? [{ id: randomUUID(), body: body.message, at: new Date().toISOString(), author: 'Web Lead' }] : [],
-          createdAt: new Date().toISOString()
-        };
-        state.records.contacts.push(contact);
-      } else {
-        if (firstName) contact.firstName = firstName;
-        if (lastName) contact.lastName = lastName;
-        if (phone) contact.phone = phone;
-        if (body.message) {
-          contact.notes = contact.notes || [];
-          contact.notes.push({ id: randomUUID(), body: body.message, at: new Date().toISOString(), author: 'Web Lead' });
-        }
-        contact.tags = Array.from(new Set([...(contact.tags || []), defaultTag, site.name]));
-      }
-
-      // Provision Deal Opportunity
-      const oppId = randomUUID();
-      const oppValue = bumpAccepted && site.checkout?.bumps?.[0]?.price ? site.checkout.bumps[0].price : 1000;
-      const opp = {
-        id: oppId,
-        agencyId,
-        locationId,
-        name: `${contact.firstName} ${contact.lastName || ''} - ${site.name}`.trim(),
-        contactId: contact.id,
-        stage: 'New Inbound Lead',
-        value: oppValue,
-        status: 'open',
-        source: `Funnel: ${site.name}`,
-        createdAt: new Date().toISOString()
-      };
-      state.records.opportunities = state.records.opportunities || [];
-      state.records.opportunities.push(opp);
-
-      // Order & Order Bump fulfillment
-      let order = null;
-      if (bumpAccepted && (site.checkout?.bumps?.length || site.checkout?.bumpPrice || site.checkout?.price)) {
-        const bump = site.checkout?.bumps?.length
-          ? (site.checkout.bumps.find(b => b.enabled) || site.checkout.bumps[0])
-          : { price: site.checkout?.bumpPrice || 47, headline: site.checkout?.bumpTitle || 'VIP Order Bump' };
-
-        const baseAmount = site.checkout?.price || 0;
-        const bumpAmt = bump.price || site.checkout?.bumpPrice || 47;
-        const totalAmount = baseAmount > 0 ? baseAmount + bumpAmt : bumpAmt;
-
-        const orderId = randomUUID();
-        const invoiceId = randomUUID();
-        const orderNum = `ORD-${Math.floor(100000 + Math.random() * 900000)}`;
-        order = {
-          id: orderId,
-          agencyId,
-          locationId,
-          orderNumber: orderNum,
-          contactId: contact.id,
-          contactName: `${contact.firstName} ${contact.lastName}`.trim(),
-          amount: totalAmount,
-          currency: 'USD',
-          status: 'completed',
-          items: [
-            ...(baseAmount > 0 ? [{ name: site.name || 'Primary Offer', price: baseAmount, quantity: 1 }] : []),
-            { name: bump.headline || bump.title || 'Order Bump', price: bumpAmt, quantity: 1 }
-          ],
-          bumpAccepted: true,
-          bumpAmount: bumpAmt,
-          paidAt: new Date().toISOString(),
-          createdAt: new Date().toISOString()
-        };
-        state.records.orders = state.records.orders || [];
-        state.records.orders.push(order);
-
-        const invoice = {
-          id: invoiceId,
-          agencyId,
-          locationId,
-          number: `INV-${orderNum.replace('ORD-', '')}`,
-          contactName: `${contact.firstName} ${contact.lastName}`.trim(),
-          amount: bump.price,
-          status: 'paid',
-          dueDate: new Date().toISOString().slice(0, 10),
-          createdAt: new Date().toISOString()
-        };
-        state.records.invoices = state.records.invoices || [];
-        state.records.invoices.push(invoice);
-      }
-
-      await saveState();
-
-      broadcast('funnel.optin.received', { siteId: site.id, contactId: contact.id, siteName: site.name });
-      auditLog('funnel.optin', null, { siteId: site.id, siteName: site.name, contactId: contact.id });
-
-      triggerWorkflowExecution({
-        agencyId,
-        locationId,
-        triggerType: 'funnel_optin',
-        triggerContext: { site, contact, opportunity: opp, order }
-      }).catch(console.error);
-
-      return sendJson(res, 201, {
-        success: true,
-        siteId: site.id,
-        contact,
-        opportunity: opp,
-        order,
-        paymentToken: `tok_opz_1click_${order ? order.id : randomUUID().slice(0, 8)}`
-      });
     }
 
     // Public Media File Server
@@ -5356,6 +5167,26 @@ const server = createServer(async (req, res) => {
       if (pathname.startsWith('/api/crm/appointments') || pathname.startsWith('/api/appointments')) {
         const requiredScope = (method === 'GET' || method === 'HEAD') ? 'appointments:read' : 'appointments:write';
         if (!checkApiKeyScope(actor, requiredScope) && !checkApiKeyScope(actor, (method === 'GET' || method === 'HEAD') ? 'scheduling:read' : 'scheduling:write')) {
+          return sendJson(res, 403, {
+            error: `Insufficient API key scope. Required: '${requiredScope}'`,
+            code: 'INSUFFICIENT_SCOPES',
+            requiredScope
+          });
+        }
+      }
+      if (pathname.startsWith('/api/crm/pipelines') || pathname.startsWith('/api/pipelines')) {
+        const requiredScope = (method === 'GET' || method === 'HEAD') ? 'pipelines:read' : 'pipelines:write';
+        if (!checkApiKeyScope(actor, requiredScope) && !checkApiKeyScope(actor, (method === 'GET' || method === 'HEAD') ? 'opportunities:read' : 'opportunities:write')) {
+          return sendJson(res, 403, {
+            error: `Insufficient API key scope. Required: '${requiredScope}'`,
+            code: 'INSUFFICIENT_SCOPES',
+            requiredScope
+          });
+        }
+      }
+      if (pathname.startsWith('/api/crm/websites') || pathname.startsWith('/api/crm/funnels')) {
+        const requiredScope = (method === 'GET' || method === 'HEAD') ? 'funnels:read' : 'funnels:write';
+        if (!checkApiKeyScope(actor, requiredScope) && !checkApiKeyScope(actor, (method === 'GET' || method === 'HEAD') ? 'websites:read' : 'websites:write')) {
           return sendJson(res, 403, {
             error: `Insufficient API key scope. Required: '${requiredScope}'`,
             code: 'INSUFFICIENT_SCOPES',
@@ -7883,6 +7714,26 @@ const server = createServer(async (req, res) => {
         getOutboxRepo,
         isStagingOrProd,
         platformDbEnabled
+      })) {
+        return;
+      }
+    }
+
+    if (pathname.startsWith('/api/pipelines')) {
+      if (await handlePipelinesRoutes(req, res, {
+        method,
+        pathname,
+        url,
+        readBody,
+        sendJson,
+        state,
+        saveState,
+        auditLog,
+        broadcast,
+        actor,
+        agency,
+        activeLocation,
+        pgPool
       })) {
         return;
       }

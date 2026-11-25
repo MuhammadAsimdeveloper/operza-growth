@@ -35,6 +35,10 @@ We decide to:
    Extract `OpportunitiesRepository` in `packages/db/lib/opportunities-repository.mjs` and dedicated router in `apps/api/routes/opportunities.mjs`. All opportunity operations (CRUD, stage updates, summary aggregation, sorting allowlist) execute via `TenantTx` against the PostgreSQL `opportunities` table with forced RLS. Zero dual-writing to `state.records.opportunities` when `pgPool` is configured.
 7. **Modularize Scheduling Domain (Phase 1.4)**:
    Extract `SchedulingRepository` in `packages/db/lib/scheduling-repository.mjs` and dedicated router in `apps/api/routes/scheduling.mjs`. All calendar and appointment operations (CRUD, GiST half-open interval concurrency isolation, public booking ingress, 2-way Google/Outlook sync) execute via `TenantTx` against `calendars` and `appointments` tables with forced RLS. Double-booking errors (`23P01`) map to HTTP 409 `SLOT_CONFLICT`. Zero dual-writing to `state.records.calendars` or `state.records.appointments` when `pgPool` is configured.
+8. **Modularize Workflows & Executions Domain (Phase 1.5)**:
+   Extract `WorkflowsRepository` in `packages/db/lib/workflows-repository.mjs` and dedicated router in `apps/api/routes/workflows.mjs` covering `workflow_definitions`, `workflow_executions`, `workflow_execution_steps`, and `workflow_approvals` via `TenantTx`.
+9. **Modularize Pipelines & Funnels Domains (Phase 1.6)**:
+   Extract `PipelinesRepository` in `packages/db/lib/pipelines-repository.mjs` (backed by Migration 011 `pipelines` and `pipeline_stages` tables) and `FunnelsRepository` in `packages/db/lib/funnels-repository.mjs` (backed by `location_records` `websites`), with routers `apps/api/routes/pipelines.mjs` and `apps/api/routes/funnels.mjs`. Zero dual-writing to `state.records.pipelines` or `state.records.websites` for CRM CRUD when `pgPool` is configured.
 
 ---
 

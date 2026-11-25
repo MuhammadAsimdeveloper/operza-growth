@@ -553,6 +553,77 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       mergeClient.release();
     }
 
+    // ─── REAL POSTGRESQL PIPELINES & FUNNELS REPOSITORY RLS CHECK ───
+    const pfClient = await pool.connect();
+    try {
+      await pfClient.query('SET ROLE operza_app');
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+
+      const pfTx = {
+        agencyId: agencyA,
+        locationId: locA1,
+        actorId: '00000000-0000-4000-8000-000000000001',
+        query: (sql, params) => pfClient.query(sql, params)
+      };
+
+      const { createPipelinesRepository } = await import('../lib/pipelines-repository.mjs');
+      const { createFunnelsRepository } = await import('../lib/funnels-repository.mjs');
+      const pipelinesRepo = createPipelinesRepository();
+      const funnelsRepo = createFunnelsRepository();
+
+      const pgPipeline = await pipelinesRepo.createPipeline(pfTx, {
+        name: 'Real PG Sales Pipeline',
+        stages: [{ name: 'Lead', probability: 20 }, { name: 'Won', probability: 100 }]
+      });
+      assert.ok(pgPipeline.id);
+      assert.equal(pgPipeline.stages.length, 2);
+
+      const pgFunnel = await funnelsRepo.createFunnel(pfTx, {
+        name: 'Real PG Funnel',
+        slug: 'real-pg-funnel',
+        published: true,
+        pages: [{ id: 'p1', slug: 'optin', title: 'Optin' }]
+      });
+      assert.ok(pgFunnel.id);
+      const visitedFunnel = await funnelsRepo.recordVisit(pfTx, pgFunnel.id, 'optin');
+      assert.equal(visitedFunnel.visits, 1);
+
+      // Verify cross-tenant isolation under Tenant B
+      await pfClient.query('COMMIT');
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      const pfTxB = {
+        agencyId: agencyB,
+        locationId: locB1,
+        actorId: '00000000-0000-4000-8000-000000000002',
+        query: (sql, params) => pfClient.query(sql, params)
+      };
+      assert.equal(await pipelinesRepo.getPipelineById(pfTxB, pgPipeline.id), null, 'Tenant B must not read Tenant A pipeline under real PG RLS');
+      assert.equal(await funnelsRepo.getFunnelById(pfTxB, pgFunnel.id), null, 'Tenant B must not read Tenant A funnel under real PG RLS');
+      await pfClient.query('ROLLBACK');
+
+      // Cleanup seeded pipeline & funnel under Tenant A
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+      assert.equal(await pipelinesRepo.deletePipeline(pfTx, pgPipeline.id), true);
+      assert.equal(await funnelsRepo.deleteFunnel(pfTx, pgFunnel.id), true);
+      await pfClient.query('COMMIT');
+    } finally {
+      await pfClient.query('ROLLBACK').catch(() => {});
+      await pfClient.query('RESET ROLE').catch(() => {});
+      pfClient.release();
+    }
+
     console.log('[REAL-PG-TEST] All real PostgreSQL RLS and least-privilege checks passed successfully.');
   } finally {
     await pool.end();
