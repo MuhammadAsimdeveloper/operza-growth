@@ -1301,6 +1301,15 @@ export async function handleWorkflowsRoutes(req, res, ctx) {
           broadcast('crm.workflows.updated', updated);
           sendJson(res, 200, updated);
         } catch (err) {
+          if (err?.code === 'VERSION_CONFLICT') {
+            sendJson(res, 409, {
+              error: err.message,
+              code: 'VERSION_CONFLICT',
+              expectedVersion: err.expectedVersion,
+              currentVersion: err.currentVersion
+            });
+            return true;
+          }
           sendJson(res, 500, { error: 'Failed to update workflow: ' + err.message });
         }
         return true;

@@ -301,13 +301,24 @@ export function createWorkflowsRepository() {
         : current.triggerType;
       const triggerConfig = data.triggerConfig && typeof data.triggerConfig === 'object' ? data.triggerConfig : current.triggerConfig;
       const nodes = Array.isArray(data.nodes) ? data.nodes : current.nodes;
+      const expectedVersion = data.expectedVersion !== undefined
+        ? Number(data.expectedVersion)
+        : (data.version !== undefined ? Number(data.version) : null);
+
+      if (expectedVersion !== null && expectedVersion !== current.version) {
+        throw Object.assign(
+          new Error(`Workflow version conflict: expected version ${expectedVersion}, current version is ${current.version}`),
+          { code: 'VERSION_CONFLICT', expectedVersion, currentVersion: current.version }
+        );
+      }
+
       const nextVersion = current.version + 1;
 
       const sql = `
         UPDATE workflow_definitions
         SET name = $1, status = $2, trigger_type = $3, trigger_config = $4,
             nodes = $5, version = $6, updated_at = now()
-        WHERE agency_id = $7 AND location_id = $8 AND id = $9
+        WHERE agency_id = $7 AND location_id = $8 AND id = $9 AND version = $10
         RETURNING *
       `;
 
@@ -320,11 +331,17 @@ export function createWorkflowsRepository() {
         nextVersion,
         tx.agencyId,
         tx.locationId,
-        id
+        id,
+        current.version
       ];
 
       const res = await tx.query(sql, params);
-      if (res.rows.length === 0) return null;
+      if (res.rows.length === 0) {
+        throw Object.assign(
+          new Error('Workflow version conflict: concurrent modification detected'),
+          { code: 'VERSION_CONFLICT', expectedVersion: current.version }
+        );
+      }
       return normalizeWorkflowRow(res.rows[0]);
     },
 

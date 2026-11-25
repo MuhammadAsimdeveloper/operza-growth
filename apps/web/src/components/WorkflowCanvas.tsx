@@ -20,6 +20,7 @@ import { useState, useRef, useEffect, type MouseEvent } from 'react';
 import { api } from '../lib/api';
 import { Icon } from './Icon';
 import { Badge } from './ui';
+import { WorkflowGraphV2 } from './WorkflowGraphV2';
 import type { Workflow, WorkflowAction, WorkflowTrigger, WorkflowRun } from '../lib/types';
 
 interface Point {
@@ -128,6 +129,7 @@ export function WorkflowCanvas({
   const [inspectedNode, setInspectedNode] = useState<NodeLayout | null>(null);
   const [testResult, setTestResult] = useState<Record<string, unknown> | null>(null);
   const [testingNode, setTestingNode] = useState(false);
+  const [xyFlowMode, setXyFlowMode] = useState(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -233,6 +235,17 @@ export function WorkflowCanvas({
       }}
       onMouseDown={handleMouseDownCanvas}
     >
+      {xyFlowMode && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 25, paddingTop: 64, background: 'var(--bg)' }}>
+          <WorkflowGraphV2
+            workflow={workflow}
+            onSelectActionId={(actionId) => {
+              const found = (workflow.actions || []).find((a) => a.id === actionId);
+              if (found) onEditStep(found);
+            }}
+          />
+        </div>
+      )}
       {/* Top Floating Controls Bar */}
       <div
         style={{
@@ -252,6 +265,17 @@ export function WorkflowCanvas({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginRight: 4 }}>
+          <button
+            type="button"
+            className="btn btn--sm"
+            onClick={(e) => {
+              e.stopPropagation();
+              setXyFlowMode((prev) => !prev);
+            }}
+            style={{ fontSize: 11, padding: '3px 8px' }}
+          >
+            {xyFlowMode ? 'Classic Canvas' : 'XYFlow V2 Graph'}
+          </button>
           <span
             style={{
               width: 8,

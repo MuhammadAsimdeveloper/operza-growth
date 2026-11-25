@@ -929,6 +929,35 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       const tenantBDunning = await dunningRepo.listAttempts(pfTxB, { agencyId: agencyB, locationId: locB1 });
       assert.equal(tenantBDunning.length, 0, 'Tenant B must not read Tenant A dunning attempts');
       await pfClient.query('ROLLBACK');
+
+      // ─── REAL POSTGRESQL WORKFLOW OPTIMISTIC LOCKING CHECK ───
+      const { createWorkflowsRepository } = await import('../lib/workflows-repository.mjs');
+      const wfRepo = createWorkflowsRepository();
+
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+      const pgWf = await wfRepo.createWorkflow(pfTx, {
+        name: 'Optimistic Lock Test Flow',
+        status: 'draft',
+        triggerType: 'manual',
+        nodes: []
+      });
+      assert.equal(pgWf.version, 1);
+
+      const pgWfV2 = await wfRepo.updateWorkflow(pfTx, pgWf.id, {
+        name: 'Optimistic Lock Test Flow v2',
+        expectedVersion: 1
+      });
+      assert.equal(pgWfV2.version, 2);
+
+      await assert.rejects(
+        () => wfRepo.updateWorkflow(pfTx, pgWf.id, { name: 'Stale Update', expectedVersion: 1 }),
+        err => err.code === 'VERSION_CONFLICT'
+      );
+      await pfClient.query('COMMIT');
     } finally {
       await pfClient.query('ROLLBACK').catch(() => {});
       await pfClient.query('RESET ROLE').catch(() => {});

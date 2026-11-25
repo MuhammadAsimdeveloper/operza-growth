@@ -104,8 +104,15 @@ function createInMemoryStoragePool() {
           if (normSql.startsWith('UPDATE workflow_definitions')) {
             const agencyId = currentAgencyId;
             const locationId = currentLocationId;
-            const id = params[params.length - 1];
-            const idx = definitions.findIndex(d => d.agency_id === agencyId && d.location_id === locationId && d.id === id);
+            const hasVersionFence = normSql.includes('AND version = $10');
+            const id = hasVersionFence ? params[8] : params[params.length - 1];
+            const expectedVersion = hasVersionFence ? Number(params[9]) : null;
+            const idx = definitions.findIndex((d) =>
+              d.agency_id === agencyId &&
+              d.location_id === locationId &&
+              d.id === id &&
+              (expectedVersion === null || Number(d.version) === expectedVersion)
+            );
             if (idx === -1) return { rows: [], rowCount: 0 };
 
             const target = definitions[idx];
