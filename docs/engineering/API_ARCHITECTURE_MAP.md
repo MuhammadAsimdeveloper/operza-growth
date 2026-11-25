@@ -50,6 +50,9 @@ This document provides a comprehensive structural mapping of the Operza Growth A
                       |   - apps/api/routes/funnels.mjs       |
                       |   - apps/api/routes/payments.mjs      |
                       |   - apps/api/routes/conversations.mjs |
+                      |   - apps/api/routes/forms.mjs         |
+                      |   - apps/api/routes/tasks.mjs         |
+                      |   - apps/api/routes/reviews.mjs       |
                       |   - apps/api/routes/crm.mjs           |
                       |   - apps/api/routes/auth.mjs          |
                       |   - apps/api/routes/agency.mjs        |

@@ -26,6 +26,9 @@ export async function handleAgencyRoutes(req, res, ctx) {
     return false;
   }
 
+  const callerRole = actor?.membership?.role || actor?.user?.role || '';
+  const isAgencyAdmin = ['owner', 'admin'].includes(callerRole);
+
   // 1. GET /api/agency/profile
   if (method === 'GET' && pathname === '/api/agency/profile') {
     sendJson(res, 200, {
@@ -92,6 +95,10 @@ export async function handleAgencyRoutes(req, res, ctx) {
 
   // 4. POST /api/agency/team/invite
   if (method === 'POST' && pathname === '/api/agency/team/invite') {
+    if (!isAgencyAdmin) {
+      sendJson(res, 403, { error: 'Only agency owners and admins can invite team members' });
+      return true;
+    }
     const body = await readBody(req);
     const name = (body.name || '').trim();
     const email = (body.email || '').toLowerCase().trim();
@@ -132,6 +139,10 @@ export async function handleAgencyRoutes(req, res, ctx) {
 
   // 5. PUT /api/agency/team/:id/role
   if (method === 'PUT' && pathname.startsWith('/api/agency/team/') && pathname.endsWith('/role')) {
+    if (!isAgencyAdmin) {
+      sendJson(res, 403, { error: 'Only agency owners and admins can modify team roles' });
+      return true;
+    }
     const memberId = pathname.replace('/api/agency/team/', '').replace('/role', '').trim();
     const body = await readBody(req);
     const role = body.role === 'admin' ? 'admin' : 'user';
@@ -140,6 +151,14 @@ export async function handleAgencyRoutes(req, res, ctx) {
     const member = state.records.team.find(m => m.id === memberId && m.agencyId === agency.id);
     if (!member) {
       sendJson(res, 404, { error: 'Team member not found' });
+      return true;
+    }
+    if (member.role === 'owner' && callerRole !== 'owner') {
+      sendJson(res, 403, { error: 'Only an agency owner can modify an owner role' });
+      return true;
+    }
+    if (member.email === actor?.user?.email && role !== callerRole) {
+      sendJson(res, 403, { error: 'Members cannot modify their own role' });
       return true;
     }
 
@@ -156,6 +175,10 @@ export async function handleAgencyRoutes(req, res, ctx) {
 
   // 6. DELETE /api/agency/team/:id
   if (method === 'DELETE' && pathname.startsWith('/api/agency/team/')) {
+    if (!isAgencyAdmin) {
+      sendJson(res, 403, { error: 'Only agency owners and admins can remove team members' });
+      return true;
+    }
     const memberId = pathname.replace('/api/agency/team/', '').trim();
     state.records.team = state.records.team || [];
     const idx = state.records.team.findIndex(m => m.id === memberId && m.agencyId === agency.id);

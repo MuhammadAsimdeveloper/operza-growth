@@ -792,6 +792,71 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       });
       assert.equal(tenantBConsents.length, 0, 'Tenant B must not read Tenant A communication consents');
       await pfClient.query('ROLLBACK');
+
+      // ─── REAL POSTGRESQL FORMS, TASKS & REVIEWS RLS CHECK ───
+      const { createFormsRepository } = await import('../lib/forms-repository.mjs');
+      const { createTasksRepository } = await import('../lib/tasks-repository.mjs');
+      const { createReviewsRepository } = await import('../lib/reviews-repository.mjs');
+      const formsRepo = createFormsRepository();
+      const tasksRepo = createTasksRepository();
+      const reviewsRepo = createReviewsRepository();
+
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+
+      const pgForm = await formsRepo.createForm(pfTx, {
+        agencyId: agencyA,
+        locationId: locA1,
+        name: 'Real PG Lead Form',
+        publicSlug: 'real-pg-lead-form-' + randomUUID().slice(0, 8),
+        published: true,
+        status: 'published'
+      });
+      const pgSub1 = await formsRepo.recordSubmission(pfTx, {
+        agencyId: agencyA,
+        locationId: locA1,
+        formId: pgForm.id,
+        idempotencyKey: 'pg-sub-1',
+        answers: { email: 'pg@example.com' }
+      });
+      const pgSubDup = await formsRepo.recordSubmission(pfTx, {
+        agencyId: agencyA,
+        locationId: locA1,
+        formId: pgForm.id,
+        idempotencyKey: 'pg-sub-1',
+        answers: { email: 'pg@example.com' }
+      });
+      assert.equal(pgSub1.deduplicated, false);
+      assert.equal(pgSubDup.deduplicated, true, 'Real PG form submission idempotency key must deduplicate');
+
+      const pgTask = await tasksRepo.createTask(pfTx, {
+        agencyId: agencyA,
+        locationId: locA1,
+        title: 'Real PG Follow Up',
+        priority: 'high'
+      });
+      const pgReview = await reviewsRepo.createReview(pfTx, {
+        agencyId: agencyA,
+        locationId: locA1,
+        contactName: 'Real PG Reviewer',
+        rating: 5,
+        text: 'Excellent!'
+      });
+      await pfClient.query('COMMIT');
+
+      // Verify Tenant B cannot read Tenant A form, task, or review under real PG RLS
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      assert.equal(await formsRepo.getForm(pfTxB, { agencyId: agencyB, locationId: locB1, id: pgForm.id }), null);
+      assert.equal(await tasksRepo.getTask(pfTxB, { agencyId: agencyB, locationId: locB1, id: pgTask.id }), null);
+      assert.equal(await reviewsRepo.getReview(pfTxB, { agencyId: agencyB, locationId: locB1, id: pgReview.id }), null);
+      await pfClient.query('ROLLBACK');
     } finally {
       await pfClient.query('ROLLBACK').catch(() => {});
       await pfClient.query('RESET ROLE').catch(() => {});

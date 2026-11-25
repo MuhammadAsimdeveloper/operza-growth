@@ -16,6 +16,9 @@ import { handlePipelinesRoutes } from './pipelines.mjs';
 import { handleFunnelsRoutes } from './funnels.mjs';
 import { handlePaymentsRoutes } from './payments.mjs';
 import { handleConversationsRoutes } from './conversations.mjs';
+import { handleFormsRoutes } from './forms.mjs';
+import { handleTasksRoutes } from './tasks.mjs';
+import { handleReviewsRoutes } from './reviews.mjs';
 
 export async function handleCrmRoutes(req, res, ctx) {
   const {
@@ -81,6 +84,17 @@ export async function handleCrmRoutes(req, res, ctx) {
 
   // Delegate conversations & communication consents domain operations
   if (await handleConversationsRoutes(req, res, ctx)) {
+    return true;
+  }
+
+  // Delegate forms, tasks & reviews domain operations
+  if (await handleFormsRoutes(req, res, ctx)) {
+    return true;
+  }
+  if (await handleTasksRoutes(req, res, ctx)) {
+    return true;
+  }
+  if (await handleReviewsRoutes(req, res, ctx)) {
     return true;
   }
 

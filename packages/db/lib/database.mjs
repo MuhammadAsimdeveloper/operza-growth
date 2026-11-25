@@ -60,5 +60,8 @@ export { createInvoicesRepository } from './invoices-repository.mjs';
 export { createLedgerRepository } from './ledger-repository.mjs';
 export { createConversationsRepository } from './conversations-repository.mjs';
 export { createCommunicationConsentsRepository } from './communication-consents-repository.mjs';
+export { createFormsRepository } from './forms-repository.mjs';
+export { createTasksRepository } from './tasks-repository.mjs';
+export { createReviewsRepository } from './reviews-repository.mjs';
 export { toCents, fromCents, validateCurrency } from './money.mjs';
 
