@@ -60,6 +60,7 @@ import { handleWorkflowsRoutes } from './routes/workflows.mjs';
 import { handlePipelinesRoutes } from './routes/pipelines.mjs';
 import { handleFunnelsRoutes } from './routes/funnels.mjs';
 import { handlePaymentsRoutes } from './routes/payments.mjs';
+import { handleConversationsRoutes, recordInboundOptOut } from './routes/conversations.mjs';
 import { parseAndValidateCsvImport, exportContactsToCsv } from '../../packages/platform-core/src/csv-transfer.mjs';
 import { createSmartListView, matchesSmartListView, filterSmartListRecords, generateSmartListSql } from '../../packages/platform-core/src/crm-views-store.mjs';
 import { createDefaultLLMRuntime } from '../../packages/platform-core/src/llm-runtime/index.mjs';
@@ -4194,6 +4195,21 @@ const server = createServer(async (req, res) => {
           });
           await saveState();
 
+          const normalizedKeyword = textBody.trim().toUpperCase();
+          if (['STOP', 'STOPALL', 'UNSUBSCRIBE', 'CANCEL', 'END', 'QUIT'].includes(normalizedKeyword)) {
+            await recordInboundOptOut({
+              pgPool,
+              state,
+              agencyId: contact.agencyId,
+              locationId: contact.locationId,
+              contactId: contact.id,
+              channel: 'sms',
+              proofRef: normalizedKeyword,
+              randomUUID
+            });
+            await saveState();
+          }
+
           broadcast('crm.conversation.updated', { id: conv.id, contactName, message: textBody });
           broadcast('webhook.twilio.sms_inbound', { from: fromNumber, to: payload.To, body: textBody });
 
@@ -5853,38 +5869,13 @@ const server = createServer(async (req, res) => {
     // ─── OMNICHANNEL OUTBOUND MESSAGING ──────────────────────────
     // ═════════════════════════════════════════════════════════════
 
-    if (method === 'POST' && pathname.startsWith('/api/conversations/') && pathname.endsWith('/messages')) {
-      const convId = pathname.replace('/api/conversations/', '').replace('/messages', '').trim();
-      state.records.conversations = state.records.conversations || [];
-      const conv = state.records.conversations.find(
-        c => c.id === convId && c.agencyId === agency.id && c.locationId === activeLocation.id
-      );
-      if (!conv) return sendJson(res, 404, { error: 'Conversation not found' });
-
-      const body = await readBody(req);
-      const text = body.content || body.body || '';
-      if (!text) return sendJson(res, 400, { error: 'content is required' });
-
-      const msg = {
-        id: randomUUID(),
-        sender: 'agent',
-        senderName: actor.user.name,
-        channel: body.channel || conv.channel || 'sms',
-        content: text,
-        subject: body.subject || undefined,
-        timestamp: new Date().toISOString()
-      };
-
-      conv.messages = conv.messages || [];
-      conv.messages.push(msg);
-      conv.lastMessage = text;
-      conv.updatedAt = new Date().toISOString();
-      await saveState();
-
-      auditLog('conversation.message_sent', actor, { convId, channel: msg.channel });
-      broadcast('crm.conversation.message', { conversationId: conv.id, message: msg });
-
-      return sendJson(res, 201, { success: true, message: msg, conversation: conv });
+    if (pathname.startsWith('/api/conversations/') && pathname.endsWith('/messages')) {
+      if (await handleConversationsRoutes(req, res, {
+        method, pathname, url, readBody, sendJson, state, saveState,
+        auditLog, broadcast, actor, agency, activeLocation, pgPool, randomUUID
+      })) {
+        return;
+      }
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -7872,96 +7863,16 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { success: true, connection: savedConnection });
     }
 
-    if (method === 'GET' && pathname === '/api/platform/consents') {
-      const contactId = url.searchParams.get('contactId');
-      const consents = platformRepository
-        ? await platformRepository.listConsents({ tenantId: agency.id, locationId: activeLocation.id, contactId })
-        : (state.communicationConsents || []).filter(item =>
-            item.tenantId === agency.id && item.locationId === activeLocation.id &&
-            (!contactId || item.contactId === contactId)
-          );
-      return sendJson(res, 200, { data: consents });
-    }
-
-    if (method === 'POST' && pathname === '/api/platform/consents') {
-      if (!['owner', 'admin'].includes(actor.membership.role)) {
-        return sendJson(res, 403, { error: 'Only workspace owners and admins can record consent evidence' });
+    if (
+      pathname === '/api/platform/consents' ||
+      (pathname.startsWith('/api/platform/consents/') && pathname.endsWith('/revoke'))
+    ) {
+      if (await handleConversationsRoutes(req, res, {
+        method, pathname, url, readBody, sendJson, state, saveState,
+        auditLog, broadcast, actor, agency, activeLocation, pgPool, randomUUID
+      })) {
+        return;
       }
-      const body = await readBody(req);
-      const contact = (state.records.contacts || []).find(
-        item => item.id === body.contactId && item.agencyId === agency.id && item.locationId === activeLocation.id
-      );
-      if (!contact) return sendJson(res, 404, { error: 'Contact not found in the active workspace' });
-      if (body.status === 'granted' && (typeof body.proofRef !== 'string' || body.proofRef.trim().length < 3)) {
-        return sendJson(res, 400, { error: 'Granting consent requires an auditable proof reference', code: 'CONSENT_PROOF_REQUIRED' });
-      }
-      const consent = recordConsent({
-        tenantId: agency.id,
-        locationId: activeLocation.id,
-        contactId: contact.id,
-        channel: body.channel,
-        purpose: body.purpose,
-        status: body.status,
-        source: body.source || 'manual',
-        proofRef: body.proofRef
-      });
-      consent.capturedByActorId = actor.user.id;
-      const storedConsent = platformRepository
-        ? await platformRepository.recordConsent(consent)
-        : (() => {
-            state.communicationConsents = state.communicationConsents || [];
-            state.communicationConsents.push(consent);
-            return consent;
-          })();
-      if (!platformRepository) await saveState();
-      auditLog('communication.consent.recorded', actor, {
-        consentId: consent.id,
-        contactId: contact.id,
-        channel: consent.channel,
-        purpose: consent.purpose,
-        status: consent.status
-      });
-      return sendJson(res, 201, { success: true, consent: storedConsent });
-    }
-
-    if (method === 'POST' && pathname.startsWith('/api/platform/consents/') && pathname.endsWith('/revoke')) {
-      if (!['owner', 'admin'].includes(actor.membership.role)) {
-        return sendJson(res, 403, { error: 'Only workspace owners and admins can record opt-outs' });
-      }
-      const consentId = pathname.split('/')[4];
-      const currentConsents = platformRepository
-        ? await platformRepository.listConsents({ tenantId: agency.id, locationId: activeLocation.id })
-        : (state.communicationConsents || []).filter(item =>
-            item.tenantId === agency.id && item.locationId === activeLocation.id
-          );
-      const existing = currentConsents.find(item => item.id === consentId);
-      if (!existing) return sendJson(res, 404, { error: 'Consent record not found' });
-      const revocation = recordConsent({
-        tenantId: agency.id,
-        locationId: activeLocation.id,
-        contactId: existing.contactId,
-        channel: existing.channel,
-        purpose: existing.purpose,
-        status: 'revoked',
-        source: 'manual',
-        proofRef: 'operator:' + actor.user.id
-      });
-      revocation.capturedByActorId = actor.user.id;
-      const storedRevocation = platformRepository
-        ? await platformRepository.recordConsent(revocation)
-        : (() => {
-            state.communicationConsents.push(revocation);
-            return revocation;
-          })();
-      if (!platformRepository) await saveState();
-      auditLog('communication.consent.revoked', actor, {
-        consentId: revocation.id,
-        priorConsentId: consentId,
-        contactId: existing.contactId,
-        channel: existing.channel,
-        purpose: existing.purpose
-      });
-      return sendJson(res, 200, { success: true, consent: storedRevocation });
     }
 
     // Note: /api/workflows routes (runs, approvals, tick, nodes, run, test)

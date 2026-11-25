@@ -44,6 +44,12 @@ This document provides a comprehensive structural mapping of the Operza Growth A
                       |          Domain Route Handlers        |
                       |   - apps/api/routes/contacts.mjs      |
                       |   - apps/api/routes/opportunities.mjs |
+                      |   - apps/api/routes/scheduling.mjs    |
+                      |   - apps/api/routes/workflows.mjs     |
+                      |   - apps/api/routes/pipelines.mjs     |
+                      |   - apps/api/routes/funnels.mjs       |
+                      |   - apps/api/routes/payments.mjs      |
+                      |   - apps/api/routes/conversations.mjs |
                       |   - apps/api/routes/crm.mjs           |
                       |   - apps/api/routes/auth.mjs          |
                       |   - apps/api/routes/agency.mjs        |

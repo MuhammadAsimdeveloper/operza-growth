@@ -693,6 +693,105 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       const tenantBLedger = await ledgerRepo.verifyAccountIntegrity(pfTxB, { accountType: 'stripe_escrow' });
       assert.equal(tenantBLedger.balanceCents, 0, 'Tenant B ledger must be isolated from Tenant A');
       await pfClient.query('ROLLBACK');
+
+      // ─── REAL POSTGRESQL CONVERSATIONS, MESSAGES & CONSENTS RLS CHECK ───
+      const { createConversationsRepository } = await import('../lib/conversations-repository.mjs');
+      const { createCommunicationConsentsRepository } = await import('../lib/communication-consents-repository.mjs');
+      const conversationsRepo = createConversationsRepository();
+      const consentsRepo = createCommunicationConsentsRepository();
+
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+
+      const pgConv = await conversationsRepo.createConversation(pfTx, {
+        agencyId: agencyA,
+        locationId: locA1,
+        contactName: 'Real PG Messaging Contact',
+        channel: 'sms',
+        subject: 'PG Messaging RLS Test'
+      });
+      const pgMsg1 = await conversationsRepo.appendMessage(pfTx, {
+        agencyId: agencyA,
+        locationId: locA1,
+        conversationId: pgConv.id,
+        channel: 'sms',
+        direction: 'inbound',
+        senderType: 'contact',
+        senderName: 'Real PG Messaging Contact',
+        body: 'Hello from real PG',
+        deliveryStatus: 'delivered',
+        provider: 'twilio',
+        providerMessageId: 'SM-REAL-PG-1'
+      });
+      const pgMsgDup = await conversationsRepo.appendMessage(pfTx, {
+        agencyId: agencyA,
+        locationId: locA1,
+        conversationId: pgConv.id,
+        channel: 'sms',
+        direction: 'inbound',
+        senderType: 'contact',
+        senderName: 'Real PG Messaging Contact',
+        body: 'Hello from real PG',
+        deliveryStatus: 'delivered',
+        provider: 'twilio',
+        providerMessageId: 'SM-REAL-PG-1'
+      });
+      assert.equal(pgMsg1.deduplicated, false);
+      assert.equal(pgMsgDup.deduplicated, true, 'Real PG provider_message_id unique index must deduplicate');
+
+      // Consent check for contactIdPg
+      const contactIdPg = randomUUID();
+      await consentsRepo.recordConsent(pfTx, {
+        agencyId: agencyA,
+        locationId: locA1,
+        contactId: contactIdPg,
+        channel: 'sms',
+        purpose: 'marketing',
+        status: 'granted',
+        source: 'web_form',
+        proofRef: 'pg-form-001'
+      });
+      await consentsRepo.recordConsent(pfTx, {
+        agencyId: agencyA,
+        locationId: locA1,
+        contactId: contactIdPg,
+        channel: 'sms',
+        purpose: 'marketing',
+        status: 'revoked',
+        source: 'keyword_opt_out',
+        proofRef: 'STOP'
+      });
+      const smsAllowed = await consentsRepo.isChannelAllowed(pfTx, {
+        agencyId: agencyA,
+        locationId: locA1,
+        contactId: contactIdPg,
+        channel: 'sms',
+        purpose: 'transactional'
+      });
+      assert.equal(smsAllowed.allowed, false, 'Real PG STOP revocation must block SMS');
+      await pfClient.query('COMMIT');
+
+      // Verify Tenant B cannot read Tenant A conversation, messages, or consents under real PG RLS
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      assert.equal(
+        await conversationsRepo.getConversation(pfTxB, { agencyId: agencyB, locationId: locB1, id: pgConv.id }),
+        null,
+        'Tenant B must not read Tenant A conversation'
+      );
+      const tenantBConsents = await consentsRepo.listConsents(pfTxB, {
+        agencyId: agencyB,
+        locationId: locB1,
+        contactId: contactIdPg
+      });
+      assert.equal(tenantBConsents.length, 0, 'Tenant B must not read Tenant A communication consents');
+      await pfClient.query('ROLLBACK');
     } finally {
       await pfClient.query('ROLLBACK').catch(() => {});
       await pfClient.query('RESET ROLE').catch(() => {});
