@@ -10,6 +10,7 @@ import { Avatar } from './ui';
 import { Modal } from './Modal';
 import { AppLauncherModal } from './AppLauncherModal';
 import { useStore } from '../lib/store';
+import { useContacts, useConversations, useOpportunities } from '../hooks/useWorkspaceData';
 import { relative } from '../lib/format';
 import { SEO } from './SEO';
 
@@ -36,12 +37,14 @@ function Sidebar({
   onOpenAppsLauncher: () => void;
 }) {
   const { state } = useStore();
+  const convsQuery = useConversations();
   const location = useLocation();
   const { user, agency, locations, activeLocation, switchLocation } = useAuth();
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
   const [menuFilter, setMenuFilter] = useState('');
-  const unreadConversations = state.conversations.reduce((sum, c) => sum + c.unread, 0);
+  const convList = convsQuery.data?.data ?? convsQuery.data?.conversations ?? [];
+  const unreadConversations = convList.reduce((sum: number, c: any) => sum + (Number(c.unread) || 0), 0);
   const unreadNotifications = state.notifications.filter((n) => !n.read).length;
 
   useEffect(() => {
@@ -535,25 +538,29 @@ function Sidebar({
 }
 
 export function SearchBox() {
-  const { state } = useStore();
+  const contactsQuery = useContacts();
+  const oppsQuery = useOpportunities();
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const contactsList = contactsQuery.data?.data ?? [];
+  const oppsList = oppsQuery.data?.data ?? [];
+
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return { contacts: [], deals: [] };
     return {
-      contacts: state.contacts
-        .filter((c) =>
+      contacts: contactsList
+        .filter((c: any) =>
           `${c.firstName} ${c.lastName} ${c.email} ${c.company}`.toLowerCase().includes(q),
         )
         .slice(0, 5),
-      deals: state.opportunities.filter((o) => o.name.toLowerCase().includes(q)).slice(0, 4),
+      deals: oppsList.filter((o: any) => String(o.name || '').toLowerCase().includes(q)).slice(0, 4),
     };
-  }, [query, state.contacts, state.opportunities]);
+  }, [query, contactsList, oppsList]);
 
   useEffect(() => {
     const onDown = (e: MouseEvent) => {

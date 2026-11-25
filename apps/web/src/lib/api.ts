@@ -12,16 +12,40 @@
 
 const BASE = '';
 
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  details?: unknown;
+
+  constructor(message: string, status: number, code?: string, details?: unknown) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+    this.details = details;
+  }
+}
+
+export function isUnauthorizedError(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 401;
+}
+
 export async function request<T = any>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers || {});
   if (!headers.has('Content-Type') && !(options.body instanceof FormData)) {
     headers.set('Content-Type', 'application/json');
   }
 
-  // Pass active location header if saved
-  const activeLoc = localStorage.getItem('operza_active_location');
-  if (activeLoc && !headers.has('x-operza-location')) {
-    headers.set('x-operza-location', activeLoc);
+  // Pass active location/agency headers if saved
+  if (typeof localStorage !== 'undefined') {
+    const activeLoc = localStorage.getItem('operza_active_location');
+    if (activeLoc && !headers.has('x-operza-location')) {
+      headers.set('x-operza-location', activeLoc);
+    }
+    const activeAgency = localStorage.getItem('operza_active_agency');
+    if (activeAgency && !headers.has('x-operza-agency')) {
+      headers.set('x-operza-agency', activeAgency);
+    }
   }
 
   // Auto-inject CSRF token for mutating requests in browser environment
@@ -41,7 +65,12 @@ export async function request<T = any>(endpoint: string, options: RequestInit = 
 
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({}));
-    throw new Error(errorBody.error || `Request failed with status ${response.status}`);
+    throw new ApiError(
+      errorBody.error || `Request failed with status ${response.status}`,
+      response.status,
+      errorBody.code,
+      errorBody
+    );
   }
 
   return response.json();

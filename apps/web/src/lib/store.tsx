@@ -7,7 +7,6 @@ import {
   type Dispatch,
   type ReactNode,
 } from 'react';
-import { seed } from './seed';
 import type {
   Affiliate,
   Appointment,
@@ -1295,7 +1294,7 @@ function applyAction(state: WorkspaceState, action: Action): WorkspaceState {
       try {
         localStorage.removeItem('operza_clean_workspace');
       } catch {}
-      return seed;
+      return createEmptyWorkspaceState();
 
     default:
       return state;
@@ -1957,7 +1956,7 @@ export function reducer(state: WorkspaceState, action: Action): WorkspaceState {
   const entry: AuditEntry = {
     id: uid('au'),
     at: new Date().toISOString(),
-    actor: 'Asim R.',
+    actor: 'Operator',
     ...meta,
   };
   return { ...next, auditLog: [entry, ...next.auditLog].slice(0, 250) };
@@ -1965,41 +1964,13 @@ export function reducer(state: WorkspaceState, action: Action): WorkspaceState {
 
 export function createEmptyWorkspaceState(): WorkspaceState {
   return {
-    ...seed,
     contacts: [],
     opportunities: [],
-    pipelines: [
-      {
-        id: 'pipe-lead',
-        name: 'Lead Pipeline',
-        stages: [
-          { id: 's1', name: 'New Lead', color: '#64748b' },
-          { id: 's2', name: 'Contacted', color: '#3b82f6' },
-          { id: 's3', name: 'Demo Booked', color: '#8b5cf6' },
-          { id: 's4', name: 'Proposal Sent', color: '#f59e0b' },
-          { id: 's5', name: 'Won', color: '#10b981' },
-          { id: 's6', name: 'Lost', color: '#ef4444' },
-        ],
-      },
-    ],
+    pipelines: [],
     conversations: [],
     tasks: [],
     appointments: [],
-    calendars: [
-      {
-        id: 'cal-discovery',
-        name: 'Discovery & Strategy Session',
-        color: '#6366f1',
-        availability: [
-          { weekday: 1, start: '09:00', end: '17:00' },
-          { weekday: 2, start: '09:00', end: '17:00' },
-          { weekday: 3, start: '09:00', end: '17:00' },
-          { weekday: 4, start: '09:00', end: '17:00' },
-          { weekday: 5, start: '09:00', end: '17:00' },
-        ],
-        roundRobin: true,
-      },
-    ],
+    calendars: [],
     sites: [],
     workflows: [],
     workflowRuns: [],
@@ -2016,21 +1987,54 @@ export function createEmptyWorkspaceState(): WorkspaceState {
     notifications: [],
     auditLog: [],
     savedReports: [],
-  };
+    reviews: [],
+    reviewRequests: [],
+    integrations: [],
+    templates: [],
+    triggerLinks: [],
+    affiliates: [],
+    courses: [],
+    memberships: [],
+    documents: [],
+    coupons: [],
+    customValues: [],
+    customFields: [],
+    smartLists: [],
+    subAccounts: [],
+    snapshots: [],
+    team: [],
+    phoneNumbers: [],
+    calls: [],
+    orders: [],
+    subscriptions: [],
+    prospects: [],
+    paymentGateways: [],
+    dashboardWidgets: [],
+    saasPlans: [],
+    branding: {
+      platformName: 'Operza',
+      primaryColor: '#4f46e5',
+      customDomain: '',
+      isDomainVerified: false,
+      sslActive: false,
+      senderEmail: 'noreply@operza.io',
+      isDkimVerified: false,
+      portalWelcomeHeading: 'Client Portal',
+      portalWelcomeSubhead: 'Manage your projects, invoices, and appointments.',
+    },
+  } as unknown as WorkspaceState;
 }
 
 function loadInitial(): WorkspaceState {
   try {
-    const isClean = localStorage.getItem('operza_clean_workspace') === 'true';
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      return isClean ? createEmptyWorkspaceState() : seed;
+      return createEmptyWorkspaceState();
     }
     const parsed = JSON.parse(raw) as Partial<WorkspaceState>;
-    const base = isClean ? createEmptyWorkspaceState() : seed;
-    return { ...base, ...parsed };
+    return { ...createEmptyWorkspaceState(), ...parsed };
   } catch {
-    return seed;
+    return createEmptyWorkspaceState();
   }
 }
 

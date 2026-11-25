@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, EmptyState } from '../components/ui';
-import { uid, useStore } from '../lib/store';
+import { Avatar, Badge, EmptyState, ErrorState, LoadingState } from '../components/ui';
+import { useAuth } from '../lib/AuthContext';
+import { useContacts, useTaskMutations, useTasks } from '../hooks/useWorkspaceData';
 import { shortDate, timeOf, toDateTimeInput } from '../lib/format';
-import { api } from '../lib/api';
 import type { Task, TaskPriority } from '../lib/types';
 
 const PRIORITY: Record<TaskPriority, { label: string; tone: 'default' | 'amber' | 'red' }> = {
@@ -16,48 +16,42 @@ const PRIORITY: Record<TaskPriority, { label: string; tone: 'default' | 'amber' 
 
 type Filter = 'open' | 'done' | 'all';
 
+function mapApiTask(t: any): Task {
+  return {
+    id: t.id,
+    title: t.title || 'Follow-up Task',
+    contactId: t.contactId || undefined,
+    assignee: t.assignedTo || 'Operator',
+    dueAt: t.dueDate || t.createdAt || new Date().toISOString(),
+    priority: (t.priority === 'high' ? 'high' : t.priority === 'low' ? 'low' : 'medium') as TaskPriority,
+    done: t.status === 'completed',
+    createdAt: t.createdAt || new Date().toISOString(),
+  };
+}
+
 export default function Tasks() {
-  const { state, dispatch } = useStore();
+  const tasksQuery = useTasks();
+  const contactsQuery = useContacts();
+  const mutations = useTaskMutations();
   const [filter, setFilter] = useState<Filter>('open');
   const [query, setQuery] = useState('');
   const [adding, setAdding] = useState(false);
 
-  useEffect(() => {
-    let active = true;
-    api.crm.list('tasks').then((res) => {
-      if (!active || !res?.data) return;
-      for (const t of res.data) {
-        if (!state.tasks.some((st) => st.id === t.id)) {
-          dispatch({
-            type: 'task/add',
-            task: {
-              id: t.id,
-              title: t.title || 'Follow-up Task',
-              contactId: t.contactId,
-              assignee: t.assignedTo || 'Current User',
-              dueAt: t.dueDate || new Date(Date.now() + 86400000).toISOString(),
-              priority: (t.priority === 'high' ? 'high' : t.priority === 'low' ? 'low' : 'medium') as TaskPriority,
-              done: t.status === 'completed',
-              createdAt: t.createdAt || new Date().toISOString(),
-            },
-          });
-        }
-      }
-    }).catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, [state.tasks, dispatch]);
+  const allTasks = useMemo(() => {
+    const raw = tasksQuery.data?.data ?? tasksQuery.data?.tasks ?? [];
+    return raw.map(mapApiTask);
+  }, [tasksQuery.data]);
 
+  const contacts = contactsQuery.data?.data ?? [];
   const now = Date.now();
   const contactName = (id?: string) => {
-    const c = id ? state.contacts.find((x) => x.id === id) : undefined;
+    const c = id ? contacts.find((x: any) => x.id === id) : undefined;
     return c ? `${c.firstName} ${c.lastName}` : null;
   };
 
   const tasks = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return state.tasks
+    return allTasks
       .filter((t) => {
         if (filter === 'open' && t.done) return false;
         if (filter === 'done' && !t.done) return false;
@@ -65,11 +59,10 @@ export default function Tasks() {
         return `${t.title} ${t.assignee} ${contactName(t.contactId) ?? ''}`.toLowerCase().includes(q);
       })
       .sort((a, b) => a.dueAt.localeCompare(b.dueAt));
-    // contactName closes over state.contacts, which is already a dependency
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.tasks, state.contacts, filter, query]);
+  }, [allTasks, contacts, filter, query]);
 
-  const open = state.tasks.filter((t) => !t.done);
+  const open = allTasks.filter((t) => !t.done);
   const overdue = open.filter((t) => new Date(t.dueAt).getTime() < now);
   const dueToday = open.filter((t) => {
     const due = new Date(t.dueAt);
@@ -80,7 +73,7 @@ export default function Tasks() {
       due.getFullYear() === today.getFullYear()
     );
   });
-  const completed = state.tasks.filter((t) => t.done);
+  const completed = allTasks.filter((t) => t.done);
 
   const openTasks = tasks.filter((t) => !t.done);
   const groups = [
@@ -133,9 +126,6 @@ export default function Tasks() {
           <div className="atlas-kpi__label">Open Tasks</div>
           <div className="atlas-kpi__value tabular">{open.length}</div>
           <div className="atlas-kpi__note">Pending completion</div>
-          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
-            <path d="M0 16 Q25 12 50 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: 'var(--accent)', opacity: 0.8 }} />
-          </svg>
         </article>
 
         <article className="operza-kpi atlas-kpi">
@@ -146,9 +136,6 @@ export default function Tasks() {
           <div className="atlas-kpi__label">Overdue</div>
           <div className="atlas-kpi__value tabular">{overdue.length}</div>
           <div className="atlas-kpi__note">Past due deadline</div>
-          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
-            <path d="M0 14 Q30 8 60 12 T100 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#ef4444', opacity: 0.8 }} />
-          </svg>
         </article>
 
         <article className="operza-kpi atlas-kpi">
@@ -159,9 +146,6 @@ export default function Tasks() {
           <div className="atlas-kpi__label">Due Today</div>
           <div className="atlas-kpi__value tabular">{dueToday.length}</div>
           <div className="atlas-kpi__note">Due before EOD</div>
-          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
-            <path d="M0 18 Q35 14 70 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#f59e0b', opacity: 0.8 }} />
-          </svg>
         </article>
 
         <article className="operza-kpi atlas-kpi">
@@ -172,9 +156,6 @@ export default function Tasks() {
           <div className="atlas-kpi__label">Completed</div>
           <div className="atlas-kpi__value tabular">{completed.length}</div>
           <div className="atlas-kpi__note">All-time executed</div>
-          <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
-            <path d="M0 10 Q30 14 60 8 T100 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#10b981', opacity: 0.8 }} />
-          </svg>
         </article>
       </section>
 
@@ -200,7 +181,15 @@ export default function Tasks() {
           <span className="hint">{tasks.length} shown</span>
         </div>
 
-        {tasks.length === 0 ? (
+        {tasksQuery.isLoading ? (
+          <LoadingState message="Loading tasks..." />
+        ) : tasksQuery.isError ? (
+          <ErrorState
+            title="Failed to load tasks"
+            message={(tasksQuery.error as Error)?.message}
+            onRetry={() => tasksQuery.refetch()}
+          />
+        ) : tasks.length === 0 ? (
           <EmptyState
             icon={<Icon name="task" size={22} />}
             title="Nothing here"
@@ -217,7 +206,13 @@ export default function Tasks() {
               <div key={group.key}>
                 <div className={`task-group task-group--${group.key}`}>{group.label}</div>
                 {group.items.map((t) => (
-                  <TaskRow key={t.id} task={t} />
+                  <TaskRow
+                    key={t.id}
+                    task={t}
+                    contacts={contacts}
+                    onToggle={() => mutations.update.mutate({ id: t.id, patch: { status: t.done ? 'pending' : 'completed' } })}
+                    onDelete={() => mutations.remove.mutate(t.id)}
+                  />
                 ))}
               </div>
             ))}
@@ -225,7 +220,13 @@ export default function Tasks() {
               <div>
                 <div className="task-group">Done</div>
                 {doneTasks.map((t) => (
-                  <TaskRow key={t.id} task={t} />
+                  <TaskRow
+                    key={t.id}
+                    task={t}
+                    contacts={contacts}
+                    onToggle={() => mutations.update.mutate({ id: t.id, patch: { status: t.done ? 'pending' : 'completed' } })}
+                    onDelete={() => mutations.remove.mutate(t.id)}
+                  />
                 ))}
               </div>
             )}
@@ -233,14 +234,34 @@ export default function Tasks() {
         )}
       </section>
 
-      {adding && <NewTask onClose={() => setAdding(false)} />}
+      {adding && (
+        <NewTask
+          contacts={contacts}
+          isSaving={mutations.create.isPending}
+          errorMessage={mutations.create.isError ? (mutations.create.error as Error).message : undefined}
+          onSave={async (payload) => {
+            await mutations.create.mutateAsync(payload);
+            setAdding(false);
+          }}
+          onClose={() => setAdding(false)}
+        />
+      )}
     </main>
   );
 }
 
-function TaskRow({ task }: { task: Task }) {
-  const { state, dispatch } = useStore();
-  const contact = task.contactId ? state.contacts.find((c) => c.id === task.contactId) : undefined;
+function TaskRow({
+  task,
+  contacts,
+  onToggle,
+  onDelete,
+}: {
+  task: Task;
+  contacts: any[];
+  onToggle: () => void;
+  onDelete: () => void;
+}) {
+  const contact = task.contactId ? contacts.find((c) => c.id === task.contactId) : undefined;
   const priority = PRIORITY[task.priority];
 
   return (
@@ -251,15 +272,7 @@ function TaskRow({ task }: { task: Task }) {
         role="checkbox"
         aria-checked={task.done}
         aria-label={task.done ? `Reopen ${task.title}` : `Complete ${task.title}`}
-        onClick={async () => {
-          const nextDone = !task.done;
-          try {
-            await api.crm.update('tasks', task.id, { status: nextDone ? 'completed' : 'pending' });
-          } catch (err) {
-            console.error('Failed to toggle task in backend:', err);
-          }
-          dispatch({ type: 'task/toggle', id: task.id });
-        }}
+        onClick={onToggle}
       >
         {task.done && <Icon name="check" size={13} />}
       </button>
@@ -284,14 +297,7 @@ function TaskRow({ task }: { task: Task }) {
         type="button"
         className="icon-btn"
         aria-label={`Delete ${task.title}`}
-        onClick={async () => {
-          try {
-            await api.crm.delete('tasks', task.id);
-          } catch (err) {
-            console.error('Failed to delete task in backend:', err);
-          }
-          dispatch({ type: 'task/delete', id: task.id });
-        }}
+        onClick={onDelete}
       >
         <Icon name="trash" size={15} />
       </button>
@@ -299,11 +305,23 @@ function TaskRow({ task }: { task: Task }) {
   );
 }
 
-function NewTask({ onClose }: { onClose: () => void }) {
-  const { state, dispatch } = useStore();
+function NewTask({
+  contacts,
+  isSaving,
+  errorMessage,
+  onSave,
+  onClose,
+}: {
+  contacts: any[];
+  isSaving: boolean;
+  errorMessage?: string;
+  onSave: (payload: any) => Promise<void>;
+  onClose: () => void;
+}) {
+  const { user } = useAuth();
   const [title, setTitle] = useState('');
   const [contactId, setContactId] = useState('');
-  const [assignee, setAssignee] = useState(state.team[0]?.name ?? 'Asim R.');
+  const [assignee, setAssignee] = useState(user?.name || 'Operator');
   const [priority, setPriority] = useState<TaskPriority>('medium');
   const [due, setDue] = useState(() => {
     const d = new Date();
@@ -312,38 +330,18 @@ function NewTask({ onClose }: { onClose: () => void }) {
     return toDateTimeInput(d);
   });
 
-  const canSave = title.trim().length > 1 && !!due;
+  const canSave = title.trim().length > 1 && !!due && !isSaving;
 
   const save = async () => {
     if (!canSave) return;
-    let newId = uid('tk');
-    try {
-      const res = await api.crm.create('tasks', {
-        title: title.trim(),
-        contactId: contactId || undefined,
-        assignedTo: assignee.trim(),
-        dueDate: new Date(due).toISOString(),
-        priority,
-        status: 'pending'
-      });
-      if (res?.id) newId = res.id;
-    } catch (err) {
-      console.error('Failed to create task in backend:', err);
-    }
-    dispatch({
-      type: 'task/add',
-      task: {
-        id: newId,
-        title: title.trim(),
-        contactId: contactId || undefined,
-        assignee,
-        dueAt: new Date(due).toISOString(),
-        priority,
-        done: false,
-        createdAt: new Date().toISOString(),
-      },
+    await onSave({
+      title: title.trim(),
+      contactId: contactId || undefined,
+      assignedTo: assignee.trim(),
+      dueDate: new Date(due).toISOString(),
+      priority,
+      status: 'pending',
     });
-    onClose();
   };
 
   return (
@@ -356,11 +354,16 @@ function NewTask({ onClose }: { onClose: () => void }) {
             Cancel
           </button>
           <button className="btn btn--primary" type="button" disabled={!canSave} onClick={save}>
-            Create task
+            {isSaving ? 'Creating...' : 'Create task'}
           </button>
         </>
       }
     >
+      {errorMessage && (
+        <div className="callout callout--warn" role="alert" style={{ marginBottom: 12 }}>
+          {errorMessage}
+        </div>
+      )}
       <div className="field">
         <label htmlFor="task-title">Task</label>
         <input
@@ -377,7 +380,7 @@ function NewTask({ onClose }: { onClose: () => void }) {
           <label htmlFor="task-contact">Contact</label>
           <select id="task-contact" className="select" value={contactId} onChange={(e) => setContactId(e.target.value)}>
             <option value="">No contact</option>
-            {state.contacts.map((c) => (
+            {contacts.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.firstName} {c.lastName}
               </option>
@@ -386,13 +389,7 @@ function NewTask({ onClose }: { onClose: () => void }) {
         </div>
         <div className="field">
           <label htmlFor="task-assignee">Assignee</label>
-          <select id="task-assignee" className="select" value={assignee} onChange={(e) => setAssignee(e.target.value)}>
-            {state.team.map((m) => (
-              <option key={m.id} value={m.name}>
-                {m.name}
-              </option>
-            ))}
-          </select>
+          <input id="task-assignee" className="input" value={assignee} onChange={(e) => setAssignee(e.target.value)} />
         </div>
         <div className="field">
           <label htmlFor="task-due">Due</label>

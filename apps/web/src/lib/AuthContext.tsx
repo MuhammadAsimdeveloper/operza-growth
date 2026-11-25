@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import { api } from './api';
+import { clearTenantCache } from './query';
 
 export interface AuthUser {
   id: string;
@@ -151,6 +152,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Even if API call fails, clear local state
     }
     localStorage.removeItem(ACTIVE_LOCATION_KEY);
+    localStorage.removeItem('operza_active_agency');
+    clearTenantCache();
     setState({
       user: null,
       agency: null,
@@ -166,6 +169,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const loc = prev.locations.find((l) => l.id === locationId);
       if (!loc) return prev;
       localStorage.setItem(ACTIVE_LOCATION_KEY, loc.id);
+      clearTenantCache();
       return { ...prev, activeLocation: loc };
     });
   }, []);

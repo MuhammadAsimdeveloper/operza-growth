@@ -3,8 +3,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
-import { Avatar, Badge, EmptyState, StatusBadge } from '../components/ui';
-import { useStore, uid } from '../lib/store';
+import { Avatar, Badge, EmptyState, ErrorState, LoadingState, StatusBadge } from '../components/ui';
+import { useContactMutations, useContacts } from '../hooks/useWorkspaceData';
 import { shortDate } from '../lib/format';
 import type { Contact, ContactStatus } from '../lib/types';
 
@@ -16,7 +16,8 @@ const STATUSES: Array<{ value: 'all' | ContactStatus; label: string }> = [
 ];
 
 export default function Contacts() {
-  const { state, dispatch } = useStore();
+  const contactsQuery = useContacts();
+  const mutations = useContactMutations();
   const navigate = useNavigate();
   const location = useLocation();
   const [query, setQuery] = useState('');
@@ -50,52 +51,39 @@ export default function Contacts() {
   }, [location.search]);
 
   useEffect(() => {
-    let active = true;
-    api.crm.list('contacts').then((res) => {
-      if (!active || !res?.data || !Array.isArray(res.data)) return;
-      for (const c of res.data) {
-        if (!state.contacts.some((sc) => sc.id === c.id)) {
-          dispatch({
-            type: 'contact/add',
-            contact: {
-              id: c.id,
-              firstName: c.firstName || '',
-              lastName: c.lastName || '',
-              email: c.email || '',
-              phone: c.phone || '',
-              company: c.company || '',
-              tags: Array.isArray(c.tags) ? c.tags : [],
-              source: c.source || 'Manual',
-              status: (c.status || 'lead') as ContactStatus,
-              owner: c.owner || 'Operator',
-              createdAt: c.createdAt || new Date().toISOString(),
-              notes: [],
-              customFields: c.customValues || {},
-            },
-          });
-        }
-      }
-    }).catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, [state.contacts, dispatch]);
-
-  useEffect(() => {
-    const state = location.state as { openAddContact?: boolean } | null;
-    if (!state?.openAddContact) return;
+    const routeState = location.state as { openAddContact?: boolean } | null;
+    if (!routeState?.openAddContact) return;
     setAdding(true);
     navigate(location.pathname, { replace: true, state: null });
   }, [location.pathname, location.state, navigate]);
 
+  const contactsList: Contact[] = useMemo(() => {
+    const raw = contactsQuery.data?.data ?? [];
+    return raw.map((c: any) => ({
+      id: c.id,
+      firstName: c.firstName || '',
+      lastName: c.lastName || '',
+      email: c.email || '',
+      phone: c.phone || '',
+      company: c.company || '',
+      tags: Array.isArray(c.tags) ? c.tags : [],
+      source: c.source || 'Manual',
+      status: (c.status || 'lead') as ContactStatus,
+      owner: c.owner || 'Operator',
+      createdAt: c.createdAt || new Date().toISOString(),
+      notes: [],
+      customFields: c.customValues || {},
+    }));
+  }, [contactsQuery.data]);
+
   const allTags = useMemo(
-    () => Array.from(new Set(state.contacts.flatMap((c) => c.tags))).sort(),
-    [state.contacts],
+    () => Array.from(new Set(contactsList.flatMap((c) => c.tags))).sort(),
+    [contactsList],
   );
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return state.contacts
+    return contactsList
       .filter((c) => {
         if (status !== 'all' && c.status !== status) return false;
         if (tag !== 'all' && !c.tags.includes(tag)) return false;
@@ -105,7 +93,7 @@ export default function Contacts() {
           .includes(q);
       })
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  }, [state.contacts, query, status, tag]);
+  }, [contactsList, query, status, tag]);
 
   const visibleIds = rows.map((c) => c.id);
   const allSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.includes(id));
@@ -123,20 +111,44 @@ export default function Contacts() {
   const applyTag = async () => {
     const value = tagDraft.trim().toLowerCase().replace(/\s+/g, '-');
     if (!value || selected.length === 0) return;
-    dispatch({ type: 'contact/bulkTag', ids: selected, tag: value });
     try {
-      await api.contacts.bulkTag(selected, value);
+      await mutations.bulkTag.mutateAsync({ contactIds: selected, tag: value });
       setNotice(`Tag “${value}” applied to ${selected.length} contact(s)`);
     } catch (err: any) {
-      console.error('Failed to bulk tag contacts:', err);
+      setNotice(err?.message || 'Failed to bulk tag contacts');
     }
     setTagDraft('');
   };
 
-  const applyStatus = () => {
+  const applyStatus = async () => {
     if (selected.length === 0) return;
-    dispatch({ type: 'contact/bulkStatus', ids: selected, status: statusDraft });
+    try {
+      await Promise.all(selected.map((id) => mutations.update.mutateAsync({ id, patch: { status: statusDraft } })));
+      setNotice(`Updated status to “${statusDraft}” for ${selected.length} contact(s)`);
+    } catch (err: any) {
+      setNotice(err?.message || 'Failed to update contact statuses');
+    }
   };
+
+  if (contactsQuery.isLoading) {
+    return (
+      <main className="operza-dashboard atlas-dashboard">
+        <LoadingState message="Loading contacts..." />
+      </main>
+    );
+  }
+
+  if (contactsQuery.isError) {
+    return (
+      <main className="operza-dashboard atlas-dashboard">
+        <ErrorState
+          title="Failed to load contacts"
+          message={(contactsQuery.error as Error)?.message}
+          onRetry={() => contactsQuery.refetch()}
+        />
+      </main>
+    );
+  }
 
   return (
     <main className="operza-dashboard atlas-dashboard">
@@ -172,7 +184,7 @@ export default function Contacts() {
             <span className="operza-kpi__trend"><Icon name="arrow-up-right" size={12} /> +12%</span>
           </div>
           <div className="atlas-kpi__label">All Contacts</div>
-          <div className="atlas-kpi__value tabular">{state.contacts.length}</div>
+          <div className="atlas-kpi__value tabular">{contactsList.length}</div>
           <div className="atlas-kpi__note">Workspace directory</div>
           <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
             <path d="M0 16 Q25 12 50 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: 'var(--accent)', opacity: 0.8 }} />
@@ -185,7 +197,7 @@ export default function Contacts() {
             <span className="operza-kpi__trend"><Icon name="arrow-up-right" size={12} /> +18%</span>
           </div>
           <div className="atlas-kpi__label">Active Leads</div>
-          <div className="atlas-kpi__value tabular">{state.contacts.filter(c => c.status === 'lead').length}</div>
+          <div className="atlas-kpi__value tabular">{contactsList.filter(c => c.status === 'lead').length}</div>
           <div className="atlas-kpi__note">Pipeline opportunities</div>
           <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
             <path d="M0 14 Q30 8 60 12 T100 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#3b82f6', opacity: 0.8 }} />
@@ -198,7 +210,7 @@ export default function Contacts() {
             <span className="operza-kpi__trend"><Icon name="arrow-up-right" size={12} /> +8%</span>
           </div>
           <div className="atlas-kpi__label">Paying Customers</div>
-          <div className="atlas-kpi__value tabular">{state.contacts.filter(c => c.status === 'customer').length}</div>
+          <div className="atlas-kpi__value tabular">{contactsList.filter(c => c.status === 'customer').length}</div>
           <div className="atlas-kpi__note">Active accounts</div>
           <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
             <path d="M0 18 Q35 14 70 6 T100 2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#10b981', opacity: 0.8 }} />
@@ -211,7 +223,7 @@ export default function Contacts() {
             <span className="operza-kpi__trend">Nurture</span>
           </div>
           <div className="atlas-kpi__label">Cold / Re-engage</div>
-          <div className="atlas-kpi__value tabular">{state.contacts.filter(c => c.status === 'cold').length}</div>
+          <div className="atlas-kpi__value tabular">{contactsList.filter(c => c.status === 'cold').length}</div>
           <div className="atlas-kpi__note">Long-tail accounts</div>
           <svg className="operza-kpi__sparkline" viewBox="0 0 100 20" fill="none" preserveAspectRatio="none">
             <path d="M0 10 Q30 14 60 8 T100 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ color: '#f59e0b', opacity: 0.8 }} />
@@ -397,11 +409,10 @@ export default function Contacts() {
       {adding && (
         <AddContact
           onClose={() => setAdding(false)}
-          onSave={(contact) => {
-            dispatch({ type: 'contact/add', contact });
-            api.crm.create('contacts', contact).catch(() => {});
+          onSave={async (contact) => {
+            const created = await mutations.create.mutateAsync(contact);
             setAdding(false);
-            navigate(`/contacts/${contact.id}`);
+            navigate(`/contacts/${created?.id || contact.id}`);
           }}
         />
       )}
@@ -411,33 +422,7 @@ export default function Contacts() {
           onClose={() => setImporting(false)}
           onImported={(count) => {
             setNotice(`Successfully imported ${count} contact(s) via CSV!`);
-            // Refresh contacts from server
-            api.crm.list('contacts').then((res) => {
-              if (res?.data && Array.isArray(res.data)) {
-                for (const c of res.data) {
-                  if (!state.contacts.some((sc) => sc.id === c.id)) {
-                    dispatch({
-                      type: 'contact/add',
-                      contact: {
-                        id: c.id,
-                        firstName: c.firstName || '',
-                        lastName: c.lastName || '',
-                        email: c.email || '',
-                        phone: c.phone || '',
-                        company: c.company || '',
-                        tags: Array.isArray(c.tags) ? c.tags : [],
-                        source: c.source || 'CSV Import',
-                        status: (c.status || 'lead') as ContactStatus,
-                        owner: c.owner || 'Operator',
-                        createdAt: c.createdAt || new Date().toISOString(),
-                        notes: [],
-                        customFields: c.customValues || {},
-                      },
-                    });
-                  }
-                }
-              }
-            }).catch(() => {});
+            contactsQuery.refetch();
           }}
         />
       )}
@@ -445,10 +430,10 @@ export default function Contacts() {
       {merging && (
         <MergeModal
           selectedIds={selected}
-          contacts={state.contacts}
+          contacts={contactsList}
           onClose={() => setMerging(false)}
           onMerged={(primaryId, mergedIds) => {
-            dispatch({ type: 'contact/bulkDelete', ids: mergedIds });
+            contactsQuery.refetch();
             setSelected([primaryId]);
             setNotice(`Merged ${mergedIds.length} contact(s) into master record.`);
           }}
@@ -467,8 +452,8 @@ export default function Contacts() {
               <button
                 className="btn btn--primary"
                 style={{ background: 'var(--red)', borderColor: 'var(--red)' }}
-                onClick={() => {
-                  dispatch({ type: 'contact/bulkDelete', ids: selected });
+                onClick={async () => {
+                  await Promise.all(selected.map((id) => mutations.remove.mutateAsync(id)));
                   setSelected([]);
                   setConfirmBulk(false);
                 }}
@@ -509,7 +494,7 @@ export function AddContact({
   const submit = () => {
     if (!valid) return;
     onSave({
-      id: uid('c'),
+      id: typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `c_${Date.now()}`,
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       email: email.trim(),

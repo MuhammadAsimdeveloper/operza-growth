@@ -1,47 +1,38 @@
-import { useEffect, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
-import { Avatar } from '../components/ui';
-import { useStore } from '../lib/store';
+import { Avatar, EmptyState, ErrorState, LoadingState } from '../components/ui';
+import { useContacts, useOrders } from '../hooks/useWorkspaceData';
 import { currency, num, shortDate } from '../lib/format';
 import { api } from '../lib/api';
 import type { Order } from '../lib/types';
 
 export default function Orders() {
-  const { state, dispatch } = useStore();
-  const { orders } = state;
+  const ordersQuery = useOrders();
+  const contactsQuery = useContacts();
   const [query, setQuery] = useState('');
 
-  useEffect(() => {
-    api.crm.list<any>('orders').then((res) => {
-      if (res.data && res.data.length > 0) {
-        for (const o of res.data) {
-          if (!orders.some((x) => x.id === o.id || x.number === o.orderNumber)) {
-            dispatch({
-              type: 'order/add',
-              order: {
-                id: o.id,
-                number: o.orderNumber || o.number || 'ORD-000',
-                contactId: o.contactId,
-                items: Array.isArray(o.items) ? o.items.length : 1,
-                total: Number(o.amount) || Number(o.total) || 0,
-                status: o.status === 'paid' ? 'paid' : (o.status === 'refunded' ? 'refunded' : 'pending'),
-                at: o.paidAt || o.createdAt || new Date().toISOString()
-              }
-            });
-          }
-        }
-      }
-    }).catch(() => { /* dev fallback */ });
-  }, []);
+  const orders: Order[] = useMemo(() => {
+    const raw = ordersQuery.data?.data ?? [];
+    return raw.map((o: any) => ({
+      id: o.id,
+      number: o.orderNumber || o.number || 'ORD-000',
+      contactId: o.contactId || '',
+      items: Array.isArray(o.items) ? o.items.length : (Number(o.items) || 1),
+      total: o.amountCents !== undefined ? Number(o.amountCents) / 100 : (Number(o.amount) || Number(o.total) || 0),
+      status: o.status === 'paid' ? 'paid' : (o.status === 'refunded' ? 'refunded' : 'pending'),
+      at: o.paidAt || o.createdAt || new Date().toISOString(),
+    }));
+  }, [ordersQuery.data]);
 
+  const contacts = contactsQuery.data?.data ?? [];
   const paid = orders.filter((o) => o.status === 'paid');
   const revenue = paid.reduce((s, o) => s + o.total, 0);
   const refunded = orders.filter((o) => o.status === 'refunded').reduce((s, o) => s + o.total, 0);
   const aov = paid.length ? revenue / paid.length : 0;
 
   const contactName = (id: string) => {
-    const c = state.contacts.find((x) => x.id === id);
-    return c ? `${c.firstName} ${c.lastName}` : 'Unknown contact';
+    const c = contacts.find((x: any) => x.id === id);
+    return c ? `${c.firstName} ${c.lastName}` : 'Customer';
   };
 
   const visible = orders.filter((o) => {
@@ -49,6 +40,26 @@ export default function Orders() {
     const q = query.toLowerCase();
     return o.number.toLowerCase().includes(q) || contactName(o.contactId).toLowerCase().includes(q);
   });
+
+  if (ordersQuery.isLoading) {
+    return (
+      <main className="operza-dashboard atlas-dashboard">
+        <LoadingState message="Loading orders..." />
+      </main>
+    );
+  }
+
+  if (ordersQuery.isError) {
+    return (
+      <main className="operza-dashboard atlas-dashboard">
+        <ErrorState
+          title="Failed to load orders"
+          message={(ordersQuery.error as Error)?.message}
+          onRetry={() => ordersQuery.refetch()}
+        />
+      </main>
+    );
+  }
 
   return (
     <main className="operza-dashboard atlas-dashboard">
@@ -58,8 +69,8 @@ export default function Orders() {
           <h1>Customer Orders &amp; Transactions</h1>
         </div>
         <div className="atlas-dashboard__toolbar">
-          <button className="btn btn--secondary btn--sm">
-            <Icon name="copy" size={14} /> Export CSV
+          <button className="btn btn--secondary btn--sm" onClick={() => ordersQuery.refetch()}>
+            <Icon name="refresh" size={14} /> Refresh
           </button>
         </div>
       </header>
@@ -123,50 +134,59 @@ export default function Orders() {
             </div>
           </div>
         </div>
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Order</th>
-                <th>Customer</th>
-                <th className="cell-right">Items</th>
-                <th className="cell-right">Total</th>
-                <th>Date</th>
-                <th style={{ width: 140 }}>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map((o) => (
-                <tr key={o.id}>
-                  <td style={{ fontWeight: 600, fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{o.number}</td>
-                  <td>
-                    <span className="person">
-                      <Avatar name={contactName(o.contactId)} size="xs" />
-                      {contactName(o.contactId)}
-                    </span>
-                  </td>
-                  <td className="cell-right cell-num">{o.items}</td>
-                  <td className="cell-right cell-num">{currency(o.total)}</td>
-                  <td className="cell-sub">{shortDate(o.at)}</td>
-                  <td>
-                    <select
-                      className="select select--sm"
-                      value={o.status}
-                      aria-label={`Status for ${o.number}`}
-                      onChange={(e) =>
-                        dispatch({ type: 'order/status', id: o.id, status: e.target.value as Order['status'] })
-                      }
-                    >
-                      <option value="paid">Paid</option>
-                      <option value="pending">Pending</option>
-                      <option value="refunded">Refunded</option>
-                    </select>
-                  </td>
+        {visible.length === 0 ? (
+          <EmptyState
+            icon={<Icon name="credit-card" size={22} />}
+            title="No orders yet"
+            text="Completed checkouts and payment-link orders will appear here."
+          />
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Customer</th>
+                  <th className="cell-right">Items</th>
+                  <th className="cell-right">Total</th>
+                  <th>Date</th>
+                  <th style={{ width: 140 }}>Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {visible.map((o) => (
+                  <tr key={o.id}>
+                    <td style={{ fontWeight: 600, fontFamily: 'var(--font-mono)', fontSize: 12.5 }}>{o.number}</td>
+                    <td>
+                      <span className="person">
+                        <Avatar name={contactName(o.contactId)} size="xs" />
+                        {contactName(o.contactId)}
+                      </span>
+                    </td>
+                    <td className="cell-right cell-num">{o.items}</td>
+                    <td className="cell-right cell-num">{currency(o.total)}</td>
+                    <td className="cell-sub">{shortDate(o.at)}</td>
+                    <td>
+                      <select
+                        className="select select--sm"
+                        value={o.status}
+                        aria-label={`Status for ${o.number}`}
+                        onChange={async (e) => {
+                          await api.crm.update('orders', o.id, { status: e.target.value });
+                          await ordersQuery.refetch();
+                        }}
+                      >
+                        <option value="paid">Paid</option>
+                        <option value="pending">Pending</option>
+                        <option value="refunded">Refunded</option>
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </main>
   );

@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
-import { useStore } from '../lib/store';
-import { api } from '../lib/api';
+import {
+  useConversations,
+  useDashboardStats,
+  useOpportunities,
+  useWorkflowRuns,
+  useWorkflows,
+} from '../hooks/useWorkspaceData';
 import { getDashboardMetrics } from '../lib/dashboardMetrics.mjs';
 
 type AttentionItem = {
@@ -21,49 +26,39 @@ function StatusPill({ status }: { status: AttentionItem['status'] }) {
 }
 
 export default function Dashboard() {
-  const { state } = useStore();
-  const [pendingApprovals, setPendingApprovals] = useState<number | null>(null);
-  const [approvalStatusLoaded, setApprovalStatusLoaded] = useState(false);
+  const statsQuery = useDashboardStats();
+  const oppsQuery = useOpportunities();
+  const convsQuery = useConversations();
+  const workflowsQuery = useWorkflows();
+  const runsQuery = useWorkflowRuns();
 
-  useEffect(() => {
-    let active = true;
+  const opportunities = oppsQuery.data?.data ?? [];
+  const conversations = convsQuery.data?.data ?? convsQuery.data?.conversations ?? [];
+  const workflows = workflowsQuery.data?.data ?? [];
+  const workflowRuns = runsQuery.data?.runs ?? [];
+  const pendingApprovals = runsQuery.isError
+    ? null
+    : workflowRuns.filter((run: any) => run?.status === 'waiting_approval').length;
+  const approvalStatusLoaded = !runsQuery.isLoading;
 
-    api.workflows.getRuns()
-      .then((response: any) => {
-        const runs = Array.isArray(response) ? response : Array.isArray(response?.data) ? response.data : [];
-        if (active) {
-          setPendingApprovals(runs.filter((run: any) => run?.status === 'waiting_approval').length);
-          setApprovalStatusLoaded(true);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setPendingApprovals(null);
-          setApprovalStatusLoaded(true);
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  const metrics = useMemo(() => getDashboardMetrics({
-    contacts: state.contacts,
-    opportunities: state.opportunities,
-    conversations: state.conversations,
-    workflows: state.workflows,
-    workflowRuns: state.workflowRuns,
-    integrations: state.integrations,
-    pendingApprovals,
-    now: Date.now()
-  }), [
-    state.contacts,
-    state.opportunities,
-    state.conversations,
-    state.workflows,
-    state.workflowRuns,
-    state.integrations,
+  const metrics = useMemo(() => {
+    const base = getDashboardMetrics({
+      contacts: Array.from({ length: statsQuery.data?.contacts?.total ?? 0 }),
+      opportunities,
+      conversations,
+      workflows,
+      workflowRuns,
+      integrations: [],
+      pendingApprovals,
+      now: Date.now()
+    });
+    return base;
+  }, [
+    statsQuery.data?.contacts?.total,
+    opportunities,
+    conversations,
+    workflows,
+    workflowRuns,
     pendingApprovals
   ]);
 
@@ -106,7 +101,7 @@ export default function Dashboard() {
   ];
 
   const stageStats = useMemo(() => {
-    const opps = state.opportunities || [];
+    const opps = opportunities;
     const stages = [
       { name: 'Lead Capture', color: '#3b82f6' },
       { name: 'Qualified', color: '#2563eb' },
@@ -120,7 +115,7 @@ export default function Dashboard() {
       const pct = Math.max(8, Math.round((count / total) * 100));
       return { ...s, count, pct };
     });
-  }, [state.opportunities]);
+  }, [opportunities]);
 
   const openOperzaCopilot = () => {
     window.dispatchEvent(new Event('operza:open-copilot'));
