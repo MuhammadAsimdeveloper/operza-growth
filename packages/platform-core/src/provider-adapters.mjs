@@ -331,9 +331,137 @@ export const zapierWebhookAdapter = Object.freeze({
 });
 
 export const stripePaymentAdapter = Object.freeze({
-  id: 'adapter-stripe-payments-disabled-v1', providerKey: 'payments.stripe', channel: 'payments',
-  async verify() { return { verified: false, code: 'PAYMENTS_DISABLED_PENDING_COMPLIANCE' }; },
-  async dispatch() { return failure('PAYMENTS_DISABLED_PENDING_COMPLIANCE'); }
+  id: 'adapter-stripe-payments-v3',
+  providerKey: 'payments.stripe',
+  channel: 'payments',
+  async verify({ secret, config = {}, fetchFn = globalThis.fetch } = {}) {
+    if (typeof secret !== 'string' || !/^sk_(test|live)_[A-Za-z0-9]{10,}$/.test(secret)) {
+      return { verified: false, code: 'INVALID_CREDENTIAL_FORMAT' };
+    }
+    const mode = secret.startsWith('sk_live_') ? 'production' : 'sandbox';
+    try {
+      const headers = { ...bearer(secret) };
+      if (config.stripeAccountId) headers['Stripe-Account'] = config.stripeAccountId;
+      const res = await request(fetchFn, 'https://api.stripe.com/v1/account', { method: 'GET', headers });
+      const data = await responseJson(res);
+      if (!res.ok) {
+        return { verified: false, code: 'PROVIDER_AUTH_FAILED', httpStatus: res.status };
+      }
+      return {
+        verified: true,
+        mode,
+        accountId: data.id || config.stripeAccountId || null,
+        chargesEnabled: Boolean(data.charges_enabled),
+        payoutsEnabled: Boolean(data.payouts_enabled)
+      };
+    } catch {
+      return { verified: false, code: 'PROVIDER_UNREACHABLE' };
+    }
+  },
+  async createConnectAccount({ secret, email, country = 'US', fetchFn = globalThis.fetch } = {}) {
+    if (typeof secret !== 'string' || !/^sk_(test|live)_[A-Za-z0-9]{10,}$/.test(secret)) {
+      return failure('INVALID_CREDENTIAL_FORMAT', 0, false);
+    }
+    const form = new URLSearchParams({ type: 'express', country });
+    if (email) form.set('email', email);
+    try {
+      const res = await request(fetchFn, 'https://api.stripe.com/v1/accounts', {
+        method: 'POST',
+        headers: { ...bearer(secret), 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form
+      });
+      const data = await responseJson(res);
+      if (!res.ok || !data.id) {
+        return failure('STRIPE_CONNECT_FAILED', res.status, false, data?.error?.message);
+      }
+      return {
+        ok: true,
+        stripeAccountId: data.id,
+        chargesEnabled: Boolean(data.charges_enabled),
+        payoutsEnabled: Boolean(data.payouts_enabled),
+        detailsSubmitted: Boolean(data.details_submitted)
+      };
+    } catch (err) {
+      const { code, indeterminate } = classifyNetworkError(err);
+      return failure(code, 0, indeterminate, err?.message);
+    }
+  },
+  async createPaymentIntent({ secret, amountCents, currency = 'USD', stripeAccountId = null, idempotencyKey = null, metadata = {}, fetchFn = globalThis.fetch } = {}) {
+    if (typeof secret !== 'string' || !/^sk_(test|live)_[A-Za-z0-9]{10,}$/.test(secret)) {
+      return failure('INVALID_CREDENTIAL_FORMAT', 0, false);
+    }
+    if (!Number.isSafeInteger(amountCents) || amountCents <= 0) {
+      return failure('INVALID_AMOUNT_CENTS', 0, false);
+    }
+    const form = new URLSearchParams({
+      amount: String(amountCents),
+      currency: String(currency).toLowerCase()
+    });
+    for (const [k, v] of Object.entries(metadata || {})) {
+      if (v !== undefined && v !== null) form.set(`metadata[${k}]`, String(v));
+    }
+    const headers = { ...bearer(secret), 'Content-Type': 'application/x-www-form-urlencoded' };
+    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+    if (stripeAccountId) headers['Stripe-Account'] = stripeAccountId;
+    try {
+      const res = await request(fetchFn, 'https://api.stripe.com/v1/payment_intents', {
+        method: 'POST',
+        headers,
+        body: form
+      });
+      const data = await responseJson(res);
+      if (!res.ok || !data.id) {
+        return failure(data?.error?.code || 'STRIPE_INTENT_FAILED', res.status, false, data?.error?.message);
+      }
+      return {
+        ok: true,
+        provider: 'stripe',
+        mode: secret.startsWith('sk_live_') ? 'production' : 'sandbox',
+        providerPaymentId: data.id,
+        status: data.status,
+        clientSecret: data.client_secret || null
+      };
+    } catch (err) {
+      const { code, indeterminate } = classifyNetworkError(err);
+      return failure(code, 0, indeterminate, err?.message);
+    }
+  },
+  async createRefund({ secret, paymentIntentId, amountCents = null, idempotencyKey = null, stripeAccountId = null, fetchFn = globalThis.fetch } = {}) {
+    if (typeof secret !== 'string' || !/^sk_(test|live)_[A-Za-z0-9]{10,}$/.test(secret)) {
+      return failure('INVALID_CREDENTIAL_FORMAT', 0, false);
+    }
+    if (!paymentIntentId) return failure('PAYMENT_INTENT_REQUIRED', 0, false);
+    const form = new URLSearchParams({ payment_intent: paymentIntentId });
+    if (Number.isSafeInteger(amountCents) && amountCents > 0) {
+      form.set('amount', String(amountCents));
+    }
+    const headers = { ...bearer(secret), 'Content-Type': 'application/x-www-form-urlencoded' };
+    if (idempotencyKey) headers['Idempotency-Key'] = idempotencyKey;
+    if (stripeAccountId) headers['Stripe-Account'] = stripeAccountId;
+    try {
+      const res = await request(fetchFn, 'https://api.stripe.com/v1/refunds', {
+        method: 'POST',
+        headers,
+        body: form
+      });
+      const data = await responseJson(res);
+      if (!res.ok || !data.id) {
+        return failure(data?.error?.code || 'STRIPE_REFUND_FAILED', res.status, false, data?.error?.message);
+      }
+      return {
+        ok: true,
+        refundId: data.id,
+        status: data.status,
+        amountCents: Number(data.amount) || amountCents
+      };
+    } catch (err) {
+      const { code, indeterminate } = classifyNetworkError(err);
+      return failure(code, 0, indeterminate, err?.message);
+    }
+  },
+  async dispatch(opts = {}) {
+    return this.createPaymentIntent(opts);
+  }
 });
 
 export function createProviderAdapterRegistry(customAdapters = []) {

@@ -4080,6 +4080,109 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    // Twilio Delivery Status Callback Webhook
+    if (method === 'POST' && pathname === '/api/webhooks/twilio/status') {
+      const rawBody = await readRawBody(req);
+      const twilioSig = req.headers['x-twilio-signature'] || '';
+      const contentType = req.headers['content-type'] || '';
+      let payload;
+      if (contentType.includes('application/x-www-form-urlencoded')) {
+        payload = Object.fromEntries(new URLSearchParams(rawBody.toString('utf8')));
+      } else {
+        try { payload = JSON.parse(rawBody.toString('utf8')); } catch { payload = {}; }
+      }
+
+      const baseUrl = process.env.PUBLIC_BASE_URL || `http://${req.headers.host || 'localhost'}`;
+      const twilioUrl = `${baseUrl.replace(/\/$/, '')}${req.url}`;
+
+      if (TWILIO_AUTH_TOKEN && twilioSig) {
+        let sigData = twilioUrl;
+        for (const k of Object.keys(payload).sort()) sigData += k + payload[k];
+        const expected = createHmac('sha1', TWILIO_AUTH_TOKEN).update(Buffer.from(sigData, 'utf8')).digest('base64');
+        if (!safeEqual(expected, twilioSig)) {
+          return sendJson(res, 403, { error: 'Invalid Twilio signature' });
+        }
+      } else if (TWILIO_AUTH_TOKEN) {
+        return sendJson(res, 403, { error: 'Missing x-twilio-signature header' });
+      } else if (process.env.NODE_ENV === 'production' || process.env.WEBHOOKS_FAIL_CLOSED === 'true') {
+        return sendJson(res, 503, { error: 'Twilio auth token is not configured in production environment', code: 'WEBHOOK_SECRET_REQUIRED' });
+      }
+
+      const messageSid = payload.MessageSid || payload.SmsSid;
+      const rawStatus = String(payload.MessageStatus || payload.SmsStatus || '').toLowerCase();
+      if (messageSid && isWebhookReplay(`twilio_status:${messageSid}:${rawStatus}`)) {
+        return sendJson(res, 200, { received: true, deduplicated: true });
+      }
+
+      const statusMap = {
+        queued: 'queued',
+        sending: 'processing',
+        sent: 'sent',
+        delivered: 'delivered',
+        undelivered: 'failed',
+        failed: 'failed',
+        read: 'read'
+      };
+      const deliveryStatus = statusMap[rawStatus] || 'queued';
+      if (messageSid && pgPool) {
+        await pgPool.query(
+          `UPDATE messages SET delivery_status = $1, error_code = COALESCE($2, error_code)
+           WHERE provider_message_id = $3`,
+          [deliveryStatus, payload.ErrorCode || null, messageSid]
+        ).catch(() => {});
+      }
+      if (messageSid) {
+        for (const conv of state.records.conversations || []) {
+          const msg = (conv.messages || []).find(m => m.providerMessageId === messageSid);
+          if (msg) msg.deliveryStatus = deliveryStatus;
+        }
+        await saveState();
+      }
+      auditLog('webhook.twilio.status', null, { messageSid, deliveryStatus });
+      return sendJson(res, 200, { received: true, messageSid, deliveryStatus });
+    }
+
+    // SendGrid Event Webhook (delivered, bounce, spamreport, unsubscribe)
+    if (method === 'POST' && pathname === '/api/webhooks/sendgrid/events') {
+      const rawBody = await readRawBody(req);
+      let events = [];
+      try {
+        const parsed = JSON.parse(rawBody.toString('utf8'));
+        events = Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        return sendJson(res, 400, { error: 'Invalid JSON payload' });
+      }
+
+      let processed = 0;
+      for (const ev of events) {
+        const sgId = ev.sg_event_id || `${ev.sg_message_id || 'msg'}:${ev.event || 'unknown'}:${ev.timestamp || ''}`;
+        if (isWebhookReplay(`sendgrid_ev:${sgId}`)) continue;
+        processed++;
+
+        const evType = String(ev.event || '').toLowerCase();
+        if (['spamreport', 'unsubscribe', 'group_unsubscribe'].includes(evType) && ev.email) {
+          const contact = (state.records.contacts || []).find(
+            c => c.email && c.email.toLowerCase().trim() === String(ev.email).toLowerCase().trim()
+          );
+          if (contact) {
+            await recordInboundOptOut({
+              pgPool,
+              state,
+              agencyId: contact.agencyId,
+              locationId: contact.locationId,
+              contactId: contact.id,
+              channel: 'email',
+              proofRef: `sendgrid:${evType}`,
+              randomUUID
+            });
+          }
+        }
+      }
+      await saveState();
+      auditLog('webhook.sendgrid.events', null, { processed });
+      return sendJson(res, 200, { received: true, processed });
+    }
+
     // SendGrid Inbound Parse Webhook
     if (method === 'POST' && pathname === '/api/webhooks/sendgrid') {
       const rawBody = await readRawBody(req);

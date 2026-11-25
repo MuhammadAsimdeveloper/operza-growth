@@ -63,5 +63,9 @@ export { createCommunicationConsentsRepository } from './communication-consents-
 export { createFormsRepository } from './forms-repository.mjs';
 export { createTasksRepository } from './tasks-repository.mjs';
 export { createReviewsRepository } from './reviews-repository.mjs';
+export { createPaymentLinksRepository } from './payment-links-repository.mjs';
+export { createCouponsRepository } from './coupons-repository.mjs';
+export { createDunningRepository, isRetryableFailure } from './dunning-repository.mjs';
+export { generateInvoicePdf } from './invoice-pdf.mjs';
 export { toCents, fromCents, validateCurrency } from './money.mjs';
 

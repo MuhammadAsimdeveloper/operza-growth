@@ -857,6 +857,78 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       assert.equal(await tasksRepo.getTask(pfTxB, { agencyId: agencyB, locationId: locB1, id: pgTask.id }), null);
       assert.equal(await reviewsRepo.getReview(pfTxB, { agencyId: agencyB, locationId: locB1, id: pgReview.id }), null);
       await pfClient.query('ROLLBACK');
+
+      // ─── REAL POSTGRESQL PHASE 3 COUPONS, PAYMENT LINKS & DUNNING RLS CHECK ───
+      const { createCouponsRepository } = await import('../lib/coupons-repository.mjs');
+      const { createPaymentLinksRepository } = await import('../lib/payment-links-repository.mjs');
+      const { createDunningRepository } = await import('../lib/dunning-repository.mjs');
+      const couponsRepo = createCouponsRepository();
+      const paymentLinksRepo = createPaymentLinksRepository();
+      const dunningRepo = createDunningRepository();
+
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+
+      const pgCoupon = await couponsRepo.createCoupon(pfTx, {
+        agencyId: agencyA,
+        locationId: locA1,
+        code: 'PG30_' + randomUUID().slice(0, 6),
+        discountType: 'percent',
+        discountValue: 30,
+        maxUses: 1
+      });
+      await couponsRepo.redeemCoupon(pfTx, { agencyId: agencyA, locationId: locA1, code: pgCoupon.code });
+      await assert.rejects(
+        () => couponsRepo.redeemCoupon(pfTx, { agencyId: agencyA, locationId: locA1, code: pgCoupon.code }),
+        /usage limit/i
+      );
+
+      const pgLink = await paymentLinksRepo.createPaymentLink(pfTx, {
+        agencyId: agencyA,
+        locationId: locA1,
+        name: 'Real PG Retainer',
+        slug: 'pg-retainer-' + randomUUID().slice(0, 6),
+        amountCents: 49900
+      });
+      assert.equal(pgLink.amountCents, 49900);
+
+      const pgDun = await dunningRepo.scheduleRetry(pfTx, {
+        agencyId: agencyA,
+        locationId: locA1,
+        invoiceId: pgInvoice.id,
+        attemptNumber: 1,
+        failureCode: 'insufficient_funds',
+        idempotencyKey: 'pg_dun_' + pgInvoice.id
+      });
+      assert.equal(pgDun.deduplicated, false);
+      const pgDunDup = await dunningRepo.scheduleRetry(pfTx, {
+        agencyId: agencyA,
+        locationId: locA1,
+        invoiceId: pgInvoice.id,
+        attemptNumber: 1,
+        failureCode: 'insufficient_funds',
+        idempotencyKey: 'pg_dun_' + pgInvoice.id
+      });
+      assert.equal(pgDunDup.deduplicated, true);
+      await pfClient.query('COMMIT');
+
+      // Verify Tenant B cannot read Tenant A payment links, coupons, or dunning attempts under real PG RLS
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      assert.equal(
+        await paymentLinksRepo.getBySlug(pfTxB, { agencyId: agencyB, locationId: locB1, slug: pgLink.slug }),
+        null,
+        'Tenant B must not read Tenant A payment link'
+      );
+      const tenantBDunning = await dunningRepo.listAttempts(pfTxB, { agencyId: agencyB, locationId: locB1 });
+      assert.equal(tenantBDunning.length, 0, 'Tenant B must not read Tenant A dunning attempts');
+      await pfClient.query('ROLLBACK');
     } finally {
       await pfClient.query('ROLLBACK').catch(() => {});
       await pfClient.query('RESET ROLE').catch(() => {});

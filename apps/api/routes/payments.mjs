@@ -16,6 +16,8 @@ import { createOrdersRepository } from '../../../packages/db/lib/orders-reposito
 import { createPaymentsRepository } from '../../../packages/db/lib/payments-repository.mjs';
 import { createInvoicesRepository } from '../../../packages/db/lib/invoices-repository.mjs';
 import { createLedgerRepository } from '../../../packages/db/lib/ledger-repository.mjs';
+import { createDunningRepository } from '../../../packages/db/lib/dunning-repository.mjs';
+import { generateInvoicePdf } from '../../../packages/db/lib/invoice-pdf.mjs';
 import { createContactsRepository } from '../../../packages/db/lib/contacts-repository.mjs';
 import { createOpportunitiesRepository } from '../../../packages/db/lib/opportunities-repository.mjs';
 import { toCents, fromCents, validateCurrency } from '../../../packages/db/lib/money.mjs';
@@ -24,6 +26,7 @@ const ordersRepo = createOrdersRepository();
 const paymentsRepo = createPaymentsRepository();
 const invoicesRepo = createInvoicesRepository();
 const ledgerRepo = createLedgerRepository();
+const dunningRepo = createDunningRepository();
 const contactsRepo = createContactsRepository();
 const opportunitiesRepo = createOpportunitiesRepository();
 
@@ -733,6 +736,37 @@ export async function handlePaymentsRoutes(req, res, ctx) {
       return true;
     }
 
+    if (method === 'GET' && subPath && subPath.endsWith('/pdf')) {
+      if (!checkScope(actor, 'invoices:read', ['payments:read'])) {
+        sendJson(res, 403, { error: "Insufficient API key scope. Required: 'invoices:read'", code: 'INSUFFICIENT_SCOPES' });
+        return true;
+      }
+      const invoiceId = subPath.replace(/\/pdf$/, '').trim();
+      let invoice = null;
+      if (pgPool) {
+        invoice = await runInTenantTx(pgPool, tenantCtx, tx => invoicesRepo.getInvoiceById(tx, invoiceId));
+      } else {
+        invoice = (state.records.invoices || []).find(
+          i => i.id === invoiceId && i.agencyId === agency.id && (!i.locationId || i.locationId === activeLocation.id)
+        ) || null;
+      }
+      if (!invoice) {
+        sendJson(res, 404, { error: 'Invoice not found' });
+        return true;
+      }
+      const pdfBuffer = generateInvoicePdf({
+        ...invoice,
+        agencyName: agency?.name || 'Operza Agency'
+      });
+      res.writeHead(200, {
+        'content-type': 'application/pdf',
+        'content-disposition': `inline; filename="${String(invoice.number || invoice.id).replace(/[^A-Za-z0-9._-]/g, '_')}.pdf"`,
+        'content-length': String(pdfBuffer.length)
+      });
+      res.end(pdfBuffer);
+      return true;
+    }
+
     if (method === 'POST' && isList) {
       if (!checkScope(actor, 'invoices:write', ['payments:write'])) {
         sendJson(res, 403, { error: "Insufficient API key scope. Required: 'invoices:write'", code: 'INSUFFICIENT_SCOPES' });
@@ -825,6 +859,62 @@ export async function handlePaymentsRoutes(req, res, ctx) {
       }
       const list = (state.records.payments || []).filter(p => p.agencyId === agency.id && (!p.locationId || p.locationId === activeLocation.id));
       sendJson(res, 200, { data: list, count: list.length });
+      return true;
+    }
+
+    if (method === 'GET' && pathname === '/api/payments/stripe/status') {
+      const stripeKey = process.env.STRIPE_SECRET_KEY || '';
+      const mode = stripeKey.startsWith('sk_live_') ? 'production' : (stripeKey.startsWith('sk_test_') ? 'sandbox' : 'not_configured');
+      let account = null;
+      if (pgPool) {
+        account = await runInTenantTx(pgPool, tenantCtx, async (tx) => {
+          const r = await tx.query(
+            'SELECT * FROM stripe_connect_accounts WHERE agency_id = $1 AND location_id = $2 ORDER BY created_at DESC LIMIT 1',
+            [agency.id, activeLocation.id]
+          );
+          return r.rows[0] || null;
+        });
+      }
+      sendJson(res, 200, {
+        provider: 'stripe',
+        mode,
+        status: account?.onboarding_status || (mode === 'not_configured' ? 'not_configured' : `${mode}_connected`),
+        chargesEnabled: Boolean(account?.charges_enabled),
+        payoutsEnabled: Boolean(account?.payouts_enabled),
+        stripeAccountId: account?.stripe_account_id || null
+      });
+      return true;
+    }
+
+    if (method === 'POST' && pathname === '/api/payments/dunning/schedule') {
+      if (!checkScope(actor, 'payments:write')) {
+        sendJson(res, 403, { error: "Insufficient API key scope. Required: 'payments:write'", code: 'INSUFFICIENT_SCOPES' });
+        return true;
+      }
+      const body = await readBody(req);
+      if (!body?.invoiceId) {
+        sendJson(res, 400, { error: 'invoiceId is required' });
+        return true;
+      }
+      if (pgPool) {
+        const scheduled = await runInTenantTx(pgPool, tenantCtx, tx => dunningRepo.scheduleRetry(tx, body));
+        sendJson(res, scheduled.deduplicated ? 200 : 201, { success: true, ...scheduled });
+        return true;
+      }
+      state.records.dunningAttempts = state.records.dunningAttempts || [];
+      const attempt = {
+        id: randomUUID(),
+        agencyId: agency.id,
+        locationId: activeLocation.id,
+        invoiceId: body.invoiceId,
+        attemptNumber: body.attemptNumber || 1,
+        status: 'scheduled',
+        failureCode: body.failureCode || null,
+        createdAt: new Date().toISOString()
+      };
+      state.records.dunningAttempts.push(attempt);
+      await saveState();
+      sendJson(res, 201, { success: true, deduplicated: false, attempt });
       return true;
     }
 

@@ -627,5 +627,12 @@ export const api = {
       }),
     verifyEmail: () =>
       request<{ success: boolean; branding: any; message: string }>('/api/agency/branding/verify-email', { method: 'POST' }),
+  },
+  billing: {
+    getStripeStatus: () =>
+      request<{ provider: string; mode: string; status: string; chargesEnabled: boolean; payoutsEnabled: boolean; stripeAccountId: string | null }>('/api/payments/stripe/status'),
+    getInvoicePdfUrl: (invoiceId: string) => `/api/invoices/${encodeURIComponent(invoiceId)}/pdf`,
+    scheduleDunning: (data: { invoiceId: string; attemptNumber?: number; failureCode?: string }) =>
+      request('/api/payments/dunning/schedule', { method: 'POST', body: JSON.stringify(data) }),
   }
 };
