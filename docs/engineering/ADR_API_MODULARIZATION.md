@@ -39,6 +39,8 @@ We decide to:
    Extract `WorkflowsRepository` in `packages/db/lib/workflows-repository.mjs` and dedicated router in `apps/api/routes/workflows.mjs` covering `workflow_definitions`, `workflow_executions`, `workflow_execution_steps`, and `workflow_approvals` via `TenantTx`.
 9. **Modularize Pipelines & Funnels Domains (Phase 1.6)**:
    Extract `PipelinesRepository` in `packages/db/lib/pipelines-repository.mjs` (backed by Migration 011 `pipelines` and `pipeline_stages` tables) and `FunnelsRepository` in `packages/db/lib/funnels-repository.mjs` (backed by `location_records` `websites`), with routers `apps/api/routes/pipelines.mjs` and `apps/api/routes/funnels.mjs`. Zero dual-writing to `state.records.pipelines` or `state.records.websites` for CRM CRUD when `pgPool` is configured.
+10. **Modularize Orders, Payments, Invoices & Ledger Domains (Phase 1.7)**:
+   Add Migration `033_commerce_and_ledger_hardening.sql` creating `orders`, `invoices`, and `payments` tables with `bigint` minor-unit amounts (`amount_cents`), idempotency indexes, `provider_event_id` uniqueness, and `FORCE ROW LEVEL SECURITY`, plus hardening `billing_ledger_entries` and granting least-privilege `operza_app` permissions. Extract `OrdersRepository`, `PaymentsRepository`, `InvoicesRepository`, `LedgerRepository`, `money.mjs`, and `apps/api/routes/payments.mjs`. Repair `apps/api/routes/funnels.mjs` so public opt-in and 1-click upsell execute atomically via `TenantTx` with zero writes to `state.records` when `pgPool` is configured.
 
 ---
 

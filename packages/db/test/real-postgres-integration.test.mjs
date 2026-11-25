@@ -618,6 +618,81 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       assert.equal(await pipelinesRepo.deletePipeline(pfTx, pgPipeline.id), true);
       assert.equal(await funnelsRepo.deleteFunnel(pfTx, pgFunnel.id), true);
       await pfClient.query('COMMIT');
+
+      // ─── REAL POSTGRESQL COMMERCE & LEDGER RLS + ATOMICITY CHECK ───
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+      const { createOrdersRepository, createPaymentsRepository, createInvoicesRepository, createLedgerRepository } = await import('../lib/database.mjs');
+      const ordersRepo = createOrdersRepository();
+      const paymentsRepo = createPaymentsRepository();
+      const invoicesRepo = createInvoicesRepository();
+      const ledgerRepo = createLedgerRepository();
+
+      const pgOrder = await ordersRepo.createOrder(pfTx, {
+        amountCents: 25000,
+        currency: 'USD',
+        contactName: 'Real PG Buyer',
+        idempotencyKey: 'real_pg_ord_1'
+      });
+      const pgOrderDup = await ordersRepo.createOrder(pfTx, {
+        amountCents: 25000,
+        currency: 'USD',
+        contactName: 'Real PG Buyer',
+        idempotencyKey: 'real_pg_ord_1'
+      });
+      assert.equal(pgOrderDup.id, pgOrder.id, 'Real PG order idempotency key must deduplicate');
+
+      const pgInvoice = await invoicesRepo.createInvoice(pfTx, {
+        orderId: pgOrder.id,
+        amountCents: 25000,
+        currency: 'USD',
+        status: 'draft'
+      });
+      await invoicesRepo.issueInvoice(pfTx, pgInvoice.id);
+      await invoicesRepo.recordPaymentAllocation(pfTx, pgInvoice.id, { paidCents: 25000, paymentMethod: 'card' });
+
+      const pgPayment = await paymentsRepo.createPayment(pfTx, {
+        orderId: pgOrder.id,
+        invoiceId: pgInvoice.id,
+        amountCents: 25000,
+        currency: 'USD',
+        status: 'pending',
+        idempotencyKey: 'real_pg_pay_1'
+      });
+      await paymentsRepo.recordProviderEvent(pfTx, {
+        paymentId: pgPayment.id,
+        providerPaymentId: 'pi_real_pg_1',
+        providerEventId: 'evt_real_pg_1',
+        status: 'succeeded'
+      });
+      await ledgerRepo.recordTransaction(pfTx, {
+        accountType: 'stripe_escrow',
+        entryType: 'credit',
+        amountCents: 25000,
+        referenceType: 'order_payment',
+        referenceId: pgOrder.id,
+        idempotencyKey: 'real_pg_led_1'
+      });
+      const ledgerCheck = await ledgerRepo.verifyAccountIntegrity(pfTx, { accountType: 'stripe_escrow' });
+      assert.equal(ledgerCheck.valid, true);
+      assert.equal(ledgerCheck.balanceCents, 25000);
+      await pfClient.query('COMMIT');
+
+      // Verify Tenant B cannot read Tenant A order, invoice, payment, or ledger under real PG RLS
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      assert.equal(await ordersRepo.getOrderById(pfTxB, pgOrder.id), null, 'Tenant B must not read Tenant A order');
+      assert.equal(await paymentsRepo.getPaymentById(pfTxB, pgPayment.id), null, 'Tenant B must not read Tenant A payment');
+      assert.equal(await invoicesRepo.getInvoiceById(pfTxB, pgInvoice.id), null, 'Tenant B must not read Tenant A invoice');
+      const tenantBLedger = await ledgerRepo.verifyAccountIntegrity(pfTxB, { accountType: 'stripe_escrow' });
+      assert.equal(tenantBLedger.balanceCents, 0, 'Tenant B ledger must be isolated from Tenant A');
+      await pfClient.query('ROLLBACK');
     } finally {
       await pfClient.query('ROLLBACK').catch(() => {});
       await pfClient.query('RESET ROLE').catch(() => {});

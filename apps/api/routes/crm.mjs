@@ -14,6 +14,7 @@ import { handleSchedulingRoutes } from './scheduling.mjs';
 import { handleWorkflowsRoutes } from './workflows.mjs';
 import { handlePipelinesRoutes } from './pipelines.mjs';
 import { handleFunnelsRoutes } from './funnels.mjs';
+import { handlePaymentsRoutes } from './payments.mjs';
 
 export async function handleCrmRoutes(req, res, ctx) {
   const {
@@ -69,6 +70,11 @@ export async function handleCrmRoutes(req, res, ctx) {
 
   // Delegate funnels & websites domain operations to dedicated funnels router
   if (await handleFunnelsRoutes(req, res, ctx)) {
+    return true;
+  }
+
+  // Delegate orders, invoices & payments domain operations to dedicated payments router
+  if (await handlePaymentsRoutes(req, res, ctx)) {
     return true;
   }
 

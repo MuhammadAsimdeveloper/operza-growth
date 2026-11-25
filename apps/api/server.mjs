@@ -59,6 +59,7 @@ import { handleSchedulingRoutes } from './routes/scheduling.mjs';
 import { handleWorkflowsRoutes } from './routes/workflows.mjs';
 import { handlePipelinesRoutes } from './routes/pipelines.mjs';
 import { handleFunnelsRoutes } from './routes/funnels.mjs';
+import { handlePaymentsRoutes } from './routes/payments.mjs';
 import { parseAndValidateCsvImport, exportContactsToCsv } from '../../packages/platform-core/src/csv-transfer.mjs';
 import { createSmartListView, matchesSmartListView, filterSmartListRecords, generateSmartListSql } from '../../packages/platform-core/src/crm-views-store.mjs';
 import { createDefaultLLMRuntime } from '../../packages/platform-core/src/llm-runtime/index.mjs';
@@ -3466,217 +3467,29 @@ const server = createServer(async (req, res) => {
       }
     }
 
-    // Public Payment Link Lookup
-    if (method === 'GET' && pathname.startsWith('/api/payments/public/')) {
-      const slugOrId = pathname.replace('/api/payments/public/', '').trim();
-      const links = state.records.paymentLinks || [];
-      const link = links.find(l => (l.slug === slugOrId || l.id === slugOrId) && l.active !== false);
-      if (!link) return sendJson(res, 404, { error: 'Payment link not found or inactive' });
-
-      link.visits = (link.visits || 0) + 1;
-      await saveState();
-
-      const products = (state.records.products || []).filter(p => (link.productIds || []).includes(p.id));
-
-      return sendJson(res, 200, {
-        id: link.id,
-        name: link.name,
-        slug: link.slug,
-        amount: link.amount,
-        currency: link.currency || 'USD',
-        description: link.description || '',
-        active: link.active,
-        visits: link.visits,
-        products
-      });
-    }
-
-    // Public Checkout Ingress -> Order + Invoice + Contact + Opportunity Won + Trigger Workflow
-    if (method === 'POST' && pathname.startsWith('/api/payments/checkout/')) {
-      const slugOrId = pathname.replace('/api/payments/checkout/', '').trim();
-      const links = state.records.paymentLinks || [];
-      const link = links.find(l => (l.slug === slugOrId || l.id === slugOrId) && l.active !== false);
-      if (!link) return sendJson(res, 404, { error: 'Payment link not found or inactive' });
-
-      const body = await readBody(req);
-      if (body.website || body.hp || body.company_fax) {
-        return sendJson(res, 400, { error: 'Bot submission rejected', code: 'BOT_SUBMISSION_REJECTED' });
+    // Public Payment Link Lookup & Checkout Ingress (Delegated to Payments Router)
+    if ((method === 'GET' && pathname.startsWith('/api/payments/public/')) || (method === 'POST' && pathname.startsWith('/api/payments/checkout/'))) {
+      if (await handlePaymentsRoutes(req, res, {
+        method,
+        pathname,
+        url,
+        readBody,
+        readRawBody,
+        sendJson,
+        state,
+        saveState,
+        auditLog,
+        broadcast,
+        actor: undefined,
+        agency: undefined,
+        activeLocation: undefined,
+        pgPool,
+        triggerWorkflowExecution,
+        isWebhookReplay,
+        logStructured
+      })) {
+        return;
       }
-      const { customerName, customerEmail, customerPhone } = body;
-      if (!customerName || !customerEmail) {
-        return sendJson(res, 400, { error: 'Customer name and email are required.' });
-      }
-
-      const emailKey = String(customerEmail).toLowerCase().trim();
-      const nameParts = String(customerName).trim().split(/\s+/);
-      const firstName = nameParts[0] || 'Valued';
-      const lastName = nameParts.slice(1).join(' ') || 'Customer';
-
-      let contact = (state.records.contacts || []).find(
-        c => c.agencyId === link.agencyId && c.locationId === link.locationId && c.email === emailKey
-      );
-
-      if (!contact) {
-        contact = {
-          id: randomUUID(),
-          agencyId: link.agencyId,
-          locationId: link.locationId,
-          firstName,
-          lastName,
-          email: emailKey,
-          phone: customerPhone || '',
-          source: `Checkout: ${link.name}`,
-          tags: ['customer', 'paid-checkout', link.slug || 'checkout'],
-          status: 'customer',
-          createdAt: new Date().toISOString()
-        };
-        state.records.contacts = state.records.contacts || [];
-        state.records.contacts.push(contact);
-      } else {
-        contact.status = 'customer';
-        contact.tags = contact.tags || [];
-        if (!contact.tags.includes('customer')) contact.tags.push('customer');
-        if (!contact.tags.includes('paid-checkout')) contact.tags.push('paid-checkout');
-        if (customerPhone && !contact.phone) contact.phone = customerPhone;
-      }
-
-      // Dynamic Coupon Discount Application
-      let discountAmount = 0;
-      let appliedCoupon = null;
-      if (body.couponCode) {
-        const cCode = String(body.couponCode).trim().toUpperCase();
-        state.records.coupons = state.records.coupons || [];
-        appliedCoupon = state.records.coupons.find(c =>
-          c.agencyId === link.agencyId && c.code && c.code.toUpperCase() === cCode && c.active !== false
-        );
-        if (appliedCoupon) {
-          const isExpired = appliedCoupon.expiresAt && new Date(appliedCoupon.expiresAt).getTime() < Date.now();
-          const isExhausted = appliedCoupon.maxRedemptions !== null && appliedCoupon.maxRedemptions !== undefined && appliedCoupon.redemptions >= appliedCoupon.maxRedemptions;
-          if (!isExpired && !isExhausted) {
-            if (appliedCoupon.kind === 'percent') {
-              discountAmount = Math.round((link.amount * appliedCoupon.amount) / 100 * 100) / 100;
-            } else {
-              discountAmount = Math.min(appliedCoupon.amount, link.amount);
-            }
-            appliedCoupon.redemptions = (appliedCoupon.redemptions || 0) + 1;
-          }
-        }
-      }
-      const finalAmount = Math.max(0, link.amount - discountAmount);
-
-      // Enforce Payment Gateway & Method Validation (Master Plan Task 0.4)
-      if (finalAmount > 0) {
-        const { cardNumber, expiry, cvc, paymentMethodId, paymentToken } = body;
-        const hasCard = Boolean(cardNumber && expiry && cvc);
-        const hasToken = Boolean(paymentMethodId || paymentToken);
-
-        if (!hasCard && !hasToken) {
-          return sendJson(res, 400, {
-            error: 'Payment method is required for non-zero checkout. Please provide card details or a payment token.',
-            code: 'PAYMENT_METHOD_REQUIRED'
-          });
-        }
-
-        if (hasCard) {
-          const cleanCard = String(cardNumber).replace(/[\s-]/g, '');
-          if (!/^\d{13,19}$/.test(cleanCard)) {
-            return sendJson(res, 400, {
-              error: 'Invalid card number format.',
-              code: 'INVALID_CARD_NUMBER'
-            });
-          }
-          if (!/^\d{1,2}\/\d{2,4}$/.test(String(expiry).trim())) {
-            return sendJson(res, 400, {
-              error: 'Invalid expiry format (expected MM/YY).',
-              code: 'INVALID_CARD_EXPIRY'
-            });
-          }
-          if (!/^\d{3,4}$/.test(String(cvc).trim())) {
-            return sendJson(res, 400, {
-              error: 'Invalid CVC security code.',
-              code: 'INVALID_CARD_CVC'
-            });
-          }
-        }
-
-        if (process.env.NODE_ENV === 'production' && !process.env.STRIPE_SECRET_KEY && !process.env.TEST_PAYMENT_GATEWAY) {
-          return sendJson(res, 503, {
-            error: 'Payment processing gateway is not configured for this merchant.',
-            code: 'PAYMENTS_NOT_CONFIGURED'
-          });
-        }
-      }
-
-      const orderId = randomUUID();
-      const order = {
-        id: orderId,
-        agencyId: link.agencyId,
-        locationId: link.locationId,
-        orderNumber: `ORD-${Date.now().toString().slice(-6)}`,
-        contactId: contact.id,
-        contactName: `${firstName} ${lastName}`,
-        amount: finalAmount,
-        originalAmount: link.amount,
-        discount: discountAmount,
-        couponCode: appliedCoupon ? appliedCoupon.code : undefined,
-        currency: link.currency || 'USD',
-        status: 'paid',
-        paymentLinkId: link.id,
-        items: [{ name: link.name, amount: finalAmount, quantity: 1 }],
-        paymentToken: `tok_${randomBytes(12).toString('hex')}`,
-        canOneClickUpsell: true,
-        paidAt: new Date().toISOString(),
-        createdAt: new Date().toISOString()
-      };
-      state.records.orders = state.records.orders || [];
-      state.records.orders.push(order);
-
-      const invoiceId = randomUUID();
-      const invoice = {
-        id: invoiceId,
-        agencyId: link.agencyId,
-        locationId: link.locationId,
-        number: `INV-${Date.now().toString().slice(-6)}`,
-        contactId: contact.id,
-        contactName: `${firstName} ${lastName}`,
-        amount: finalAmount,
-        status: 'paid',
-        dueDate: new Date().toISOString().split('T')[0],
-        description: `Payment for ${link.name}${appliedCoupon ? ` (Discount coupon ${appliedCoupon.code})` : ''}`,
-        createdAt: new Date().toISOString()
-      };
-      state.records.invoices = state.records.invoices || [];
-      state.records.invoices.push(invoice);
-
-      const opp = (state.records.opportunities || []).find(o => o.contactId === contact.id && o.status === 'open');
-      if (opp) {
-        opp.stage = 'Won';
-        opp.status = 'won';
-        opp.value = (opp.value || 0) + link.amount;
-        broadcast('crm.opportunity.updated', { id: opp.id, stage: 'Won', status: 'won', value: opp.value });
-      }
-
-      link.conversions = (link.conversions || 0) + 1;
-      await saveState();
-
-      broadcast('crm.order.created', { id: orderId, amount: order.amount, customerName: order.contactName });
-      broadcast('crm.invoice.created', { id: invoiceId, number: invoice.number, amount: invoice.amount, status: 'paid' });
-
-      triggerWorkflowExecution({
-        agencyId: link.agencyId,
-        locationId: link.locationId,
-        triggerType: 'payment',
-        triggerContext: { link, order, invoice, contact }
-      }).catch(err => console.error('Payment workflow trigger failed:', err));
-
-      return sendJson(res, 201, {
-        success: true,
-        message: 'Payment processed successfully.',
-        order,
-        invoice,
-        contact,
-        paymentToken: order.paymentToken
-      });
     }
 
     // ═════════════════════════════════════════════════════════════
@@ -4199,38 +4012,15 @@ const server = createServer(async (req, res) => {
       });
     }
 
-    // Public Client Portal Invoice Payment Ingress
+    // Public Client Portal Invoice Payment Ingress (Delegated to Payments Router)
     if (method === 'POST' && pathname.startsWith('/api/portal/invoices/') && pathname.endsWith('/pay')) {
-      const invoiceId = pathname.replace('/api/portal/invoices/', '').replace('/pay', '').trim();
-      state.records.invoices = state.records.invoices || [];
-      const invoice = state.records.invoices.find(i => i.id === invoiceId);
-      if (!invoice) return sendJson(res, 404, { error: 'Invoice not found' });
-
-      const body = await readBody(req);
-      invoice.status = 'paid';
-      invoice.paidAt = new Date().toISOString();
-      invoice.paymentMethod = body.paymentMethod || 'card';
-
-      state.records.orders = state.records.orders || [];
-      const order = {
-        id: randomUUID(),
-        orderNumber: `ORD-${Date.now().toString().slice(-6)}`,
-        invoiceId: invoice.id,
-        contactId: invoice.contactId || null,
-        contactName: invoice.contactName || 'Portal Client',
-        amount: invoice.amount || 0,
-        currency: invoice.currency || 'USD',
-        status: 'completed',
-        paidAt: invoice.paidAt,
-        source: 'Client Portal Checkout'
-      };
-      state.records.orders.unshift(order);
-
-      await saveState();
-      broadcast('invoice.paid', { invoiceId: invoice.id, status: 'paid', amount: invoice.amount });
-      broadcast('order.created', order);
-
-      return sendJson(res, 200, { success: true, invoice, order });
+      if (await handlePaymentsRoutes(req, res, {
+        method, pathname, url, readBody, readRawBody, sendJson, state, saveState,
+        auditLog, broadcast, actor: undefined, agency: undefined, activeLocation: undefined,
+        pgPool, triggerWorkflowExecution, isWebhookReplay, logStructured
+      })) {
+        return;
+      }
     }
 
     // Public Client Portal Course Progress Ingress
@@ -4281,70 +4071,15 @@ const server = createServer(async (req, res) => {
     // ─── WEBHOOK HANDLERS (public, signature-gated) ─────────────
     // ═════════════════════════════════════════════════════════════
 
-    // Stripe Webhook
+    // Stripe Webhook (Delegated to Payments Router)
     if (method === 'POST' && pathname === '/api/webhooks/stripe') {
-      const rawBody = await readRawBody(req);
-      const sigHeader = req.headers['stripe-signature'] || '';
-
-      if (STRIPE_WEBHOOK_SECRET && sigHeader) {
-        // Verify Stripe signature: extract timestamp + v1 signature
-        const elements = Object.fromEntries(sigHeader.split(',').map(p => { const [k, v] = p.split('='); return [k, v]; }));
-        if (elements.t) {
-          const timestampSec = Number(elements.t);
-          const currentSec = Math.floor(Date.now() / 1000);
-          if (Math.abs(currentSec - timestampSec) > 300) {
-            console.warn('[STRIPE WEBHOOK] Webhook timestamp outside allowed 300s tolerance window');
-            return sendJson(res, 400, { error: 'Webhook timestamp expired or outside tolerance window' });
-          }
-        }
-        const signedPayload = `${elements.t || ''}.${rawBody.toString('utf8')}`;
-        const expectedSig = createHmac('sha256', STRIPE_WEBHOOK_SECRET).update(signedPayload).digest('hex');
-        if (!elements.v1 || !safeEqual(expectedSig, elements.v1)) {
-          console.warn('[STRIPE WEBHOOK] Invalid signature');
-          return sendJson(res, 400, { error: 'Invalid webhook signature' });
-        }
-      } else if (STRIPE_WEBHOOK_SECRET) {
-        console.warn('[STRIPE WEBHOOK] Missing stripe-signature header');
-        return sendJson(res, 400, { error: 'Missing stripe-signature header' });
-      } else {
-        if (process.env.NODE_ENV === 'production' || process.env.WEBHOOKS_FAIL_CLOSED === 'true') {
-          return sendJson(res, 503, { error: 'Stripe webhook secret is not configured in production environment', code: 'WEBHOOK_SECRET_REQUIRED' });
-        }
-        console.warn('[STRIPE WEBHOOK] No STRIPE_WEBHOOK_SECRET configured — skipping signature check');
+      if (await handlePaymentsRoutes(req, res, {
+        method, pathname, url, readBody, readRawBody, sendJson, state, saveState,
+        auditLog, broadcast, actor: undefined, agency: undefined, activeLocation: undefined,
+        pgPool, triggerWorkflowExecution, isWebhookReplay, logStructured
+      })) {
+        return;
       }
-
-      let event;
-      try { event = JSON.parse(rawBody.toString('utf8')); } catch { return sendJson(res, 400, { error: 'Invalid JSON' }); }
-
-      if (event.id && isWebhookReplay(`stripe:${event.id}`)) {
-        logStructured('WARN', 'Duplicate Stripe webhook event detected and safely skipped', { eventId: event.id });
-        return sendJson(res, 200, { received: true, deduplicated: true });
-      }
-
-      const eventType = event.type || 'unknown';
-      console.log(`[STRIPE WEBHOOK] Received event: ${eventType} | id: ${event.id || 'N/A'}`);
-      auditLog('webhook.stripe', null, { eventType, eventId: event.id });
-
-      switch (eventType) {
-        case 'invoice.paid':
-          console.log(`[STRIPE] Invoice paid: ${event.data?.object?.id} — amount: ${event.data?.object?.amount_paid}`);
-          broadcast('webhook.stripe.invoice_paid', { invoiceId: event.data?.object?.id });
-          break;
-        case 'payment_intent.succeeded':
-          console.log(`[STRIPE] Payment intent succeeded: ${event.data?.object?.id}`);
-          broadcast('webhook.stripe.payment_succeeded', { paymentIntentId: event.data?.object?.id });
-          break;
-        case 'customer.subscription.created':
-        case 'customer.subscription.updated':
-        case 'customer.subscription.deleted':
-          console.log(`[STRIPE] Subscription ${eventType}: ${event.data?.object?.id}`);
-          broadcast('webhook.stripe.subscription', { type: eventType, subscriptionId: event.data?.object?.id });
-          break;
-        default:
-          console.log(`[STRIPE] Unhandled event type: ${eventType}`);
-      }
-
-      return sendJson(res, 200, { received: true });
     }
 
     // Twilio Webhook
@@ -5192,6 +4927,24 @@ const server = createServer(async (req, res) => {
             code: 'INSUFFICIENT_SCOPES',
             requiredScope
           });
+        }
+      }
+      if (pathname.startsWith('/api/crm/orders') || pathname.startsWith('/api/orders')) {
+        const requiredScope = (method === 'GET' || method === 'HEAD') ? 'orders:read' : 'orders:write';
+        if (!checkApiKeyScope(actor, requiredScope) && !checkApiKeyScope(actor, (method === 'GET' || method === 'HEAD') ? 'payments:read' : 'payments:write')) {
+          return sendJson(res, 403, { error: `Insufficient API key scope. Required: '${requiredScope}'`, code: 'INSUFFICIENT_SCOPES', requiredScope });
+        }
+      }
+      if (pathname.startsWith('/api/crm/invoices') || pathname.startsWith('/api/invoices')) {
+        const requiredScope = (method === 'GET' || method === 'HEAD') ? 'invoices:read' : 'invoices:write';
+        if (!checkApiKeyScope(actor, requiredScope) && !checkApiKeyScope(actor, (method === 'GET' || method === 'HEAD') ? 'payments:read' : 'payments:write')) {
+          return sendJson(res, 403, { error: `Insufficient API key scope. Required: '${requiredScope}'`, code: 'INSUFFICIENT_SCOPES', requiredScope });
+        }
+      }
+      if (pathname.startsWith('/api/crm/payments') || pathname.startsWith('/api/payments') || pathname.startsWith('/api/ledger/')) {
+        const requiredScope = (method === 'GET' || method === 'HEAD') ? 'payments:read' : 'payments:write';
+        if (!checkApiKeyScope(actor, requiredScope)) {
+          return sendJson(res, 403, { error: `Insufficient API key scope. Required: '${requiredScope}'`, code: 'INSUFFICIENT_SCOPES', requiredScope });
         }
       }
       if (pathname.startsWith('/api/workflows') && method === 'POST') {
@@ -7734,6 +7487,21 @@ const server = createServer(async (req, res) => {
         agency,
         activeLocation,
         pgPool
+      })) {
+        return;
+      }
+    }
+
+    if (
+      pathname.startsWith('/api/orders') ||
+      pathname.startsWith('/api/invoices') ||
+      pathname.startsWith('/api/payments') ||
+      pathname.startsWith('/api/ledger/')
+    ) {
+      if (await handlePaymentsRoutes(req, res, {
+        method, pathname, url, readBody, readRawBody, sendJson, state, saveState,
+        auditLog, broadcast, actor, agency, activeLocation, pgPool,
+        triggerWorkflowExecution, isWebhookReplay, logStructured
       })) {
         return;
       }
