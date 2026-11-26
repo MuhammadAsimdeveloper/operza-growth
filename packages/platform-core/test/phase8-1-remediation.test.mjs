@@ -42,6 +42,15 @@ test('Auth Rate Limiter: falls back safely when Redis throws', async () => {
   const res = await limiter.check({ action: 'oauth_token', req, identifier: 'client_1' });
   assert.equal(res.allowed, true);
   assert.equal(res.backend, 'memory');
+
+  const strictLimiter = createAuthRateLimiter({
+    strictDistributed: true,
+    redisClient: { incr: async () => { throw new Error('ECONNREFUSED'); } }
+  });
+  await assert.rejects(
+    () => strictLimiter.check({ action: 'login', req, identifier: 'alice@example.com' }),
+    (err) => err.code === 'RATE_LIMIT_BACKEND_UNAVAILABLE'
+  );
 });
 
 test('Upload Quarantine & Malware Scanner: signature validation, fail-closed policy, malware quarantine, and tenant isolation', async () => {

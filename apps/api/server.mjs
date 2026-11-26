@@ -62,6 +62,7 @@ import { createAiPlatformRoutes } from './routes/ai.mjs';
 import { createDomainsRoutes } from './routes/domains.mjs';
 import { createPhase7Routes } from './routes/phase7.mjs';
 import { createGdprRoutes } from './routes/gdpr.mjs';
+import { validateFileSignature, createClamAvScanner } from '../../packages/platform-core/src/security/upload-scanner.mjs';
 import { createAiProviderGateway, PROVIDER_STATUSES } from '../../packages/platform-core/src/ai/provider-gateway.mjs';
 import { createAiCostGovernance } from '../../packages/platform-core/src/ai/cost-governance.mjs';
 import { createAiToolRegistry, TOOL_RISK_CLASSES } from '../../packages/platform-core/src/ai/tool-registry-v2.mjs';
@@ -3688,7 +3689,13 @@ const server = createServer(async (req, res) => {
     // Public Media File Server
     if (method === 'GET' && pathname.startsWith('/api/media/file/')) {
       const fileId = pathname.replace('/api/media/file/', '').trim();
+      if (!/^[a-zA-Z0-9_-]{3,80}$/.test(fileId)) {
+        return sendJson(res, 400, { error: 'Invalid media file identifier', code: 'INVALID_MEDIA_ID' });
+      }
       const fileRecord = (state.records.media || []).find(m => m.id === fileId);
+      if (fileRecord?.scanStatus && fileRecord.scanStatus !== 'clean') {
+        return sendJson(res, 403, { error: 'Media asset is quarantined or failed malware scan', code: 'MEDIA_QUARANTINED' });
+      }
 
       const MEDIA_STORAGE_DIR = path.join(dataDir, 'media');
       const filePath = path.join(MEDIA_STORAGE_DIR, `${fileId}.bin`);
@@ -6770,6 +6777,27 @@ const server = createServer(async (req, res) => {
         sizeKb = Math.max(1, Math.round(buffer.length / 1024));
         if (buffer.length > 25 * 1024 * 1024) {
           return sendJson(res, 413, { error: 'Media file exceeds maximum allowed size (25MB)', code: 'PAYLOAD_TOO_LARGE' });
+        }
+
+        // Phase 8.2: Magic-byte signature check for supported binary/text types
+        if (['application/pdf', 'image/png', 'image/jpeg', 'text/plain'].includes(mimeType)) {
+          const sig = validateFileSignature(buffer, mimeType);
+          if (!sig.valid) {
+            return sendJson(res, 400, { error: sig.message, code: sig.code });
+          }
+        }
+
+        // Phase 8.2: Enforce ClamAV scan when CLAMAV_REQUIRED=true (staging/production)
+        if (process.env.CLAMAV_REQUIRED === 'true') {
+          const clam = createClamAvScanner({ binaryPath: process.env.CLAMAV_BIN || 'clamscan' });
+          const scanRes = await clam.scanBuffer(buffer);
+          if (scanRes.status === 'infected') {
+            auditLog('media.malware_detected', actor, { name, engine: 'clamav' });
+            return sendJson(res, 422, { error: 'Upload rejected due to malware detection', code: 'MALWARE_DETECTED' });
+          }
+          if (scanRes.status !== 'clean') {
+            return sendJson(res, 503, { error: 'Malware scanner unavailable; upload quarantined', code: 'MALWARE_SCANNER_UNAVAILABLE' });
+          }
         }
       } else {
         sizeKb = body.sizeKb || 24;

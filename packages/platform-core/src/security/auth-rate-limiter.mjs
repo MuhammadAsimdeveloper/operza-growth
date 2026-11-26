@@ -44,6 +44,7 @@ function hashIdentifier(value) {
 export function createAuthRateLimiter({
   policies = DEFAULT_POLICIES,
   redisClient = null,
+  strictDistributed = false,
   trustProxy = false,
   trustedProxies = ['127.0.0.1', '::1', '::ffff:127.0.0.1'],
   auditSink = null
@@ -58,9 +59,19 @@ export function createAuthRateLimiter({
           await redisClient.pexpire(key, windowMs);
         }
         return { count, retryAfterSec: Math.ceil(windowMs / 1000), backend: 'redis' };
-      } catch {
-        // Fall back safely to in-memory window if Redis is transiently unavailable
+      } catch (err) {
+        if (strictDistributed) {
+          throw Object.assign(new Error('Distributed Redis rate limiter unavailable'), {
+            code: 'RATE_LIMIT_BACKEND_UNAVAILABLE',
+            cause: err
+          });
+        }
+        // Single-instance fallback only when strictDistributed is false
       }
+    } else if (strictDistributed) {
+      throw Object.assign(new Error('Distributed Redis rate limiter not configured'), {
+        code: 'RATE_LIMIT_BACKEND_UNAVAILABLE'
+      });
     }
 
     const cutoff = now - windowMs;
