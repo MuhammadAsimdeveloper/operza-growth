@@ -1095,6 +1095,113 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       assert.equal(await domainsRepo.getDomainById(pfTxB, domA.id), null, 'Tenant B must not read Tenant A domain');
       assert.equal(await versionsRepo.getPublishedVersion(pfTxB, siteIdA), null, 'Tenant B must not read Tenant A site versions');
       await pfClient.query('ROLLBACK');
+
+      // ─── PHASE 7: SAAS SUBSCRIPTIONS, MARKETPLACE, OAUTH 2.0 & REPORTING UNDER FORCE RLS ───
+      const { createSaasSubscriptionsRepository } = await import('../lib/saas-subscriptions-repository.mjs');
+      const { createMarketplaceRepository } = await import('../lib/marketplace-repository.mjs');
+      const { createOAuthRepository } = await import('../lib/oauth-repository.mjs');
+      const { createReportingRepository } = await import('../lib/reporting-repository.mjs');
+      const { createHash } = await import('node:crypto');
+
+      const subsRepo = createSaasSubscriptionsRepository();
+      const marketRepo = createMarketplaceRepository();
+      const oauthRepo = createOAuthRepository();
+      const reportRepo = createReportingRepository();
+
+      // Seed & approve marketplace app via privileged pool (platform admin boundary)
+      const submittedApp = await marketRepo.submitApp(pool, {
+        slug: `slack-pro-${Date.now()}`,
+        name: 'Slack Pro Connector',
+        publisherId: 'pub_operza',
+        requestedScopes: ['contacts:read', 'workflows:trigger']
+      });
+      await marketRepo.reviewApp(pool, submittedApp.id, { status: 'published', reviewedBy: 'platform_admin_1' });
+
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+
+      // SaaS subscription & server-side entitlement check
+      const subA = await subsRepo.upsertSubscription(pfTx, { planId: 'growth', status: 'active' });
+      assert.equal(subA.plan_id, 'growth');
+      const entCheck = await subsRepo.assertFeatureEntitled(pfTx, 'customDomains');
+      assert.equal(entCheck.entitlements.planId, 'growth');
+
+      // Marketplace install & uninstall
+      const instA = await marketRepo.installApp(pfTx, {
+        appId: submittedApp.id,
+        installedBy: 'user-a',
+        grantedScopes: ['contacts:read']
+      });
+      assert.equal(instA.status, 'installed');
+      const uninstalledA = await marketRepo.uninstallApp(pfTx, instA.id);
+      assert.equal(uninstalledA.status, 'uninstalled');
+
+      // OAuth 2.0 PKCE + single-use code + replay block + refresh rotation + reuse family revocation
+      const { app: oauthApp, clientSecret } = await oauthRepo.createApp(pfTx, {
+        name: 'Zapier OAuth Client',
+        redirectUris: ['https://app.example.com/oauth/callback'],
+        allowedScopes: ['contacts:read'],
+        createdBy: 'user-a'
+      });
+      const verifier = 'phase7_pkce_verifier_secret_value_12345';
+      const challenge = createHash('sha256').update(verifier).digest('base64url');
+      const { code: authCode } = await oauthRepo.issueAuthorizationCode(pfTx, {
+        clientId: oauthApp.client_id,
+        userId: 'user-a',
+        redirectUri: 'https://app.example.com/oauth/callback',
+        scopes: ['contacts:read'],
+        codeChallenge: challenge
+      });
+      const tok1 = await oauthRepo.exchangeAuthorizationCode(pfTx, {
+        clientId: oauthApp.client_id,
+        clientSecret,
+        code: authCode,
+        redirectUri: 'https://app.example.com/oauth/callback',
+        codeVerifier: verifier
+      });
+      assert.ok(tok1.accessToken.startsWith('opz_at_'));
+      await assert.rejects(
+        () => oauthRepo.exchangeAuthorizationCode(pfTx, {
+          clientId: oauthApp.client_id,
+          clientSecret,
+          code: authCode,
+          redirectUri: 'https://app.example.com/oauth/callback',
+          codeVerifier: verifier
+        }),
+        err => err.code === 'AUTH_CODE_REPLAYED'
+      );
+      const tok2 = await oauthRepo.rotateRefreshToken(pfTx, {
+        clientId: oauthApp.client_id,
+        clientSecret,
+        refreshToken: tok1.refreshToken
+      });
+      assert.ok(tok2.refreshToken !== tok1.refreshToken);
+      await assert.rejects(
+        () => oauthRepo.rotateRefreshToken(pfTx, {
+          clientId: oauthApp.client_id,
+          clientSecret,
+          refreshToken: tok1.refreshToken
+        }),
+        err => err.code === 'REFRESH_TOKEN_REUSED'
+      );
+
+      // Consolidated SQL Reporting
+      const summaryA = await reportRepo.getWorkspaceSummary(pfTx);
+      assert.equal(summaryA.agencyId, agencyA);
+      await pfClient.query('COMMIT');
+
+      // Cross-tenant isolation check under Tenant B
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      assert.equal(await subsRepo.getSubscription(pfTxB), null, 'Tenant B must not see Tenant A subscription');
+      assert.equal((await marketRepo.listInstallations(pfTxB)).length, 0, 'Tenant B must not see Tenant A installations');
+      await pfClient.query('ROLLBACK');
     } finally {
       await pfClient.query('ROLLBACK').catch(() => {});
       await pfClient.query('RESET ROLE').catch(() => {});

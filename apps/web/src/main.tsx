@@ -6,8 +6,11 @@ import App from './App';
 import { StoreProvider } from './lib/store';
 import { AuthProvider } from './lib/AuthContext';
 import { queryClient } from './lib/query';
+import { registerOperzaServiceWorker } from './lib/pwa';
 import './styles/tokens.css';
 import './styles/app.css';
+
+void registerOperzaServiceWorker();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
