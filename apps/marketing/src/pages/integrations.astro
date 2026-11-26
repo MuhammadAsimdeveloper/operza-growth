@@ -1,0 +1,25 @@
+---
+import MarketingLayout from '../layouts/MarketingLayout.astro';
+---
+
+<MarketingLayout
+  title="Integrations — Operza Growth"
+  description="Integration Hub SDK connectors for payments, messaging, calendars, and webhooks with explicit sandbox vs. live status."
+  canonicalPath="/integrations"
+>
+  <h1>Integration Hub</h1>
+  <p>
+    Connectors are registered through the Operza Integration Hub SDK with schema validation,
+    per-tenant rate limits, and idempotent execution.
+  </p>
+  <div class="grid">
+    <article class="card">
+      <h2>Payments &amp; Billing</h2>
+      <p>Stripe Connect adapter (sandbox verified), payment links, coupons, invoice PDFs, and dunning orchestration.</p>
+    </article>
+    <article class="card">
+      <h2>Messaging &amp; Calendars</h2>
+      <p>Twilio SMS, SendGrid/Resend email, WhatsApp Cloud API, and Google/Outlook Calendar OAuth sync (sandbox adapters).</p>
+    </article>
+  </div>
+</MarketingLayout>

@@ -1025,6 +1025,76 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       });
       assert.equal(ragAfterDelete.answerable, false);
       await pfClient.query('COMMIT');
+
+      // ─── PHASE 6: SITE VERSIONS, CUSTOM DOMAINS & SSL LIFECYCLE UNDER FORCE RLS ───
+      const { createSiteVersionsRepository } = await import('../lib/site-versions-repository.mjs');
+      const { createCustomDomainsRepository } = await import('../lib/custom-domains-repository.mjs');
+      const { createSslProvisioningAdapter } = await import('../../platform-core/src/domains/custom-domains.mjs');
+      const versionsRepo = createSiteVersionsRepository();
+      const domainsRepo = createCustomDomainsRepository();
+      const siteIdA = randomUUID();
+
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+      const v1 = await versionsRepo.publishVersion(pfTx, {
+        siteId: siteIdA,
+        snapshot: { title: 'V1 Live' },
+        seoMeta: { canonical: 'https://portal.phase6-test.example' },
+        actorId: 'user-a'
+      });
+      assert.equal(v1.version_number, 1);
+      const draftV2 = await versionsRepo.saveDraft(pfTx, {
+        siteId: siteIdA,
+        snapshot: { title: 'V2 Draft Unreleased' }
+      });
+      assert.equal(draftV2.status, 'draft');
+      const currentPublished = await versionsRepo.getPublishedVersion(pfTx, siteIdA);
+      assert.equal(currentPublished.version_number, 1, 'Draft must not overwrite published version');
+
+      const claimedHost = `portal-${Date.now()}.phase6-test.example`;
+      const domA = await domainsRepo.requestDomain(pfTx, { siteId: siteIdA, hostname: claimedHost, isPrimary: true });
+      assert.equal(domA.status, 'pending_verification');
+
+      const verifiedDom = await domainsRepo.verifyDomain(pfTx, domA.id, {
+        resolveTxt: async () => [[domA.verification_token]]
+      });
+      assert.equal(verifiedDom.verified, true);
+      assert.equal(verifiedDom.domain.status, 'verified');
+
+      const sslRes = await domainsRepo.provisionSsl(pfTx, domA.id, {
+        sslAdapter: createSslProvisioningAdapter({
+          provider: 'local_tls_fixture',
+          issueCertificate: async () => ({ ok: true, issuer: 'Operza Test Fixture', serialNumber: 'sn_pg_1' }),
+          verifyHttps: async () => ({ ok: true })
+        })
+      });
+      assert.equal(sslRes.ok, true);
+      assert.equal(sslRes.domain.status, 'active');
+      await pfClient.query('COMMIT');
+
+      // Cross-tenant duplicate domain claim must be rejected even under Tenant B
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      await assert.rejects(
+        () => domainsRepo.requestDomain(pfTxB, { hostname: claimedHost }),
+        err => err.code === 'DOMAIN_ALREADY_CLAIMED'
+      );
+      await pfClient.query('ROLLBACK');
+
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      assert.equal(await domainsRepo.getDomainById(pfTxB, domA.id), null, 'Tenant B must not read Tenant A domain');
+      assert.equal(await versionsRepo.getPublishedVersion(pfTxB, siteIdA), null, 'Tenant B must not read Tenant A site versions');
+      await pfClient.query('ROLLBACK');
     } finally {
       await pfClient.query('ROLLBACK').catch(() => {});
       await pfClient.query('RESET ROLE').catch(() => {});

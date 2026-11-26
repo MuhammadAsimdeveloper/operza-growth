@@ -59,6 +59,7 @@ import { handleSchedulingRoutes } from './routes/scheduling.mjs';
 import { handleWorkflowsRoutes } from './routes/workflows.mjs';
 import { handlePipelinesRoutes } from './routes/pipelines.mjs';
 import { createAiPlatformRoutes } from './routes/ai.mjs';
+import { createDomainsRoutes } from './routes/domains.mjs';
 import { createAiProviderGateway, PROVIDER_STATUSES } from '../../packages/platform-core/src/ai/provider-gateway.mjs';
 import { createAiCostGovernance } from '../../packages/platform-core/src/ai/cost-governance.mjs';
 import { createAiToolRegistry, TOOL_RISK_CLASSES } from '../../packages/platform-core/src/ai/tool-registry-v2.mjs';
@@ -8054,6 +8055,16 @@ const server = createServer(async (req, res) => {
       auditLog
     });
     if ((await handleAiPlatformRoute({ method, pathname, req, res, agency, activeLocation, actor })) !== false) {
+      return;
+    }
+
+    const handleDomainsRoute = createDomainsRoutes({
+      pgPool,
+      sendJson,
+      readBody,
+      auditLog
+    });
+    if ((await handleDomainsRoute({ method, pathname, req, res, agency, activeLocation, actor })) !== false) {
       return;
     }
 

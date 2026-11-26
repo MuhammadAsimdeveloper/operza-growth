@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../components/Icon';
 import { Badge, StatusBadge } from '../components/ui';
 import { api } from '../lib/api';
@@ -46,6 +47,16 @@ export default function Branding() {
   const [savedBanner, setSavedBanner] = useState(false);
   const [verifyingDomain, setVerifyingDomain] = useState(false);
   const [verifyingEmail, setVerifyingEmail] = useState(false);
+
+  const { data: domainRecords } = useQuery({
+    queryKey: ['custom-domains'],
+    queryFn: async () => {
+      const res = await fetch('/api/domains', { credentials: 'include' });
+      if (!res.ok) return { domains: [] };
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
 
   useEffect(() => {
     let active = true;
@@ -123,7 +134,10 @@ export default function Branding() {
             </span>
           </div>
           <div className="atlas-kpi__value">{branding.isDomainVerified ? 'Active' : 'DNS Pending'}</div>
-          <div className="atlas-kpi__note">{branding.sslActive ? 'SSL certificate active' : 'Awaiting CNAME check'}</div>
+          <div className="atlas-kpi__note">
+            {branding.sslActive ? 'SSL certificate active' : 'Awaiting CNAME check'}
+            {Array.isArray(domainRecords?.domains) ? ` · ${domainRecords.domains.length} DNS-tracked` : ''}
+          </div>
         </article>
         <article className="operza-kpi atlas-kpi">
           <div className="atlas-kpi__meta">

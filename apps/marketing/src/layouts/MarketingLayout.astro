@@ -1,0 +1,135 @@
+---
+interface Props {
+  title: string;
+  description: string;
+  canonicalPath?: string;
+}
+
+const { title, description, canonicalPath = '/' } = Astro.props;
+const siteOrigin = 'https://operza.io';
+const canonicalUrl = canonicalPath === '/' ? `${siteOrigin}/` : `${siteOrigin}${canonicalPath}`;
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: 'Operza Growth',
+    url: siteOrigin
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'Operza Growth',
+    applicationCategory: 'BusinessApplication',
+    operatingSystem: 'Web'
+  }
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href={canonicalUrl} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonicalUrl} />
+    <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
+    <style>
+      :root {
+        --bg: #f8fafc;
+        --surface: #ffffff;
+        --text: #0f172a;
+        --muted: #475569;
+        --border: #e2e8f0;
+        --accent: #2563eb;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Inter, system-ui, -apple-system, sans-serif;
+        color: var(--text);
+        background: var(--bg);
+        line-height: 1.6;
+      }
+      .skip-link {
+        position: absolute;
+        left: -9999px;
+      }
+      .skip-link:focus {
+        left: 1rem;
+        top: 1rem;
+        background: var(--accent);
+        color: #fff;
+        padding: 0.5rem 0.75rem;
+        z-index: 50;
+      }
+      header {
+        background: var(--surface);
+        border-bottom: 1px solid var(--border);
+      }
+      .nav-inner, main, footer {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 1rem 1.5rem;
+      }
+      .nav-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+      }
+      nav {
+        display: flex;
+        gap: 1.25rem;
+        flex-wrap: wrap;
+      }
+      a { color: var(--text); text-decoration: none; font-weight: 500; }
+      a:hover { color: var(--accent); }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+        gap: 1.25rem;
+        margin-top: 1.5rem;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 0.75rem;
+        padding: 1.25rem;
+      }
+      footer {
+        border-top: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 0.9rem;
+        margin-top: 3rem;
+      }
+    </style>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
+    <header>
+      <div class="nav-inner">
+        <a href="/" style="font-weight:700;font-size:1.1rem;">Operza Growth</a>
+        <nav aria-label="Primary Navigation">
+          <a href="/features">Features</a>
+          <a href="/integrations">Integrations</a>
+          <a href="/pricing">Pricing</a>
+          <a href="/contact">Contact</a>
+        </nav>
+      </div>
+    </header>
+    <main id="main-content">
+      <slot />
+    </main>
+    <footer>
+      <p>Operza Growth — Multi-Tenant Agency CRM, Automation, Scheduling &amp; AI Platform.</p>
+    </footer>
+  </body>
+</html>
