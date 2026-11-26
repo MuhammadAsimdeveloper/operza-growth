@@ -1246,6 +1246,79 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       const exportedB = await gdprRepo.exportSubjectData(pfTxB, { contactId: gdprContact.id });
       assert.equal(exportedB.records.contacts.length, 0);
       await pfClient.query('ROLLBACK');
+
+      // ─── STAGE 1 CRM 2.0: CUSTOMER 360, SAFE MERGE, SMART LISTS & CUSTOM FIELDS UNDER FORCE RLS ───
+      const { createCrm2Repository } = await import('../lib/crm-2-repository.mjs');
+      const crm2Repo = createCrm2Repository();
+
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+      const cPrimary = await gdprContactsRepo.create(pfTx, {
+        firstName: 'Grace',
+        lastName: 'Hopper',
+        email: 'grace@example.com',
+        lifecycleStage: 'customer',
+        tags: ['vip']
+      });
+      const cDup = await gdprContactsRepo.create(pfTx, {
+        firstName: 'Grace',
+        lastName: 'Hopper',
+        email: 'GRACE@example.com',
+        phone: '+14155550199',
+        company: 'Compiler Corp',
+        tags: ['enterprise']
+      });
+
+      const dupGroups = await crm2Repo.findDuplicates(pfTx);
+      assert.ok(dupGroups.some((g) => g.reason === 'exact_email'));
+
+      const mergeRes = await crm2Repo.mergeContactsSafely(pfTx, {
+        primaryId: cPrimary.id,
+        mergeIds: [cDup.id],
+        mergedBy: 'admin-a'
+      });
+      assert.equal(mergeRes.success, true);
+      assert.ok(mergeRes.contact.tags.includes('enterprise'));
+
+      // Concurrent/repeated merge of already-merged secondary contact must fail with MERGE_CONFLICT
+      await assert.rejects(
+        () => crm2Repo.mergeContactsSafely(pfTx, { primaryId: cPrimary.id, mergeIds: [cDup.id] }),
+        err => err.code === 'MERGE_CONFLICT'
+      );
+
+      const profile360 = await crm2Repo.getCustomer360Profile(pfTx, cPrimary.id);
+      assert.equal(profile360.contact.id, cPrimary.id);
+      assert.ok(profile360.timeline.total >= 1);
+
+      const cfDef = await crm2Repo.createCustomFieldDef(pfTx, {
+        fieldKey: 'arr_tier',
+        label: 'ARR Tier',
+        fieldType: 'select',
+        options: ['starter', 'enterprise']
+      });
+      assert.equal(cfDef.field_key, 'arr_tier');
+
+      const smartList = await crm2Repo.createSmartList(pfTx, {
+        name: 'VIP Customers',
+        filterAst: { op: 'and', rules: [{ field: 'tags', operator: 'contains', value: 'vip' }] },
+        createdBy: 'admin-a'
+      });
+      const evalRes = await crm2Repo.evaluateSmartList(pfTx, smartList.id);
+      assert.ok(evalRes.total >= 1);
+      await pfClient.query('COMMIT');
+
+      // Cross-tenant isolation check under Tenant B
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      assert.equal(await crm2Repo.getCustomer360Profile(pfTxB, cPrimary.id), null, 'Tenant B must not read Tenant A Customer 360');
+      assert.equal((await crm2Repo.listSmartLists(pfTxB)).length, 0, 'Tenant B must not read Tenant A Smart Lists');
+      await pfClient.query('ROLLBACK');
     } finally {
       await pfClient.query('ROLLBACK').catch(() => {});
       await pfClient.query('RESET ROLE').catch(() => {});

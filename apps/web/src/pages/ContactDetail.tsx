@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
@@ -23,13 +24,24 @@ export default function ContactDetail() {
   const [timelineEvents, setTimelineEvents] = useState<any[]>([]);
   const [timelineLoading, setTimelineLoading] = useState(false);
 
+  const { data: profile360 } = useQuery<{ contact?: Contact } | null>({
+    queryKey: ['crm', 'contact-360', id],
+    enabled: Boolean(id),
+    queryFn: async ({ signal }) => {
+      const res = await fetch(`/api/crm/contacts/${id}/profile`, { credentials: 'include', signal });
+      if (!res.ok) return null;
+      return res.json();
+    },
+    staleTime: 20_000,
+  });
+
   // GHL-Grade Quick Actions Modals
   const [smsOpen, setSmsOpen] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
   const [apptOpen, setApptOpen] = useState(false);
   const [dealOpen, setDealOpen] = useState(false);
 
-  const contact = state.contacts.find((c) => c.id === id);
+  const contact = profile360?.contact || state.contacts.find((c) => c.id === id);
 
   if (!contact) {
     return (

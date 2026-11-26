@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
@@ -14,6 +15,17 @@ export default function SmartLists() {
   const [adding, setAdding] = useState(false);
   const [evaluatingId, setEvaluatingId] = useState<string | null>(null);
   const navigate = useNavigate();
+
+  const { data: v2SmartLists } = useQuery({
+    queryKey: ['crm', 'v2', 'smart-lists'],
+    queryFn: async ({ signal }) => {
+      const res = await fetch('/api/crm/v2/smart-lists', { credentials: 'include', signal });
+      if (!res.ok) return { smartLists: [] };
+      return res.json();
+    },
+    staleTime: 20_000,
+  });
+  void v2SmartLists;
 
   useEffect(() => {
     api.crm.list<SmartList>('smartLists').then((res) => {

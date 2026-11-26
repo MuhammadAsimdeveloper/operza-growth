@@ -8,6 +8,7 @@
  */
 
 import { createSmartListView, filterSmartListRecords } from '../../../packages/platform-core/src/crm-views-store.mjs';
+import { handleCrm2Routes } from './crm2.mjs';
 import { handleContactsRoutes } from './contacts.mjs';
 import { handleOpportunitiesRoutes } from './opportunities.mjs';
 import { handleSchedulingRoutes } from './scheduling.mjs';
@@ -45,6 +46,11 @@ export async function handleCrmRoutes(req, res, ctx) {
 
   if (!pathname.startsWith('/api/crm/')) {
     return false;
+  }
+
+  // Delegate CRM 2.0 Customer 360, duplicate merge, Smart Lists & custom fields
+  if (await handleCrm2Routes(req, res, ctx)) {
+    return true;
   }
 
   // Delegate contacts domain operations to dedicated contacts router
