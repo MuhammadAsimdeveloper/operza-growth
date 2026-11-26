@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:0.8.0-pg16
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-operza_staging}
@@ -16,7 +16,7 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.2-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
@@ -28,7 +28,7 @@ services:
       retries: 10
 
   clamav:
-    image: clamav/clamav:stable
+    image: clamav/clamav:1.4
     restart: unless-stopped
     volumes:
       - staging_clamav_db:/var/lib/clamav

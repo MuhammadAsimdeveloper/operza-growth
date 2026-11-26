@@ -11,7 +11,8 @@ import { resolveEntitlements } from '../../../packages/platform-core/src/entitle
 import { createAuthRateLimiter } from '../../../packages/platform-core/src/security/auth-rate-limiter.mjs';
 
 const oauthRateLimiter = createAuthRateLimiter({
-  trustProxy: process.env.TRUST_PROXY === 'true'
+  trustProxy: process.env.TRUST_PROXY === 'true',
+  strictDistributed: process.env.DISTRIBUTED_RATE_LIMIT_STRICT === 'true'
 });
 
 const subsRepo = createSaasSubscriptionsRepository();

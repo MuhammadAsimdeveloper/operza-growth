@@ -9,7 +9,8 @@ import { verifyGoogleIdToken } from '../lib/google-auth.mjs';
 import { createAuthRateLimiter } from '../../../packages/platform-core/src/security/auth-rate-limiter.mjs';
 
 const authRateLimiter = createAuthRateLimiter({
-  trustProxy: process.env.TRUST_PROXY === 'true'
+  trustProxy: process.env.TRUST_PROXY === 'true',
+  strictDistributed: process.env.DISTRIBUTED_RATE_LIMIT_STRICT === 'true'
 });
 
 export async function handleAuthRoutes(req, res, ctx) {
@@ -400,6 +401,11 @@ export async function handleAuthRoutes(req, res, ctx) {
   if (method === 'POST' && pathname === '/api/auth/magic-link') {
     const body = await readBody(req);
     const email = (body.email || '').toLowerCase().trim();
+    const rl = await authRateLimiter.check({ action: 'otp_request', req, identifier: email });
+    if (!rl.allowed) {
+      sendJson(res, 429, { error: 'Too many verification code requests', code: rl.code, retryAfterSec: rl.retryAfterSec }, { 'retry-after': String(rl.retryAfterSec) });
+      return true;
+    }
     if (!email || !email.includes('@')) {
       sendJson(res, 400, { error: 'Valid email address is required' });
       return true;
@@ -453,6 +459,11 @@ export async function handleAuthRoutes(req, res, ctx) {
   if (method === 'POST' && pathname === '/api/auth/verify-otp') {
     const body = await readBody(req);
     const emailKey = (body.email || '').toLowerCase().trim();
+    const rl = await authRateLimiter.check({ action: 'otp_verify', req, identifier: emailKey });
+    if (!rl.allowed) {
+      sendJson(res, 429, { error: 'Too many OTP verification attempts', code: rl.code, retryAfterSec: rl.retryAfterSec }, { 'retry-after': String(rl.retryAfterSec) });
+      return true;
+    }
     const code = String(body.code || '').trim();
     const name = (body.name || '').trim();
 
