@@ -8,6 +8,11 @@ import { createMarketplaceRepository } from '../../../packages/db/lib/marketplac
 import { createOAuthRepository } from '../../../packages/db/lib/oauth-repository.mjs';
 import { createReportingRepository } from '../../../packages/db/lib/reporting-repository.mjs';
 import { resolveEntitlements } from '../../../packages/platform-core/src/entitlements.mjs';
+import { createAuthRateLimiter } from '../../../packages/platform-core/src/security/auth-rate-limiter.mjs';
+
+const oauthRateLimiter = createAuthRateLimiter({
+  trustProxy: process.env.TRUST_PROXY === 'true'
+});
 
 const subsRepo = createSaasSubscriptionsRepository();
 const marketRepo = createMarketplaceRepository();
@@ -132,6 +137,10 @@ export function createPhase7Routes({ pgPool = null, sendJson, readBody, auditLog
 
     if (method === 'POST' && pathname === '/api/oauth/authorize') {
       const body = await readBody(req);
+      const rl = await oauthRateLimiter.check({ action: 'oauth_authorize', req, identifier: body?.clientId || tenantCtx.actorId });
+      if (!rl.allowed) {
+        return sendJson(res, 429, { error: 'Too many OAuth authorization requests', code: rl.code }, { 'retry-after': String(rl.retryAfterSec) });
+      }
       const issued = await runInTenantTx(pgPool, tenantCtx, (tx) =>
         oauthRepo.issueAuthorizationCode(tx, {
           clientId: body?.clientId,
@@ -146,6 +155,10 @@ export function createPhase7Routes({ pgPool = null, sendJson, readBody, auditLog
 
     if (method === 'POST' && pathname === '/api/oauth/token') {
       const body = await readBody(req);
+      const rl = await oauthRateLimiter.check({ action: 'oauth_token', req, identifier: body?.clientId || tenantCtx.actorId });
+      if (!rl.allowed) {
+        return sendJson(res, 429, { error: 'Too many OAuth token requests', code: rl.code }, { 'retry-after': String(rl.retryAfterSec) });
+      }
       try {
         if (body?.grantType === 'refresh_token') {
           const rotated = await runInTenantTx(pgPool, tenantCtx, (tx) =>

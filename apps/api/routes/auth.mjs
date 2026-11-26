@@ -6,6 +6,11 @@
 
 import { randomInt } from 'node:crypto';
 import { verifyGoogleIdToken } from '../lib/google-auth.mjs';
+import { createAuthRateLimiter } from '../../../packages/platform-core/src/security/auth-rate-limiter.mjs';
+
+const authRateLimiter = createAuthRateLimiter({
+  trustProxy: process.env.TRUST_PROXY === 'true'
+});
 
 export async function handleAuthRoutes(req, res, ctx) {
   const {
@@ -601,6 +606,12 @@ export async function handleAuthRoutes(req, res, ctx) {
     const body = await readBody(req);
     const { email, password } = body;
     const emailKey = String(email || '').toLowerCase().trim();
+
+    const rl = await authRateLimiter.check({ action: 'login', req, identifier: emailKey });
+    if (!rl.allowed) {
+      sendJson(res, 429, { error: 'Too many authentication attempts', code: rl.code, retryAfterSec: rl.retryAfterSec }, { 'retry-after': String(rl.retryAfterSec) });
+      return true;
+    }
 
     if (!emailKey || !password) {
       sendJson(res, 400, { error: 'Email and password required' });
