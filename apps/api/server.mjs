@@ -61,6 +61,7 @@ import { handlePipelinesRoutes } from './routes/pipelines.mjs';
 import { createAiPlatformRoutes } from './routes/ai.mjs';
 import { createDomainsRoutes } from './routes/domains.mjs';
 import { createPhase7Routes } from './routes/phase7.mjs';
+import { createGdprRoutes } from './routes/gdpr.mjs';
 import { createAiProviderGateway, PROVIDER_STATUSES } from '../../packages/platform-core/src/ai/provider-gateway.mjs';
 import { createAiCostGovernance } from '../../packages/platform-core/src/ai/cost-governance.mjs';
 import { createAiToolRegistry, TOOL_RISK_CLASSES } from '../../packages/platform-core/src/ai/tool-registry-v2.mjs';
@@ -772,6 +773,8 @@ function sendJson(res, status, body, headers = {}) {
     'access-control-allow-headers': 'content-type, x-operza-csrf, x-operza-location, x-request-id, idempotency-key',
     'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'cache-control': 'no-store',
+    'content-security-policy': "default-src 'none'; frame-ancestors 'none'",
+    'strict-transport-security': 'max-age=31536000; includeSubDomains',
     'x-content-type-options': 'nosniff',
     'x-frame-options': 'SAMEORIGIN',
     'x-xss-protection': '1; mode=block',
@@ -8076,6 +8079,16 @@ const server = createServer(async (req, res) => {
       auditLog
     });
     if ((await handlePhase7Route({ method, pathname, req, res, agency, activeLocation, actor })) !== false) {
+      return;
+    }
+
+    const handleGdprRoute = createGdprRoutes({
+      pgPool,
+      sendJson,
+      readBody,
+      auditLog
+    });
+    if ((await handleGdprRoute({ method, pathname, req, res, agency, activeLocation, actor })) !== false) {
       return;
     }
 

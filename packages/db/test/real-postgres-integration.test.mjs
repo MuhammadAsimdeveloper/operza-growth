@@ -1202,6 +1202,50 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       assert.equal(await subsRepo.getSubscription(pfTxB), null, 'Tenant B must not see Tenant A subscription');
       assert.equal((await marketRepo.listInstallations(pfTxB)).length, 0, 'Tenant B must not see Tenant A installations');
       await pfClient.query('ROLLBACK');
+
+      // ─── PHASE 8: GDPR DATA EXPORT & DELETION UNDER FORCE RLS ───
+      const { createGdprRepository } = await import('../lib/gdpr-repository.mjs');
+      const { createContactsRepository } = await import('../lib/contacts-repository.mjs');
+      const gdprRepo = createGdprRepository();
+      const gdprContactsRepo = createContactsRepository();
+
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+      const gdprContact = await gdprContactsRepo.create(pfTx, {
+        firstName: 'Ada',
+        lastName: 'Lovelace',
+        email: 'ada.gdpr@example.com'
+      });
+      const exportedA = await gdprRepo.exportSubjectData(pfTx, { subjectEmail: 'ada.gdpr@example.com', requestedBy: 'admin-a' });
+      assert.equal(exportedA.records.contacts.length, 1);
+      assert.ok(exportedA.manifest.sha256);
+
+      // Legal hold blocks deletion
+      await assert.rejects(
+        () => gdprRepo.deleteSubjectData(pfTx, { subjectEmail: 'ada.gdpr@example.com', legalHold: true }),
+        err => err.code === 'GDPR_LEGAL_HOLD_ACTIVE'
+      );
+
+      // Deletion succeeds and is idempotent
+      const del1 = await gdprRepo.deleteSubjectData(pfTx, { subjectEmail: 'ada.gdpr@example.com' });
+      assert.equal(del1.deletedContacts, 1);
+      assert.equal(del1.financialLedgerRetained, true);
+      const del2 = await gdprRepo.deleteSubjectData(pfTx, { subjectEmail: 'ada.gdpr@example.com' });
+      assert.equal(del2.idempotent, true);
+      await pfClient.query('COMMIT');
+
+      // Tenant B cannot export Tenant A subject
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      const exportedB = await gdprRepo.exportSubjectData(pfTxB, { contactId: gdprContact.id });
+      assert.equal(exportedB.records.contacts.length, 0);
+      await pfClient.query('ROLLBACK');
     } finally {
       await pfClient.query('ROLLBACK').catch(() => {});
       await pfClient.query('RESET ROLE').catch(() => {});

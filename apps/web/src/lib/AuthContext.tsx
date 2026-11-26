@@ -9,6 +9,7 @@ import {
 } from 'react';
 import { api } from './api';
 import { clearTenantCache } from './query';
+import { purgePwaTenantCaches } from './pwa';
 
 export interface AuthUser {
   id: string;
@@ -154,6 +155,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(ACTIVE_LOCATION_KEY);
     localStorage.removeItem('operza_active_agency');
     clearTenantCache();
+    void purgePwaTenantCaches();
     setState({
       user: null,
       agency: null,
@@ -170,6 +172,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!loc) return prev;
       localStorage.setItem(ACTIVE_LOCATION_KEY, loc.id);
       clearTenantCache();
+      void purgePwaTenantCaches();
       return { ...prev, activeLocation: loc };
     });
   }, []);
