@@ -57,6 +57,7 @@ import { handleCrmRoutes } from './routes/crm.mjs';
 import { handleOpportunitiesRoutes } from './routes/opportunities.mjs';
 import { handleSchedulingRoutes } from './routes/scheduling.mjs';
 import { handleWorkflowsRoutes } from './routes/workflows.mjs';
+import { handleIntegrations2Routes } from './routes/integrations2.mjs';
 import { handlePipelinesRoutes } from './routes/pipelines.mjs';
 import { createAiPlatformRoutes } from './routes/ai.mjs';
 import { createDomainsRoutes } from './routes/domains.mjs';
@@ -7832,6 +7833,10 @@ const server = createServer(async (req, res) => {
         { id: 'slack', name: 'Slack', category: 'Notifications', description: 'Real-time notifications for leads, booked appointments, and deals', icon: 'message', connected: false, accountName: '', status: 'unconfigured', lastSyncAt: null }
       ];
     };
+
+    if (await handleIntegrations2Routes(req, res, { method, pathname, url, actor, agency, activeLocation, pgPool, readBody, sendJson, auditLog })) {
+      return;
+    }
 
     if (method === 'GET' && pathname === '/api/integrations') {
       state.records.integrations = state.records.integrations || {};

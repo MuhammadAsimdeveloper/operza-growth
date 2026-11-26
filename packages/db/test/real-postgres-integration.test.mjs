@@ -1388,6 +1388,78 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       assert.equal((await wf2Repo.listWorkflowVersions(pfTxB, wf2Id)).length, 0, 'Tenant B must not read Tenant A workflow_versions');
       assert.equal((await wf2Repo.listSchedules(pfTxB, wf2Id)).length, 0, 'Tenant B must not read Tenant A workflow_schedules');
       await pfClient.query('ROLLBACK');
+
+      // ── 14. Integrations Hub 2.0 (Connections, Webhook Deduplication, Sync Jobs/Conflicts, FORCE RLS)
+      const { createIntegrations2Repository } = await import('../lib/integrations-2-repository.mjs');
+      const int2Repo = createIntegrations2Repository();
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+      const conn = await int2Repo.createConnection(pfTx, {
+        connectorId: 'stripe',
+        provider: 'payments.stripe',
+        accountLabel: 'Stripe Sandbox A',
+        authStrategy: 'api_key',
+        status: 'active',
+        readinessLevel: 'sandbox_verified',
+        vaultSecretRef: 'vault:ag-a:stripe:1',
+        grantedScopes: ['commerce:read', 'commerce:write'],
+        createdBy: 'admin-a'
+      });
+      assert.equal(conn.hasSecretRef, true);
+      assert.equal('vault_secret_ref' in conn, false);
+
+      const ev1 = await int2Repo.recordWebhookEvent(pfTx, {
+        connectionId: conn.id,
+        provider: 'payments.stripe',
+        providerEventId: 'evt_dup_1',
+        eventType: 'payment.succeeded',
+        payload: { amountCents: 2500 }
+      });
+      assert.equal(ev1.deduplicated, false);
+      const ev2 = await int2Repo.recordWebhookEvent(pfTx, {
+        connectionId: conn.id,
+        provider: 'payments.stripe',
+        providerEventId: 'evt_dup_1',
+        eventType: 'payment.succeeded',
+        payload: { amountCents: 2500 }
+      });
+      assert.equal(ev2.deduplicated, true);
+
+      const syncJob = await int2Repo.createSyncJob(pfTx, {
+        connectionId: conn.id,
+        entityType: 'contacts',
+        direction: 'two_way',
+        conflictPolicy: 'manual_queue'
+      });
+      await int2Repo.createSyncConflict(pfTx, {
+        syncJobId: syncJob.id,
+        localRecordId: 'c1',
+        externalRecordId: 'ext1',
+        localPayload: { email: 'a@test.com' },
+        externalPayload: { email: 'b@test.com' }
+      });
+      const intMetrics = await int2Repo.getIntegrationMetrics(pfTx);
+      assert.equal(intMetrics.connections.active, 1);
+      assert.equal(intMetrics.openSyncConflicts, 1);
+
+      const disc = await int2Repo.updateConnectionStatus(pfTx, conn.id, { status: 'disconnected' });
+      assert.equal(disc.status, 'disconnected');
+      assert.ok(disc.revokedAt);
+      await pfClient.query('COMMIT');
+
+      // Cross-tenant FORCE RLS check under Tenant B
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      assert.equal((await int2Repo.listConnections(pfTxB)).length, 0, 'Tenant B must not read Tenant A integration_connections');
+      assert.equal((await int2Repo.listWebhookEvents(pfTxB)).length, 0, 'Tenant B must not read Tenant A integration_webhook_events');
+      assert.equal((await int2Repo.listSyncConflicts(pfTxB)).length, 0, 'Tenant B must not read Tenant A integration_sync_conflicts');
+      await pfClient.query('ROLLBACK');
     } finally {
       await pfClient.query('ROLLBACK').catch(() => {});
       await pfClient.query('RESET ROLE').catch(() => {});

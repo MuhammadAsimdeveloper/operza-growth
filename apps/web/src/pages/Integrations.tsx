@@ -18,6 +18,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, StatusBadge } from '../components/ui';
+import { IntegrationsHub2Panel } from '../components/IntegrationsHub2Panel';
 import { api } from '../lib/api';
 
 interface ProviderCatalogEntry {
@@ -524,6 +525,8 @@ export default function Integrations() {
         <h2>Governed API Connectors &amp; Universal Webhook Event Bus</h2>
         <p>Manage verified server-side provider credentials, communication channels (Twilio, SendGrid, Meta WhatsApp, Stripe), and bi-directional Zapier automation triggers.</p>
       </section>
+
+      <IntegrationsHub2Panel />
 
       {/* KPI Overview Grid */}
       <section className="atlas-kpis" style={{ marginBottom: 24 }}>
