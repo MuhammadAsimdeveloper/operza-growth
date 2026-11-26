@@ -958,6 +958,73 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
         err => err.code === 'VERSION_CONFLICT'
       );
       await pfClient.query('COMMIT');
+
+      // ─── PHASE 5: REAL POSTGRESQL RAG KNOWLEDGE BASE & TENANT RLS CHECK ───
+      const { createKnowledgeBaseRepository } = await import('../lib/knowledge-base-repository.mjs');
+      const { createAiProviderGateway } = await import('../../platform-core/src/ai/provider-gateway.mjs');
+      const { ingestDocumentPipeline, retrieveGroundedKnowledge } = await import('../../platform-core/src/ai/rag.mjs');
+
+      const kbRepo = createKnowledgeBaseRepository();
+      const aiGateway = createAiProviderGateway();
+
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+      const ingested = await ingestDocumentPipeline({
+        tx: pfTx,
+        repository: kbRepo,
+        providerGateway: aiGateway,
+        title: 'Agency Hours Policy',
+        fileType: 'markdown',
+        content: '# Business Hours\nWe are closed on Sundays and open Monday to Friday 9am-5pm.'
+      });
+      assert.equal(ingested.source.status, 'ready');
+      assert.ok(ingested.chunksCount >= 1);
+
+      const ragA = await retrieveGroundedKnowledge({
+        tx: pfTx,
+        repository: kbRepo,
+        providerGateway: aiGateway,
+        query: 'Are you open on Sundays?'
+      });
+      assert.equal(ragA.answerable, true);
+      assert.ok(ragA.citations.length >= 1);
+      assert.equal(ragA.citations[0].sourceId, ingested.source.id);
+      await pfClient.query('COMMIT');
+
+      // Cross-tenant isolation under operza_app FORCE RLS: Tenant B must see 0 chunks
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      const ragB = await retrieveGroundedKnowledge({
+        tx: pfTxB,
+        repository: kbRepo,
+        providerGateway: aiGateway,
+        query: 'Are you open on Sundays?'
+      });
+      assert.equal(ragB.answerable, false);
+      assert.equal(ragB.citations.length, 0);
+      await pfClient.query('ROLLBACK');
+
+      // Deleted document exclusion check under Tenant A
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+      await kbRepo.softDeleteSource(pfTx, ingested.source.id);
+      const ragAfterDelete = await retrieveGroundedKnowledge({
+        tx: pfTx,
+        repository: kbRepo,
+        providerGateway: aiGateway,
+        query: 'Are you open on Sundays?'
+      });
+      assert.equal(ragAfterDelete.answerable, false);
+      await pfClient.query('COMMIT');
     } finally {
       await pfClient.query('ROLLBACK').catch(() => {});
       await pfClient.query('RESET ROLE').catch(() => {});

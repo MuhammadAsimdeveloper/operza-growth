@@ -58,6 +58,11 @@ import { handleOpportunitiesRoutes } from './routes/opportunities.mjs';
 import { handleSchedulingRoutes } from './routes/scheduling.mjs';
 import { handleWorkflowsRoutes } from './routes/workflows.mjs';
 import { handlePipelinesRoutes } from './routes/pipelines.mjs';
+import { createAiPlatformRoutes } from './routes/ai.mjs';
+import { createAiProviderGateway, PROVIDER_STATUSES } from '../../packages/platform-core/src/ai/provider-gateway.mjs';
+import { createAiCostGovernance } from '../../packages/platform-core/src/ai/cost-governance.mjs';
+import { createAiToolRegistry, TOOL_RISK_CLASSES } from '../../packages/platform-core/src/ai/tool-registry-v2.mjs';
+import { createVoiceAiSessionManager } from '../../packages/platform-core/src/ai/voice-streaming.mjs';
 import { handleFunnelsRoutes } from './routes/funnels.mjs';
 import { handlePaymentsRoutes } from './routes/payments.mjs';
 import { handleConversationsRoutes, recordInboundOptOut } from './routes/conversations.mjs';
@@ -87,6 +92,61 @@ const defaultLLMRuntime = createDefaultLLMRuntime({
 
 // Operza Copilot 2.0 Unified Engine
 const copilotService = new CopilotService();
+const aiCostGovernance = createAiCostGovernance();
+const aiPlatformGateway = createAiProviderGateway({
+  providers: [
+    {
+      id: 'gemini',
+      name: 'Google Gemini',
+      configured: Boolean(process.env.GEMINI_API_KEY || process.env.AI_API_KEY),
+      status: (process.env.GEMINI_API_KEY || process.env.AI_API_KEY) ? PROVIDER_STATUSES.CONFIGURED : PROVIDER_STATUSES.NOT_CONFIGURED,
+      capabilities: { textGeneration: true, structuredOutput: true, toolCalling: true, streaming: true, embeddings: true, audioInput: true }
+    },
+    {
+      id: 'openai',
+      name: 'OpenAI',
+      configured: Boolean(process.env.OPENAI_API_KEY),
+      status: process.env.OPENAI_API_KEY ? PROVIDER_STATUSES.CONFIGURED : PROVIDER_STATUSES.NOT_CONFIGURED,
+      capabilities: { textGeneration: true, structuredOutput: true, toolCalling: true, streaming: true, embeddings: true, audioInput: true, audioOutput: true }
+    },
+    {
+      id: 'anthropic',
+      name: 'Anthropic Claude',
+      configured: Boolean(process.env.ANTHROPIC_API_KEY),
+      status: process.env.ANTHROPIC_API_KEY ? PROVIDER_STATUSES.CONFIGURED : PROVIDER_STATUSES.NOT_CONFIGURED,
+      capabilities: { textGeneration: true, structuredOutput: true, toolCalling: true, streaming: true }
+    },
+    {
+      id: 'local_embeddings',
+      name: 'Local Deterministic Trigram Embeddings',
+      configured: true,
+      status: PROVIDER_STATUSES.SANDBOX_VERIFIED,
+      capabilities: { embeddings: true }
+    }
+  ]
+});
+const aiToolRegistry = createAiToolRegistry({
+  auditSink: (evt) => auditLog(evt.event, { user: { id: evt.actorId } }, evt)
+});
+aiToolRegistry.registerTool({
+  id: 'crm.search_contacts',
+  name: 'Search CRM Contacts',
+  description: 'Read-only contact lookup',
+  inputSchema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+  riskClass: TOOL_RISK_CLASSES.READ_ONLY,
+  handler: async ({ query }) => ({ query, results: [] })
+});
+aiToolRegistry.registerTool({
+  id: 'finance.issue_refund',
+  name: 'Issue Refund',
+  description: 'Financial refund proposal requiring human approval',
+  inputSchema: { type: 'object', properties: { invoiceId: { type: 'string' }, amountCents: { type: 'number' } }, required: ['invoiceId', 'amountCents'] },
+  riskClass: TOOL_RISK_CLASSES.FINANCIAL_OPERATION,
+  requiredRole: 'admin',
+  requiresApproval: true,
+  handler: async ({ invoiceId, amountCents }) => ({ invoiceId, amountCents, status: 'refund_proposed' })
+});
+const aiVoiceManager = createVoiceAiSessionManager({ costGovernance: aiCostGovernance });
 const copilotRag = new RAGEngine();
 
 function getMultiAgentOrchestrator(agencyId, locationId, actor) {
@@ -7983,6 +8043,19 @@ const server = createServer(async (req, res) => {
       autoReplyEnabled: true,
       fallbackToHuman: true
     });
+
+    const handleAiPlatformRoute = createAiPlatformRoutes({
+      providerGateway: aiPlatformGateway,
+      costGovernance: aiCostGovernance,
+      toolRegistry: aiToolRegistry,
+      voiceManager: aiVoiceManager,
+      sendJson,
+      readBody,
+      auditLog
+    });
+    if ((await handleAiPlatformRoute({ method, pathname, req, res, agency, activeLocation, actor })) !== false) {
+      return;
+    }
 
     if (method === 'GET' && pathname === '/api/ai/config') {
       state.aiConfig = state.aiConfig || {};

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, Switch } from '../components/ui';
@@ -73,6 +74,26 @@ export default function AiTrainer() {
     },
   ]);
   const [isQuerying, setIsQuerying] = useState(false);
+
+  const { data: providersData } = useQuery({
+    queryKey: ['ai', 'providers'],
+    queryFn: async () => {
+      const res = await fetch('/api/ai/providers', { credentials: 'include' });
+      if (!res.ok) return { providers: [] };
+      return res.json();
+    },
+    staleTime: 30_000,
+  });
+
+  const { data: usageData } = useQuery({
+    queryKey: ['ai', 'usage'],
+    queryFn: async () => {
+      const res = await fetch('/api/ai/usage', { credentials: 'include' });
+      if (!res.ok) return { usage: null };
+      return res.json();
+    },
+    staleTime: 15_000,
+  });
 
   useEffect(() => {
     let active = true;
@@ -242,6 +263,27 @@ export default function AiTrainer() {
           <div className="atlas-kpi__note">Human approval &amp; bounds</div>
         </article>
       </section>
+
+      {Array.isArray(providersData?.providers) && providersData.providers.length > 0 && (
+        <section className="atlas-panel" style={{ marginBottom: '1rem', padding: '0.875rem 1rem' }} aria-label="AI Provider and Budget Governance">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'center' }}>
+              <strong style={{ fontSize: '0.85rem' }}>Provider Status:</strong>
+              {providersData.providers.map((p: { id: string; name: string; status: string }) => (
+                <Badge key={p.id} tone={p.status === 'not_configured' ? 'default' : 'green'}>
+                  {p.name}: {p.status}
+                </Badge>
+              ))}
+            </div>
+            {usageData?.usage && (
+              <div style={{ fontSize: '0.82rem', color: 'var(--text-muted, #64748b)' }}>
+                Monthly AI Spend: ${(usageData.usage.costMicrocents / 1_000_000).toFixed(4)} / ${(usageData.usage.budgetMicrocents / 1_000_000).toFixed(2)}
+                {' · '}Tokens: {usageData.usage.inputTokens + usageData.usage.outputTokens}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       <div className="grid grid--2" style={{ marginTop: 22, gap: 18, alignItems: 'start' }}>
         {/* Left Column: Personality & Knowledge Management */}
