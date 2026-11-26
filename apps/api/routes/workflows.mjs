@@ -21,6 +21,7 @@ import { runInTenantTx } from '../../../packages/db/lib/tenant-tx.mjs';
 import { createActionInvocation, getWorkflowActionDefinition } from '../../../packages/workflow-engine/src/action-governance.mjs';
 import { createPendingApproval, resolvePendingApproval } from '../../../packages/workflow-engine/src/approval-lifecycle.mjs';
 import { produceWorkflowResumeEvent } from '../../../packages/platform-core/src/outbox-producer.mjs';
+import { handleWorkflows2Routes } from './workflows2.mjs';
 
 const workflowsRepo = createWorkflowsRepository();
 
@@ -175,6 +176,10 @@ export async function handleWorkflowsRoutes(req, res, ctx) {
 
   if (!isWorkflowRoute) {
     return false;
+  }
+
+  if (await handleWorkflows2Routes(req, res, { ...ctx, readJson: ctx.readJson || ctx.readBody })) {
+    return true;
   }
 
   const queryUrl = url || new URL(req.url, `http://${req.headers?.host || 'localhost'}`);

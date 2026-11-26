@@ -1319,6 +1319,75 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       assert.equal(await crm2Repo.getCustomer360Profile(pfTxB, cPrimary.id), null, 'Tenant B must not read Tenant A Customer 360');
       assert.equal((await crm2Repo.listSmartLists(pfTxB)).length, 0, 'Tenant B must not read Tenant A Smart Lists');
       await pfClient.query('ROLLBACK');
+
+      // ── 13. Workflow Builder 2.0 (Immutable Versions, Concurrency, Schedules, Logs, FORCE RLS)
+      const { createWorkflows2Repository } = await import('../lib/workflows-2-repository.mjs');
+      const wf2Repo = createWorkflows2Repository();
+      const wf2Id = '22222222-2222-4222-8222-222222222222';
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+      await pfClient.query(
+        `INSERT INTO workflow_definitions (id, agency_id, location_id, name, status, trigger_type, trigger_config, nodes, graph_json, version)
+         VALUES ($1, $2, $3, 'WF2 Onboarding', 'draft', 'contact_created', '{}'::jsonb, '[]'::jsonb, '{"nodes":[{"id":"n1","kind":"tag","label":"Tag VIP","config":{"tag":"vip"}}],"edges":[{"id":"e1","source":"trigger","target":"n1"}]}'::jsonb, 1)`,
+        [wf2Id, agencyA, locA1]
+      );
+      const pub1 = await wf2Repo.publishWorkflowVersion(pfTx, {
+        workflowId: wf2Id,
+        expectedVersion: 1,
+        publishedBy: 'admin-a',
+        changeSummary: 'Initial publish'
+      });
+      assert.equal(pub1.version.versionNumber, 1);
+
+      // Optimistic concurrency conflict check
+      await assert.rejects(
+        () => wf2Repo.publishWorkflowVersion(pfTx, { workflowId: wf2Id, expectedVersion: 99 }),
+        (err) => err?.code === 'VERSION_CONFLICT'
+      );
+
+      const pub2 = await wf2Repo.publishWorkflowVersion(pfTx, {
+        workflowId: wf2Id,
+        expectedVersion: 1,
+        publishedBy: 'admin-a',
+        changeSummary: 'Second publish'
+      });
+      assert.equal(pub2.version.versionNumber, 2);
+
+      const rolled = await wf2Repo.rollbackWorkflowVersion(pfTx, {
+        workflowId: wf2Id,
+        targetVersionNumber: 1,
+        actorId: 'admin-a'
+      });
+      assert.equal(rolled.version.versionNumber, 3);
+      const versions = await wf2Repo.listWorkflowVersions(pfTx, wf2Id);
+      assert.equal(versions.length, 3);
+
+      const sched = await wf2Repo.createSchedule(pfTx, {
+        workflowId: wf2Id,
+        scheduleType: 'cron',
+        timezone: 'America/New_York',
+        cronExpression: '15 9 * * *',
+        catchupPolicy: 'skip'
+      });
+      assert.equal(sched.timezone, 'America/New_York');
+      assert.ok(sched.nextRunAt);
+
+      const wf2Metrics = await wf2Repo.getWorkflowObservabilityMetrics(pfTx);
+      assert.equal(typeof wf2Metrics.totalExecutions, 'number');
+      await pfClient.query('COMMIT');
+
+      // Tenant B must not see Tenant A versions or schedules under FORCE RLS
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      assert.equal((await wf2Repo.listWorkflowVersions(pfTxB, wf2Id)).length, 0, 'Tenant B must not read Tenant A workflow_versions');
+      assert.equal((await wf2Repo.listSchedules(pfTxB, wf2Id)).length, 0, 'Tenant B must not read Tenant A workflow_schedules');
+      await pfClient.query('ROLLBACK');
     } finally {
       await pfClient.query('ROLLBACK').catch(() => {});
       await pfClient.query('RESET ROLE').catch(() => {});

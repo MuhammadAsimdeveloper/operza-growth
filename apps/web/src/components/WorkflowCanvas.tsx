@@ -239,6 +239,7 @@ export function WorkflowCanvas({
         <div style={{ position: 'absolute', inset: 0, zIndex: 25, paddingTop: 64, background: 'var(--bg)' }}>
           <WorkflowGraphV2
             workflow={workflow}
+            activeRun={_activeRun}
             onSelectActionId={(actionId) => {
               const found = (workflow.actions || []).find((a) => a.id === actionId);
               if (found) onEditStep(found);
