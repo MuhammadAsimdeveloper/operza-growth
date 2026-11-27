@@ -6,7 +6,8 @@ import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, StatusBadge, Switch } from '../components/ui';
 import { WorkflowCanvas } from '../components/WorkflowCanvas';
-import { num, pct, relative } from '../lib/format';
+import { WorkflowOperationsPanel } from '../components/WorkflowOperationsPanel';
+import { num, pct } from '../lib/format';
 import { uid, useStore } from '../lib/store';
 import type {
   ConditionField,
@@ -371,11 +372,6 @@ export default function Workflows() {
     }
   };
 
-  const contactName = (id: string) => {
-    const contact = state.contacts.find((c) => c.id === id);
-    return contact ? `${contact.firstName} ${contact.lastName}` : 'Unknown contact';
-  };
-
   const addStep = (parentId?: string, branch?: 'yes' | 'no') => {
     if (!selected) return;
     setStepDraft({ workflowId: selected.id, parentId, branch });
@@ -709,9 +705,27 @@ export default function Workflows() {
                     label={`Toggle status for ${selected.name}`}
                     onChange={() => dispatch({ type: 'workflow/toggle', id: selected.id })}
                   />
-                  <Badge tone={selected.status === 'published' ? 'green' : 'default'} dot>
-                    {selected.status === 'published' ? 'Active' : 'Draft'}
+                  <Badge tone={selected.status === 'published' ? 'green' : selected.status === 'paused' ? 'amber' : 'default'} dot>
+                    {selected.status === 'published' ? 'Active' : selected.status === 'paused' ? 'Paused' : 'Draft'}
                   </Badge>
+                  {(selected.status === 'published' || selected.status === 'paused') && (
+                    <button
+                      type="button"
+                      className="btn btn--xs btn--subtle"
+                      onClick={async () => {
+                        const nextStatus = selected.status === 'published' ? 'paused' : 'published';
+                        try {
+                          if (nextStatus === 'paused') await api.workflows.pause(selected.id);
+                          else await api.workflows.resume(selected.id);
+                        } catch {
+                          // fallback to local store update when offline
+                        }
+                        dispatch({ type: 'workflow/update', id: selected.id, patch: { status: nextStatus } });
+                      }}
+                    >
+                      {selected.status === 'published' ? 'Pause' : 'Resume'}
+                    </button>
+                  )}
                 </div>
 
                 {/* Trigger Chip */}
@@ -881,80 +895,12 @@ export default function Workflows() {
         )}
       </section>
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <div className="card__head">
-          <div>
-            <div className="card__title">Recent executions</div>
-            <div className="card__sub">Live workflow execution state machine and durable run history.</div>
-          </div>
-          <Badge>{displayRuns.length} total</Badge>
-        </div>
-        {displayRuns.length === 0 ? (
-          <EmptyState
-            icon={<Icon name="play" size={20} />}
-            title="No runs yet"
-            text="Pick a workflow and use Run now to trace it against a contact."
-          />
-        ) : (
-          <div className="table-wrap">
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>Workflow</th>
-                  <th>Contact / Trigger</th>
-                  <th>Steps</th>
-                  <th>Status</th>
-                  <th>When</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {displayRuns.map((run: any) => {
-                  const flow = state.workflows.find((w) => w.id === run.workflowId);
-                  const isSuccess = run.status === 'success' || run.status === 'completed';
-                  const hasSimulatedSteps = (run.steps || []).some((step: any) => step.status === 'simulated');
-                  const isApproval = run.status === 'waiting_approval';
-                  const isRunning = run.status === 'running' || run.status === 'resuming';
-                  const cName = run.triggerContext?.contact
-                    ? `${run.triggerContext.contact.firstName || ''} ${run.triggerContext.contact.lastName || ''}`.trim()
-                    : (run.contactId ? contactName(run.contactId) : run.triggerType || 'Automated');
-
-                  return (
-                    <tr key={run.id} className="is-clickable" onClick={() => setViewingRun(run)}>
-                      <td>
-                        <div className="cell-main">{run.workflowName || flow?.name || 'Workflow'}</div>
-                        <div className="cell-sub">
-                          {(run.steps || []).length} steps · {run.durationMs ? `${(run.durationMs / 1000).toFixed(1)}s` : 'fast'}
-                        </div>
-                      </td>
-                      <td>{cName || 'Automated'}</td>
-                      <td className="cell-num">{(run.steps || []).length}</td>
-                      <td>
-                        <Badge tone={isSuccess && !hasSimulatedSteps ? 'green' : isSuccess ? 'default' : isApproval ? 'amber' : isRunning ? 'violet' : 'red'} dot>
-                          {isSuccess ? (hasSimulatedSteps ? 'Completed · Simulated' : 'Completed') : isApproval ? 'Approval Needed' : isRunning ? 'Running' : 'Failed'}
-                        </Badge>
-                      </td>
-                      <td className="cell-sub">{relative(run.createdAt || run.at || new Date().toISOString())}</td>
-                      <td className="cell-right">
-                        <button
-                          type="button"
-                          className="btn btn--sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setViewingRun(run);
-                          }}
-                        >
-                          View
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+      <WorkflowOperationsPanel
+        workflows={state.workflows}
+        selectedWorkflowId={selected?.id}
+        fallbackRuns={displayRuns}
+        onRefreshParentRuns={fetchRuns}
+      />
 
       {creating && (
         <WorkflowDetails

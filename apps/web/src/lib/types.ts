@@ -481,7 +481,7 @@ export interface WorkflowAction {
 export interface Workflow {
   id: ID;
   name: string;
-  status: 'published' | 'draft';
+  status: 'published' | 'draft' | 'paused';
   trigger: WorkflowTrigger;
   actions: WorkflowAction[];
   enrolled: number;

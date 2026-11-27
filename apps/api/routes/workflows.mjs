@@ -970,6 +970,14 @@ export async function handleWorkflowsRoutes(req, res, ctx) {
       return true;
     }
 
+    if (flow.status === 'paused' || flow.status === 'archived') {
+      sendJson(res, 409, {
+        error: `Workflow is '${flow.status}' and cannot start new executions.`,
+        code: flow.status === 'paused' ? 'WORKFLOW_PAUSED' : 'WORKFLOW_ARCHIVED'
+      });
+      return true;
+    }
+
     if (checkTenantUsageLimit) {
       const runLimit = await checkTenantUsageLimit(agency.id, 'monthlyWorkflowRuns', 1);
       if (!runLimit.allowed) {
@@ -1064,6 +1072,14 @@ export async function handleWorkflowsRoutes(req, res, ctx) {
 
     if (!flow) {
       sendJson(res, 404, { error: 'Workflow not found' });
+      return true;
+    }
+
+    if (flow.status === 'paused' || flow.status === 'archived') {
+      sendJson(res, 409, {
+        error: `Workflow is '${flow.status}' and cannot start new executions.`,
+        code: flow.status === 'paused' ? 'WORKFLOW_PAUSED' : 'WORKFLOW_ARCHIVED'
+      });
       return true;
     }
 

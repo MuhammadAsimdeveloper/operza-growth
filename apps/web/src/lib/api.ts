@@ -193,6 +193,55 @@ export const api = {
         `/api/workflows/callbacks/${token}`,
         { method: 'POST', body: JSON.stringify(data) }
       ),
+    getOpsMetrics: (params: Record<string, string | undefined> = {}) => {
+      const qs = new URLSearchParams(
+        Object.entries(params).filter(([, v]) => v !== undefined && v !== '') as Array<[string, string]>
+      ).toString();
+      return request<any>(`/api/workflows/v2/metrics${qs ? `?${qs}` : ''}`);
+    },
+    listOpsRuns: (params: Record<string, string | number | undefined> = {}) => {
+      const qs = new URLSearchParams(
+        Object.entries(params)
+          .filter(([, v]) => v !== undefined && v !== '')
+          .map(([k, v]) => [k, String(v)])
+      ).toString();
+      return request<{ items: any[]; total: number; limit: number; offset: number }>(
+        `/api/workflows/v2/runs${qs ? `?${qs}` : ''}`
+      );
+    },
+    getOpsRunDetail: (runId: string) =>
+      request<any>(`/api/workflows/v2/runs/${runId}`),
+    retryRun: (runId: string, data: { reason?: string; confirmSideEffectRetry?: boolean } = {}) =>
+      request<any>(`/api/workflows/v2/runs/${runId}/retry`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    cancelRun: (runId: string, data: { reason?: string } = {}) =>
+      request<any>(`/api/workflows/v2/runs/${runId}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    listDeadLetters: (params: Record<string, string | number | undefined> = {}) => {
+      const qs = new URLSearchParams(
+        Object.entries(params)
+          .filter(([, v]) => v !== undefined && v !== '')
+          .map(([k, v]) => [k, String(v)])
+      ).toString();
+      return request<{ items: any[]; total: number; limit: number; offset: number }>(
+        `/api/workflows/v2/dead-letters${qs ? `?${qs}` : ''}`
+      );
+    },
+    requeueDeadLetter: (runId: string, data: { reason?: string; confirmSideEffectRetry?: boolean } = {}) =>
+      request<any>(`/api/workflows/v2/dead-letters/${runId}/requeue`, {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    recoverStuck: () =>
+      request<any>('/api/workflows/v2/operations/recover-stuck', { method: 'POST', body: '{}' }),
+    pause: (workflowId: string) =>
+      request<any>(`/api/workflows/v2/${workflowId}/pause`, { method: 'POST', body: '{}' }),
+    resume: (workflowId: string) =>
+      request<any>(`/api/workflows/v2/${workflowId}/resume`, { method: 'POST', body: '{}' }),
   },
   notifications: {
     list: () => request<{ data: any[] }>('/api/notifications'),

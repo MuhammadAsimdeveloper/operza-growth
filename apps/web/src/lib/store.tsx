@@ -153,7 +153,7 @@ export type Action =
   | { type: 'form/field/move'; formId: string; id: string; direction: 'up' | 'down' }
   | { type: 'workflow/toggle'; id: string }
   | { type: 'workflow/add'; workflow: Workflow }
-  | { type: 'workflow/update'; id: string; patch: Partial<Pick<Workflow, 'name' | 'trigger'>> }
+  | { type: 'workflow/update'; id: string; patch: Partial<Pick<Workflow, 'name' | 'trigger' | 'status'>> }
   | { type: 'workflow/step/add'; workflowId: string; step: WorkflowAction; parentId?: string; branch?: 'yes' | 'no' }
   | { type: 'workflow/step/update'; workflowId: string; id: string; patch: Partial<WorkflowAction> }
   | { type: 'workflow/step/delete'; workflowId: string; id: string }

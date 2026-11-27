@@ -8,6 +8,14 @@
 import { randomUUID } from 'node:crypto';
 import { runInTenantTx } from '../../../packages/db/lib/tenant-tx.mjs';
 import { createWorkflows2Repository } from '../../../packages/db/lib/workflows-2-repository.mjs';
+import { createWorkflowOperationsRepository } from '../../../packages/db/lib/workflow-operations-repository.mjs';
+import {
+  classifyWorkflowFailure,
+  detectStuckExecutions,
+  evaluateCancellationContract,
+  evaluateRetryEligibility,
+  sanitizeExecutionPayload
+} from '../../../packages/workflow-engine/src/operations-2-0.mjs';
 import { listNodeDefinitionsV2 } from '../../../packages/workflow-engine/src/node-registry-v2.mjs';
 import {
   redactSensitivePayload,
@@ -19,6 +27,7 @@ import {
 } from '../../../packages/workflow-engine/src/scheduler-v2.mjs';
 
 const workflows2Repo = createWorkflows2Repository();
+const workflowOpsRepo = createWorkflowOperationsRepository();
 
 function checkScope(actor, requiredScope) {
   if (!actor || !actor.apiKey) return true;
@@ -53,7 +62,8 @@ export async function handleWorkflows2Routes(req, res, ctx) {
   const tenantCtx = {
     agencyId: agency?.id,
     locationId: activeLocation?.id,
-    userId: actor?.id
+    userId: actor?.id,
+    actorId: actor?.user?.id || actor?.id || 'system'
   };
 
   // 1. Node Registry V2
@@ -102,31 +112,440 @@ export async function handleWorkflows2Routes(req, res, ctx) {
     return true;
   }
 
-  // 4. Workflow Observability Metrics
+  // 4. Workflow Observability & Operations Metrics
   if (method === 'GET' && subPath === '/metrics') {
     if (!checkScope(actor, 'workflows:read')) {
       sendJson(res, 403, { error: 'Insufficient scope: workflows:read', code: 'INSUFFICIENT_SCOPES' });
       return true;
     }
+    const filters = {
+      workflowId: url.searchParams.get('workflowId') || undefined,
+      status: url.searchParams.get('status') || undefined,
+      triggerType: url.searchParams.get('triggerType') || undefined,
+      failureCategory: url.searchParams.get('failureCategory') || undefined,
+      dateFrom: url.searchParams.get('dateFrom') || undefined,
+      dateTo: url.searchParams.get('dateTo') || undefined
+    };
     if (pgPool) {
-      const metrics = await runInTenantTx(pgPool, tenantCtx, tx => workflows2Repo.getWorkflowObservabilityMetrics(tx));
+      const metrics = await runInTenantTx(pgPool, tenantCtx, tx =>
+        workflowOpsRepo.getOperationalMetrics(tx, filters)
+      );
       sendJson(res, 200, metrics);
       return true;
     }
-    const runs = (state?.records?.workflowRuns || []).filter(r => r.agencyId === agency?.id);
-    const completedCount = runs.filter(r => r.status === 'completed').length;
-    const failedCount = runs.filter(r => r.status === 'failed').length;
+    const allRuns = [
+      ...(state?.workflowExecutions || []),
+      ...(state?.records?.workflowRuns || [])
+    ].filter(r => (!r.agencyId || r.agencyId === agency?.id) && (!r.locationId || r.locationId === activeLocation?.id));
+    const filtered = allRuns.filter(r => {
+      if (filters.workflowId && r.workflowId !== filters.workflowId) return false;
+      if (filters.status && filters.status !== 'all' && r.status !== filters.status) return false;
+      if (filters.triggerType && filters.triggerType !== 'all' && (r.triggerType || 'manual') !== filters.triggerType) return false;
+      if (filters.failureCategory && filters.failureCategory !== 'all' && r.failureCategory !== filters.failureCategory) return false;
+      if (filters.dateFrom && new Date(r.createdAt) < new Date(filters.dateFrom)) return false;
+      if (filters.dateTo && new Date(r.createdAt) > new Date(filters.dateTo)) return false;
+      return true;
+    });
+    const completedCount = filtered.filter(r => r.status === 'completed' || r.status === 'success').length;
+    const failedCount = filtered.filter(r => r.status === 'failed').length;
+    const deadLetterCount = filtered.filter(r => r.status === 'dead_letter').length;
+    const runningCount = filtered.filter(r => ['running', 'resuming'].includes(r.status)).length;
+    const queuedCount = filtered.filter(r => ['pending', 'enqueued'].includes(r.status)).length;
+    const retryScheduledCount = filtered.filter(r => r.status === 'retry_scheduled').length;
+    const canceledCount = filtered.filter(r => r.status === 'canceled').length;
+    const waitingCount = filtered.filter(r => ['waiting', 'waiting_approval', 'waiting_webhook'].includes(r.status)).length;
+    const catMap = new Map();
+    const wfFailMap = new Map();
+    const trendMap = new Map();
+    for (const r of filtered) {
+      const day = String(r.createdAt || new Date().toISOString()).slice(0, 10);
+      const t = trendMap.get(day) || { bucket: day, total: 0, completed: 0, failed: 0 };
+      t.total += 1;
+      if (r.status === 'completed' || r.status === 'success') t.completed += 1;
+      if (r.status === 'failed' || r.status === 'dead_letter') {
+        t.failed += 1;
+        const cat = r.failureCategory || classifyWorkflowFailure({ errorCode: r.lastErrorCode }).category;
+        catMap.set(cat, (catMap.get(cat) || 0) + 1);
+        const wfEntry = wfFailMap.get(r.workflowId) || { workflowId: r.workflowId, workflowName: r.workflowName || 'Workflow', failureCount: 0, totalCount: 0 };
+        wfEntry.failureCount += 1;
+        wfFailMap.set(r.workflowId, wfEntry);
+      }
+      if (wfFailMap.has(r.workflowId)) wfFailMap.get(r.workflowId).totalCount += 1;
+      trendMap.set(day, t);
+    }
+    const stuck = detectStuckExecutions({ executions: filtered });
     sendJson(res, 200, {
-      totalExecutions: runs.length,
+      totalExecutions: filtered.length,
       completedCount,
       failedCount,
-      deadLetterCount: runs.filter(r => r.status === 'dead_letter').length,
-      activeCount: runs.filter(r => ['pending', 'running', 'enqueued', 'resuming'].includes(r.status)).length,
-      waitingCount: runs.filter(r => ['waiting', 'waiting_approval', 'waiting_webhook'].includes(r.status)).length,
-      totalAttempts: runs.reduce((acc, r) => acc + (r.attemptCount || 1), 0),
-      avgDurationMs: runs.length ? Math.round(runs.reduce((a, r) => a + (r.durationMs || 0), 0) / runs.length) : 0,
-      successRate: runs.length ? Number((completedCount / runs.length).toFixed(4)) : 1,
-      pendingApprovals: (state?.records?.workflowApprovals || []).filter(a => a.status === 'pending').length
+      runningCount,
+      queuedCount,
+      retryScheduledCount,
+      deadLetterCount,
+      canceledCount,
+      activeCount: runningCount + queuedCount,
+      waitingCount,
+      totalAttempts: filtered.reduce((acc, r) => acc + (r.attemptCount || 1), 0),
+      avgDurationMs: filtered.length ? Math.round(filtered.reduce((a, r) => a + (r.durationMs || 0), 0) / filtered.length) : 0,
+      successRate: filtered.length ? Number((completedCount / filtered.length).toFixed(4)) : 1,
+      pendingApprovals: (state?.workflowApprovals || state?.records?.workflowApprovals || []).filter(a => a.status === 'pending').length,
+      stuckCount: stuck.stuckCount,
+      failureCategories: Array.from(catMap.entries()).map(([category, count]) => ({ category, count })),
+      topFailingWorkflows: Array.from(wfFailMap.values()).sort((a, b) => b.failureCount - a.failureCount).slice(0, 5),
+      executionTrends: Array.from(trendMap.values()).sort((a, b) => a.bucket.localeCompare(b.bucket)).slice(-14),
+      recentFailures: filtered.filter(r => r.status === 'failed' || r.status === 'dead_letter').slice(0, 8)
+    });
+    return true;
+  }
+
+  // 4b. Paginated Operational Executions List
+  if (method === 'GET' && subPath === '/runs') {
+    if (!checkScope(actor, 'workflows:read')) {
+      sendJson(res, 403, { error: 'Insufficient scope: workflows:read', code: 'INSUFFICIENT_SCOPES' });
+      return true;
+    }
+    const filters = {
+      workflowId: url.searchParams.get('workflowId') || undefined,
+      status: url.searchParams.get('status') || undefined,
+      triggerType: url.searchParams.get('triggerType') || undefined,
+      failureCategory: url.searchParams.get('failureCategory') || undefined,
+      dateFrom: url.searchParams.get('dateFrom') || undefined,
+      dateTo: url.searchParams.get('dateTo') || undefined,
+      search: url.searchParams.get('search') || undefined,
+      limit: Number(url.searchParams.get('limit')) || 25,
+      offset: Number(url.searchParams.get('offset')) || 0
+    };
+    if (pgPool) {
+      const result = await runInTenantTx(pgPool, tenantCtx, tx => workflowOpsRepo.listOperationalRuns(tx, filters));
+      sendJson(res, 200, result);
+      return true;
+    }
+    const allRuns = [
+      ...(state?.workflowExecutions || []),
+      ...(state?.records?.workflowRuns || [])
+    ].filter(r => (!r.agencyId || r.agencyId === agency?.id) && (!r.locationId || r.locationId === activeLocation?.id));
+    const filtered = allRuns.filter(r => {
+      if (filters.workflowId && r.workflowId !== filters.workflowId) return false;
+      if (filters.status && filters.status !== 'all' && r.status !== filters.status) return false;
+      if (filters.triggerType && filters.triggerType !== 'all' && (r.triggerType || 'manual') !== filters.triggerType) return false;
+      if (filters.failureCategory && filters.failureCategory !== 'all' && r.failureCategory !== filters.failureCategory) return false;
+      if (filters.search) {
+        const q = filters.search.toLowerCase();
+        if (!String(r.id).toLowerCase().includes(q) && !String(r.workflowName || '').toLowerCase().includes(q) && !String(r.lastErrorCode || '').toLowerCase().includes(q)) return false;
+      }
+      return true;
+    }).slice().reverse();
+    const limit = Math.min(100, Math.max(1, filters.limit));
+    const offset = Math.max(0, filters.offset);
+    sendJson(res, 200, {
+      items: filtered.slice(offset, offset + limit),
+      total: filtered.length,
+      limit,
+      offset
+    });
+    return true;
+  }
+
+  // 4c. Execution Detail (Timeline + Attempts + Logs + Retry Eligibility + Cancellation Contract)
+  const runDetailMatch = subPath.match(/^\/runs\/([^/]+)$/);
+  if (method === 'GET' && runDetailMatch) {
+    if (!checkScope(actor, 'workflows:read')) {
+      sendJson(res, 403, { error: 'Insufficient scope: workflows:read', code: 'INSUFFICIENT_SCOPES' });
+      return true;
+    }
+    const runId = runDetailMatch[1];
+    if (pgPool) {
+      const detail = await runInTenantTx(pgPool, tenantCtx, tx => workflowOpsRepo.getOperationalRunDetail(tx, runId));
+      if (!detail) {
+        sendJson(res, 404, { error: 'Execution not found', code: 'EXECUTION_NOT_FOUND' });
+        return true;
+      }
+      sendJson(res, 200, detail);
+      return true;
+    }
+    const allRuns = [...(state?.workflowExecutions || []), ...(state?.records?.workflowRuns || [])];
+    const run = allRuns.find(r => r.id === runId && (!r.agencyId || r.agencyId === agency?.id));
+    if (!run) {
+      sendJson(res, 404, { error: 'Execution not found', code: 'EXECUTION_NOT_FOUND' });
+      return true;
+    }
+    const steps = (run.steps || []).map((s, idx) => ({
+      id: s.id || `${run.id}_step_${idx}`,
+      executionId: run.id,
+      nodeId: s.nodeId,
+      nodeType: s.nodeType || s.kind || null,
+      nodeName: s.nodeName || s.nodeId,
+      executionOrder: s.executionOrder || idx + 1,
+      attempt: s.attempt || 1,
+      status: s.status,
+      durationMs: s.durationMs || 0,
+      inputSummary: sanitizeExecutionPayload(s.inputSummary || {}),
+      outputSummary: sanitizeExecutionPayload(s.outputSummary || s.result || {}),
+      errorCode: s.errorCode || null,
+      errorMessage: s.errorMessage || null,
+      precedingNodeIds: s.precedingNodeIds || [],
+      startedAt: s.startedAt || s.executedAt || run.createdAt,
+      finishedAt: s.finishedAt || s.executedAt || null
+    }));
+    const retryEligibility = evaluateRetryEligibility({ execution: run, steps, receipts: [], confirmSideEffectRetry: false });
+    const cancellationContract = evaluateCancellationContract(run);
+    sendJson(res, 200, {
+      execution: {
+        ...run,
+        triggerEvent: sanitizeExecutionPayload(run.triggerEvent || run.triggerContext || {}),
+        nodeCounts: {
+          total: steps.length,
+          completed: steps.filter(s => s.status === 'completed' || s.status === 'done').length,
+          failed: steps.filter(s => s.status === 'failed').length
+        }
+      },
+      steps,
+      attempts: run.attemptsHistory || [{
+        id: `${run.id}_att_1`,
+        executionId: run.id,
+        attemptNumber: run.attemptCount || 1,
+        status: run.status,
+        failureCategory: run.failureCategory || null,
+        errorCode: run.lastErrorCode || null,
+        startedAt: run.createdAt,
+        finishedAt: run.finishedAt || null,
+        durationMs: run.durationMs || 0
+      }],
+      logs: run.logs || [],
+      receipts: [],
+      retryEligibility,
+      cancellationContract
+    });
+    return true;
+  }
+
+  // 4d. Retry Execution
+  const retryMatch = subPath.match(/^\/runs\/([^/]+)\/retry$/);
+  if (method === 'POST' && retryMatch) {
+    if (!checkScope(actor, 'workflows:write')) {
+      sendJson(res, 403, { error: 'Insufficient scope: workflows:write', code: 'INSUFFICIENT_SCOPES' });
+      return true;
+    }
+    const runId = retryMatch[1];
+    const body = await readJson(req);
+    if (pgPool) {
+      const result = await runInTenantTx(pgPool, tenantCtx, tx =>
+        workflowOpsRepo.retryOrRequeueExecution(tx, {
+          executionId: runId,
+          actorId: actor?.user?.id || actor?.id || 'system',
+          reason: body?.reason || 'Operator retry',
+          confirmSideEffectRetry: body?.confirmSideEffectRetry === true,
+          targetMode: 'retry'
+        })
+      );
+      if (result.notFound) {
+        sendJson(res, 404, { error: result.error, code: result.code });
+        return true;
+      }
+      if (result.confirmationRequired || result.conflict) {
+        sendJson(res, 409, result);
+        return true;
+      }
+      auditLog?.('workflow.execution.retried', actor, { executionId: runId, attempt: result.execution.attemptCount });
+      sendJson(res, 200, result);
+      return true;
+    }
+    const allRuns = [...(state?.workflowExecutions || []), ...(state?.records?.workflowRuns || [])];
+    const run = allRuns.find(r => r.id === runId && (!r.agencyId || r.agencyId === agency?.id));
+    if (!run) {
+      sendJson(res, 404, { error: 'Execution not found', code: 'EXECUTION_NOT_FOUND' });
+      return true;
+    }
+    const eligibility = evaluateRetryEligibility({
+      execution: run,
+      steps: run.steps || [],
+      receipts: [],
+      confirmSideEffectRetry: body?.confirmSideEffectRetry === true
+    });
+    if (!eligibility.eligible) {
+      sendJson(res, 409, { conflict: true, code: eligibility.code, error: eligibility.reason, eligibility });
+      return true;
+    }
+    if (eligibility.requiresConfirmation && body?.confirmSideEffectRetry !== true) {
+      sendJson(res, 409, { confirmationRequired: true, code: eligibility.code, error: eligibility.reason, eligibility });
+      return true;
+    }
+    run.status = 'enqueued';
+    run.attemptCount = (run.attemptCount || 1) + 1;
+    run.finishedAt = null;
+    await saveState?.();
+    auditLog?.('workflow.execution.retried', actor, { executionId: runId, attempt: run.attemptCount });
+    sendJson(res, 200, { success: true, execution: run, eligibility });
+    return true;
+  }
+
+  // 4e. Cancel Execution
+  const cancelMatch = subPath.match(/^\/runs\/([^/]+)\/cancel$/);
+  if (method === 'POST' && cancelMatch) {
+    if (!checkScope(actor, 'workflows:write')) {
+      sendJson(res, 403, { error: 'Insufficient scope: workflows:write', code: 'INSUFFICIENT_SCOPES' });
+      return true;
+    }
+    const runId = cancelMatch[1];
+    const body = await readJson(req);
+    if (pgPool) {
+      const result = await runInTenantTx(pgPool, tenantCtx, tx =>
+        workflowOpsRepo.cancelExecution(tx, {
+          executionId: runId,
+          actorId: actor?.user?.id || actor?.id || 'system',
+          reason: body?.reason || 'Operator canceled'
+        })
+      );
+      if (result.notFound) {
+        sendJson(res, 404, { error: result.error, code: result.code });
+        return true;
+      }
+      if (result.conflict) {
+        sendJson(res, 409, result);
+        return true;
+      }
+      auditLog?.('workflow.execution.cancel_requested', actor, { executionId: runId, mode: result.mode });
+      sendJson(res, 200, result);
+      return true;
+    }
+    const allRuns = [...(state?.workflowExecutions || []), ...(state?.records?.workflowRuns || [])];
+    const run = allRuns.find(r => r.id === runId && (!r.agencyId || r.agencyId === agency?.id));
+    if (!run) {
+      sendJson(res, 404, { error: 'Execution not found', code: 'EXECUTION_NOT_FOUND' });
+      return true;
+    }
+    const contract = evaluateCancellationContract(run);
+    if (!contract.supported) {
+      sendJson(res, 409, { conflict: true, code: 'CANCELLATION_UNSUPPORTED', error: contract.reason, contract });
+      return true;
+    }
+    if (contract.mode === 'immediate') {
+      run.status = 'canceled';
+      run.canceledAt = new Date().toISOString();
+      run.finishedAt = run.canceledAt;
+    } else {
+      run.cancelRequestedAt = new Date().toISOString();
+    }
+    await saveState?.();
+    auditLog?.('workflow.execution.cancel_requested', actor, { executionId: runId, mode: contract.mode });
+    sendJson(res, 200, { success: true, mode: contract.mode, execution: run, contract });
+    return true;
+  }
+
+  // 4f. Dead-Letter Queue List & Safe Requeue
+  if (method === 'GET' && subPath === '/dead-letters') {
+    if (!checkScope(actor, 'workflows:read')) {
+      sendJson(res, 403, { error: 'Insufficient scope: workflows:read', code: 'INSUFFICIENT_SCOPES' });
+      return true;
+    }
+    const filters = {
+      workflowId: url.searchParams.get('workflowId') || undefined,
+      failureCategory: url.searchParams.get('failureCategory') || undefined,
+      dateFrom: url.searchParams.get('dateFrom') || undefined,
+      dateTo: url.searchParams.get('dateTo') || undefined,
+      search: url.searchParams.get('search') || undefined,
+      limit: Number(url.searchParams.get('limit')) || 25,
+      offset: Number(url.searchParams.get('offset')) || 0
+    };
+    if (pgPool) {
+      const result = await runInTenantTx(pgPool, tenantCtx, tx => workflowOpsRepo.listDeadLetterExecutions(tx, filters));
+      sendJson(res, 200, result);
+      return true;
+    }
+    const dlq = [...(state?.workflowExecutions || []), ...(state?.records?.workflowRuns || [])]
+      .filter(r => r.status === 'dead_letter' && (!r.agencyId || r.agencyId === agency?.id))
+      .reverse();
+    sendJson(res, 200, { items: dlq.slice(0, filters.limit), total: dlq.length, limit: filters.limit, offset: filters.offset });
+    return true;
+  }
+
+  const dlqRequeueMatch = subPath.match(/^\/dead-letters\/([^/]+)\/requeue$/);
+  if (method === 'POST' && dlqRequeueMatch) {
+    if (!checkScope(actor, 'workflows:write')) {
+      sendJson(res, 403, { error: 'Insufficient scope: workflows:write', code: 'INSUFFICIENT_SCOPES' });
+      return true;
+    }
+    const runId = dlqRequeueMatch[1];
+    const body = await readJson(req);
+    if (pgPool) {
+      const result = await runInTenantTx(pgPool, tenantCtx, tx =>
+        workflowOpsRepo.retryOrRequeueExecution(tx, {
+          executionId: runId,
+          actorId: actor?.user?.id || actor?.id || 'system',
+          reason: body?.reason || 'Dead-letter operator requeue',
+          confirmSideEffectRetry: body?.confirmSideEffectRetry === true,
+          targetMode: 'requeue'
+        })
+      );
+      if (result.notFound) {
+        sendJson(res, 404, { error: result.error, code: result.code });
+        return true;
+      }
+      if (result.confirmationRequired || result.conflict) {
+        sendJson(res, 409, result);
+        return true;
+      }
+      auditLog?.('workflow.dead_letter.requeued', actor, { executionId: runId, requeueCount: result.execution.requeueCount });
+      sendJson(res, 200, result);
+      return true;
+    }
+    const allRuns = [...(state?.workflowExecutions || []), ...(state?.records?.workflowRuns || [])];
+    const run = allRuns.find(r => r.id === runId && r.status === 'dead_letter');
+    if (!run) {
+      sendJson(res, 404, { error: 'Dead-letter execution not found', code: 'NOT_DEAD_LETTERED' });
+      return true;
+    }
+    const eligibility = evaluateRetryEligibility({
+      execution: run,
+      steps: run.steps || [],
+      receipts: [],
+      confirmSideEffectRetry: body?.confirmSideEffectRetry === true
+    });
+    if (!eligibility.eligible) {
+      sendJson(res, 409, { conflict: true, code: eligibility.code, error: eligibility.reason, eligibility });
+      return true;
+    }
+    if (eligibility.requiresConfirmation && body?.confirmSideEffectRetry !== true) {
+      sendJson(res, 409, { confirmationRequired: true, code: eligibility.code, error: eligibility.reason, eligibility });
+      return true;
+    }
+    run.status = 'enqueued';
+    run.requeueCount = (run.requeueCount || 0) + 1;
+    await saveState?.();
+    auditLog?.('workflow.dead_letter.requeued', actor, { executionId: runId, requeueCount: run.requeueCount });
+    sendJson(res, 200, { success: true, execution: run, eligibility });
+    return true;
+  }
+
+  // 4g. Stuck Execution Detection & Safe Recovery
+  if (method === 'POST' && subPath === '/operations/recover-stuck') {
+    if (!checkScope(actor, 'workflows:write')) {
+      sendJson(res, 403, { error: 'Insufficient scope: workflows:write', code: 'INSUFFICIENT_SCOPES' });
+      return true;
+    }
+    if (pgPool) {
+      const result = await runInTenantTx(pgPool, tenantCtx, tx =>
+        workflowOpsRepo.recoverStuckExecutionsInDb(tx, {
+          actorId: actor?.user?.id || actor?.id || 'system'
+        })
+      );
+      auditLog?.('workflow.operations.stuck_recovered', actor, {
+        recoveredCount: result.recoveredCount,
+        deadLetteredCount: result.deadLetteredCount
+      });
+      sendJson(res, 200, result);
+      return true;
+    }
+    const allRuns = [...(state?.workflowExecutions || []), ...(state?.records?.workflowRuns || [])];
+    const detected = detectStuckExecutions({ executions: allRuns });
+    sendJson(res, 200, {
+      scanned: allRuns.length,
+      stuckDetected: detected.stuckCount,
+      recoveredCount: 0,
+      deadLetteredCount: 0,
+      recovered: [],
+      deadLettered: [],
+      stuckExecutions: detected.stuckExecutions
     });
     return true;
   }
@@ -232,8 +651,8 @@ export async function handleWorkflows2Routes(req, res, ctx) {
     return true;
   }
 
-  // 7. Workflow-scoped V2 routes: /:id/(draft|publish|versions|rollback|schedules)
-  const wfMatch = subPath.match(/^\/([^/]+)\/(draft|publish|versions|rollback|schedules)$/);
+  // 7. Workflow-scoped V2 routes: /:id/(draft|publish|versions|rollback|schedules|pause|resume)
+  const wfMatch = subPath.match(/^\/([^/]+)\/(draft|publish|versions|rollback|schedules|pause|resume)$/);
   if (!wfMatch) return false;
 
   const [, workflowId, action] = wfMatch;
@@ -412,6 +831,80 @@ export async function handleWorkflows2Routes(req, res, ctx) {
       sendJson(res, 201, { id: randomUUID(), workflowId, ...body, status: 'active' });
       return true;
     }
+  }
+
+  if (action === 'pause' && method === 'POST') {
+    if (!checkScope(actor, 'workflows:write')) {
+      sendJson(res, 403, { error: 'Insufficient scope: workflows:write', code: 'INSUFFICIENT_SCOPES' });
+      return true;
+    }
+    if (pgPool) {
+      const result = await runInTenantTx(pgPool, tenantCtx, tx =>
+        workflowOpsRepo.setWorkflowStatus(tx, {
+          workflowId,
+          targetStatus: 'paused',
+          actorId: actor?.user?.id || actor?.id || 'system'
+        })
+      );
+      if (result.notFound) {
+        sendJson(res, 404, { error: result.error, code: result.code });
+        return true;
+      }
+      if (result.conflict || result.badRequest) {
+        sendJson(res, 409, { error: result.error, code: result.code });
+        return true;
+      }
+      auditLog?.('crm.workflows.paused', actor, { id: workflowId });
+      sendJson(res, 200, result);
+      return true;
+    }
+    const wf = (state?.workflows || state?.records?.workflows || []).find(w => w.id === workflowId && (!w.agencyId || w.agencyId === agency?.id));
+    if (!wf) {
+      sendJson(res, 404, { error: 'Workflow not found', code: 'WORKFLOW_NOT_FOUND' });
+      return true;
+    }
+    wf.status = 'paused';
+    await saveState?.();
+    auditLog?.('crm.workflows.paused', actor, { id: workflowId });
+    sendJson(res, 200, { success: true, workflow: wf });
+    return true;
+  }
+
+  if (action === 'resume' && method === 'POST') {
+    if (!checkScope(actor, 'workflows:write')) {
+      sendJson(res, 403, { error: 'Insufficient scope: workflows:write', code: 'INSUFFICIENT_SCOPES' });
+      return true;
+    }
+    if (pgPool) {
+      const result = await runInTenantTx(pgPool, tenantCtx, tx =>
+        workflowOpsRepo.setWorkflowStatus(tx, {
+          workflowId,
+          targetStatus: 'published',
+          actorId: actor?.user?.id || actor?.id || 'system'
+        })
+      );
+      if (result.notFound) {
+        sendJson(res, 404, { error: result.error, code: result.code });
+        return true;
+      }
+      if (result.conflict || result.badRequest) {
+        sendJson(res, 409, { error: result.error, code: result.code });
+        return true;
+      }
+      auditLog?.('crm.workflows.resumed', actor, { id: workflowId });
+      sendJson(res, 200, result);
+      return true;
+    }
+    const wf = (state?.workflows || state?.records?.workflows || []).find(w => w.id === workflowId && (!w.agencyId || w.agencyId === agency?.id));
+    if (!wf) {
+      sendJson(res, 404, { error: 'Workflow not found', code: 'WORKFLOW_NOT_FOUND' });
+      return true;
+    }
+    wf.status = 'published';
+    await saveState?.();
+    auditLog?.('crm.workflows.resumed', actor, { id: workflowId });
+    sendJson(res, 200, { success: true, workflow: wf });
+    return true;
   }
 
   return false;
