@@ -8,6 +8,7 @@ import { runInTenantTx } from '../../../packages/db/lib/tenant-tx.mjs';
 import { createIntegrations2Repository } from '../../../packages/db/lib/integrations-2-repository.mjs';
 import { createConnectorSdkV2 } from '../../../packages/platform-core/src/connector-sdk-v2.mjs';
 import { verifyWebhookSignature } from '../../../packages/platform-core/src/webhook-platform-v2.mjs';
+import { evaluateIntegrationHealth } from '../../../packages/platform-core/src/cross-platform-events.mjs';
 
 const integrationsRepo = createIntegrations2Repository();
 const connectorSdk = createConnectorSdkV2();
@@ -75,6 +76,29 @@ export async function handleIntegrations2Routes(req, res, ctx) {
       webhookEvents: { total_events: 0, dead_letter_count: 0 },
       openSyncConflicts: 0
     });
+    return true;
+  }
+
+  // 3b. Integration Health & Diagnostics
+  if (method === 'GET' && subPath === '/health') {
+    if (!checkScope(actor, 'integrations:read')) {
+      sendJson(res, 403, { error: 'Insufficient scope: integrations:read', code: 'INSUFFICIENT_SCOPES' });
+      return true;
+    }
+    const liveProvidersEnabled = process.env.OPERZA_LIVE_MESSAGING === 'true' || process.env.LIVE_PROVIDER_TESTS === 'true';
+    if (pgPool) {
+      const data = await runInTenantTx(pgPool, tenantCtx, async (tx) => {
+        const connections = await integrationsRepo.listConnections(tx, {});
+        const webhookEvents = await integrationsRepo.listWebhookEvents(tx);
+        return evaluateIntegrationHealth({ connections, webhookEvents, liveProvidersEnabled });
+      });
+      sendJson(res, 200, data);
+      return true;
+    }
+    const memConns = (ctx.state?.integrations || ctx.state?.records?.integrations || []).filter(
+      c => !c.agencyId || c.agencyId === agency?.id
+    );
+    sendJson(res, 200, evaluateIntegrationHealth({ connections: memConns, webhookEvents: [], liveProvidersEnabled }));
     return true;
   }
 

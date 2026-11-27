@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 import { num, pct, relative } from '../lib/format';
 import { Icon } from './Icon';
@@ -469,6 +470,9 @@ export function SupportInbox2Panel({ fallbackConversations = [] }: { fallbackCon
                   {customer360.financials?.authorized && (
                     <div className="cell-sub">Invoices: {(customer360.financials.invoices || []).length}</div>
                   )}
+                  <Link className="btn btn--xs" to={`/contacts/${detail.conversation.contactId}`}>
+                    View Customer 360 →
+                  </Link>
                 </div>
               ) : (
                 <div className="cell-sub">No linked CRM contact record.</div>

@@ -11,6 +11,7 @@ import {
   METRIC_CATALOG_V2,
   redactExportRows
 } from '../../../packages/platform-core/src/analytics-2-0.mjs';
+import { aggregateCanonicalRevenueByCurrency } from '../../../packages/platform-core/src/cross-platform-events.mjs';
 
 const analyticsRepo = createAnalytics2Repository();
 
@@ -31,7 +32,38 @@ export async function handleAnalytics2Routes(req, res, ctx) {
   }
 
   if (!pgPool) {
-    sendJson(res, 503, { error: 'PostgreSQL required for Analytics 2.0 routes', code: 'PG_REQUIRED' });
+    const state = ctx.state || {};
+    const contacts = (state.contacts || []).filter(c => !c.agencyId || c.agencyId === agency?.id);
+    const opps = (state.opportunities || []).filter(o => !o.agencyId || o.agencyId === agency?.id);
+    const invoices = (state.invoices || []).filter(i => !i.agencyId || i.agencyId === agency?.id);
+    const workflows = (state.workflowExecutions || []).filter(w => !w.agencyId || w.agencyId === agency?.id);
+    const convs = (state.conversations || []).filter(c => !c.agencyId || c.agencyId === agency?.id);
+    const revenueByCurrency = aggregateCanonicalRevenueByCurrency({ invoices, refunds: state.refunds || [] });
+
+    if (method === 'GET' && subPath === '/overview') {
+      sendJson(res, 200, {
+        source: 'local_state',
+        freshnessAt: new Date().toISOString(),
+        totals: {
+          contacts: contacts.length,
+          opportunities: opps.length,
+          wonOpportunities: opps.filter(o => o.stage === 'won' || o.status === 'won').length,
+          conversations: convs.length,
+          workflowExecutions: workflows.length
+        },
+        revenueByCurrency
+      });
+      return true;
+    }
+    if (method === 'GET' && subPath === '/dashboards') {
+      sendJson(res, 200, { dashboards: [] });
+      return true;
+    }
+    if (method === 'GET' && subPath === '/saved-reports') {
+      sendJson(res, 200, { reports: [] });
+      return true;
+    }
+    sendJson(res, 503, { error: 'PostgreSQL required for custom Analytics 2.0 mutations', code: 'PG_REQUIRED' });
     return true;
   }
 

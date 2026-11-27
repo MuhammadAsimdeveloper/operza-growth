@@ -176,6 +176,9 @@ export default function ContactDetail() {
           >
             <Icon name="plus" size={13} /> Add Deal
           </button>
+          <Link className="atlas-quick-action-button" to="/conversations" title="Open Unified Inbox & Support 2.0">
+            <Icon name="message" size={13} /> Unified Inbox
+          </Link>
           <button className="atlas-quick-action-button" onClick={() => setEditing(true)}>
             <Icon name="edit" size={13} /> Edit Profile
           </button>
