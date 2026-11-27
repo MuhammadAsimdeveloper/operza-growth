@@ -95,14 +95,14 @@ export function EmptyState({
   text,
   action,
 }: {
-  icon: ReactNode;
+  icon?: ReactNode;
   title: string;
   text?: string;
   action?: ReactNode;
 }) {
   return (
     <div className="empty">
-      <div className="empty__icon">{icon}</div>
+      {icon && <div className="empty__icon">{icon}</div>}
       <div className="empty__title">{title}</div>
       {text && <div className="empty__text">{text}</div>}
       {action && <div style={{ marginTop: 8 }}>{action}</div>}

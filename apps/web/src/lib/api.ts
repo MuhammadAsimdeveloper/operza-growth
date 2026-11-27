@@ -243,6 +243,41 @@ export const api = {
     resume: (workflowId: string) =>
       request<any>(`/api/workflows/v2/${workflowId}/resume`, { method: 'POST', body: '{}' }),
   },
+  support: {
+    getChannelsStatus: () => request<{ channels: any[] }>('/api/support/v2/channels/status'),
+    getMetrics: () => request<any>('/api/support/v2/metrics'),
+    listConversations: (params: Record<string, string | number | undefined> = {}) => {
+      const qs = new URLSearchParams(
+        Object.entries(params)
+          .filter(([, v]) => v !== undefined && v !== '')
+          .map(([k, v]) => [k, String(v)])
+      ).toString();
+      return request<{ items: any[]; total: number; limit: number; offset: number }>(
+        `/api/support/v2/conversations${qs ? `?${qs}` : ''}`
+      );
+    },
+    getConversation: (id: string) => request<any>(`/api/support/v2/conversations/${id}`),
+    assign: (id: string, data: { assignedTo?: string | null; assignedAgentName?: string | null; teamId?: string | null; expectedVersion?: number }) =>
+      request<any>(`/api/support/v2/conversations/${id}/assign`, { method: 'POST', body: JSON.stringify(data) }),
+    updateLifecycle: (id: string, data: { status?: string; priority?: string; tags?: string[]; expectedVersion?: number }) =>
+      request<any>(`/api/support/v2/conversations/${id}/lifecycle`, { method: 'PATCH', body: JSON.stringify(data) }),
+    reply: (id: string, data: { body: string; subject?: string; channel?: string; idempotencyKey?: string }) =>
+      request<any>(`/api/support/v2/conversations/${id}/reply`, { method: 'POST', body: JSON.stringify(data) }),
+    addNote: (id: string, body: string) =>
+      request<any>(`/api/support/v2/conversations/${id}/notes`, { method: 'POST', body: JSON.stringify({ body }) }),
+    aiSuggest: (id: string, data: { messages?: any[]; contact?: any } = {}) =>
+      request<any>(`/api/support/v2/conversations/${id}/ai-suggest`, { method: 'POST', body: JSON.stringify(data) }),
+    listTeams: () => request<{ teams: any[] }>('/api/support/v2/teams'),
+    listSavedReplies: () => request<{ replies: any[] }>('/api/support/v2/saved-replies'),
+    createSavedReply: (data: { title: string; category?: string; scope?: string; body: string }) =>
+      request<any>('/api/support/v2/saved-replies', { method: 'POST', body: JSON.stringify(data) }),
+    listTickets: () => request<{ tickets: any[] }>('/api/support/v2/tickets'),
+    createTicket: (data: { conversationId?: string; contactId?: string; subject: string; description?: string; priority?: string; category?: string }) =>
+      request<any>('/api/support/v2/tickets', { method: 'POST', body: JSON.stringify(data) }),
+    updateTicket: (id: string, data: { status?: string; priority?: string; resolutionSummary?: string }) =>
+      request<any>(`/api/support/v2/tickets/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    getCustomer360: (contactId: string) => request<any>(`/api/support/v2/contacts/${contactId}/360`),
+  },
   notifications: {
     list: () => request<{ data: any[] }>('/api/notifications'),
     markRead: (id: string) => request<{ success: boolean; notification: any }>(`/api/notifications/${id}/read`, { method: 'POST' }),

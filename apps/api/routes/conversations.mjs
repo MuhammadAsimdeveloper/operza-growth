@@ -13,6 +13,7 @@ import { createConversationsRepository } from '../../../packages/db/lib/conversa
 import { createCommunicationConsentsRepository } from '../../../packages/db/lib/communication-consents-repository.mjs';
 import { recordConsent } from '../../../packages/platform-core/src/consent-policy.mjs';
 import { handleEngagement2Routes } from './engagement2.mjs';
+import { handleSupport2Routes } from './support2.mjs';
 
 const conversationsRepo = createConversationsRepository();
 const consentsRepo = createCommunicationConsentsRepository();
@@ -134,6 +135,9 @@ export async function handleConversationsRoutes(req, res, ctx) {
   const queryUrl = url || new URL(req.url || '/', `http://${req.headers?.host || 'localhost'}`);
 
   if (await handleEngagement2Routes({ req, res, pathname, method, ctx })) {
+    return true;
+  }
+  if (await handleSupport2Routes({ req, res, pathname, method, ctx })) {
     return true;
   }
 

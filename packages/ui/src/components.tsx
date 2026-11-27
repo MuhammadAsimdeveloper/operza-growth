@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react';
+import type { ButtonHTMLAttributes, CSSProperties, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react';
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
@@ -73,15 +73,17 @@ export function Card({
   actions,
   children,
   className = '',
+  style,
 }: {
   title?: string;
   subtitle?: string;
   actions?: ReactNode;
   children: ReactNode;
   className?: string;
+  style?: CSSProperties;
 }) {
   return (
-    <section className={`card ${className}`.trim()}>
+    <section className={`card ${className}`.trim()} style={style}>
       {(title || actions) && (
         <header className="card__head">
           <div>

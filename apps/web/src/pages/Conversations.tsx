@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, EmptyState } from '../components/ui';
+import { SupportInbox2Panel } from '../components/SupportInbox2Panel';
 import { CHANNEL_META, uid, useStore } from '../lib/store';
 import { relative, timeOf } from '../lib/format';
 import { resolveMerge } from '../lib/merge';
@@ -26,6 +27,7 @@ export default function Conversations() {
   const [widgetModalOpen, setWidgetModalOpen] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
   const [aiDrafting, setAiDrafting] = useState(false);
+  const [workspaceMode, setWorkspaceMode] = useState<'support_2' | 'classic'>('support_2');
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -167,6 +169,40 @@ export default function Conversations() {
 
   return (
     <main className="operza-dashboard atlas-dashboard content--flush">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', borderBottom: '1px solid var(--border)', flexWrap: 'wrap', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <strong style={{ fontSize: 15 }}>Unified Inbox & Customer Support 2.0</strong>
+          <Badge tone="accent">2.0</Badge>
+        </div>
+        <div role="tablist" aria-label="Inbox workspace mode" style={{ display: 'inline-flex', background: 'var(--surface)', borderRadius: 6, padding: 2, border: '1px solid var(--border)' }}>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={workspaceMode === 'support_2'}
+            className={`btn btn--xs ${workspaceMode === 'support_2' ? 'btn--primary' : 'btn--subtle'}`}
+            style={{ border: 'none' }}
+            onClick={() => setWorkspaceMode('support_2')}
+          >
+            Support Workspace
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={workspaceMode === 'classic'}
+            className={`btn btn--xs ${workspaceMode === 'classic' ? 'btn--primary' : 'btn--subtle'}`}
+            style={{ border: 'none' }}
+            onClick={() => setWorkspaceMode('classic')}
+          >
+            Classic Stream
+          </button>
+        </div>
+      </div>
+
+      {workspaceMode === 'support_2' ? (
+        <div style={{ padding: 16 }}>
+          <SupportInbox2Panel fallbackConversations={state.conversations} />
+        </div>
+      ) : (
       <div className="inbox">
         <section className={`inbox__list${selected ? ' is-hidden-mobile' : ''}`}>
           <div className="inbox__list-head">
@@ -429,6 +465,7 @@ export default function Conversations() {
           </section>
         )}
       </div>
+      )}
 
       {composing && (
         <NewConversationModal

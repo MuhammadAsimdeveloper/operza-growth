@@ -95,6 +95,14 @@
       "passwordHash": "34b2478c4a63fd5ec8ab8c323965d3c9:b89eca07cfb6a4468cbc33563ebcee79dd11c9b7b88bae41e846d2b9df72611fcbd03bec3bda07fe0aa73aa80f48744dcc1dd042b686ccd3de3921507f0a390b",
       "status": "active",
       "createdAt": "2026-11-27T18:56:40.141Z"
+    },
+    {
+      "id": "b6d5129c-5ed9-471a-a5a6-21cc2f5717a8",
+      "name": "Support Lead",
+      "email": "stage15_support_1795807102864@operza.io",
+      "passwordHash": "39634af45c7602c5c216aaed623573af:fbad8c36bb2f9458ec267ec6e42a11d6e7cd563d5936b89153c0a2bd90acce0dcf853a8bdad567625f7a2d3bdba71c502461f6172cff1866c341f70737db3a5e",
+      "status": "active",
+      "createdAt": "2026-11-27T19:18:22.966Z"
     }
   ],
   "agencies": [
@@ -186,6 +194,13 @@
       "slug": "stage14_ops_1795805800008",
       "status": "active",
       "createdAt": "2026-11-27T18:56:40.141Z"
+    },
+    {
+      "id": "f4b5926d-e502-49f3-a76b-60d46c0228d5",
+      "name": "Support Audit Agency",
+      "slug": "stage15_support_1795807102864",
+      "status": "active",
+      "createdAt": "2026-11-27T19:18:22.966Z"
     }
   ],
   "locations": [
@@ -284,6 +299,14 @@
       "timezone": "UTC",
       "status": "active",
       "createdAt": "2026-11-27T18:56:40.141Z"
+    },
+    {
+      "id": "1ab611c1-2f26-4135-975c-c4be2666a769",
+      "agencyId": "f4b5926d-e502-49f3-a76b-60d46c0228d5",
+      "name": "Main Workspace",
+      "timezone": "UTC",
+      "status": "active",
+      "createdAt": "2026-11-27T19:18:22.966Z"
     }
   ],
   "memberships": [
@@ -382,6 +405,14 @@
       "role": "owner",
       "status": "active",
       "createdAt": "2026-11-27T18:56:40.141Z"
+    },
+    {
+      "id": "5689c111-5e94-4659-b63c-7db58527c50b",
+      "agencyId": "f4b5926d-e502-49f3-a76b-60d46c0228d5",
+      "userId": "b6d5129c-5ed9-471a-a5a6-21cc2f5717a8",
+      "role": "owner",
+      "status": "active",
+      "createdAt": "2026-11-27T19:18:22.966Z"
     }
   ],
   "invitations": [],
@@ -513,6 +544,14 @@
       "userId": "2107e2f0-5636-4c4b-b501-eaace2873461",
       "agencyId": "eb0296c7-395e-4f0a-8d34-3ebfe4c1d4d2",
       "expiresAt": 1795849000142
+    },
+    {
+      "id": "7752b971-98c0-4ffc-9c40-8a41145ff5a0",
+      "tokenHash": "6b4b6eebf7800087dc7ff82776f87c7b5c70964dcd0c789cdf3e255b979d0de9",
+      "csrfHash": "1331bd93f0bf645761a5bac5fb954eab8c52911d233cf2f96c378f84c295b5b3",
+      "userId": "b6d5129c-5ed9-471a-a5a6-21cc2f5717a8",
+      "agencyId": "f4b5926d-e502-49f3-a76b-60d46c0228d5",
+      "expiresAt": 1795850302967
     }
   ],
   "records": {
@@ -710,6 +749,22 @@
         "status": "active",
         "description": "Primary customer acquisition pipeline",
         "createdAt": "2026-11-27T18:56:40.141Z"
+      },
+      {
+        "id": "5c1962d1-51ea-4830-ab49-8f1518523fae",
+        "agencyId": "f4b5926d-e502-49f3-a76b-60d46c0228d5",
+        "locationId": "1ab611c1-2f26-4135-975c-c4be2666a769",
+        "name": "Lead Pipeline",
+        "stages": [
+          "New Inbound Lead",
+          "Discovery Call Booked",
+          "Proposal Sent",
+          "Won",
+          "Lost"
+        ],
+        "status": "active",
+        "description": "Primary customer acquisition pipeline",
+        "createdAt": "2026-11-27T19:18:22.966Z"
       }
     ],
     "customFields": [],
@@ -1317,6 +1372,56 @@
           }
         ],
         "createdAt": "2026-11-27T18:56:40.141Z"
+      },
+      {
+        "id": "3fd6c8b2-0861-42f4-960c-9140daa96f54",
+        "agencyId": "f4b5926d-e502-49f3-a76b-60d46c0228d5",
+        "locationId": "1ab611c1-2f26-4135-975c-c4be2666a769",
+        "name": "Automated Lead Qualification & AI Scoring",
+        "description": "Auto-scores new leads with Copilot AI, applies qualification tags, and creates team follow-up tasks.",
+        "status": "published",
+        "triggerType": "form",
+        "triggerConfig": {
+          "formName": "contact-us"
+        },
+        "nodes": [
+          {
+            "id": "node-ai-score",
+            "name": "AI Lead Evaluation",
+            "type": "ai_agent",
+            "config": {
+              "prompt": "Analyze lead data and score purchase intent from 1 to 100."
+            }
+          },
+          {
+            "id": "node-tag",
+            "name": "Apply High-Intent Tag",
+            "type": "tag",
+            "config": {
+              "tag": "ai-qualified"
+            }
+          },
+          {
+            "id": "node-task",
+            "name": "Create Priority Outreach Task",
+            "type": "task",
+            "config": {
+              "title": "High-Intent Lead Review",
+              "priority": "high",
+              "dueInDays": 1
+            }
+          },
+          {
+            "id": "node-approval",
+            "name": "Executive Proposal Gate",
+            "type": "condition",
+            "requiresApproval": true,
+            "config": {
+              "message": "Review enterprise proposal before final transmission"
+            }
+          }
+        ],
+        "createdAt": "2026-11-27T19:18:22.966Z"
       }
     ],
     "forms": [
@@ -1547,6 +1652,25 @@
         "submissions": 0,
         "description": "Book your strategy consultation with our growth engineering team.",
         "createdAt": "2026-11-27T18:56:40.141Z"
+      },
+      {
+        "id": "8caeadc1-1af8-4fcd-9f17-faf372469c99",
+        "agencyId": "f4b5926d-e502-49f3-a76b-60d46c0228d5",
+        "locationId": "1ab611c1-2f26-4135-975c-c4be2666a769",
+        "name": "Inbound Consultation Request",
+        "publicSlug": "contact-us",
+        "fields": [
+          "firstName",
+          "lastName",
+          "email",
+          "phone",
+          "company",
+          "projectDetails"
+        ],
+        "status": "published",
+        "submissions": 0,
+        "description": "Book your strategy consultation with our growth engineering team.",
+        "createdAt": "2026-11-27T19:18:22.966Z"
       }
     ],
     "formSubmissions": [],
@@ -2689,6 +2813,46 @@
           }
         ],
         "createdAt": "2026-11-27T18:56:40.141Z"
+      },
+      {
+        "id": "54ece722-0878-4da2-9b64-5b2463971eb8",
+        "agencyId": "f4b5926d-e502-49f3-a76b-60d46c0228d5",
+        "locationId": "1ab611c1-2f26-4135-975c-c4be2666a769",
+        "name": "Discovery & Strategy Session",
+        "slug": "discovery-strategy",
+        "color": "#6366f1",
+        "durationMin": 30,
+        "description": "30-minute discovery call to evaluate automation requirements and team fit.",
+        "status": "active",
+        "roundRobin": true,
+        "availability": [
+          {
+            "weekday": 1,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 2,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 3,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 4,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 5,
+            "start": "09:00",
+            "end": "17:00"
+          }
+        ],
+        "createdAt": "2026-11-27T19:18:22.966Z"
       }
     ],
     "paymentLinks": [
@@ -2871,6 +3035,21 @@
         "active": true,
         "description": "Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.",
         "createdAt": "2026-11-27T18:56:40.141Z"
+      },
+      {
+        "id": "a2ed29f3-c759-41ad-b744-e46b7ca563b8",
+        "agencyId": "f4b5926d-e502-49f3-a76b-60d46c0228d5",
+        "locationId": "1ab611c1-2f26-4135-975c-c4be2666a769",
+        "name": "Growth Retainer - Starter Pack",
+        "slug": "starter-retainer",
+        "amount": 1500,
+        "currency": "USD",
+        "productIds": [],
+        "visits": 0,
+        "conversions": 0,
+        "active": true,
+        "description": "Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.",
+        "createdAt": "2026-11-27T19:18:22.966Z"
       }
     ],
     "orders": [],
