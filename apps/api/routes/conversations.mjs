@@ -12,6 +12,7 @@ import { runInTenantTx } from '../../../packages/db/lib/tenant-tx.mjs';
 import { createConversationsRepository } from '../../../packages/db/lib/conversations-repository.mjs';
 import { createCommunicationConsentsRepository } from '../../../packages/db/lib/communication-consents-repository.mjs';
 import { recordConsent } from '../../../packages/platform-core/src/consent-policy.mjs';
+import { handleEngagement2Routes } from './engagement2.mjs';
 
 const conversationsRepo = createConversationsRepository();
 const consentsRepo = createCommunicationConsentsRepository();
@@ -131,6 +132,10 @@ export async function handleConversationsRoutes(req, res, ctx) {
   const locationId = activeLocation?.id;
   const actorId = actor?.user?.id || 'system';
   const queryUrl = url || new URL(req.url || '/', `http://${req.headers?.host || 'localhost'}`);
+
+  if (await handleEngagement2Routes({ req, res, pathname, method, ctx })) {
+    return true;
+  }
 
   // ── 1. /api/crm/conversations CRUD ────────────────────────────────────────
   if (pathname === '/api/crm/conversations' || pathname.startsWith('/api/crm/conversations/')) {

@@ -7,6 +7,7 @@ import { num, pct, shortDate } from '../lib/format';
 import { uid, useStore } from '../lib/store';
 import { api } from '../lib/api';
 import type { Campaign, CampaignSegment, Contact, EmailBlock } from '../lib/types';
+import { EngagementHub2Panel } from '../components/EngagementHub2Panel';
 
 const STATUS_LABEL: Record<Exclude<CampaignSegment['status'], 'any'>, string> = {
   lead: 'Leads',
@@ -375,6 +376,7 @@ export default function Campaigns() {
           onClose={() => setPreviewCampaign(null)}
         />
       )}
+      <EngagementHub2Panel />
     </main>
   );
 }
