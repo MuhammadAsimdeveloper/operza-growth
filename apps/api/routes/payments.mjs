@@ -21,6 +21,7 @@ import { generateInvoicePdf } from '../../../packages/db/lib/invoice-pdf.mjs';
 import { createContactsRepository } from '../../../packages/db/lib/contacts-repository.mjs';
 import { createOpportunitiesRepository } from '../../../packages/db/lib/opportunities-repository.mjs';
 import { toCents, fromCents, validateCurrency } from '../../../packages/db/lib/money.mjs';
+import { handleCommerce2Routes } from './commerce2.mjs';
 
 const ordersRepo = createOrdersRepository();
 const paymentsRepo = createPaymentsRepository();
@@ -65,6 +66,10 @@ export async function handlePaymentsRoutes(req, res, ctx) {
     isWebhookReplay,
     logStructured
   } = ctx;
+
+  if (await handleCommerce2Routes({ req, res, pathname, method, ctx })) {
+    return true;
+  }
 
   const isPublicRoute =
     pathname.startsWith('/api/payments/public/') ||

@@ -7,6 +7,7 @@ import { useStore, uid } from '../lib/store';
 import { currency, fullDate, pct } from '../lib/format';
 import { api } from '../lib/api';
 import type { InvoiceStatus } from '../lib/types';
+import { CommerceHub2Panel } from '../components/CommerceHub2Panel';
 
 const STATUSES: InvoiceStatus[] = ['draft', 'sent', 'paid', 'overdue'];
 
@@ -295,6 +296,7 @@ export default function Payments() {
           }}
         />
       )}
+      <CommerceHub2Panel />
     </main>
   );
 }
