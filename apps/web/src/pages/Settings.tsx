@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge, Switch } from '../components/ui';
+import { AgencyGovernance2Panel } from '../components/AgencyGovernance2Panel';
 import { INTEGRATION_CATEGORIES, useStore, uid } from '../lib/store';
 import { num } from '../lib/format';
 import { api } from '../lib/api';
 import type { CustomField, TeamMember } from '../lib/types';
 
 const SECTIONS = [
+  { key: 'governance', label: 'Agency Governance 2.0', icon: 'shield' },
   { key: 'business', label: 'Business profile', icon: 'globe' },
   { key: 'team', label: 'Team', icon: 'users' },
   { key: 'fields', label: 'Custom fields', icon: 'sliders' },
@@ -20,7 +22,7 @@ type SectionKey = (typeof SECTIONS)[number]['key'];
 
 export default function Settings() {
   const { state, dispatch } = useStore();
-  const [section, setSection] = useState<SectionKey>('business');
+  const [section, setSection] = useState<SectionKey>('governance');
   const [inviting, setInviting] = useState(false);
   const [addingField, setAddingField] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -122,6 +124,7 @@ export default function Settings() {
         </nav>
 
         <div className="stack">
+          {section === 'governance' && <AgencyGovernance2Panel />}
           {section === 'business' && <BusinessProfile />}
 
           {section === 'team' && (

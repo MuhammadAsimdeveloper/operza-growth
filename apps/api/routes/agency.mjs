@@ -4,6 +4,8 @@
  * ============================================================================
  */
 
+import { handleAgency2Routes } from './agency2.mjs';
+
 export async function handleAgencyRoutes(req, res, ctx) {
   const {
     method,
@@ -24,6 +26,10 @@ export async function handleAgencyRoutes(req, res, ctx) {
 
   if (!pathname.startsWith('/api/agency/') && pathname !== '/api/agency') {
     return false;
+  }
+
+  if (await handleAgency2Routes(req, res, ctx)) {
+    return true;
   }
 
   const callerRole = actor?.membership?.role || actor?.user?.role || '';

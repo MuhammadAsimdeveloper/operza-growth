@@ -42,7 +42,9 @@ export async function handleAnalytics2Routes(req, res, ctx) {
 
     if (method === 'GET' && subPath === '/overview') {
       sendJson(res, 200, {
-        source: 'local_state',
+        source: 'local_dev_in_memory',
+        authoritative: false,
+        warning: 'Computed from local in-memory state because PostgreSQL is not configured in this environment.',
         freshnessAt: new Date().toISOString(),
         totals: {
           contacts: contacts.length,

@@ -278,6 +278,32 @@ export const api = {
       request<any>(`/api/support/v2/tickets/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     getCustomer360: (contactId: string) => request<any>(`/api/support/v2/contacts/${contactId}/360`),
   },
+  agency2: {
+    getWorkspace: () => request<{ workspace: any }>('/api/agency/v2/workspace'),
+    updateWorkspace: (data: any) => request<{ workspace: any }>('/api/agency/v2/workspace', { method: 'PUT', body: JSON.stringify(data) }),
+    listLocations: () => request<{ locations: any[] }>('/api/agency/v2/locations'),
+    createLocation: (data: { name: string; timezone?: string; phone?: string; email?: string }) =>
+      request<{ location: any }>('/api/agency/v2/locations', { method: 'POST', body: JSON.stringify(data) }),
+    archiveLocation: (id: string) => request<any>(`/api/agency/v2/locations/${id}/archive`, { method: 'POST', body: '{}' }),
+    restoreLocation: (id: string) => request<any>(`/api/agency/v2/locations/${id}/restore`, { method: 'POST', body: '{}' }),
+    listTeam: (params: { search?: string; status?: string } = {}) => {
+      const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => Boolean(v)) as Array<[string, string]>).toString();
+      return request<{ members: any[] }>(`/api/agency/v2/team${qs ? `?${qs}` : ''}`);
+    },
+    offboardMember: (userId: string) => request<any>(`/api/agency/v2/team/${userId}/offboard`, { method: 'POST', body: '{}' }),
+    listInvitations: () => request<{ invitations: any[] }>('/api/agency/v2/invitations'),
+    createInvitation: (data: { email: string; role: string; locationIds?: string[] }) =>
+      request<any>('/api/agency/v2/invitations', { method: 'POST', body: JSON.stringify(data) }),
+    revokeInvitation: (id: string) => request<any>(`/api/agency/v2/invitations/${id}/revoke`, { method: 'POST', body: '{}' }),
+    listRoles: () => request<{ builtinRoles: any[]; customRoles: any[]; permissionCatalog: Record<string, string[]> }>('/api/agency/v2/roles'),
+    createCustomRole: (data: { name: string; description?: string; scope: 'agency' | 'location'; permissions: string[] }) =>
+      request<any>('/api/agency/v2/roles', { method: 'POST', body: JSON.stringify(data) }),
+    listSessions: () => request<{ sessions: any[]; mfaNotice?: string }>('/api/agency/v2/sessions'),
+    revokeSession: (id: string) => request<any>(`/api/agency/v2/sessions/${id}/revoke`, { method: 'POST', body: '{}' }),
+    getOnboarding: () => request<{ onboarding: any }>('/api/agency/v2/onboarding'),
+    updateOnboarding: (data: { completedSteps?: string[]; dismissed?: boolean }) =>
+      request<{ onboarding: any }>('/api/agency/v2/onboarding', { method: 'PATCH', body: JSON.stringify(data) }),
+  },
   notifications: {
     list: () => request<{ data: any[] }>('/api/notifications'),
     markRead: (id: string) => request<{ success: boolean; notification: any }>(`/api/notifications/${id}/read`, { method: 'POST' }),

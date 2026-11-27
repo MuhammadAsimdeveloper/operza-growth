@@ -111,6 +111,14 @@
       "passwordHash": "5d3bf501386eb6701986bb9def5062a5:6c90066f2260e9a84a7da8e9d2ff7c6e983a30220e7b54fd58ec986081d9221bbcfcbdf91b7bdc1c8a7a2324fa3bee6599a8887bf22b46867b7637459d195041",
       "status": "active",
       "createdAt": "2026-11-27T19:34:22.105Z"
+    },
+    {
+      "id": "1cff63cf-91a0-414d-b5f6-273858bc95bb",
+      "name": "Agency Admin",
+      "email": "stage17_gov_1795809738131@operza.io",
+      "passwordHash": "27ad7c9b65c7b3c9c78485eed9f5e3d3:ce18d0a5fd09891cfeece9ec7bd7f2cd905c1a26d93bd6074f1e577ded2d9b2b22ce72ebbb1632e5960e68054c1b0fd61d3a780525f766c947b7129169d32909",
+      "status": "active",
+      "createdAt": "2026-11-27T20:02:18.277Z"
     }
   ],
   "agencies": [
@@ -216,6 +224,21 @@
       "slug": "stage16_xp_1795808061951",
       "status": "active",
       "createdAt": "2026-11-27T19:34:22.105Z"
+    },
+    {
+      "id": "509e5e97-d14b-47f4-b0d4-df777700b76a",
+      "name": "Gov Audit Agency",
+      "slug": "stage17_gov_1795809738131",
+      "status": "active",
+      "createdAt": "2026-11-27T20:02:18.277Z",
+      "email": "",
+      "phone": "",
+      "website": "",
+      "category": "",
+      "country": "US",
+      "defaultLanguage": "en",
+      "timezone": "UTC",
+      "currency": "USD"
     }
   ],
   "locations": [
@@ -330,6 +353,22 @@
       "timezone": "UTC",
       "status": "active",
       "createdAt": "2026-11-27T19:34:22.105Z"
+    },
+    {
+      "id": "8f8c1e5f-e8ac-4953-b4af-9e7b6e2a6463",
+      "agencyId": "509e5e97-d14b-47f4-b0d4-df777700b76a",
+      "name": "Main Workspace",
+      "timezone": "UTC",
+      "status": "active",
+      "createdAt": "2026-11-27T20:02:18.277Z"
+    },
+    {
+      "id": "8bd286da-48b1-4430-9afb-9e0d5605eb8d",
+      "agencyId": "509e5e97-d14b-47f4-b0d4-df777700b76a",
+      "name": "West Coast HQ",
+      "timezone": "America/New_York",
+      "status": "active",
+      "createdAt": "2026-11-27T20:02:22.253Z"
     }
   ],
   "memberships": [
@@ -444,6 +483,14 @@
       "role": "owner",
       "status": "active",
       "createdAt": "2026-11-27T19:34:22.105Z"
+    },
+    {
+      "id": "7610315a-f953-43b7-a806-70fe447129cf",
+      "agencyId": "509e5e97-d14b-47f4-b0d4-df777700b76a",
+      "userId": "1cff63cf-91a0-414d-b5f6-273858bc95bb",
+      "role": "owner",
+      "status": "active",
+      "createdAt": "2026-11-27T20:02:18.277Z"
     }
   ],
   "invitations": [],
@@ -591,6 +638,14 @@
       "userId": "0e20c02a-84bf-4e32-b30c-8b331c7804f3",
       "agencyId": "9b691ce2-74e6-4715-b44d-aa553363cba4",
       "expiresAt": 1795851262105
+    },
+    {
+      "id": "f21966e4-5627-4510-b28f-ff1bd42feae8",
+      "tokenHash": "d96ec1e2adfefd73d809df756eb93b171824328fa5ff97db88cb3169644f9b11",
+      "csrfHash": "031f2eeacfd77e9ee34c552da551aac58018402f9eb5f94f9be6d7a5dc863e27",
+      "userId": "1cff63cf-91a0-414d-b5f6-273858bc95bb",
+      "agencyId": "509e5e97-d14b-47f4-b0d4-df777700b76a",
+      "expiresAt": 1795852938277
     }
   ],
   "records": {
@@ -820,6 +875,22 @@
         "status": "active",
         "description": "Primary customer acquisition pipeline",
         "createdAt": "2026-11-27T19:34:22.105Z"
+      },
+      {
+        "id": "0aa9ea9c-175e-4069-8483-d94773f12d2a",
+        "agencyId": "509e5e97-d14b-47f4-b0d4-df777700b76a",
+        "locationId": "8f8c1e5f-e8ac-4953-b4af-9e7b6e2a6463",
+        "name": "Lead Pipeline",
+        "stages": [
+          "New Inbound Lead",
+          "Discovery Call Booked",
+          "Proposal Sent",
+          "Won",
+          "Lost"
+        ],
+        "status": "active",
+        "description": "Primary customer acquisition pipeline",
+        "createdAt": "2026-11-27T20:02:18.277Z"
       }
     ],
     "customFields": [],
@@ -1527,6 +1598,56 @@
           }
         ],
         "createdAt": "2026-11-27T19:34:22.105Z"
+      },
+      {
+        "id": "578a044b-997b-40e0-90c1-95e64d5b8082",
+        "agencyId": "509e5e97-d14b-47f4-b0d4-df777700b76a",
+        "locationId": "8f8c1e5f-e8ac-4953-b4af-9e7b6e2a6463",
+        "name": "Automated Lead Qualification & AI Scoring",
+        "description": "Auto-scores new leads with Copilot AI, applies qualification tags, and creates team follow-up tasks.",
+        "status": "published",
+        "triggerType": "form",
+        "triggerConfig": {
+          "formName": "contact-us"
+        },
+        "nodes": [
+          {
+            "id": "node-ai-score",
+            "name": "AI Lead Evaluation",
+            "type": "ai_agent",
+            "config": {
+              "prompt": "Analyze lead data and score purchase intent from 1 to 100."
+            }
+          },
+          {
+            "id": "node-tag",
+            "name": "Apply High-Intent Tag",
+            "type": "tag",
+            "config": {
+              "tag": "ai-qualified"
+            }
+          },
+          {
+            "id": "node-task",
+            "name": "Create Priority Outreach Task",
+            "type": "task",
+            "config": {
+              "title": "High-Intent Lead Review",
+              "priority": "high",
+              "dueInDays": 1
+            }
+          },
+          {
+            "id": "node-approval",
+            "name": "Executive Proposal Gate",
+            "type": "condition",
+            "requiresApproval": true,
+            "config": {
+              "message": "Review enterprise proposal before final transmission"
+            }
+          }
+        ],
+        "createdAt": "2026-11-27T20:02:18.277Z"
       }
     ],
     "forms": [
@@ -1795,6 +1916,25 @@
         "submissions": 0,
         "description": "Book your strategy consultation with our growth engineering team.",
         "createdAt": "2026-11-27T19:34:22.105Z"
+      },
+      {
+        "id": "6c62c6d7-ca3a-4d7c-94e4-5a87568f98a0",
+        "agencyId": "509e5e97-d14b-47f4-b0d4-df777700b76a",
+        "locationId": "8f8c1e5f-e8ac-4953-b4af-9e7b6e2a6463",
+        "name": "Inbound Consultation Request",
+        "publicSlug": "contact-us",
+        "fields": [
+          "firstName",
+          "lastName",
+          "email",
+          "phone",
+          "company",
+          "projectDetails"
+        ],
+        "status": "published",
+        "submissions": 0,
+        "description": "Book your strategy consultation with our growth engineering team.",
+        "createdAt": "2026-11-27T20:02:18.277Z"
       }
     ],
     "formSubmissions": [],
@@ -3017,6 +3157,46 @@
           }
         ],
         "createdAt": "2026-11-27T19:34:22.105Z"
+      },
+      {
+        "id": "cc0e6b26-f5f0-419e-83d8-45f5a3a5dbc0",
+        "agencyId": "509e5e97-d14b-47f4-b0d4-df777700b76a",
+        "locationId": "8f8c1e5f-e8ac-4953-b4af-9e7b6e2a6463",
+        "name": "Discovery & Strategy Session",
+        "slug": "discovery-strategy",
+        "color": "#6366f1",
+        "durationMin": 30,
+        "description": "30-minute discovery call to evaluate automation requirements and team fit.",
+        "status": "active",
+        "roundRobin": true,
+        "availability": [
+          {
+            "weekday": 1,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 2,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 3,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 4,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 5,
+            "start": "09:00",
+            "end": "17:00"
+          }
+        ],
+        "createdAt": "2026-11-27T20:02:18.277Z"
       }
     ],
     "paymentLinks": [
@@ -3229,6 +3409,21 @@
         "active": true,
         "description": "Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.",
         "createdAt": "2026-11-27T19:34:22.105Z"
+      },
+      {
+        "id": "95c6f798-a445-4328-9903-6406254920ff",
+        "agencyId": "509e5e97-d14b-47f4-b0d4-df777700b76a",
+        "locationId": "8f8c1e5f-e8ac-4953-b4af-9e7b6e2a6463",
+        "name": "Growth Retainer - Starter Pack",
+        "slug": "starter-retainer",
+        "amount": 1500,
+        "currency": "USD",
+        "productIds": [],
+        "visits": 0,
+        "conversions": 0,
+        "active": true,
+        "description": "Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.",
+        "createdAt": "2026-11-27T20:02:18.277Z"
       }
     ],
     "orders": [],
@@ -4956,6 +5151,43 @@
         "email": "stage16_xp_1795808061951@operza.io"
       },
       "timestamp": "2026-11-27T19:34:22.117Z"
+    },
+    {
+      "id": "a56b913c-d149-42e7-80eb-977709afefe9",
+      "action": "auth.signup",
+      "userId": "1cff63cf-91a0-414d-b5f6-273858bc95bb",
+      "userName": "Agency Admin",
+      "agencyId": "509e5e97-d14b-47f4-b0d4-df777700b76a",
+      "locationId": "8f8c1e5f-e8ac-4953-b4af-9e7b6e2a6463",
+      "details": {
+        "email": "stage17_gov_1795809738131@operza.io"
+      },
+      "timestamp": "2026-11-27T20:02:18.292Z"
+    },
+    {
+      "id": "99423b7f-b322-4b40-ac93-5abd48b20094",
+      "action": "agency.workspace.updated",
+      "userId": "1cff63cf-91a0-414d-b5f6-273858bc95bb",
+      "userName": "Agency Admin",
+      "agencyId": "509e5e97-d14b-47f4-b0d4-df777700b76a",
+      "locationId": "8f8c1e5f-e8ac-4953-b4af-9e7b6e2a6463",
+      "details": {
+        "agencyId": "509e5e97-d14b-47f4-b0d4-df777700b76a"
+      },
+      "timestamp": "2026-11-27T20:02:21.443Z"
+    },
+    {
+      "id": "d706ccd6-6d91-49a6-8015-ab01851af1d5",
+      "action": "agency.location.created",
+      "userId": "1cff63cf-91a0-414d-b5f6-273858bc95bb",
+      "userName": "Agency Admin",
+      "agencyId": "509e5e97-d14b-47f4-b0d4-df777700b76a",
+      "locationId": "8f8c1e5f-e8ac-4953-b4af-9e7b6e2a6463",
+      "details": {
+        "locationId": "8bd286da-48b1-4430-9afb-9e0d5605eb8d",
+        "name": "West Coast HQ"
+      },
+      "timestamp": "2026-11-27T20:02:22.263Z"
     }
   ],
   "mediaFiles": {},
@@ -5012,5 +5244,29 @@
     }
   ],
   "zapierHookSubscriptions": [],
-  "zapierHookDeliveries": []
+  "zapierHookDeliveries": [],
+  "agencyInvitations": [
+    {
+      "id": "0c358494-3b45-46d9-a8ef-f319cbb21b71",
+      "agencyId": "509e5e97-d14b-47f4-b0d4-df777700b76a",
+      "email": "new.agent@operza.io",
+      "role": "member",
+      "status": "revoked",
+      "deliveryStatus": "pending_local",
+      "createdAt": "2026-11-27T20:02:23.135Z"
+    }
+  ],
+  "agencyRoles": [
+    {
+      "id": "cf6ce9fd-32fe-41b4-934f-d26515ff457d",
+      "agencyId": "509e5e97-d14b-47f4-b0d4-df777700b76a",
+      "name": "QA Auditor",
+      "scope": "location",
+      "permissions": [
+        "contacts:read",
+        "conversations:read"
+      ],
+      "isSystem": false
+    }
+  ]
 }
