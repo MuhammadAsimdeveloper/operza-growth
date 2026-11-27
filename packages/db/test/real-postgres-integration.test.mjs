@@ -1460,6 +1460,65 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       assert.equal((await int2Repo.listWebhookEvents(pfTxB)).length, 0, 'Tenant B must not read Tenant A integration_webhook_events');
       assert.equal((await int2Repo.listSyncConflicts(pfTxB)).length, 0, 'Tenant B must not read Tenant A integration_sync_conflicts');
       await pfClient.query('ROLLBACK');
+
+      // ── 15. AI Automation & Agents 2.0 (Agents, Plans, User-Isolated Memory, Delegations, Evals, FORCE RLS)
+      const { createAi2Repository } = await import('../lib/ai-2-repository.mjs');
+      const ai2Repo = createAi2Repository();
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+      const agent = await ai2Repo.createAgent(pfTx, {
+        name: 'CRM Ops Specialist',
+        persona: 'executive',
+        model: 'operza-deterministic-v1',
+        allowedTools: ['search_contacts']
+      });
+      const runWithPlan = await ai2Repo.createRunWithPlan(pfTx, {
+        agentId: agent.id,
+        userId: 'user-a1',
+        objective: 'Find VIP contacts',
+        steps: [{ action: 'search', tool: 'search_contacts' }],
+        validated: true
+      });
+      assert.equal(runWithPlan.plan.validated, true);
+
+      await ai2Repo.createMemory(pfTx, {
+        scope: 'user',
+        userId: 'user-a1',
+        agentId: agent.id,
+        memoryKey: 'style',
+        content: 'Prefer bullet points'
+      });
+      await ai2Repo.createMemory(pfTx, {
+        scope: 'agency',
+        agentId: agent.id,
+        memoryKey: 'policy',
+        content: 'Always verify consent before messaging'
+      });
+      assert.equal((await ai2Repo.listMemories(pfTx, { userId: 'user-a1' })).length, 2);
+      assert.equal((await ai2Repo.listMemories(pfTx, { userId: 'user-a2' })).length, 1);
+
+      const delegation = await ai2Repo.createDelegation(pfTx, {
+        parentRunId: runWithPlan.run.id,
+        parentAgentId: agent.id,
+        specialistType: 'research',
+        depth: 1
+      });
+      assert.equal(delegation.depth, 1);
+      await pfClient.query('COMMIT');
+
+      // Cross-tenant FORCE RLS check under Tenant B
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      assert.equal((await ai2Repo.listAgents(pfTxB)).length, 0, 'Tenant B must not read Tenant A ai_agents');
+      assert.equal((await ai2Repo.listRuns(pfTxB)).length, 0, 'Tenant B must not read Tenant A ai_runs');
+      assert.equal((await ai2Repo.listMemories(pfTxB, { userId: 'user-a1' })).length, 0, 'Tenant B must not read Tenant A ai_agent_memories');
+      await pfClient.query('ROLLBACK');
     } finally {
       await pfClient.query('ROLLBACK').catch(() => {});
       await pfClient.query('RESET ROLE').catch(() => {});

@@ -4,6 +4,8 @@
  * evaluation summary, and Voice AI short-lived session issuance.
  */
 
+import { handleAi2Routes } from './ai2.mjs';
+
 export function createAiPlatformRoutes({
   providerGateway,
   costGovernance,
@@ -13,7 +15,10 @@ export function createAiPlatformRoutes({
   readBody,
   auditLog
 } = {}) {
-  return async function handleAiPlatformRoute({ method, pathname, req, res, agency, activeLocation, actor }) {
+  return async function handleAiPlatformRoute({ method, pathname, req, res, agency, activeLocation, actor, pgPool }) {
+    if (await handleAi2Routes(req, res, { method, pathname, actor, agency, activeLocation, pgPool, readBody, sendJson, auditLog })) {
+      return true;
+    }
     const agencyId = agency?.id;
     const locationId = activeLocation?.id || 'default';
 

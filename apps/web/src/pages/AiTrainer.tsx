@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Badge, EmptyState, Switch } from '../components/ui';
+import { AiStudio2Panel } from '../components/AiStudio2Panel';
 import { api } from '../lib/api';
 
 interface KnowledgeDoc {
@@ -228,6 +229,8 @@ export default function AiTrainer() {
         <h2>Enterprise Semantic Knowledge Grounding</h2>
         <p>Train Operza AI Copilot on your proprietary agency SOPs, service pricing tiers, custom personas, and execution safety bounds.</p>
       </section>
+
+      <AiStudio2Panel />
 
       <section className="atlas-kpis" aria-label="AI training metrics">
         <article className="operza-kpi atlas-kpi">
