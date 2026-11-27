@@ -155,3 +155,58 @@ export function Pagination({
     </nav>
   );
 }
+
+export function Skeleton({
+  width = '100%',
+  height = 16,
+  borderRadius = 6,
+}: {
+  width?: string | number;
+  height?: string | number;
+  borderRadius?: number;
+}) {
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        width,
+        height,
+        borderRadius,
+        background: 'var(--surface-3, rgba(148, 163, 184, 0.2))',
+      }}
+    />
+  );
+}
+
+export function Alert({
+  tone = 'info',
+  title,
+  children,
+}: {
+  tone?: 'info' | 'success' | 'warning' | 'danger';
+  title?: string;
+  children: ReactNode;
+}) {
+  const palette: Record<string, { border: string; bg: string }> = {
+    info: { border: 'var(--blue, #3b82f6)', bg: 'var(--blue-soft, rgba(59,130,246,0.1))' },
+    success: { border: 'var(--green, #10b981)', bg: 'var(--green-soft, rgba(16,185,129,0.1))' },
+    warning: { border: 'var(--amber, #f59e0b)', bg: 'var(--amber-soft, rgba(245,158,11,0.1))' },
+    danger: { border: 'var(--red, #ef4444)', bg: 'var(--red-soft, rgba(239,68,68,0.1))' },
+  };
+  const colors = palette[tone] || palette.info;
+  return (
+    <div
+      role={tone === 'danger' || tone === 'warning' ? 'alert' : 'status'}
+      style={{
+        border: `1px solid ${colors.border}`,
+        background: colors.bg,
+        borderRadius: 'var(--r-md, 8px)',
+        padding: '10px 14px',
+        fontSize: 13,
+      }}
+    >
+      {title && <div style={{ fontWeight: 600, marginBottom: 2 }}>{title}</div>}
+      <div>{children}</div>
+    </div>
+  );
+}

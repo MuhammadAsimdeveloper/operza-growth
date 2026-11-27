@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { request } from '../lib/api';
 import { Badge, EmptyState } from './ui';
 
 interface ConnectorSpec {
@@ -41,12 +41,12 @@ interface SyncConflictRow {
   status: string;
 }
 
-const READINESS_TONE: Record<string, 'green' | 'amber' | 'blue' | 'slate'> = {
+const READINESS_TONE: Record<string, 'green' | 'amber' | 'blue' | 'default'> = {
   live_verified: 'green',
   production_configured: 'green',
   sandbox_verified: 'blue',
   unit_tested: 'amber',
-  implemented_adapter: 'slate',
+  implemented_adapter: 'default',
 };
 
 export function IntegrationsHub2Panel() {
@@ -59,24 +59,24 @@ export function IntegrationsHub2Panel() {
   const { data: catalogData } = useQuery<{ connectors?: ConnectorSpec[] }>({
     queryKey: ['integrations', 'v2', 'catalog', category, search],
     queryFn: () =>
-      api<{ connectors?: ConnectorSpec[] }>(
+      request<{ connectors?: ConnectorSpec[] }>(
         `/api/integrations/v2/catalog?category=${encodeURIComponent(category)}&search=${encodeURIComponent(search)}`
       ),
   });
 
   const { data: connData } = useQuery<{ connections?: IntegrationConn[] }>({
     queryKey: ['integrations', 'v2', 'connections'],
-    queryFn: () => api<{ connections?: IntegrationConn[] }>('/api/integrations/v2/connections'),
+    queryFn: () => request<{ connections?: IntegrationConn[] }>('/api/integrations/v2/connections'),
   });
 
   const { data: webhookData } = useQuery<{ events?: WebhookEventRow[] }>({
     queryKey: ['integrations', 'v2', 'webhooks'],
-    queryFn: () => api<{ events?: WebhookEventRow[] }>('/api/integrations/v2/webhooks/events'),
+    queryFn: () => request<{ events?: WebhookEventRow[] }>('/api/integrations/v2/webhooks/events'),
   });
 
   const { data: conflictData } = useQuery<{ conflicts?: SyncConflictRow[] }>({
     queryKey: ['integrations', 'v2', 'conflicts'],
-    queryFn: () => api<{ conflicts?: SyncConflictRow[] }>('/api/integrations/v2/sync/conflicts'),
+    queryFn: () => request<{ conflicts?: SyncConflictRow[] }>('/api/integrations/v2/sync/conflicts'),
   });
 
   const { data: metricsData } = useQuery<{
@@ -85,7 +85,7 @@ export function IntegrationsHub2Panel() {
     openSyncConflicts?: number;
   }>({
     queryKey: ['integrations', 'v2', 'metrics'],
-    queryFn: () => api('/api/integrations/v2/metrics'),
+    queryFn: () => request('/api/integrations/v2/metrics'),
   });
 
   const connectors = catalogData?.connectors || [];
@@ -94,12 +94,12 @@ export function IntegrationsHub2Panel() {
   const conflicts = conflictData?.conflicts || [];
 
   const handleTestConnection = async (id: string) => {
-    await api(`/api/integrations/v2/connections/${id}/test`, { method: 'POST', body: '{}' });
+    await request(`/api/integrations/v2/connections/${id}/test`, { method: 'POST', body: '{}' });
     await queryClient.invalidateQueries({ queryKey: ['integrations', 'v2'] });
   };
 
   const handleDisconnect = async (id: string) => {
-    await api(`/api/integrations/v2/connections/${id}/disconnect`, { method: 'POST', body: '{}' });
+    await request(`/api/integrations/v2/connections/${id}/disconnect`, { method: 'POST', body: '{}' });
     await queryClient.invalidateQueries({ queryKey: ['integrations', 'v2'] });
   };
 
@@ -144,7 +144,7 @@ export function IntegrationsHub2Panel() {
               <div key={c.id} style={{ border: '1px solid var(--line)', borderRadius: 10, padding: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                   <strong style={{ fontSize: 13 }}>{c.name}</strong>
-                  <Badge tone={READINESS_TONE[c.readinessLevel] || 'slate'}>{c.readinessLevel.replace(/_/g, ' ')}</Badge>
+                  <Badge tone={READINESS_TONE[c.readinessLevel] || 'default'}>{c.readinessLevel.replace(/_/g, ' ')}</Badge>
                 </div>
                 <div style={{ fontSize: 12, opacity: 0.78, marginBottom: 8 }}>{c.description}</div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11 }}>
@@ -161,7 +161,7 @@ export function IntegrationsHub2Panel() {
 
       {tab === 'connections' && (
         connections.length === 0 ? (
-          <EmptyState icon="plug" title="No active V2 connections" body="Connect an integration via OAuth 2.0 PKCE or encrypted vault reference." />
+          <EmptyState icon="plug" title="No active V2 connections" text="Connect an integration via OAuth 2.0 PKCE or encrypted vault reference." />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {connections.map((conn) => (
@@ -184,7 +184,7 @@ export function IntegrationsHub2Panel() {
 
       {tab === 'webhooks' && (
         events.length === 0 ? (
-          <EmptyState icon="webhook" title="No webhook events recorded" body="Signed inbound and outbound webhook deliveries appear here." />
+          <EmptyState icon="webhook" title="No webhook events recorded" text="Signed inbound and outbound webhook deliveries appear here." />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
             {events.map((ev) => (
@@ -199,7 +199,7 @@ export function IntegrationsHub2Panel() {
 
       {tab === 'sync' && (
         conflicts.length === 0 ? (
-          <EmptyState icon="refresh" title="No open sync conflicts" body="Two-way synchronization conflicts queued for review appear here." />
+          <EmptyState icon="refresh" title="No open sync conflicts" text="Two-way synchronization conflicts queued for review appear here." />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
             {conflicts.map((cf) => (

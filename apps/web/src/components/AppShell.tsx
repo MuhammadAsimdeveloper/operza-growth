@@ -1286,12 +1286,15 @@ export function AppShell({ children }: { children?: ReactNode }) {
 
   return (
     <div className={["shell", navOpen && "is-nav-open"].filter(Boolean).join(" ")}>
+      <a href="#main-content" className="skip-link">Skip to main content</a>
       <SEO title="Agency Workspace" description="Operza Agency Workspace" robots="noindex, nofollow" />
       <Sidebar onNavigate={() => setNavOpen(false)} onOpenAppsLauncher={() => setAppsLauncherOpen(true)} />
       <div className="scrim" onClick={() => setNavOpen(false)} />
       <div className="main">
         <TopBar onOpenNav={() => setNavOpen(true)} onOpenAppsLauncher={() => setAppsLauncherOpen(true)} />
-        {children ?? <Outlet />}
+        <div id="main-content" tabIndex={-1}>
+          {children ?? <Outlet />}
+        </div>
         <CopilotHub />
       </div>
       <AppLauncherModal isOpen={appsLauncherOpen} onClose={() => setAppsLauncherOpen(false)} />

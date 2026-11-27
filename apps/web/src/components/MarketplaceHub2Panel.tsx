@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { request } from '../lib/api';
 import { Badge, EmptyState } from './ui';
 
 interface MarketplaceAppRow {
@@ -51,12 +51,12 @@ export function MarketplaceHub2Panel() {
 
   const { data: catalogData } = useQuery<{ apps?: MarketplaceAppRow[] }>({
     queryKey: ['marketplace', 'v2', 'catalog'],
-    queryFn: () => api('/api/marketplace/v2/catalog'),
+    queryFn: () => request('/api/marketplace/v2/catalog'),
   });
 
   const { data: installedData } = useQuery<{ installations?: InstallationRow[] }>({
     queryKey: ['marketplace', 'installations'],
-    queryFn: () => api('/api/marketplace/installations'),
+    queryFn: () => request('/api/marketplace/installations'),
   });
 
   const apps = (catalogData?.apps || []).filter((a) => {
@@ -71,7 +71,7 @@ export function MarketplaceHub2Panel() {
   const handleValidateManifest = async () => {
     try {
       const parsed = JSON.parse(manifestJson);
-      const res = await api<{ valid: boolean; errors: Array<{ code: string; message: string }> }>(
+      const res = await request<{ valid: boolean; errors: Array<{ code: string; message: string }> }>(
         '/api/developer/manifests/validate',
         { method: 'POST', body: JSON.stringify({ manifest: parsed }) }
       );
@@ -82,7 +82,7 @@ export function MarketplaceHub2Panel() {
   };
 
   const handleUninstall = async (installationId: string) => {
-    await api('/api/marketplace/uninstall', { method: 'POST', body: JSON.stringify({ installationId }) });
+    await request('/api/marketplace/uninstall', { method: 'POST', body: JSON.stringify({ installationId }) });
     await queryClient.invalidateQueries({ queryKey: ['marketplace'] });
   };
 
@@ -122,7 +122,7 @@ export function MarketplaceHub2Panel() {
             </select>
           </div>
           {apps.length === 0 ? (
-            <EmptyState icon="grid" title="No published marketplace apps yet" body="Approved and published applications appear here with explicit scope declarations." />
+            <EmptyState icon="grid" title="No published marketplace apps yet" text="Approved and published applications appear here with explicit scope declarations." />
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 10 }}>
               {apps.map((app) => (
@@ -144,7 +144,7 @@ export function MarketplaceHub2Panel() {
 
       {tab === 'installed' && (
         installations.length === 0 ? (
-          <EmptyState icon="plug" title="No applications installed" body="Install an approved Marketplace application to manage its scopes and version here." />
+          <EmptyState icon="plug" title="No applications installed" text="Install an approved Marketplace application to manage its scopes and version here." />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12 }}>
             {installations.map((inst) => (

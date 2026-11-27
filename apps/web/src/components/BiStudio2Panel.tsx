@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { request } from '../lib/api';
 import { Badge, EmptyState } from './ui';
 
 interface CurrencyBucket {
@@ -40,18 +40,18 @@ export function BiStudio2Panel() {
 
   const { data: overviewData } = useQuery<OverviewPayload>({
     queryKey: ['reports', 'v2', 'overview'],
-    queryFn: () => api('/api/reports/v2/overview'),
+    queryFn: () => request('/api/reports/v2/overview'),
   });
 
   const { data: catalogData } = useQuery<{ metrics?: MetricDef[] }>({
     queryKey: ['reports', 'v2', 'catalog'],
-    queryFn: () => api('/api/reports/v2/catalog'),
+    queryFn: () => request('/api/reports/v2/catalog'),
   });
 
   const runCustomQuery = async () => {
     setQueryError(null);
     try {
-      const res = await api<{ rows?: Array<Record<string, unknown>> }>('/api/reports/v2/query', {
+      const res = await request<{ rows?: Array<Record<string, unknown>> }>('/api/reports/v2/query', {
         method: 'POST',
         body: JSON.stringify({ dataSource, dimensions: dimension ? [dimension] : [], measures: ['count'] }),
       });
@@ -136,7 +136,7 @@ export function BiStudio2Panel() {
           {queryError && <div style={{ color: '#ef4444' }}>{queryError}</div>}
           {queryRows && (
             queryRows.length === 0 ? (
-              <EmptyState icon="bar-chart" title="No matching rows" body="No records matched the selected allowlisted dimension." />
+              <EmptyState icon="bar-chart" title="No matching rows" text="No records matched the selected allowlisted dimension." />
             ) : (
               <pre style={{ margin: 0, padding: 10, borderRadius: 8, background: 'var(--bg)', overflowX: 'auto' }}>
                 {JSON.stringify(queryRows, null, 2)}

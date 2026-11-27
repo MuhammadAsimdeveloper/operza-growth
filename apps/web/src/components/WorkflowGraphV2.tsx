@@ -13,7 +13,7 @@ import {
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { request } from '../lib/api';
 import { Badge } from './ui';
 import type { Workflow, WorkflowRun } from '../lib/types';
 
@@ -123,7 +123,7 @@ export function WorkflowGraphV2({
 
   const { data: registryData } = useQuery<{ nodes?: RegistryNode[] }>({
     queryKey: ['workflows', 'v2', 'registry'],
-    queryFn: () => api<{ nodes?: RegistryNode[] }>('/api/workflows/v2/registry'),
+    queryFn: () => request<{ nodes?: RegistryNode[] }>('/api/workflows/v2/registry'),
   });
 
   const registryNodes = registryData?.nodes || [];
@@ -283,7 +283,9 @@ export function WorkflowGraphV2({
   const stepStatusMap = useMemo(() => {
     const map = new Map<string, string>();
     for (const s of activeRun?.steps || []) {
-      map.set(s.nodeId, s.status);
+      const stepRec = s as unknown as { nodeId?: string; actionId?: string; stepId?: string };
+      const id = stepRec.nodeId || stepRec.actionId || stepRec.stepId;
+      if (id) map.set(id, s.status);
     }
     return map;
   }, [activeRun]);
@@ -315,7 +317,7 @@ export function WorkflowGraphV2({
         label: (n.data as Record<string, unknown>)?.rawLabel || String((n.data as Record<string, unknown>)?.label || n.id),
         config: ((n.data as Record<string, unknown>)?.config as Record<string, unknown>) || {},
       }));
-    const res = await api<{ valid: boolean; errors: ValidationIssue[]; warnings: ValidationIssue[] }>(
+    const res = await request<{ valid: boolean; errors: ValidationIssue[]; warnings: ValidationIssue[] }>(
       '/api/workflows/v2/validate',
       { method: 'POST', body: JSON.stringify({ nodes: payloadNodes, edges, trigger: workflow.trigger }) }
     );
@@ -331,7 +333,7 @@ export function WorkflowGraphV2({
         label: (n.data as Record<string, unknown>)?.rawLabel || String((n.data as Record<string, unknown>)?.label || n.id),
         config: ((n.data as Record<string, unknown>)?.config as Record<string, unknown>) || {},
       }));
-    await api(`/api/workflows/v2/${workflow.id}/draft`, {
+    await request(`/api/workflows/v2/${workflow.id}/draft`, {
       method: 'POST',
       body: JSON.stringify({ nodes: payloadNodes, graphJson: { nodes: payloadNodes, edges } }),
     });

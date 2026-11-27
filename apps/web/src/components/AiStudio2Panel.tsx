@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../lib/api';
+import { request } from '../lib/api';
 import { Badge, EmptyState } from './ui';
 
 interface ModelEntry {
@@ -45,27 +45,27 @@ export function AiStudio2Panel() {
 
   const { data: modelsData } = useQuery<{ models?: ModelEntry[] }>({
     queryKey: ['ai', 'v2', 'models'],
-    queryFn: () => api('/api/ai/v2/models'),
+    queryFn: () => request('/api/ai/v2/models'),
   });
 
   const { data: specialistsData } = useQuery<{ specialists?: SpecialistEntry[] }>({
     queryKey: ['ai', 'v2', 'specialists'],
-    queryFn: () => api('/api/ai/v2/specialists'),
+    queryFn: () => request('/api/ai/v2/specialists'),
   });
 
   const { data: agentsData } = useQuery<{ agents?: AgentRow[] }>({
     queryKey: ['ai', 'v2', 'agents'],
-    queryFn: () => api('/api/ai/v2/agents'),
+    queryFn: () => request('/api/ai/v2/agents'),
   });
 
   const { data: runsData } = useQuery<{ runs?: RunRow[] }>({
     queryKey: ['ai', 'v2', 'runs'],
-    queryFn: () => api('/api/ai/v2/runs'),
+    queryFn: () => request('/api/ai/v2/runs'),
   });
 
   const handleCreateAgent = async () => {
     if (!newAgentName.trim()) return;
-    await api('/api/ai/v2/agents', {
+    await request('/api/ai/v2/agents', {
       method: 'POST',
       body: JSON.stringify({ name: newAgentName.trim(), persona: 'executive', model: 'operza-deterministic-v1' }),
     });
@@ -74,7 +74,7 @@ export function AiStudio2Panel() {
   };
 
   const handleRunEval = async () => {
-    const res = await api<{ evalResult?: { passed: boolean; passedCases: number; totalCases: number } }>('/api/ai/v2/evals/run', {
+    const res = await request<{ evalResult?: { passed: boolean; passedCases: number; totalCases: number } }>('/api/ai/v2/evals/run', {
       method: 'POST',
       body: '{}',
     });
@@ -142,7 +142,7 @@ export function AiStudio2Panel() {
 
       {tab === 'runs' && (
         (runsData?.runs || []).length === 0 ? (
-          <EmptyState icon="sparkles" title="No AI 2.0 runs recorded" body="Agent runs, step plans, and token cost estimates appear here." />
+          <EmptyState icon="sparkles" title="No AI 2.0 runs recorded" text="Agent runs, step plans, and token cost estimates appear here." />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12 }}>
             {(runsData?.runs || []).map((r) => (
