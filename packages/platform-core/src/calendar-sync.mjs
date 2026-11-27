@@ -574,17 +574,24 @@ export async function executeCalendarSync({
   }
 
   // 1. Verify provider access
-  const verification = await adapter.verify({
-    accessToken: token,
-    refreshToken,
-    clientId: credentials.clientId,
-    clientSecret: credentials.clientSecret,
-    fetchFn
-  });
+  let verification;
+  try {
+    verification = await adapter.verify({
+      accessToken: token,
+      refreshToken,
+      clientId: credentials.clientId,
+      clientSecret: credentials.clientSecret,
+      fetchFn
+    });
+  } catch (err) {
+    throw Object.assign(new Error(`Provider verification failed: ${err?.message || 'Verification error'}`), {
+      code: err?.code || 'CALENDAR_AUTH_FAILED'
+    });
+  }
 
-  if (!verification.verified) {
-    throw Object.assign(new Error(`Provider verification failed: ${verification.code}`), {
-      code: verification.code || 'CALENDAR_AUTH_FAILED'
+  if (!verification?.verified) {
+    throw Object.assign(new Error(`Provider verification failed: ${verification?.code || 'CALENDAR_AUTH_FAILED'}`), {
+      code: verification?.code || 'CALENDAR_AUTH_FAILED'
     });
   }
 

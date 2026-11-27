@@ -238,10 +238,10 @@ test('Phase 2B: Independent Security Verification Suite', async (t) => {
     const responses = await Promise.all(requests);
     const statuses = responses.map(r => r.status);
     const successCount = statuses.filter(s => s === 200).length;
-    const failCount = statuses.filter(s => s === 400).length;
+    const failCount = statuses.filter(s => s === 400 || s === 429).length;
 
     assert.equal(successCount, 1, 'Exactly one concurrent verification must succeed');
-    assert.equal(failCount, 9, 'All other concurrent verification attempts must fail');
+    assert.equal(failCount, 9, 'All other concurrent verification attempts must fail (400 or rate-limited 429)');
   });
 
   await t.test('3.2 Missing delivery provider does NOT return or expose secret', async () => {

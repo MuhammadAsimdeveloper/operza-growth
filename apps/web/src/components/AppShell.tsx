@@ -3,7 +3,7 @@ import { api } from '../lib/api';
 import { CopilotHub } from './CopilotHub';
 import { OnboardingTour } from './OnboardingTour';
 import { CommandPalette } from './CommandPalette';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Component, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Icon } from './Icon';
 import { Avatar } from './ui';
@@ -1284,6 +1284,43 @@ export function AppShell({ children }: { children?: ReactNode }) {
     setNavOpen(false);
   }, [location.pathname]);
 
+class RouteErrorBoundary extends Component<
+  { children: ReactNode },
+  { hasError: boolean; message: string }
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, message: error?.message || 'Unexpected render error' };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('RouteErrorBoundary caught error:', error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div role="alert" style={{ padding: 24, margin: 24, borderRadius: 12, border: '1px solid var(--red, #ef4444)', background: 'var(--surface)' }}>
+          <h2 style={{ margin: '0 0 8px', fontSize: 18 }}>Something went wrong loading this view</h2>
+          <p style={{ margin: '0 0 16px', color: 'var(--text-2)', fontSize: 14 }}>{this.state.message}</p>
+          <button
+            type="button"
+            className="btn btn--secondary"
+            onClick={() => this.setState({ hasError: false, message: '' })}
+          >
+            Try Again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
   return (
     <div className={["shell", navOpen && "is-nav-open"].filter(Boolean).join(" ")}>
       <a href="#main-content" className="skip-link">Skip to main content</a>
@@ -1293,7 +1330,7 @@ export function AppShell({ children }: { children?: ReactNode }) {
       <div className="main">
         <TopBar onOpenNav={() => setNavOpen(true)} onOpenAppsLauncher={() => setAppsLauncherOpen(true)} />
         <div id="main-content" tabIndex={-1}>
-          {children ?? <Outlet />}
+          <RouteErrorBoundary>{children ?? <Outlet />}</RouteErrorBoundary>
         </div>
         <CopilotHub />
       </div>

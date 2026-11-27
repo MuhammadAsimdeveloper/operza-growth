@@ -227,13 +227,15 @@ test('Unified executeCalendarSync handles 2-way sync and prevents unverified con
       return { ok: false, status: 404, json: async () => ({}) };
     };
 
+    const futureStart = new Date(Date.now() + 86400000).toISOString();
+    const futureEnd = new Date(Date.now() + 88200000).toISOString();
     const appointments = [
       {
         id: 'appt_local_1',
         calendarId: 'cal_1',
         title: 'Strategy Consultation',
-        startsAt: '2026-11-26T15:00:00Z',
-        endsAt: '2026-11-26T15:30:00Z',
+        startsAt: futureStart,
+        endsAt: futureEnd,
         status: 'confirmed'
       }
     ];

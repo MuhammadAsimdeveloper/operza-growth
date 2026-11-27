@@ -20,7 +20,7 @@ function isRtlText(text: string): boolean {
 function getActiveModuleName(pathname: string): { label: string; path: string } {
   if (pathname.startsWith('/websites')) return { label: 'Hosted Websites & CMS', path: '/websites' };
   if (pathname.startsWith('/funnels')) return { label: 'Funnels & Checkouts', path: '/funnels' };
-  if (pathname.startsWith('/workflows')) return { label: 'Visual Workflows (n8n Engine)', path: '/workflows' };
+  if (pathname.startsWith('/workflows')) return { label: 'Visual Workflows', path: '/workflows' };
   if (pathname.startsWith('/contacts')) return { label: 'Contacts & CRM', path: '/contacts' };
   if (pathname.startsWith('/conversations')) return { label: 'Conversations & Inboxes', path: '/conversations' };
   if (pathname.startsWith('/phone')) return { label: 'WebRTC Telephony & Softphone', path: '/phone' };
@@ -558,8 +558,9 @@ export function CopilotHub() {
           >
             <Icon name="sparkles" size={16} />
           </div>
-          <span style={{ fontWeight: 650, fontSize: 13.5 }}>Operza Copilot</span>
+          <span className="copilot-launcher__text" style={{ fontWeight: 650, fontSize: 13.5 }}>Operza Copilot</span>
           <span
+            className="copilot-launcher__badge"
             style={{
               fontSize: 10,
               fontWeight: 700,

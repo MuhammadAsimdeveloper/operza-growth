@@ -107,10 +107,10 @@ test('Dispatch fails closed when contact-specific consent does not match', async
   assert.equal(result.code, 'CONSENT_REQUIRED');
 });
 
-test('Stripe remains disabled and never reports fake success', async () => {
+test('Stripe fails closed without valid credentials and never reports fake success', async () => {
   const result = await stripePaymentAdapter.dispatch({});
   assert.equal(result.ok, false);
-  assert.equal(result.code, 'PAYMENTS_DISABLED_PENDING_COMPLIANCE');
+  assert.equal(result.code, 'INVALID_CREDENTIAL_FORMAT');
 });
 
 test('registry exposes implemented providers', () => {

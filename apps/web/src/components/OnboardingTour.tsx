@@ -19,7 +19,7 @@ const TOUR_STEPS: TourStep[] = [
       'Operza unifies your entire business technology stack into one cohesive, cloud-native platform. Say goodbye to paying for 10 separate disconnected tools.',
     icon: 'layout',
     highlights: [
-      'Replaces HubSpot, GoHighLevel, n8n, WordPress, and Twilio in one workspace',
+      'Unifies CRM, visual workflows, sites, calendars, and omnichannel messaging in one workspace',
       'True multi-tenancy with sub-account locations and snapshot duplication',
       'Deep AI Copilot Swarm assistance contextually embedded across every screen',
     ],
@@ -41,10 +41,10 @@ const TOUR_STEPS: TourStep[] = [
     ctaText: 'Open Command Center',
   },
   {
-    badge: 'GHL-GRADE CRM',
+    badge: 'UNIFIED CRM',
     title: 'Contact 360 & Pipeline Opportunity Management',
     description:
-      'Complete contact timelines with omnichannel communications, stage-based kanban pipelines, and GoHighLevel-grade quick actions.',
+      'Complete contact timelines with omnichannel communications, stage-based kanban pipelines, and instant quick actions.',
     icon: 'users',
     highlights: [
       'Quick-Action bar on contact profile: 1-click Direct SMS, Rich Email, and Softphone Calling',
@@ -55,7 +55,7 @@ const TOUR_STEPS: TourStep[] = [
     ctaText: 'View Contacts',
   },
   {
-    badge: 'N8N-GRADE AUTOMATION',
+    badge: 'DURABLE AUTOMATION',
     title: 'Visual 2D Nodal Workflows & Execution Inspector',
     description:
       'Design, inspect, and dry-run complex multi-step automations on an infinite 2D canvas with live step execution telemetry.',
@@ -72,7 +72,7 @@ const TOUR_STEPS: TourStep[] = [
     badge: 'TRUE HOSTING & CMS',
     title: 'Multi-Page Sites, Custom Domains & Static Exports',
     description:
-      'Build WordPress & GHL-grade responsive websites with live DNS verification and 1-click static export packs for true cloud hosting.',
+      'Build responsive multi-page websites with live DNS verification and 1-click static export packs for true cloud hosting.',
     icon: 'globe',
     highlights: [
       'Live DNS record checker (A record, CNAME, and TXT verification challenge)',

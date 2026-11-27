@@ -31,6 +31,38 @@
       "passwordHash": "19b22109d9d8f727affb0e36270fa14b:e17eb438926ee76136eca3f42df97c531bd171e22b77b4c6b20b71d63746bfd5232a000184d61a8ae3c46a25d5621c9931e73337d8cac0e9352dea921159ca0b",
       "status": "active",
       "createdAt": "2026-11-08T09:45:09.681Z"
+    },
+    {
+      "id": "073eb7d6-61f3-4a63-8036-0185b291c387",
+      "name": "Stage 8 Auditor",
+      "email": "stage8_audit_1795788560836@operza.io",
+      "passwordHash": "4747ee792682ad400e6e1c3f84a54297:16347cd2ba637c16fbd16902b7b6d48466c5d8630bf039eddb0105d1456d49cbb1d70577700351a96598ab9b6d09b74560202ddd420edae0eade868fcdd88b32",
+      "status": "active",
+      "createdAt": "2026-11-27T14:09:25.251Z"
+    },
+    {
+      "id": "70ed7aa9-b5d0-4112-8286-124efe4d6cac",
+      "name": "Stage 8 Auditor",
+      "email": "stage8_audit_1795788829566@operza.io",
+      "passwordHash": "450c9e2f575aaaa250f09c00dba640ec:420ed8d6150851e2a88e145b1f4f7fd5f734317c03a0807f95fb223efa96509928a3ccfd0f66e5faf361848a4ec324b8ab8ce876852c13baa73e0efe09159b4c",
+      "status": "active",
+      "createdAt": "2026-11-27T14:13:52.605Z"
+    },
+    {
+      "id": "2f30db8a-36fe-4f2e-a1db-9e3b05dc2a20",
+      "name": "Stage 8 Auditor",
+      "email": "stage8_audit_1795795287550@operza.io",
+      "passwordHash": "920b5c719c8167f5d3404c19de13a06f:711c549f61757975265056270c3b72643f243c7fb5498a241add7ea5952faa13573a4ba9b776b4d27fd453aefcdf0f11ddd0ccb7dedd0e91b473667dfb52702c",
+      "status": "active",
+      "createdAt": "2026-11-27T16:01:29.957Z"
+    },
+    {
+      "id": "3226e33a-40fa-4da3-b304-0189ec3f1a5b",
+      "name": "Stage 8 Auditor",
+      "email": "stage8_audit_1795795370345@operza.io",
+      "passwordHash": "e97aced2f21aa95d2c29b53f0c376236:3bf957fc689e976e8b1abe536eb7d350e28d2e2245fe70a5ea8bd1cfa75cbbe2f192676a6581c86949f5ccca0de03d19f75e7403b688fc305b81cd9207fb8022",
+      "status": "active",
+      "createdAt": "2026-11-27T16:02:52.495Z"
     }
   ],
   "agencies": [
@@ -66,6 +98,34 @@
       "slug": "stream_tester_1794131109579",
       "status": "active",
       "createdAt": "2026-11-08T09:45:09.681Z"
+    },
+    {
+      "id": "ffd36a76-b450-4509-ba71-6b869916d308",
+      "name": "Stage 8 Audit Agency",
+      "slug": "stage8_audit_1795788560836",
+      "status": "active",
+      "createdAt": "2026-11-27T14:09:25.251Z"
+    },
+    {
+      "id": "9c252658-8d08-4b70-96c5-801b60849928",
+      "name": "Stage 8 Audit Agency",
+      "slug": "stage8_audit_1795788829566",
+      "status": "active",
+      "createdAt": "2026-11-27T14:13:52.605Z"
+    },
+    {
+      "id": "29483d01-09d7-48e8-a3d4-c064e6bd9218",
+      "name": "Stage 8 Audit Agency",
+      "slug": "stage8_audit_1795795287550",
+      "status": "active",
+      "createdAt": "2026-11-27T16:01:29.957Z"
+    },
+    {
+      "id": "025aee33-3c70-4187-b8d7-6695eba69964",
+      "name": "Stage 8 Audit Agency",
+      "slug": "stage8_audit_1795795370345",
+      "status": "active",
+      "createdAt": "2026-11-27T16:02:52.495Z"
     }
   ],
   "locations": [
@@ -100,6 +160,38 @@
       "timezone": "UTC",
       "status": "active",
       "createdAt": "2026-11-08T09:45:09.681Z"
+    },
+    {
+      "id": "84cb254d-bfa0-4741-8e86-c1ba4eeddb7a",
+      "agencyId": "ffd36a76-b450-4509-ba71-6b869916d308",
+      "name": "Main Workspace",
+      "timezone": "UTC",
+      "status": "active",
+      "createdAt": "2026-11-27T14:09:25.251Z"
+    },
+    {
+      "id": "2bff9e03-6898-4272-b245-e88b1f992d1a",
+      "agencyId": "9c252658-8d08-4b70-96c5-801b60849928",
+      "name": "Main Workspace",
+      "timezone": "UTC",
+      "status": "active",
+      "createdAt": "2026-11-27T14:13:52.605Z"
+    },
+    {
+      "id": "fccf76ca-9b39-4530-9d2b-726133c0ee01",
+      "agencyId": "29483d01-09d7-48e8-a3d4-c064e6bd9218",
+      "name": "Main Workspace",
+      "timezone": "UTC",
+      "status": "active",
+      "createdAt": "2026-11-27T16:01:29.957Z"
+    },
+    {
+      "id": "1d622703-f1c6-416e-ae50-ef75292ffb96",
+      "agencyId": "025aee33-3c70-4187-b8d7-6695eba69964",
+      "name": "Main Workspace",
+      "timezone": "UTC",
+      "status": "active",
+      "createdAt": "2026-11-27T16:02:52.495Z"
     }
   ],
   "memberships": [
@@ -134,6 +226,38 @@
       "role": "owner",
       "status": "active",
       "createdAt": "2026-11-08T09:45:09.681Z"
+    },
+    {
+      "id": "bff0e095-23ed-4710-954b-2f884d2f28a6",
+      "agencyId": "ffd36a76-b450-4509-ba71-6b869916d308",
+      "userId": "073eb7d6-61f3-4a63-8036-0185b291c387",
+      "role": "owner",
+      "status": "active",
+      "createdAt": "2026-11-27T14:09:25.251Z"
+    },
+    {
+      "id": "6c533e98-982a-4755-9f01-c78d70ef474c",
+      "agencyId": "9c252658-8d08-4b70-96c5-801b60849928",
+      "userId": "70ed7aa9-b5d0-4112-8286-124efe4d6cac",
+      "role": "owner",
+      "status": "active",
+      "createdAt": "2026-11-27T14:13:52.605Z"
+    },
+    {
+      "id": "2f953fba-26e8-4f0c-8489-761e1cbe074e",
+      "agencyId": "29483d01-09d7-48e8-a3d4-c064e6bd9218",
+      "userId": "2f30db8a-36fe-4f2e-a1db-9e3b05dc2a20",
+      "role": "owner",
+      "status": "active",
+      "createdAt": "2026-11-27T16:01:29.957Z"
+    },
+    {
+      "id": "0986f0c0-3a0f-4c9b-9366-659faaa4fb7d",
+      "agencyId": "025aee33-3c70-4187-b8d7-6695eba69964",
+      "userId": "3226e33a-40fa-4da3-b304-0189ec3f1a5b",
+      "role": "owner",
+      "status": "active",
+      "createdAt": "2026-11-27T16:02:52.495Z"
     }
   ],
   "invitations": [],
@@ -201,6 +325,38 @@
       "userId": "8aa05a3c-0078-4c16-b75a-2869c0adb5ac",
       "agencyId": "fd76a37d-afd6-4cd0-b5e7-ce76a53bf0de",
       "expiresAt": 1794174309682
+    },
+    {
+      "id": "bdcc0167-97e1-4de8-8883-a6f09e956f01",
+      "tokenHash": "3f14af0cd63bf91d6c677b38b19d89d94f87405d064fb4c55e056ffca3264679",
+      "csrfHash": "682c2e8ee5bcef869a711d75bff0c7c9f02c4200a573bd998319a7a735440ccb",
+      "userId": "073eb7d6-61f3-4a63-8036-0185b291c387",
+      "agencyId": "ffd36a76-b450-4509-ba71-6b869916d308",
+      "expiresAt": 1795831765251
+    },
+    {
+      "id": "c28d7210-7b30-4753-927b-606e72d85ffd",
+      "tokenHash": "13f806856bc6cbcfba746fa7398eea76e58c57e7984c411ca01e60a93cc6906b",
+      "csrfHash": "cf38a96507eb587bd3f461328f40f2b9a41e7574cb94cc48ee2a4fb0e7f37e33",
+      "userId": "70ed7aa9-b5d0-4112-8286-124efe4d6cac",
+      "agencyId": "9c252658-8d08-4b70-96c5-801b60849928",
+      "expiresAt": 1795832032606
+    },
+    {
+      "id": "543b7b0a-5564-40a2-b8ef-abfef9521845",
+      "tokenHash": "7a9f0703c5a53ca2b3f001531a125c8d5afd66170571b5e6f563e9df08cf6a3c",
+      "csrfHash": "736bb37ec48f97b1d40abdbdc82947ed8cb1692cb2e6bb06f46187a3baef0c2e",
+      "userId": "2f30db8a-36fe-4f2e-a1db-9e3b05dc2a20",
+      "agencyId": "29483d01-09d7-48e8-a3d4-c064e6bd9218",
+      "expiresAt": 1795838489958
+    },
+    {
+      "id": "9fd492ce-5244-48a9-9ff2-4e141779e6d2",
+      "tokenHash": "e531cd510fdd15c4110a3a1a9327d8c60481b4e5d15b3af293a8d8f2013826e3",
+      "csrfHash": "623f7f06104f481a6a575e228d6acbeebd0bf3b2299fe7bfc71d520e2a830cc9",
+      "userId": "3226e33a-40fa-4da3-b304-0189ec3f1a5b",
+      "agencyId": "025aee33-3c70-4187-b8d7-6695eba69964",
+      "expiresAt": 1795838572495
     }
   ],
   "records": {
@@ -270,6 +426,70 @@
         "status": "active",
         "description": "Primary customer acquisition pipeline",
         "createdAt": "2026-11-08T09:45:09.681Z"
+      },
+      {
+        "id": "ed23c140-a8d1-4ccd-b0d5-49602edb6500",
+        "agencyId": "ffd36a76-b450-4509-ba71-6b869916d308",
+        "locationId": "84cb254d-bfa0-4741-8e86-c1ba4eeddb7a",
+        "name": "Lead Pipeline",
+        "stages": [
+          "New Inbound Lead",
+          "Discovery Call Booked",
+          "Proposal Sent",
+          "Won",
+          "Lost"
+        ],
+        "status": "active",
+        "description": "Primary customer acquisition pipeline",
+        "createdAt": "2026-11-27T14:09:25.251Z"
+      },
+      {
+        "id": "a8559393-f087-4d62-a17d-0802b518719f",
+        "agencyId": "9c252658-8d08-4b70-96c5-801b60849928",
+        "locationId": "2bff9e03-6898-4272-b245-e88b1f992d1a",
+        "name": "Lead Pipeline",
+        "stages": [
+          "New Inbound Lead",
+          "Discovery Call Booked",
+          "Proposal Sent",
+          "Won",
+          "Lost"
+        ],
+        "status": "active",
+        "description": "Primary customer acquisition pipeline",
+        "createdAt": "2026-11-27T14:13:52.605Z"
+      },
+      {
+        "id": "a1bcb79c-5ff6-45f9-ba69-3b7ed25a38ac",
+        "agencyId": "29483d01-09d7-48e8-a3d4-c064e6bd9218",
+        "locationId": "fccf76ca-9b39-4530-9d2b-726133c0ee01",
+        "name": "Lead Pipeline",
+        "stages": [
+          "New Inbound Lead",
+          "Discovery Call Booked",
+          "Proposal Sent",
+          "Won",
+          "Lost"
+        ],
+        "status": "active",
+        "description": "Primary customer acquisition pipeline",
+        "createdAt": "2026-11-27T16:01:29.957Z"
+      },
+      {
+        "id": "5fb576e6-e8ad-46c0-bc4f-59f61eabbc19",
+        "agencyId": "025aee33-3c70-4187-b8d7-6695eba69964",
+        "locationId": "1d622703-f1c6-416e-ae50-ef75292ffb96",
+        "name": "Lead Pipeline",
+        "stages": [
+          "New Inbound Lead",
+          "Discovery Call Booked",
+          "Proposal Sent",
+          "Won",
+          "Lost"
+        ],
+        "status": "active",
+        "description": "Primary customer acquisition pipeline",
+        "createdAt": "2026-11-27T16:02:52.495Z"
       }
     ],
     "customFields": [],
@@ -477,6 +697,206 @@
           }
         ],
         "createdAt": "2026-11-08T09:45:09.681Z"
+      },
+      {
+        "id": "681dccb2-eae5-4d2e-87fa-a4b0d693fe0e",
+        "agencyId": "ffd36a76-b450-4509-ba71-6b869916d308",
+        "locationId": "84cb254d-bfa0-4741-8e86-c1ba4eeddb7a",
+        "name": "Automated Lead Qualification & AI Scoring",
+        "description": "Auto-scores new leads with Copilot AI, applies qualification tags, and creates team follow-up tasks.",
+        "status": "published",
+        "triggerType": "form",
+        "triggerConfig": {
+          "formName": "contact-us"
+        },
+        "nodes": [
+          {
+            "id": "node-ai-score",
+            "name": "AI Lead Evaluation",
+            "type": "ai_agent",
+            "config": {
+              "prompt": "Analyze lead data and score purchase intent from 1 to 100."
+            }
+          },
+          {
+            "id": "node-tag",
+            "name": "Apply High-Intent Tag",
+            "type": "tag",
+            "config": {
+              "tag": "ai-qualified"
+            }
+          },
+          {
+            "id": "node-task",
+            "name": "Create Priority Outreach Task",
+            "type": "task",
+            "config": {
+              "title": "High-Intent Lead Review",
+              "priority": "high",
+              "dueInDays": 1
+            }
+          },
+          {
+            "id": "node-approval",
+            "name": "Executive Proposal Gate",
+            "type": "condition",
+            "requiresApproval": true,
+            "config": {
+              "message": "Review enterprise proposal before final transmission"
+            }
+          }
+        ],
+        "createdAt": "2026-11-27T14:09:25.251Z"
+      },
+      {
+        "id": "07dc66c8-d1ca-4f6f-96ac-3efdbc84dbd2",
+        "agencyId": "9c252658-8d08-4b70-96c5-801b60849928",
+        "locationId": "2bff9e03-6898-4272-b245-e88b1f992d1a",
+        "name": "Automated Lead Qualification & AI Scoring",
+        "description": "Auto-scores new leads with Copilot AI, applies qualification tags, and creates team follow-up tasks.",
+        "status": "published",
+        "triggerType": "form",
+        "triggerConfig": {
+          "formName": "contact-us"
+        },
+        "nodes": [
+          {
+            "id": "node-ai-score",
+            "name": "AI Lead Evaluation",
+            "type": "ai_agent",
+            "config": {
+              "prompt": "Analyze lead data and score purchase intent from 1 to 100."
+            }
+          },
+          {
+            "id": "node-tag",
+            "name": "Apply High-Intent Tag",
+            "type": "tag",
+            "config": {
+              "tag": "ai-qualified"
+            }
+          },
+          {
+            "id": "node-task",
+            "name": "Create Priority Outreach Task",
+            "type": "task",
+            "config": {
+              "title": "High-Intent Lead Review",
+              "priority": "high",
+              "dueInDays": 1
+            }
+          },
+          {
+            "id": "node-approval",
+            "name": "Executive Proposal Gate",
+            "type": "condition",
+            "requiresApproval": true,
+            "config": {
+              "message": "Review enterprise proposal before final transmission"
+            }
+          }
+        ],
+        "createdAt": "2026-11-27T14:13:52.605Z"
+      },
+      {
+        "id": "0f192d16-f828-4a3d-a375-aa73dd104f8c",
+        "agencyId": "29483d01-09d7-48e8-a3d4-c064e6bd9218",
+        "locationId": "fccf76ca-9b39-4530-9d2b-726133c0ee01",
+        "name": "Automated Lead Qualification & AI Scoring",
+        "description": "Auto-scores new leads with Copilot AI, applies qualification tags, and creates team follow-up tasks.",
+        "status": "published",
+        "triggerType": "form",
+        "triggerConfig": {
+          "formName": "contact-us"
+        },
+        "nodes": [
+          {
+            "id": "node-ai-score",
+            "name": "AI Lead Evaluation",
+            "type": "ai_agent",
+            "config": {
+              "prompt": "Analyze lead data and score purchase intent from 1 to 100."
+            }
+          },
+          {
+            "id": "node-tag",
+            "name": "Apply High-Intent Tag",
+            "type": "tag",
+            "config": {
+              "tag": "ai-qualified"
+            }
+          },
+          {
+            "id": "node-task",
+            "name": "Create Priority Outreach Task",
+            "type": "task",
+            "config": {
+              "title": "High-Intent Lead Review",
+              "priority": "high",
+              "dueInDays": 1
+            }
+          },
+          {
+            "id": "node-approval",
+            "name": "Executive Proposal Gate",
+            "type": "condition",
+            "requiresApproval": true,
+            "config": {
+              "message": "Review enterprise proposal before final transmission"
+            }
+          }
+        ],
+        "createdAt": "2026-11-27T16:01:29.957Z"
+      },
+      {
+        "id": "32ef0131-a3b5-4339-8128-164d7ff31ebf",
+        "agencyId": "025aee33-3c70-4187-b8d7-6695eba69964",
+        "locationId": "1d622703-f1c6-416e-ae50-ef75292ffb96",
+        "name": "Automated Lead Qualification & AI Scoring",
+        "description": "Auto-scores new leads with Copilot AI, applies qualification tags, and creates team follow-up tasks.",
+        "status": "published",
+        "triggerType": "form",
+        "triggerConfig": {
+          "formName": "contact-us"
+        },
+        "nodes": [
+          {
+            "id": "node-ai-score",
+            "name": "AI Lead Evaluation",
+            "type": "ai_agent",
+            "config": {
+              "prompt": "Analyze lead data and score purchase intent from 1 to 100."
+            }
+          },
+          {
+            "id": "node-tag",
+            "name": "Apply High-Intent Tag",
+            "type": "tag",
+            "config": {
+              "tag": "ai-qualified"
+            }
+          },
+          {
+            "id": "node-task",
+            "name": "Create Priority Outreach Task",
+            "type": "task",
+            "config": {
+              "title": "High-Intent Lead Review",
+              "priority": "high",
+              "dueInDays": 1
+            }
+          },
+          {
+            "id": "node-approval",
+            "name": "Executive Proposal Gate",
+            "type": "condition",
+            "requiresApproval": true,
+            "config": {
+              "message": "Review enterprise proposal before final transmission"
+            }
+          }
+        ],
+        "createdAt": "2026-11-27T16:02:52.495Z"
       }
     ],
     "forms": [
@@ -555,6 +975,82 @@
         "submissions": 0,
         "description": "Book your strategy consultation with our growth engineering team.",
         "createdAt": "2026-11-08T09:45:09.681Z"
+      },
+      {
+        "id": "51089376-e092-43ec-b5f4-af277158fa8c",
+        "agencyId": "ffd36a76-b450-4509-ba71-6b869916d308",
+        "locationId": "84cb254d-bfa0-4741-8e86-c1ba4eeddb7a",
+        "name": "Inbound Consultation Request",
+        "publicSlug": "contact-us",
+        "fields": [
+          "firstName",
+          "lastName",
+          "email",
+          "phone",
+          "company",
+          "projectDetails"
+        ],
+        "status": "published",
+        "submissions": 0,
+        "description": "Book your strategy consultation with our growth engineering team.",
+        "createdAt": "2026-11-27T14:09:25.251Z"
+      },
+      {
+        "id": "1111f770-1b5a-4429-ac04-b1f83c4bee59",
+        "agencyId": "9c252658-8d08-4b70-96c5-801b60849928",
+        "locationId": "2bff9e03-6898-4272-b245-e88b1f992d1a",
+        "name": "Inbound Consultation Request",
+        "publicSlug": "contact-us",
+        "fields": [
+          "firstName",
+          "lastName",
+          "email",
+          "phone",
+          "company",
+          "projectDetails"
+        ],
+        "status": "published",
+        "submissions": 0,
+        "description": "Book your strategy consultation with our growth engineering team.",
+        "createdAt": "2026-11-27T14:13:52.605Z"
+      },
+      {
+        "id": "f2ecf583-6031-48ed-8d27-bf0fb903898f",
+        "agencyId": "29483d01-09d7-48e8-a3d4-c064e6bd9218",
+        "locationId": "fccf76ca-9b39-4530-9d2b-726133c0ee01",
+        "name": "Inbound Consultation Request",
+        "publicSlug": "contact-us",
+        "fields": [
+          "firstName",
+          "lastName",
+          "email",
+          "phone",
+          "company",
+          "projectDetails"
+        ],
+        "status": "published",
+        "submissions": 0,
+        "description": "Book your strategy consultation with our growth engineering team.",
+        "createdAt": "2026-11-27T16:01:29.957Z"
+      },
+      {
+        "id": "c6d54c83-8bcb-4b4b-aa50-5cedb5a36bed",
+        "agencyId": "025aee33-3c70-4187-b8d7-6695eba69964",
+        "locationId": "1d622703-f1c6-416e-ae50-ef75292ffb96",
+        "name": "Inbound Consultation Request",
+        "publicSlug": "contact-us",
+        "fields": [
+          "firstName",
+          "lastName",
+          "email",
+          "phone",
+          "company",
+          "projectDetails"
+        ],
+        "status": "published",
+        "submissions": 0,
+        "description": "Book your strategy consultation with our growth engineering team.",
+        "createdAt": "2026-11-27T16:02:52.495Z"
       }
     ],
     "formSubmissions": [],
@@ -1377,6 +1873,166 @@
           }
         ],
         "createdAt": "2026-11-08T09:45:09.681Z"
+      },
+      {
+        "id": "6b8bd44e-68e5-45d0-9fbc-4adcd740ab66",
+        "agencyId": "ffd36a76-b450-4509-ba71-6b869916d308",
+        "locationId": "84cb254d-bfa0-4741-8e86-c1ba4eeddb7a",
+        "name": "Discovery & Strategy Session",
+        "slug": "discovery-strategy",
+        "color": "#6366f1",
+        "durationMin": 30,
+        "description": "30-minute discovery call to evaluate automation requirements and team fit.",
+        "status": "active",
+        "roundRobin": true,
+        "availability": [
+          {
+            "weekday": 1,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 2,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 3,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 4,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 5,
+            "start": "09:00",
+            "end": "17:00"
+          }
+        ],
+        "createdAt": "2026-11-27T14:09:25.251Z"
+      },
+      {
+        "id": "32ffd037-0a05-44be-b0c3-3762fa9d314f",
+        "agencyId": "9c252658-8d08-4b70-96c5-801b60849928",
+        "locationId": "2bff9e03-6898-4272-b245-e88b1f992d1a",
+        "name": "Discovery & Strategy Session",
+        "slug": "discovery-strategy",
+        "color": "#6366f1",
+        "durationMin": 30,
+        "description": "30-minute discovery call to evaluate automation requirements and team fit.",
+        "status": "active",
+        "roundRobin": true,
+        "availability": [
+          {
+            "weekday": 1,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 2,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 3,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 4,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 5,
+            "start": "09:00",
+            "end": "17:00"
+          }
+        ],
+        "createdAt": "2026-11-27T14:13:52.605Z"
+      },
+      {
+        "id": "e75eaa19-3de5-4fcc-a602-99c74b7d5c66",
+        "agencyId": "29483d01-09d7-48e8-a3d4-c064e6bd9218",
+        "locationId": "fccf76ca-9b39-4530-9d2b-726133c0ee01",
+        "name": "Discovery & Strategy Session",
+        "slug": "discovery-strategy",
+        "color": "#6366f1",
+        "durationMin": 30,
+        "description": "30-minute discovery call to evaluate automation requirements and team fit.",
+        "status": "active",
+        "roundRobin": true,
+        "availability": [
+          {
+            "weekday": 1,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 2,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 3,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 4,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 5,
+            "start": "09:00",
+            "end": "17:00"
+          }
+        ],
+        "createdAt": "2026-11-27T16:01:29.957Z"
+      },
+      {
+        "id": "5099ccf3-acdc-46a2-932d-6cd3dae1414a",
+        "agencyId": "025aee33-3c70-4187-b8d7-6695eba69964",
+        "locationId": "1d622703-f1c6-416e-ae50-ef75292ffb96",
+        "name": "Discovery & Strategy Session",
+        "slug": "discovery-strategy",
+        "color": "#6366f1",
+        "durationMin": 30,
+        "description": "30-minute discovery call to evaluate automation requirements and team fit.",
+        "status": "active",
+        "roundRobin": true,
+        "availability": [
+          {
+            "weekday": 1,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 2,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 3,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 4,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 5,
+            "start": "09:00",
+            "end": "17:00"
+          }
+        ],
+        "createdAt": "2026-11-27T16:02:52.495Z"
       }
     ],
     "paymentLinks": [
@@ -1439,6 +2095,66 @@
         "active": true,
         "description": "Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.",
         "createdAt": "2026-11-08T09:45:09.681Z"
+      },
+      {
+        "id": "be230edc-0d38-4aa7-b716-794f8b97fe60",
+        "agencyId": "ffd36a76-b450-4509-ba71-6b869916d308",
+        "locationId": "84cb254d-bfa0-4741-8e86-c1ba4eeddb7a",
+        "name": "Growth Retainer - Starter Pack",
+        "slug": "starter-retainer",
+        "amount": 1500,
+        "currency": "USD",
+        "productIds": [],
+        "visits": 0,
+        "conversions": 0,
+        "active": true,
+        "description": "Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.",
+        "createdAt": "2026-11-27T14:09:25.251Z"
+      },
+      {
+        "id": "60fb132a-ff98-432b-b7c5-371024ff4914",
+        "agencyId": "9c252658-8d08-4b70-96c5-801b60849928",
+        "locationId": "2bff9e03-6898-4272-b245-e88b1f992d1a",
+        "name": "Growth Retainer - Starter Pack",
+        "slug": "starter-retainer",
+        "amount": 1500,
+        "currency": "USD",
+        "productIds": [],
+        "visits": 0,
+        "conversions": 0,
+        "active": true,
+        "description": "Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.",
+        "createdAt": "2026-11-27T14:13:52.605Z"
+      },
+      {
+        "id": "4b631982-2318-4823-bdb7-8fc12e6b2f1d",
+        "agencyId": "29483d01-09d7-48e8-a3d4-c064e6bd9218",
+        "locationId": "fccf76ca-9b39-4530-9d2b-726133c0ee01",
+        "name": "Growth Retainer - Starter Pack",
+        "slug": "starter-retainer",
+        "amount": 1500,
+        "currency": "USD",
+        "productIds": [],
+        "visits": 0,
+        "conversions": 0,
+        "active": true,
+        "description": "Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.",
+        "createdAt": "2026-11-27T16:01:29.957Z"
+      },
+      {
+        "id": "8a58b4ab-8c8c-4a4d-8e96-40c7b4f25ab2",
+        "agencyId": "025aee33-3c70-4187-b8d7-6695eba69964",
+        "locationId": "1d622703-f1c6-416e-ae50-ef75292ffb96",
+        "name": "Growth Retainer - Starter Pack",
+        "slug": "starter-retainer",
+        "amount": 1500,
+        "currency": "USD",
+        "productIds": [],
+        "visits": 0,
+        "conversions": 0,
+        "active": true,
+        "description": "Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.",
+        "createdAt": "2026-11-27T16:02:52.495Z"
       }
     ],
     "orders": [],
@@ -1843,6 +2559,498 @@
           "status": "disconnected",
           "lastSyncAt": null
         }
+      ],
+      "ffd36a76-b450-4509-ba71-6b869916d308": [
+        {
+          "id": "twilio",
+          "name": "Twilio",
+          "category": "Communications",
+          "description": "SMS messaging, phone numbers, and voice call tracking",
+          "icon": "phone",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "sendgrid",
+          "name": "SendGrid",
+          "category": "Communications",
+          "description": "Transactional email delivery and marketing campaigns",
+          "icon": "mail",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "resend",
+          "name": "Resend",
+          "category": "Communications",
+          "description": "Modern developer email delivery with domain verification",
+          "icon": "mail",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "whatsapp",
+          "name": "WhatsApp (Meta Cloud API)",
+          "category": "Communications",
+          "description": "Official WhatsApp business messaging",
+          "icon": "message",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "google_calendar",
+          "name": "Google Calendar",
+          "category": "Calendar",
+          "description": "Two-way appointment synchronization and scheduling",
+          "icon": "calendar",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "outlook",
+          "name": "Microsoft 365 (Outlook & Calendar)",
+          "category": "Communications",
+          "description": "Two-way Outlook mail and calendar sync",
+          "icon": "mail",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "zapier",
+          "name": "Zapier & Webhooks API",
+          "category": "Automation",
+          "description": "Operza exposes a tenant-scoped REST Hook API for Zapier; no external Zapier account is assumed connected.",
+          "icon": "zap",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "stripe",
+          "name": "Stripe",
+          "category": "Payment",
+          "description": "Credit card processing, subscriptions, and payment links",
+          "icon": "credit-card",
+          "connected": false,
+          "accountName": "",
+          "status": "disabled_pending_compliance",
+          "lastSyncAt": null
+        },
+        {
+          "id": "meta_ads",
+          "name": "Meta Ads",
+          "category": "Marketing",
+          "description": "Instant lead sync from Facebook & Instagram lead forms",
+          "icon": "facebook",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "shopify",
+          "name": "Shopify",
+          "category": "Commerce",
+          "description": "E-commerce store orders, customer import, and product sync",
+          "icon": "store",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "slack",
+          "name": "Slack",
+          "category": "Notifications",
+          "description": "Real-time notifications for leads, booked appointments, and deals",
+          "icon": "message",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        }
+      ],
+      "9c252658-8d08-4b70-96c5-801b60849928": [
+        {
+          "id": "twilio",
+          "name": "Twilio",
+          "category": "Communications",
+          "description": "SMS messaging, phone numbers, and voice call tracking",
+          "icon": "phone",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "sendgrid",
+          "name": "SendGrid",
+          "category": "Communications",
+          "description": "Transactional email delivery and marketing campaigns",
+          "icon": "mail",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "resend",
+          "name": "Resend",
+          "category": "Communications",
+          "description": "Modern developer email delivery with domain verification",
+          "icon": "mail",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "whatsapp",
+          "name": "WhatsApp (Meta Cloud API)",
+          "category": "Communications",
+          "description": "Official WhatsApp business messaging",
+          "icon": "message",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "google_calendar",
+          "name": "Google Calendar",
+          "category": "Calendar",
+          "description": "Two-way appointment synchronization and scheduling",
+          "icon": "calendar",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "outlook",
+          "name": "Microsoft 365 (Outlook & Calendar)",
+          "category": "Communications",
+          "description": "Two-way Outlook mail and calendar sync",
+          "icon": "mail",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "zapier",
+          "name": "Zapier & Webhooks API",
+          "category": "Automation",
+          "description": "Operza exposes a tenant-scoped REST Hook API for Zapier; no external Zapier account is assumed connected.",
+          "icon": "zap",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "stripe",
+          "name": "Stripe",
+          "category": "Payment",
+          "description": "Credit card processing, subscriptions, and payment links",
+          "icon": "credit-card",
+          "connected": false,
+          "accountName": "",
+          "status": "disabled_pending_compliance",
+          "lastSyncAt": null
+        },
+        {
+          "id": "meta_ads",
+          "name": "Meta Ads",
+          "category": "Marketing",
+          "description": "Instant lead sync from Facebook & Instagram lead forms",
+          "icon": "facebook",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "shopify",
+          "name": "Shopify",
+          "category": "Commerce",
+          "description": "E-commerce store orders, customer import, and product sync",
+          "icon": "store",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "slack",
+          "name": "Slack",
+          "category": "Notifications",
+          "description": "Real-time notifications for leads, booked appointments, and deals",
+          "icon": "message",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        }
+      ],
+      "29483d01-09d7-48e8-a3d4-c064e6bd9218": [
+        {
+          "id": "twilio",
+          "name": "Twilio",
+          "category": "Communications",
+          "description": "SMS messaging, phone numbers, and voice call tracking",
+          "icon": "phone",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "sendgrid",
+          "name": "SendGrid",
+          "category": "Communications",
+          "description": "Transactional email delivery and marketing campaigns",
+          "icon": "mail",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "resend",
+          "name": "Resend",
+          "category": "Communications",
+          "description": "Modern developer email delivery with domain verification",
+          "icon": "mail",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "whatsapp",
+          "name": "WhatsApp (Meta Cloud API)",
+          "category": "Communications",
+          "description": "Official WhatsApp business messaging",
+          "icon": "message",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "google_calendar",
+          "name": "Google Calendar",
+          "category": "Calendar",
+          "description": "Two-way appointment synchronization and scheduling",
+          "icon": "calendar",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "outlook",
+          "name": "Microsoft 365 (Outlook & Calendar)",
+          "category": "Communications",
+          "description": "Two-way Outlook mail and calendar sync",
+          "icon": "mail",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "zapier",
+          "name": "Zapier & Webhooks API",
+          "category": "Automation",
+          "description": "Operza exposes a tenant-scoped REST Hook API for Zapier; no external Zapier account is assumed connected.",
+          "icon": "zap",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "stripe",
+          "name": "Stripe",
+          "category": "Payment",
+          "description": "Credit card processing, subscriptions, and payment links",
+          "icon": "credit-card",
+          "connected": false,
+          "accountName": "",
+          "status": "disabled_pending_compliance",
+          "lastSyncAt": null
+        },
+        {
+          "id": "meta_ads",
+          "name": "Meta Ads",
+          "category": "Marketing",
+          "description": "Instant lead sync from Facebook & Instagram lead forms",
+          "icon": "facebook",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "shopify",
+          "name": "Shopify",
+          "category": "Commerce",
+          "description": "E-commerce store orders, customer import, and product sync",
+          "icon": "store",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "slack",
+          "name": "Slack",
+          "category": "Notifications",
+          "description": "Real-time notifications for leads, booked appointments, and deals",
+          "icon": "message",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        }
+      ],
+      "025aee33-3c70-4187-b8d7-6695eba69964": [
+        {
+          "id": "twilio",
+          "name": "Twilio",
+          "category": "Communications",
+          "description": "SMS messaging, phone numbers, and voice call tracking",
+          "icon": "phone",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "sendgrid",
+          "name": "SendGrid",
+          "category": "Communications",
+          "description": "Transactional email delivery and marketing campaigns",
+          "icon": "mail",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "resend",
+          "name": "Resend",
+          "category": "Communications",
+          "description": "Modern developer email delivery with domain verification",
+          "icon": "mail",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "whatsapp",
+          "name": "WhatsApp (Meta Cloud API)",
+          "category": "Communications",
+          "description": "Official WhatsApp business messaging",
+          "icon": "message",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "google_calendar",
+          "name": "Google Calendar",
+          "category": "Calendar",
+          "description": "Two-way appointment synchronization and scheduling",
+          "icon": "calendar",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "outlook",
+          "name": "Microsoft 365 (Outlook & Calendar)",
+          "category": "Communications",
+          "description": "Two-way Outlook mail and calendar sync",
+          "icon": "mail",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "zapier",
+          "name": "Zapier & Webhooks API",
+          "category": "Automation",
+          "description": "Operza exposes a tenant-scoped REST Hook API for Zapier; no external Zapier account is assumed connected.",
+          "icon": "zap",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "stripe",
+          "name": "Stripe",
+          "category": "Payment",
+          "description": "Credit card processing, subscriptions, and payment links",
+          "icon": "credit-card",
+          "connected": false,
+          "accountName": "",
+          "status": "disabled_pending_compliance",
+          "lastSyncAt": null
+        },
+        {
+          "id": "meta_ads",
+          "name": "Meta Ads",
+          "category": "Marketing",
+          "description": "Instant lead sync from Facebook & Instagram lead forms",
+          "icon": "facebook",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "shopify",
+          "name": "Shopify",
+          "category": "Commerce",
+          "description": "E-commerce store orders, customer import, and product sync",
+          "icon": "store",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        },
+        {
+          "id": "slack",
+          "name": "Slack",
+          "category": "Notifications",
+          "description": "Real-time notifications for leads, booked appointments, and deals",
+          "icon": "message",
+          "connected": false,
+          "accountName": "",
+          "status": "unconfigured",
+          "lastSyncAt": null
+        }
       ]
     },
     "knowledge": []
@@ -2221,6 +3429,54 @@
         "email": "stream_tester_1794131109579@operza.io"
       },
       "timestamp": "2026-11-08T09:45:09.686Z"
+    },
+    {
+      "id": "ab6c5468-6ff0-4d54-a9aa-ac797f2aed66",
+      "action": "auth.signup",
+      "userId": "073eb7d6-61f3-4a63-8036-0185b291c387",
+      "userName": "Stage 8 Auditor",
+      "agencyId": "ffd36a76-b450-4509-ba71-6b869916d308",
+      "locationId": "84cb254d-bfa0-4741-8e86-c1ba4eeddb7a",
+      "details": {
+        "email": "stage8_audit_1795788560836@operza.io"
+      },
+      "timestamp": "2026-11-27T14:09:25.256Z"
+    },
+    {
+      "id": "a21da3ca-ed9a-4322-a2f2-adda8f205a46",
+      "action": "auth.signup",
+      "userId": "70ed7aa9-b5d0-4112-8286-124efe4d6cac",
+      "userName": "Stage 8 Auditor",
+      "agencyId": "9c252658-8d08-4b70-96c5-801b60849928",
+      "locationId": "2bff9e03-6898-4272-b245-e88b1f992d1a",
+      "details": {
+        "email": "stage8_audit_1795788829566@operza.io"
+      },
+      "timestamp": "2026-11-27T14:13:52.613Z"
+    },
+    {
+      "id": "58783870-ff14-40fa-9bd1-1483d1da35cf",
+      "action": "auth.signup",
+      "userId": "2f30db8a-36fe-4f2e-a1db-9e3b05dc2a20",
+      "userName": "Stage 8 Auditor",
+      "agencyId": "29483d01-09d7-48e8-a3d4-c064e6bd9218",
+      "locationId": "fccf76ca-9b39-4530-9d2b-726133c0ee01",
+      "details": {
+        "email": "stage8_audit_1795795287550@operza.io"
+      },
+      "timestamp": "2026-11-27T16:01:29.962Z"
+    },
+    {
+      "id": "1efea312-97d5-4e44-8143-a87489f98729",
+      "action": "auth.signup",
+      "userId": "3226e33a-40fa-4da3-b304-0189ec3f1a5b",
+      "userName": "Stage 8 Auditor",
+      "agencyId": "025aee33-3c70-4187-b8d7-6695eba69964",
+      "locationId": "1d622703-f1c6-416e-ae50-ef75292ffb96",
+      "details": {
+        "email": "stage8_audit_1795795370345@operza.io"
+      },
+      "timestamp": "2026-11-27T16:02:52.503Z"
     }
   ],
   "mediaFiles": {},

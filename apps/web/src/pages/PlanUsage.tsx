@@ -298,10 +298,15 @@ export default function PlanUsage() {
                         </span>
                       </div>
                       <p className="text-xs text-gray-500">
-                        {p.limits?.workflowRunsPerMonth.toLocaleString()} workflow runs/mo • {p.limits?.copilotRequestsPerMonth.toLocaleString()} Copilot requests/mo
+                        {(p.limits?.workflowRunsPerMonth ?? 0).toLocaleString()} workflow runs/mo • {(p.limits?.copilotRequestsPerMonth ?? 0).toLocaleString()} Copilot requests/mo
                       </p>
                       <ul className="text-xs space-y-1.5 pt-2 text-gray-600 dark:text-gray-300">
-                        {p.features?.map((feat, idx) => (
+                        {(Array.isArray(p.features)
+                          ? p.features
+                          : Object.entries(p.features || {})
+                              .filter(([, enabled]) => Boolean(enabled))
+                              .map(([key]) => key)
+                        ).map((feat, idx) => (
                           <li key={idx} className="flex items-center gap-1.5">
                             <Icon name="check" size={12} className="text-green-500 flex-shrink-0" />
                             {feat}

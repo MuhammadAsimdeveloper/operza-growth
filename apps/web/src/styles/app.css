@@ -3417,6 +3417,27 @@ a {
   height: 720px;
 }
 
+@media (max-width: 640px) {
+  .copilot-container {
+    bottom: 12px;
+    right: 12px;
+  }
+  .copilot-launcher {
+    padding: 10px;
+  }
+  .copilot-launcher__text,
+  .copilot-launcher__badge {
+    display: none;
+  }
+  .copilot-panel {
+    width: calc(100vw - 24px);
+    height: min(75vh, 520px);
+  }
+  #main-content {
+    padding-bottom: 76px;
+  }
+}
+
 /* ==========================================================================
    ATLAS ANIMATION ENGINE & HIGH-TECH DARK MODE POLISH
    ========================================================================== */

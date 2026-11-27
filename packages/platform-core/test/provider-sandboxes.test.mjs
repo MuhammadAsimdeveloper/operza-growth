@@ -15,18 +15,18 @@ import {
  * Verifies API key formats, webhook signatures, mock isolation, and sandbox contracts.
  */
 
-test('Stripe Sandbox Contract: Disabled pending compliance without simulated success', async () => {
+test('Stripe Sandbox Contract: Fails closed on invalid credentials without simulated success', async () => {
   // Test that Stripe strictly fails closed and never reports fake simulation
   const check = await stripePaymentAdapter.verify({ secret: 'sk_test_mock' });
   assert.equal(check.verified, false);
-  assert.equal(check.code, 'PAYMENTS_DISABLED_PENDING_COMPLIANCE');
+  assert.equal(check.code, 'INVALID_CREDENTIAL_FORMAT');
 
   const dispatch = await stripePaymentAdapter.dispatch({
     secret: 'sk_test_mock',
     payload: { amountCents: 4900 }
   });
   assert.equal(dispatch.ok, false);
-  assert.equal(dispatch.code, 'PAYMENTS_DISABLED_PENDING_COMPLIANCE');
+  assert.equal(dispatch.code, 'INVALID_CREDENTIAL_FORMAT');
 });
 
 test('Stripe Webhook Signature Verification Contract', () => {
