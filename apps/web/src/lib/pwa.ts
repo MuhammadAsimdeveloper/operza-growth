@@ -1,5 +1,5 @@
 /**
- * Phase 7 — PWA Registration & Tenant-Safe Cache Purge Helper
+ * PWA Registration, Online Status & Tenant-Safe Cache Purge Helper
  */
 
 export async function registerOperzaServiceWorker(): Promise<void> {
@@ -18,6 +18,18 @@ export async function purgePwaTenantCaches(): Promise<void> {
   }
   if ('caches' in window) {
     const keys = await caches.keys();
-    await Promise.all(keys.map((k) => caches.delete(k)));
+    await Promise.all(keys.filter((k) => k.startsWith('operza-')).map((k) => caches.delete(k)));
   }
+}
+
+export function subscribeOnlineStatus(onChange: (online: boolean) => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const handleOnline = () => onChange(true);
+  const handleOffline = () => onChange(false);
+  window.addEventListener('online', handleOnline);
+  window.addEventListener('offline', handleOffline);
+  return () => {
+    window.removeEventListener('online', handleOnline);
+    window.removeEventListener('offline', handleOffline);
+  };
 }

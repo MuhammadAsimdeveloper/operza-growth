@@ -13,6 +13,7 @@ import { useStore } from '../lib/store';
 import { useContacts, useConversations, useOpportunities } from '../hooks/useWorkspaceData';
 import { relative } from '../lib/format';
 import { SEO } from './SEO';
+import { subscribeOnlineStatus } from '../lib/pwa';
 
 interface NavEntry {
   to: string;
@@ -1275,15 +1276,6 @@ function TopBar({ onOpenNav, onOpenAppsLauncher }: { onOpenNav: () => void; onOp
   );
 }
 
-export function AppShell({ children }: { children?: ReactNode }) {
-  const [navOpen, setNavOpen] = useState(false);
-  const [appsLauncherOpen, setAppsLauncherOpen] = useState(false);
-  const location = useLocation();
-
-  useEffect(() => {
-    setNavOpen(false);
-  }, [location.pathname]);
-
 class RouteErrorBoundary extends Component<
   { children: ReactNode },
   { hasError: boolean; message: string }
@@ -1321,6 +1313,27 @@ class RouteErrorBoundary extends Component<
   }
 }
 
+export function AppShell({ children }: { children?: ReactNode }) {
+  const [navOpen, setNavOpen] = useState(false);
+  const [appsLauncherOpen, setAppsLauncherOpen] = useState(false);
+  const [isOnline, setIsOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
+  const location = useLocation();
+
+  useEffect(() => {
+    setNavOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => subscribeOnlineStatus(setIsOnline), []);
+
+  useEffect(() => {
+    if (!navOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setNavOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [navOpen]);
+
   return (
     <div className={["shell", navOpen && "is-nav-open"].filter(Boolean).join(" ")}>
       <a href="#main-content" className="skip-link">Skip to main content</a>
@@ -1328,6 +1341,11 @@ class RouteErrorBoundary extends Component<
       <Sidebar onNavigate={() => setNavOpen(false)} onOpenAppsLauncher={() => setAppsLauncherOpen(true)} />
       <div className="scrim" onClick={() => setNavOpen(false)} />
       <div className="main">
+        {!isOnline && (
+          <div role="status" className="offline-banner">
+            You are offline. Private workspace data and mutations require an active connection.
+          </div>
+        )}
         <TopBar onOpenNav={() => setNavOpen(true)} onOpenAppsLauncher={() => setAppsLauncherOpen(true)} />
         <div id="main-content" tabIndex={-1}>
           <RouteErrorBoundary>{children ?? <Outlet />}</RouteErrorBoundary>

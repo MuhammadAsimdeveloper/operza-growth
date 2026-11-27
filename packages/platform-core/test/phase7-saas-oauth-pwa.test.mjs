@@ -32,7 +32,7 @@ test('PWA Service Worker Security: versioned cache, zero /api/ caching, and OPER
   assert.ok(fs.existsSync(manifestPath), 'manifest.json must exist');
 
   const sw = fs.readFileSync(swPath, 'utf8');
-  assert.ok(sw.includes("CACHE_VERSION = 'operza-static-v1'"));
+  assert.match(sw, /CACHE_VERSION = 'operza-static-v\d+'/);
   assert.ok(sw.includes("url.pathname.startsWith('/api/')"), 'sw.js must explicitly bypass /api/ routes');
   assert.ok(sw.includes('OPERZA_PURGE_CACHE'), 'sw.js must purge all caches on logout/agency switch');
 });

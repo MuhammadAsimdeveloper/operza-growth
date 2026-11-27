@@ -202,6 +202,29 @@
   --z-dropdown: 40;
   --z-modal: 80;
   --z-toast: 100;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+.offline-banner {
+  padding: 8px 16px;
+  background: var(--amber-soft, #fef3c7);
+  color: var(--text);
+  border-bottom: 1px solid var(--amber, #f59e0b);
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+}
+
+@media (max-width: 768px) {
+  .btn, button.icon-btn, .select, .input {
+    min-height: 44px;
+  }
+  .shell .main {
+    padding-bottom: calc(var(--space-4) + var(--safe-bottom));
+  }
 }
 
 .skip-link {

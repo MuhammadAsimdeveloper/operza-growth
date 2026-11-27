@@ -37,11 +37,12 @@ export default function ClientPortal() {
     return () => { active = false; };
   }, [dispatch, state.contacts]);
 
-  const members = state.contacts.filter((c) => c.portalAccess);
-  const candidates = state.contacts.filter((c) => !c.portalAccess).slice(0, 4);
+  const contacts = state.contacts || [];
+  const members = contacts.filter((c) => c.portalAccess);
+  const candidates = contacts.filter((c) => !c.portalAccess).slice(0, 4);
 
-  const sharedDocs = state.documents.filter((d) => members.some((m) => m.id === d.contactId)).length;
-  const seats = state.enrollments.filter((e) => members.some((m) => m.id === e.contactId)).length;
+  const sharedDocs = (state.documents || []).filter((d) => members.some((m) => m.id === d.contactId)).length;
+  const seats = (state.enrollments || []).filter((e) => members.some((m) => m.id === e.contactId)).length;
 
   async function handleToggleAccess(contactId: string, granted: boolean) {
     try {
