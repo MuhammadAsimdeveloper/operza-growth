@@ -8,6 +8,7 @@ import { num, pct } from '../lib/format';
 import { api } from '../lib/api';
 import type { PageTheme, Site, SitePage } from '../lib/types';
 import { WEBSITE_TEMPLATES, generateStaticHtmlExport } from '../lib/websiteTemplates';
+import { SitesHub2Panel } from '../components/SitesHub2Panel';
 
 const THEMES: Array<{ value: PageTheme; label: string }> = [
   { value: 'gradient', label: 'Gradient' },
@@ -788,6 +789,7 @@ export default function Websites() {
           </p>
         </Modal>
       )}
+      <SitesHub2Panel />
     </main>
   );
 }

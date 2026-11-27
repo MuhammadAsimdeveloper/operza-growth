@@ -19,6 +19,7 @@ import { createContactsRepository } from '../../../packages/db/lib/contacts-repo
 import { createOpportunitiesRepository } from '../../../packages/db/lib/opportunities-repository.mjs';
 import { toCents, fromCents } from '../../../packages/db/lib/money.mjs';
 import { runInTenantTx } from '../../../packages/db/lib/tenant-tx.mjs';
+import { handleSites2Routes } from './sites2.mjs';
 
 const funnelsRepo = createFunnelsRepository();
 const ordersRepo = createOrdersRepository();
@@ -63,6 +64,10 @@ export async function handleFunnelsRoutes(req, res, ctx) {
     pgPool,
     triggerWorkflowExecution
   } = ctx;
+
+  if (await handleSites2Routes({ req, res, pathname, method, ctx })) {
+    return true;
+  }
 
   const isPublicFunnelRoute =
     pathname.startsWith('/api/funnels/public/') ||
