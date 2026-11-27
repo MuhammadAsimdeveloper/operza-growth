@@ -6,6 +6,7 @@ import { useStore } from '../lib/store';
 import { currency, num } from '../lib/format';
 import { api } from '../lib/api';
 import type { Contact } from '../lib/types';
+import { PortalHub2Panel } from '../components/PortalHub2Panel';
 
 const PORTAL_FEATURES = [
   { icon: 'file', title: 'Contracts & proposals', text: 'Members review and sign documents in the portal.' },
@@ -375,6 +376,7 @@ export default function ClientPortal() {
           )}
         </Modal>
       )}
+      <PortalHub2Panel />
     </main>
   );
 }

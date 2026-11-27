@@ -11,6 +11,7 @@ import { resolveEntitlements } from '../../../packages/platform-core/src/entitle
 import { createAuthRateLimiter } from '../../../packages/platform-core/src/security/auth-rate-limiter.mjs';
 import { handleMarketplace2Routes } from './marketplace2.mjs';
 import { handleAnalytics2Routes } from './analytics2.mjs';
+import { handlePortal2Routes } from './portal2.mjs';
 
 const oauthRateLimiter = createAuthRateLimiter({
   trustProxy: process.env.TRUST_PROXY === 'true',
@@ -28,6 +29,9 @@ export function createPhase7Routes({ pgPool = null, sendJson, readBody, auditLog
       return true;
     }
     if (await handleAnalytics2Routes(req, res, { method, pathname, url: req.url ? new URL(req.url, 'http://localhost') : null, actor, agency, activeLocation, pgPool, readBody, sendJson })) {
+      return true;
+    }
+    if (await handlePortal2Routes({ req, res, pathname, method, ctx: { pgPool, agency, activeLocation, actor, readBody, sendJson } })) {
       return true;
     }
     const isPhase7Path =
