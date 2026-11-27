@@ -1605,6 +1605,46 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       const revB = await pfTxB.query(`SELECT * FROM marketplace_app_reviews WHERE app_id = $1`, [draftApp.id]);
       assert.equal(revB.rows.length, 0, 'Tenant B must not read Tenant A tenant-scoped marketplace_app_reviews');
       await pfClient.query('ROLLBACK');
+
+      // ── 17. Analytics & BI 2.0 (Executive Overview, Custom Query, Saved Dashboards/Reports, Events Deduplication, FORCE RLS)
+      const { createAnalytics2Repository } = await import('../lib/analytics-2-repository.mjs');
+      const a2Repo = createAnalytics2Repository();
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+      const overview = await a2Repo.getExecutiveOverview(pfTx);
+      assert.equal(overview.freshness, 'real_time_source_query');
+      assert.ok(overview.crm.totalContacts >= 1);
+
+      const custom = await a2Repo.runCustomReport(pfTx, { dataSource: 'opportunities', dimensions: ['status'], measures: ['count'] });
+      assert.ok(Array.isArray(custom.rows));
+
+      await a2Repo.createSavedDashboard(pfTx, { ownerUserId: 'user-a1', visibility: 'private', title: 'Private Dash' });
+      await a2Repo.createSavedDashboard(pfTx, { ownerUserId: 'user-a1', visibility: 'agency', title: 'Shared Dash' });
+      assert.equal((await a2Repo.listSavedDashboards(pfTx, { userId: 'user-a1' })).length, 2);
+      assert.equal((await a2Repo.listSavedDashboards(pfTx, { userId: 'user-a2' })).length, 1);
+
+      const savedRep = await a2Repo.createSavedReport(pfTx, { ownerUserId: 'user-a1', title: 'Opp Summary', dataSource: 'opportunities', dimensions: ['status'], measures: ['count'] });
+      await a2Repo.createScheduledReport(pfTx, { reportId: savedRep.id, frequency: 'weekly', timezone: 'America/New_York', recipients: ['ops@acme.test'] });
+      await a2Repo.createThresholdAlert(pfTx, { metricId: 'workflow.executions.success_rate', operator: 'lt', thresholdValue: 0.9 });
+
+      const aEv1 = await a2Repo.recordAnalyticsEvent(pfTx, { eventType: 'contact.created', sourceModule: 'crm', deduplicationKey: 'crm-ev-1' });
+      assert.equal(aEv1.deduplicated, false);
+      const aEv2 = await a2Repo.recordAnalyticsEvent(pfTx, { eventType: 'contact.created', sourceModule: 'crm', deduplicationKey: 'crm-ev-1' });
+      assert.equal(aEv2.deduplicated, true);
+      await pfClient.query('COMMIT');
+
+      // Cross-tenant FORCE RLS check under Tenant B
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      assert.equal((await a2Repo.listSavedDashboards(pfTxB, { userId: 'user-a1' })).length, 0, 'Tenant B must not read Tenant A dashboards');
+      assert.equal((await a2Repo.listSavedReports(pfTxB, { userId: 'user-a1' })).length, 0, 'Tenant B must not read Tenant A reports');
+      await pfClient.query('ROLLBACK');
     } finally {
       await pfClient.query('ROLLBACK').catch(() => {});
       await pfClient.query('RESET ROLE').catch(() => {});

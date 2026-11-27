@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '../components/Icon';
 import { Modal } from '../components/Modal';
 import { Avatar, Badge } from '../components/ui';
+import { BiStudio2Panel } from '../components/BiStudio2Panel';
 import { BarChart, Donut, LineChart, Spark } from '../components/Chart';
 import { uid, useStore } from '../lib/store';
 import { currency, num, pct } from '../lib/format';
@@ -273,6 +274,8 @@ export default function Reporting() {
           velocity synchronized in real time.
         </p>
       </section>
+
+      <BiStudio2Panel />
 
       {/* Flagship Atlas KPIs */}
       <section className="atlas-kpis" aria-label="Command center financial KPIs">

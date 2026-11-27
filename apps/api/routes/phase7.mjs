@@ -10,6 +10,7 @@ import { createReportingRepository } from '../../../packages/db/lib/reporting-re
 import { resolveEntitlements } from '../../../packages/platform-core/src/entitlements.mjs';
 import { createAuthRateLimiter } from '../../../packages/platform-core/src/security/auth-rate-limiter.mjs';
 import { handleMarketplace2Routes } from './marketplace2.mjs';
+import { handleAnalytics2Routes } from './analytics2.mjs';
 
 const oauthRateLimiter = createAuthRateLimiter({
   trustProxy: process.env.TRUST_PROXY === 'true',
@@ -24,6 +25,9 @@ const reportRepo = createReportingRepository();
 export function createPhase7Routes({ pgPool = null, sendJson, readBody, auditLog } = {}) {
   return async function handlePhase7Route({ method, pathname, req, res, agency, activeLocation, actor }) {
     if (await handleMarketplace2Routes(req, res, { method, pathname, actor, agency, activeLocation, pgPool, readBody, sendJson })) {
+      return true;
+    }
+    if (await handleAnalytics2Routes(req, res, { method, pathname, url: req.url ? new URL(req.url, 'http://localhost') : null, actor, agency, activeLocation, pgPool, readBody, sendJson })) {
       return true;
     }
     const isPhase7Path =
