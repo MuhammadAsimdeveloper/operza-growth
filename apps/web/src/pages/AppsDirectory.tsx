@@ -13,6 +13,7 @@ import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 import { Badge } from '../components/ui';
+import { MarketplaceHub2Panel } from '../components/MarketplaceHub2Panel';
 import { OPERZA_APPS, PILLARS, type AppEntry } from '../lib/appsData';
 
 export { OPERZA_APPS, PILLARS, type AppEntry };
@@ -107,6 +108,8 @@ export default function AppsDirectory() {
           </div>
         </div>
       </section>
+
+      <MarketplaceHub2Panel />
 
       {/* Category Pills & Search Bar */}
       <div

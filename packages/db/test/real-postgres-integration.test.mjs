@@ -1519,6 +1519,92 @@ test('Real PostgreSQL Integration Harness & RLS Enforcement', async (t) => {
       assert.equal((await ai2Repo.listRuns(pfTxB)).length, 0, 'Tenant B must not read Tenant A ai_runs');
       assert.equal((await ai2Repo.listMemories(pfTxB, { userId: 'user-a1' })).length, 0, 'Tenant B must not read Tenant A ai_agent_memories');
       await pfClient.query('ROLLBACK');
+
+      // ── 16. Marketplace & Developer Ecosystem 2.0 (Publishers, Releases, Upgrades, Verified Reviews, FORCE RLS)
+      const { createMarketplace2Repository } = await import('../lib/marketplace-2-repository.mjs');
+      const m1Repo = createMarketplaceRepository();
+      const m2Repo = createMarketplace2Repository();
+
+      // Publisher & Platform-Admin catalog operations run on privileged pool (not tenant operza_app role)
+      const pub = await m2Repo.createPublisher(pool, {
+        ownerUserId: 'pub-owner-1',
+        displayName: 'Acme Dev Studio',
+        supportEmail: 'support@acme.example.com'
+      });
+      const draftApp = await m2Repo.createDraftApp(pool, {
+        publisherId: pub.id,
+        ownerUserId: 'pub-owner-1',
+        manifest: {
+          slug: 'acme-sync-v2',
+          name: 'Acme Sync V2',
+          appType: 'external_connector',
+          version: '1.0.0',
+          pricingModel: 'free',
+          requestedScopes: ['contacts:read']
+        }
+      });
+      await m2Repo.submitAppForReview(pool, { appId: draftApp.id, ownerUserId: 'pub-owner-1' });
+      await m2Repo.adminTransitionApp(pool, { appId: draftApp.id, toStatus: 'under_review', actorId: 'platform-admin-1' });
+      await m2Repo.adminTransitionApp(pool, { appId: draftApp.id, toStatus: 'approved', actorId: 'platform-admin-1' });
+      await m2Repo.adminTransitionApp(pool, { appId: draftApp.id, toStatus: 'published', actorId: 'platform-admin-1' });
+
+      // Tenant A installation, verified review, and scope-upgrade consent under operza_app + FORCE RLS
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyA, locA1, '00000000-0000-4000-8000-000000000001']
+      );
+      const inst = await m1Repo.installApp(pfTx, {
+        appId: draftApp.id,
+        installedBy: 'agency-user-1',
+        grantedScopes: ['contacts:read']
+      });
+      assert.equal(inst.status, 'installed');
+
+      // Verified installation review succeeds for agency-user-1, but self-review fails for pub-owner-1
+      await assert.rejects(
+        () => m2Repo.submitReview(pfTx, { appId: draftApp.id, reviewerUserId: 'pub-owner-1', rating: 5, body: 'Self!' }),
+        err => err?.code === 'SELF_REVIEW_FORBIDDEN'
+      );
+      const rev = await m2Repo.submitReview(pfTx, { appId: draftApp.id, reviewerUserId: 'agency-user-1', rating: 5, body: 'Solid connector' });
+      assert.equal(rev.verified_installation, true);
+
+      // Submit v1.1.0 with new scope -> requires renewed consent
+      await m2Repo.submitNewVersion(pool, {
+        appId: draftApp.id,
+        ownerUserId: 'pub-owner-1',
+        manifest: {
+          name: 'Acme Sync V2',
+          appType: 'external_connector',
+          version: '1.1.0',
+          requestedScopes: ['contacts:read', 'communications:send']
+        }
+      });
+      await pool.query(`UPDATE marketplace_app_releases SET security_review_status = 'approved' WHERE app_id = $1 AND version = '1.1.0'`, [draftApp.id]);
+      await assert.rejects(
+        () => m2Repo.upgradeInstallation(pfTx, { installationId: inst.id, targetVersion: '1.1.0', consentUpgraded: false }),
+        err => err?.code === 'PERMISSION_UPGRADE_CONSENT_REQUIRED'
+      );
+      const upgraded = await m2Repo.upgradeInstallation(pfTx, { installationId: inst.id, targetVersion: '1.1.0', consentUpgraded: true });
+      assert.equal(upgraded.installed_version, '1.1.0');
+
+      // Publisher isolation check
+      await assert.rejects(
+        () => m2Repo.getPublisherAnalytics(pool, { publisherId: pub.id, ownerUserId: 'other-pub' }),
+        err => err?.code === 'PUBLISHER_FORBIDDEN'
+      );
+      await pfClient.query('COMMIT');
+
+      // Cross-tenant FORCE RLS check under Tenant B
+      await pfClient.query('BEGIN');
+      await pfClient.query(
+        "SELECT set_config('app.agency_id', $1, true), set_config('app.location_id', $2, true), set_config('app.user_id', $3, true)",
+        [agencyB, locB1, '00000000-0000-4000-8000-000000000002']
+      );
+      assert.equal((await m1Repo.listInstallations(pfTxB)).length, 0, 'Tenant B must not read Tenant A marketplace_installations');
+      const revB = await pfTxB.query(`SELECT * FROM marketplace_app_reviews WHERE app_id = $1`, [draftApp.id]);
+      assert.equal(revB.rows.length, 0, 'Tenant B must not read Tenant A tenant-scoped marketplace_app_reviews');
+      await pfClient.query('ROLLBACK');
     } finally {
       await pfClient.query('ROLLBACK').catch(() => {});
       await pfClient.query('RESET ROLE').catch(() => {});
