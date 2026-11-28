@@ -38,6 +38,7 @@ assert.ok(allTf.includes('at_rest_encryption_enabled = true'), 'Redis must enabl
 assert.ok(allTf.includes('block_public_acls       = true'), 'S3 must block public ACLs');
 assert.ok(allTf.includes('enable_key_rotation     = true'), 'KMS key must enable rotation');
 assert.ok(!allTf.includes('"*"'), 'IAM policies must not use wildcard "*" actions/resources');
+assert.ok(!allTf.includes('ACCOUNT_ID'), 'IAM OIDC trust must not contain literal ACCOUNT_ID placeholder');
 
 // 2. Validate GitHub Actions YAML workflows
 const wfFiles = await collectFiles(path.join(ROOT, '.github/workflows'), '.yml');
@@ -53,4 +54,25 @@ assert.ok(compose.services?.['worker-1']?.environment?.WORKER_DATABASE_URL, 'wor
 assert.ok(compose.services?.['worker-1']?.environment?.OPERZA_VAULT_KEY, 'worker-1 must receive OPERZA_VAULT_KEY');
 assert.equal(compose.services?.api?.environment?.DISTRIBUTED_RATE_LIMIT_STRICT, 'true', 'api staging must enforce DISTRIBUTED_RATE_LIMIT_STRICT=true');
 
-console.log(`✅ Validated ${tfFiles.length} Terraform files, ${wfFiles.length} GitHub workflows, and docker-compose.staging.yml cleanly.`);
+// 4. Machine-check .env.staging.example required keys & safe staging flags (never print values)
+const envStagingRaw = await readFile(path.join(ROOT, '.env.staging.example'), 'utf8');
+const envKeys = new Map();
+for (const line of envStagingRaw.split(/\r?\n/)) {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.startsWith('#')) continue;
+  const eq = trimmed.indexOf('=');
+  if (eq > 0) envKeys.set(trimmed.slice(0, eq).trim(), trimmed.slice(eq + 1).trim());
+}
+const requiredStagingKeys = [
+  'NODE_ENV', 'DATABASE_URL', 'DATABASE_SSL', 'MIGRATION_DATABASE_URL',
+  'WORKER_DATABASE_URL', 'REDIS_URL', 'ALLOW_IN_MEMORY_QUEUE',
+  'SESSION_SECRET', 'OPERZA_VAULT_KEY', 'OPERZA_ADMIN_KEY', 'ALLOWED_ORIGINS'
+];
+for (const k of requiredStagingKeys) {
+  assert.ok(envKeys.has(k) && envKeys.get(k).length > 0, `Missing required key in .env.staging.example: ${k}`);
+}
+assert.equal(envKeys.get('NODE_ENV'), 'staging', '.env.staging.example must set NODE_ENV=staging');
+assert.equal(envKeys.get('ALLOW_IN_MEMORY_QUEUE'), 'false', '.env.staging.example must set ALLOW_IN_MEMORY_QUEUE=false');
+assert.equal(envKeys.get('DATABASE_SSL'), 'true', '.env.staging.example must set DATABASE_SSL=true');
+
+console.log(`✅ Validated ${tfFiles.length} Terraform files, ${wfFiles.length} GitHub workflows, docker-compose.staging.yml, and ${envKeys.size} .env.staging.example keys cleanly.`);
