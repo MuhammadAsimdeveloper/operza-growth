@@ -61,8 +61,14 @@ jobs:
       - name: API Boundary & Zapier Authorization Tests
         run: node --test apps/api/test/zapier-authz.test.mjs apps/api/test/zapier-endpoints.test.mjs
 
+      - name: UI Primitives Unit Tests
+        run: node --test packages/ui/test/ui.test.mjs
+
       - name: Production Vite 6 / React 19 Build
         run: npm run build
+
+      - name: Marketing Astro Static Build
+        run: npm --workspace=apps/marketing run build
 
   # ============================================================================
   # Gate 2: Real PostgreSQL Relational Migrations & RLS Isolation
@@ -104,7 +110,7 @@ jobs:
           MIGRATION_DATABASE_URL: postgresql://operza_ci_admin:ci_test_password_123@127.0.0.1:5432/operza_ci_test
         run: node packages/db/scripts/wait-for-postgres.mjs
 
-      - name: Execute Deterministic Migration Chain 001-027
+      - name: Execute Deterministic Migration Chain 001-053
         env:
           MIGRATION_DATABASE_URL: postgresql://operza_ci_admin:ci_test_password_123@127.0.0.1:5432/operza_ci_test
         run: node packages/db/scripts/migrate.mjs
@@ -114,6 +120,11 @@ jobs:
           REQUIRE_POSTGRES_INTEGRATION: 'true'
           OPERZA_TEST_DATABASE_URL: postgresql://operza_ci_admin:ci_test_password_123@127.0.0.1:5432/operza_ci_test
         run: npm --workspace=@operza/db test
+
+      - name: Execute Stage 18 Hardening & 100% FORCE RLS Gate
+        env:
+          OPERZA_TEST_DATABASE_URL: postgresql://operza_ci_admin:ci_test_password_123@127.0.0.1:5432/operza_ci_test
+        run: node --test packages/platform-core/test/stage-18-hardening.test.mjs
 
       - name: Execute Workflow Persistence & PostgreSQL Authoritative Integration Tests
         env:

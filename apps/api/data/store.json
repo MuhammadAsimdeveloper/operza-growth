@@ -135,6 +135,22 @@
       "passwordHash": "17559e87a4fe3e6fa741bb273dd31c72:0d5dfac0e0db6b2c62532db5084fbc9b1b076bdf0bbe4a2dbc4dee843d468a06e59b1283e67cb019d98c0d81ab031a00676bb65d1afe570ffdaf9f29fd9355d0",
       "status": "active",
       "createdAt": "2026-11-28T07:01:48.749Z"
+    },
+    {
+      "id": "edce72bd-0de9-4103-9717-729e3e464468",
+      "name": "RC1 Owner",
+      "email": "rc1_owner_1795856344710@operza.io",
+      "passwordHash": "7ed48f362b221752ea7f070dce34a244:a799562a650be258345f14ab517d138bd86fdd200415ac28b3eda4722c21c36d729da9e5032ff2f1e1abd722ca34a7edeb0bb31609f8837513debf788b299530",
+      "status": "active",
+      "createdAt": "2026-11-28T08:59:04.760Z"
+    },
+    {
+      "id": "31b19d4c-f09b-438c-95fb-9ebb36324c53",
+      "name": "RC1 Owner",
+      "email": "rc1_owner_1795856490720@operza.io",
+      "passwordHash": "1560e0d8a60bc72c7ca3dc18ab3123d2:ea6872b4a31dda0d39dbd4064ca1ddf74407a81134c88d5ac2acb83f36e6b6adaafb91fc15c8713db9db4f79b2554f0d9c2702547d1a3b5ff98167f26dff8019",
+      "status": "active",
+      "createdAt": "2026-11-28T09:01:30.775Z"
     }
   ],
   "agencies": [
@@ -269,6 +285,20 @@
       "slug": "stage18_1795849308404",
       "status": "active",
       "createdAt": "2026-11-28T07:01:48.749Z"
+    },
+    {
+      "id": "ee166f3a-cc57-4ac2-a776-a25c0fd3cfb4",
+      "name": "RC1 Audit Agency",
+      "slug": "rc1_owner_1795856344710",
+      "status": "active",
+      "createdAt": "2026-11-28T08:59:04.761Z"
+    },
+    {
+      "id": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+      "name": "RC1 Audit Agency",
+      "slug": "rc1_owner_1795856490720",
+      "status": "active",
+      "createdAt": "2026-11-28T09:01:30.775Z"
     }
   ],
   "locations": [
@@ -415,6 +445,36 @@
       "timezone": "UTC",
       "status": "active",
       "createdAt": "2026-11-28T07:01:48.749Z"
+    },
+    {
+      "id": "a60598b0-005c-43b6-8bfb-4d704594357a",
+      "agencyId": "ee166f3a-cc57-4ac2-a776-a25c0fd3cfb4",
+      "name": "Main Workspace",
+      "timezone": "UTC",
+      "status": "active",
+      "createdAt": "2026-11-28T08:59:04.761Z"
+    },
+    {
+      "id": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+      "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+      "name": "Main Workspace",
+      "timezone": "UTC",
+      "status": "active",
+      "createdAt": "2026-11-28T09:01:30.775Z"
+    },
+    {
+      "id": "561be10d-c409-4915-b250-07b56107a3fa",
+      "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+      "name": "RC1 Primary HQ",
+      "address": "",
+      "phone": "",
+      "timezone": "UTC",
+      "industry": "General",
+      "ownerEmail": "",
+      "planId": "growth",
+      "seats": 1,
+      "status": "trial",
+      "createdAt": "2026-11-28T09:01:30.798Z"
     }
   ],
   "memberships": [
@@ -553,6 +613,22 @@
       "role": "owner",
       "status": "active",
       "createdAt": "2026-11-28T07:01:48.749Z"
+    },
+    {
+      "id": "d2d93068-ce9f-4de0-9d14-e2090e0fe815",
+      "agencyId": "ee166f3a-cc57-4ac2-a776-a25c0fd3cfb4",
+      "userId": "edce72bd-0de9-4103-9717-729e3e464468",
+      "role": "owner",
+      "status": "active",
+      "createdAt": "2026-11-28T08:59:04.761Z"
+    },
+    {
+      "id": "32d5efe0-994a-4da1-ae1b-2ac38dd52a58",
+      "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+      "userId": "31b19d4c-f09b-438c-95fb-9ebb36324c53",
+      "role": "owner",
+      "status": "active",
+      "createdAt": "2026-11-28T09:01:30.775Z"
     }
   ],
   "invitations": [],
@@ -724,10 +800,38 @@
       "userId": "6de484b2-cf3a-4bd9-8771-df12d857add7",
       "agencyId": "772d0311-a86d-4734-94c8-d36eb8b5e2fc",
       "expiresAt": 1795892508750
+    },
+    {
+      "id": "28fb61e8-f7b3-445d-9de0-31c5a31ec08c",
+      "tokenHash": "c67fc5984a0015a51ecf4c715b3bc6735d15340cdb8d101fc8d238c1cc6e490b",
+      "csrfHash": "40e9a97095f6940e308c8272676494851630de730e185b80bffc7bb143980309",
+      "userId": "edce72bd-0de9-4103-9717-729e3e464468",
+      "agencyId": "ee166f3a-cc57-4ac2-a776-a25c0fd3cfb4",
+      "expiresAt": 1795899544761
+    },
+    {
+      "id": "7f895708-a5bc-4fe6-8474-f1574f66439e",
+      "tokenHash": "b6519aac960bef96435af1096bccc10161094850a90ea198a8ecc8fc74e31c99",
+      "csrfHash": "ce9bbb36b24dd27529c043407e038b6e688dbff92b84894843062c1340990f24",
+      "userId": "31b19d4c-f09b-438c-95fb-9ebb36324c53",
+      "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+      "expiresAt": 1795899690775
     }
   ],
   "records": {
-    "contacts": [],
+    "contacts": [
+      {
+        "firstName": "Alice",
+        "lastName": "RC1",
+        "email": "alice_1795856490812@acmerc1.test",
+        "company": "Acme RC1 Corp",
+        "id": "50625a22-ba26-4619-b15f-5da2d4bb67e9",
+        "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+        "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+        "createdAt": "2026-11-28T09:01:30.815Z",
+        "updatedAt": "2026-11-28T09:01:30.815Z"
+      }
+    ],
     "opportunities": [],
     "pipelines": [
       {
@@ -1001,6 +1105,54 @@
         "status": "active",
         "description": "Primary customer acquisition pipeline",
         "createdAt": "2026-11-28T07:01:48.749Z"
+      },
+      {
+        "id": "f7ff73cc-d6d1-47ae-82c4-dadcf6623b3f",
+        "agencyId": "ee166f3a-cc57-4ac2-a776-a25c0fd3cfb4",
+        "locationId": "a60598b0-005c-43b6-8bfb-4d704594357a",
+        "name": "Lead Pipeline",
+        "stages": [
+          "New Inbound Lead",
+          "Discovery Call Booked",
+          "Proposal Sent",
+          "Won",
+          "Lost"
+        ],
+        "status": "active",
+        "description": "Primary customer acquisition pipeline",
+        "createdAt": "2026-11-28T08:59:04.761Z"
+      },
+      {
+        "id": "f3f700d5-9c62-4806-b3a3-4169352df5d0",
+        "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+        "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+        "name": "Lead Pipeline",
+        "stages": [
+          "New Inbound Lead",
+          "Discovery Call Booked",
+          "Proposal Sent",
+          "Won",
+          "Lost"
+        ],
+        "status": "active",
+        "description": "Primary customer acquisition pipeline",
+        "createdAt": "2026-11-28T09:01:30.775Z"
+      },
+      {
+        "id": "254b16e5-4c4e-45bf-a450-964a918f80f7",
+        "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+        "locationId": "561be10d-c409-4915-b250-07b56107a3fa",
+        "name": "RC1 Primary HQ Sales Pipeline",
+        "stages": [
+          "Lead",
+          "Contacted",
+          "Qualified",
+          "Proposal",
+          "Won",
+          "Lost"
+        ],
+        "status": "active",
+        "createdAt": "2026-11-28T09:01:30.798Z"
       }
     ],
     "customFields": [],
@@ -1858,6 +2010,131 @@
           }
         ],
         "createdAt": "2026-11-28T07:01:48.749Z"
+      },
+      {
+        "id": "67444642-6a00-4098-95d6-533a17a4eb44",
+        "agencyId": "ee166f3a-cc57-4ac2-a776-a25c0fd3cfb4",
+        "locationId": "a60598b0-005c-43b6-8bfb-4d704594357a",
+        "name": "Automated Lead Qualification & AI Scoring",
+        "description": "Auto-scores new leads with Copilot AI, applies qualification tags, and creates team follow-up tasks.",
+        "status": "published",
+        "triggerType": "form",
+        "triggerConfig": {
+          "formName": "contact-us"
+        },
+        "nodes": [
+          {
+            "id": "node-ai-score",
+            "name": "AI Lead Evaluation",
+            "type": "ai_agent",
+            "config": {
+              "prompt": "Analyze lead data and score purchase intent from 1 to 100."
+            }
+          },
+          {
+            "id": "node-tag",
+            "name": "Apply High-Intent Tag",
+            "type": "tag",
+            "config": {
+              "tag": "ai-qualified"
+            }
+          },
+          {
+            "id": "node-task",
+            "name": "Create Priority Outreach Task",
+            "type": "task",
+            "config": {
+              "title": "High-Intent Lead Review",
+              "priority": "high",
+              "dueInDays": 1
+            }
+          },
+          {
+            "id": "node-approval",
+            "name": "Executive Proposal Gate",
+            "type": "condition",
+            "requiresApproval": true,
+            "config": {
+              "message": "Review enterprise proposal before final transmission"
+            }
+          }
+        ],
+        "createdAt": "2026-11-28T08:59:04.761Z"
+      },
+      {
+        "id": "fd2a3fcb-5b48-45de-a8fb-b0d4f04eb4ba",
+        "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+        "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+        "name": "Automated Lead Qualification & AI Scoring",
+        "description": "Auto-scores new leads with Copilot AI, applies qualification tags, and creates team follow-up tasks.",
+        "status": "published",
+        "triggerType": "form",
+        "triggerConfig": {
+          "formName": "contact-us"
+        },
+        "nodes": [
+          {
+            "id": "node-ai-score",
+            "name": "AI Lead Evaluation",
+            "type": "ai_agent",
+            "config": {
+              "prompt": "Analyze lead data and score purchase intent from 1 to 100."
+            }
+          },
+          {
+            "id": "node-tag",
+            "name": "Apply High-Intent Tag",
+            "type": "tag",
+            "config": {
+              "tag": "ai-qualified"
+            }
+          },
+          {
+            "id": "node-task",
+            "name": "Create Priority Outreach Task",
+            "type": "task",
+            "config": {
+              "title": "High-Intent Lead Review",
+              "priority": "high",
+              "dueInDays": 1
+            }
+          },
+          {
+            "id": "node-approval",
+            "name": "Executive Proposal Gate",
+            "type": "condition",
+            "requiresApproval": true,
+            "config": {
+              "message": "Review enterprise proposal before final transmission"
+            }
+          }
+        ],
+        "createdAt": "2026-11-28T09:01:30.775Z"
+      },
+      {
+        "id": "bd9f5410-aac4-4509-9716-03824e2de161",
+        "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+        "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+        "name": "RC1 Lead Nurture",
+        "status": "published",
+        "triggerType": "contact_created",
+        "triggerConfig": {},
+        "trigger": {
+          "kind": "contact_created"
+        },
+        "actions": [],
+        "nodes": [
+          {
+            "id": "n1",
+            "type": "add_tag",
+            "config": {
+              "tag": "rc1-nurtured"
+            }
+          }
+        ],
+        "version": 1,
+        "createdAt": "2026-11-28T09:01:30.842Z",
+        "updatedAt": "2026-11-28T09:01:30.842Z"
       }
     ],
     "forms": [
@@ -2183,6 +2460,44 @@
         "submissions": 0,
         "description": "Book your strategy consultation with our growth engineering team.",
         "createdAt": "2026-11-28T07:01:48.749Z"
+      },
+      {
+        "id": "58120dce-67c5-4dd8-b8b5-5fbcbaf2c3df",
+        "agencyId": "ee166f3a-cc57-4ac2-a776-a25c0fd3cfb4",
+        "locationId": "a60598b0-005c-43b6-8bfb-4d704594357a",
+        "name": "Inbound Consultation Request",
+        "publicSlug": "contact-us",
+        "fields": [
+          "firstName",
+          "lastName",
+          "email",
+          "phone",
+          "company",
+          "projectDetails"
+        ],
+        "status": "published",
+        "submissions": 0,
+        "description": "Book your strategy consultation with our growth engineering team.",
+        "createdAt": "2026-11-28T08:59:04.761Z"
+      },
+      {
+        "id": "83bc28d4-82a5-498b-b4e0-0ab53afa05cc",
+        "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+        "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+        "name": "Inbound Consultation Request",
+        "publicSlug": "contact-us",
+        "fields": [
+          "firstName",
+          "lastName",
+          "email",
+          "phone",
+          "company",
+          "projectDetails"
+        ],
+        "status": "published",
+        "submissions": 0,
+        "description": "Book your strategy consultation with our growth engineering team.",
+        "createdAt": "2026-11-28T09:01:30.775Z"
       }
     ],
     "formSubmissions": [],
@@ -3525,6 +3840,86 @@
           }
         ],
         "createdAt": "2026-11-28T07:01:48.749Z"
+      },
+      {
+        "id": "dc31c97d-68fc-4628-8670-f7465fa9c403",
+        "agencyId": "ee166f3a-cc57-4ac2-a776-a25c0fd3cfb4",
+        "locationId": "a60598b0-005c-43b6-8bfb-4d704594357a",
+        "name": "Discovery & Strategy Session",
+        "slug": "discovery-strategy",
+        "color": "#6366f1",
+        "durationMin": 30,
+        "description": "30-minute discovery call to evaluate automation requirements and team fit.",
+        "status": "active",
+        "roundRobin": true,
+        "availability": [
+          {
+            "weekday": 1,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 2,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 3,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 4,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 5,
+            "start": "09:00",
+            "end": "17:00"
+          }
+        ],
+        "createdAt": "2026-11-28T08:59:04.761Z"
+      },
+      {
+        "id": "ed558609-4ea9-4933-b83d-13756b9ff51c",
+        "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+        "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+        "name": "Discovery & Strategy Session",
+        "slug": "discovery-strategy",
+        "color": "#6366f1",
+        "durationMin": 30,
+        "description": "30-minute discovery call to evaluate automation requirements and team fit.",
+        "status": "active",
+        "roundRobin": true,
+        "availability": [
+          {
+            "weekday": 1,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 2,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 3,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 4,
+            "start": "09:00",
+            "end": "17:00"
+          },
+          {
+            "weekday": 5,
+            "start": "09:00",
+            "end": "17:00"
+          }
+        ],
+        "createdAt": "2026-11-28T09:01:30.775Z"
       }
     ],
     "paymentLinks": [
@@ -3782,6 +4177,36 @@
         "active": true,
         "description": "Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.",
         "createdAt": "2026-11-28T07:01:48.749Z"
+      },
+      {
+        "id": "09c0741d-ddda-43b5-a2c1-7516daf3b57f",
+        "agencyId": "ee166f3a-cc57-4ac2-a776-a25c0fd3cfb4",
+        "locationId": "a60598b0-005c-43b6-8bfb-4d704594357a",
+        "name": "Growth Retainer - Starter Pack",
+        "slug": "starter-retainer",
+        "amount": 1500,
+        "currency": "USD",
+        "productIds": [],
+        "visits": 0,
+        "conversions": 0,
+        "active": true,
+        "description": "Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.",
+        "createdAt": "2026-11-28T08:59:04.761Z"
+      },
+      {
+        "id": "269cfd26-de8c-4d6b-ae0c-e26ccdae4b12",
+        "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+        "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+        "name": "Growth Retainer - Starter Pack",
+        "slug": "starter-retainer",
+        "amount": 1500,
+        "currency": "USD",
+        "productIds": [],
+        "visits": 0,
+        "conversions": 0,
+        "active": true,
+        "description": "Full-service automation retainer including workflow builds, CRM setup, and AI copilot agents.",
+        "createdAt": "2026-11-28T09:01:30.775Z"
       }
     ],
     "orders": [],
@@ -5174,7 +5599,100 @@
     },
     "knowledge": []
   },
-  "workflowExecutions": [],
+  "workflowExecutions": [
+    {
+      "id": "0e128b70-f7a2-4e06-9f60-691d92520e19",
+      "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+      "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+      "workflowId": "bd9f5410-aac4-4509-9716-03824e2de161",
+      "workflowName": "RC1 Lead Nurture",
+      "workflowVersion": 1,
+      "workflowSnapshot": {
+        "id": "bd9f5410-aac4-4509-9716-03824e2de161",
+        "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+        "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+        "name": "RC1 Lead Nurture",
+        "status": "published",
+        "triggerType": "contact_created",
+        "triggerConfig": {},
+        "trigger": {
+          "kind": "contact_created"
+        },
+        "actions": [],
+        "nodes": [
+          {
+            "id": "n1",
+            "type": "add_tag",
+            "config": {
+              "tag": "rc1-nurtured"
+            }
+          }
+        ],
+        "version": 1,
+        "createdAt": "2026-11-28T09:01:30.842Z",
+        "updatedAt": "2026-11-28T09:01:30.842Z"
+      },
+      "actorId": "agent_automation_runner",
+      "actorName": "RC1 Owner",
+      "providerStatuses": {
+        "zapier": "unconfigured",
+        "email": "verified",
+        "sms": "verified",
+        "webhook": "verified"
+      },
+      "consent": true,
+      "mode": "dry_run",
+      "status": "simulated",
+      "triggerType": "manual",
+      "triggerContext": {
+        "contact": {
+          "firstName": "Alice",
+          "lastName": "RC1",
+          "email": "alice_1795856490812@acmerc1.test",
+          "company": "Acme RC1 Corp",
+          "id": "50625a22-ba26-4619-b15f-5da2d4bb67e9",
+          "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+          "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+          "createdAt": "2026-11-28T09:01:30.815Z",
+          "updatedAt": "2026-11-28T09:01:30.815Z"
+        },
+        "manualTrigger": true,
+        "triggeredBy": "RC1 Owner",
+        "actorId": "agent_automation_runner",
+        "payload": {}
+      },
+      "currentNodeIndex": 1,
+      "steps": [
+        {
+          "nodeId": "n1",
+          "nodeName": "n1",
+          "nodeType": "add_tag",
+          "status": "simulated",
+          "durationMs": 3,
+          "errorCode": null,
+          "result": {
+            "actionId": "crm.contact.tag",
+            "mode": "dry_run",
+            "sideEffectsDisabled": true,
+            "mutationsDisabled": true,
+            "reason": "DRY_RUN_ONLY"
+          },
+          "error": null,
+          "executedAt": "2026-11-28T09:01:30.858Z"
+        }
+      ],
+      "createdAt": "2026-11-28T09:01:30.854Z",
+      "workerLeaseId": "api-worker-12724",
+      "attemptCount": 1,
+      "attempts": 1,
+      "heartbeatAt": "2026-11-28T09:01:30.858Z",
+      "leaseExpiresAt": "2026-11-28T09:02:30.858Z",
+      "outboxJobId": "job_2316aaf7-eb9",
+      "outboxStatus": "delivered",
+      "variables": {},
+      "durationMs": 7
+    }
+  ],
   "workflowApprovals": [],
   "providerConnections": [],
   "communicationConsents": [],
@@ -5298,6 +5816,28 @@
       "metric": "monthlyAiRequests",
       "quantity": 1,
       "occurredAt": "2026-11-08T09:44:59.063Z",
+      "metadata": {
+        "source": "copilot.chat"
+      }
+    },
+    {
+      "eventId": "cf453334-5571-468b-8e2a-99448b0779ac",
+      "tenantId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+      "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+      "metric": "monthlyWorkflowRuns",
+      "quantity": 1,
+      "occurredAt": "2026-11-28T09:01:30.849Z",
+      "metadata": {
+        "source": "workflow.manual_run"
+      }
+    },
+    {
+      "eventId": "19f32e80-af2d-4e5d-9998-0f0786fdb3f4",
+      "tenantId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+      "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+      "metric": "monthlyAiRequests",
+      "quantity": 1,
+      "occurredAt": "2026-11-28T09:01:30.878Z",
       "metadata": {
         "source": "copilot.chat"
       }
@@ -5681,6 +6221,68 @@
         "email": "stage18_1795849308404@operza.io"
       },
       "timestamp": "2026-11-28T07:01:48.782Z"
+    },
+    {
+      "id": "591293ae-b91b-4377-b6ef-149592938eea",
+      "action": "auth.signup",
+      "userId": "31b19d4c-f09b-438c-95fb-9ebb36324c53",
+      "userName": "RC1 Owner",
+      "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+      "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+      "details": {
+        "email": "rc1_owner_1795856490720@operza.io"
+      },
+      "timestamp": "2026-11-28T09:01:30.782Z"
+    },
+    {
+      "id": "8cf86331-c471-411c-8f40-69da67f4131e",
+      "action": "agency.profile.updated",
+      "userId": "31b19d4c-f09b-438c-95fb-9ebb36324c53",
+      "userName": "RC1 Owner",
+      "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+      "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+      "details": {
+        "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+        "name": "RC1 Audit Agency"
+      },
+      "timestamp": "2026-11-28T09:01:30.796Z"
+    },
+    {
+      "id": "2830e0e5-f954-4128-b9be-a99143a735fd",
+      "action": "agency.location.created",
+      "userId": "31b19d4c-f09b-438c-95fb-9ebb36324c53",
+      "userName": "RC1 Owner",
+      "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+      "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+      "details": {
+        "locationId": "561be10d-c409-4915-b250-07b56107a3fa",
+        "name": "RC1 Primary HQ"
+      },
+      "timestamp": "2026-11-28T09:01:30.802Z"
+    },
+    {
+      "id": "e8165263-5f2b-43b0-83d7-294349d481db",
+      "action": "crm.contacts.created",
+      "userId": "31b19d4c-f09b-438c-95fb-9ebb36324c53",
+      "userName": "RC1 Owner",
+      "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+      "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+      "details": {
+        "id": "50625a22-ba26-4619-b15f-5da2d4bb67e9"
+      },
+      "timestamp": "2026-11-28T09:01:30.820Z"
+    },
+    {
+      "id": "a7a27853-aa68-4ea9-a88e-eb6da029b141",
+      "action": "crm.workflows.created",
+      "userId": "31b19d4c-f09b-438c-95fb-9ebb36324c53",
+      "userName": "RC1 Owner",
+      "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+      "locationId": "3acba413-f444-4e6e-b4ab-a7a3d1334ddc",
+      "details": {
+        "id": "bd9f5410-aac4-4509-9716-03824e2de161"
+      },
+      "timestamp": "2026-11-28T09:01:30.847Z"
     }
   ],
   "mediaFiles": {},
@@ -5747,6 +6349,15 @@
       "status": "revoked",
       "deliveryStatus": "pending_local",
       "createdAt": "2026-11-27T20:02:23.135Z"
+    },
+    {
+      "id": "c360fcfd-d55f-4c8e-a55e-0ecbfe9644e0",
+      "agencyId": "19842499-8b0a-4ee2-b8af-9f7541f8756a",
+      "email": "rc1_invitee_1795856490803@operza.io",
+      "role": "support_agent",
+      "status": "pending",
+      "deliveryStatus": "pending_local",
+      "createdAt": "2026-11-28T09:01:30.805Z"
     }
   ],
   "agencyRoles": [
