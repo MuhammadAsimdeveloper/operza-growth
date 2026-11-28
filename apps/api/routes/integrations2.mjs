@@ -9,14 +9,13 @@ import { createIntegrations2Repository } from '../../../packages/db/lib/integrat
 import { createConnectorSdkV2 } from '../../../packages/platform-core/src/connector-sdk-v2.mjs';
 import { verifyWebhookSignature } from '../../../packages/platform-core/src/webhook-platform-v2.mjs';
 import { evaluateIntegrationHealth } from '../../../packages/platform-core/src/cross-platform-events.mjs';
+import { checkActorPermission } from '../../../packages/platform-core/src/security/route-authz.mjs';
 
 const integrationsRepo = createIntegrations2Repository();
 const connectorSdk = createConnectorSdkV2();
 
 function checkScope(actor, requiredScope) {
-  if (!actor || !actor.apiKey) return true;
-  const scopes = actor.scopes || [];
-  return scopes.includes('*') || scopes.includes('all') || scopes.includes(requiredScope);
+  return checkActorPermission(actor, requiredScope);
 }
 
 export async function handleIntegrations2Routes(req, res, ctx) {

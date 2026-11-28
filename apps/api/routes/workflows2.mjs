@@ -25,14 +25,13 @@ import {
   computeNextRunAtUtc,
   isValidIanaTimezone
 } from '../../../packages/workflow-engine/src/scheduler-v2.mjs';
+import { checkActorPermission } from '../../../packages/platform-core/src/security/route-authz.mjs';
 
 const workflows2Repo = createWorkflows2Repository();
 const workflowOpsRepo = createWorkflowOperationsRepository();
 
 function checkScope(actor, requiredScope) {
-  if (!actor || !actor.apiKey) return true;
-  const scopes = actor.scopes || [];
-  return scopes.includes('*') || scopes.includes('all') || scopes.includes(requiredScope);
+  return checkActorPermission(actor, requiredScope);
 }
 
 export async function handleWorkflows2Routes(req, res, ctx) {

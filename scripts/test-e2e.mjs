@@ -2384,8 +2384,8 @@ async function runTests() {
     }
 
     const t66_metricsRes = await request('/metrics');
-    console.log(`Metrics Status: ${t66_metricsRes.status}`, `Memory RSS: ${t66_metricsRes.data.memory?.rssMb} MB`, `WS Clients: ${t66_metricsRes.data.connections?.wsClients}`);
-    if (t66_metricsRes.status !== 200 || typeof t66_metricsRes.data.memory?.rssMb !== 'number' || typeof t66_metricsRes.data.connections?.wsClients !== 'number') {
+    console.log(`Metrics Status: ${t66_metricsRes.status}`, `Memory RSS: ${t66_metricsRes.data.memory?.rssMb} MB`, `Engine: ${t66_metricsRes.data.database?.engine}`);
+    if (t66_metricsRes.status !== 200 || typeof t66_metricsRes.data.memory?.rssMb !== 'number' || t66_metricsRes.data.database?.totalUsers !== undefined) {
       throw new Error(`Metrics probe failed: ${JSON.stringify(t66_metricsRes.data)}`);
     }
     console.log('✅ Production container readiness and observability metrics telemetry verified');

@@ -8,6 +8,7 @@ import { runInTenantTx } from '../../../packages/db/lib/tenant-tx.mjs';
 import { createCrm2Repository } from '../../../packages/db/lib/crm-2-repository.mjs';
 import { parseAndValidateCsvImport } from '../../../packages/platform-core/src/csv-transfer.mjs';
 import { normalizeEmail, normalizePhone } from '../../../packages/platform-core/src/crm/crm-2-0.mjs';
+import { checkActorPermission } from '../../../packages/platform-core/src/security/route-authz.mjs';
 
 const crm2Repo = createCrm2Repository();
 
@@ -35,14 +36,21 @@ export async function handleCrm2Routes(req, res, ctx) {
   };
 
   if (method === 'GET' && pathname === '/api/crm/contacts/duplicates') {
+    if (!checkActorPermission(actor, 'contacts:read')) {
+      sendJson(res, 403, { error: 'Insufficient permissions: contacts:read required', code: 'FORBIDDEN' });
+      return true;
+    }
     const groups = await runInTenantTx(pgPool, tenantCtx, (tx) => crm2Repo.findDuplicates(tx));
     sendJson(res, 200, { groups });
     return true;
   }
 
   if (method === 'POST' && pathname === '/api/crm/contacts/import/preview') {
+    if (!checkActorPermission(actor, 'contacts:create', ['contacts:write'])) {
+      sendJson(res, 403, { error: 'Insufficient permissions: contacts:create required', code: 'FORBIDDEN' });
+      return true;
+    }
     const body = await readBody(req);
-    const parsed = parseAndValidateCsvImport(String(body?.csv || ''), body?.mapping || {});
     const existingDupes = await runInTenantTx(pgPool, tenantCtx, async (tx) => {
       const resRows = await tx.query(
         `SELECT id, body->>'email' AS email, body->>'phone' AS phone FROM location_records
@@ -50,6 +58,12 @@ export async function handleCrm2Routes(req, res, ctx) {
         [tx.agencyId, tx.locationId]
       );
       return resRows.rows;
+    });
+    const parsed = parseAndValidateCsvImport({
+      text: String(body?.csv || ''),
+      agencyId: tenantCtx.agencyId,
+      locationId: tenantCtx.locationId,
+      existingContacts: existingDupes
     });
     const emailSet = new Set(existingDupes.map((r) => normalizeEmail(r.email)).filter(Boolean));
     const phoneSet = new Set(existingDupes.map((r) => normalizePhone(r.phone)).filter(Boolean));
@@ -76,6 +90,10 @@ export async function handleCrm2Routes(req, res, ctx) {
   }
 
   if (method === 'POST' && pathname === '/api/crm/contacts/merge-safe') {
+    if (!checkActorPermission(actor, 'contacts:write')) {
+      sendJson(res, 403, { error: 'Insufficient permissions: contacts:write required', code: 'FORBIDDEN' });
+      return true;
+    }
     const body = await readBody(req);
     try {
       const result = await runInTenantTx(pgPool, tenantCtx, (tx) =>

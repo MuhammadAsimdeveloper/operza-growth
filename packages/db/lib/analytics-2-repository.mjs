@@ -79,6 +79,8 @@ export function createAnalytics2Repository() {
       const wonOpps = oppCounts.won || 0;
 
       return {
+        source: 'postgresql',
+        authoritative: true,
         generatedAt: new Date().toISOString(),
         freshness: 'real_time_source_query',
         crm: { totalContacts },

@@ -1484,11 +1484,19 @@ async function getActor(req) {
             membership = { id: mRow.id, agencyId: mRow.agency_id, userId: mRow.user_id, role: mRow.role, status: mRow.status };
           }
 
+          const locAccessRes = await locClient.query(
+            "SELECT location_id FROM user_location_memberships WHERE agency_id = $1 AND user_id = $2",
+            [row.agency_id, row.user_id]
+          ).catch(() => ({ rows: [] }));
+          const allowedLocIds = new Set(locAccessRes.rows.map(r => r.location_id));
+
           const locRes = await locClient.query(
             "SELECT id, agency_id, name, status FROM locations WHERE agency_id = $1 AND status = 'active'",
             [row.agency_id]
           );
-          locations = locRes.rows.map(l => ({ id: l.id, agencyId: l.agency_id, name: l.name, status: l.status }));
+          locations = locRes.rows
+            .filter(l => allowedLocIds.size === 0 || allowedLocIds.has(l.id))
+            .map(l => ({ id: l.id, agencyId: l.agency_id, name: l.name, status: l.status }));
 
           await locClient.query('COMMIT');
         } catch (dbErr) {

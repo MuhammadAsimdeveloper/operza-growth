@@ -12,6 +12,7 @@ import { createAuthRateLimiter } from '../../../packages/platform-core/src/secur
 import { handleMarketplace2Routes } from './marketplace2.mjs';
 import { handleAnalytics2Routes } from './analytics2.mjs';
 import { handlePortal2Routes } from './portal2.mjs';
+import { isPlatformAdminActor } from '../../../packages/platform-core/src/security/route-authz.mjs';
 
 const oauthRateLimiter = createAuthRateLimiter({
   trustProxy: process.env.TRUST_PROXY === 'true',
@@ -48,7 +49,7 @@ export function createPhase7Routes({ pgPool = null, sendJson, readBody, auditLog
 
     // Strict privilege separation for Platform Admin control plane
     if (pathname.startsWith('/api/platform-admin/')) {
-      if (actor?.isPlatformAdmin !== true) {
+      if (!isPlatformAdminActor(actor)) {
         return sendJson(res, 403, { error: 'Platform administrator privilege required', code: 'PLATFORM_ADMIN_REQUIRED' });
       }
       if (method === 'POST' && pathname.startsWith('/api/platform-admin/marketplace/') && pathname.endsWith('/review')) {

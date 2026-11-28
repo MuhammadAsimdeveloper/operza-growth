@@ -7,6 +7,7 @@
 import { runInTenantTx } from '../../../packages/db/lib/tenant-tx.mjs';
 import { createMarketplace2Repository } from '../../../packages/db/lib/marketplace-2-repository.mjs';
 import { validateAppManifest } from '../../../packages/platform-core/src/marketplace-2-0.mjs';
+import { isPlatformAdminActor } from '../../../packages/platform-core/src/security/route-authz.mjs';
 
 const market2Repo = createMarketplace2Repository();
 
@@ -107,7 +108,7 @@ export async function handleMarketplace2Routes(req, res, ctx) {
   // Platform Admin Governance
   const adminMatch = pathname.match(/^\/api\/platform-admin\/marketplace\/v2\/([^/]+)\/transition$/);
   if (method === 'POST' && adminMatch) {
-    if (actor?.isPlatformAdmin !== true) {
+    if (!isPlatformAdminActor(actor)) {
       sendJson(res, 403, { error: 'Platform administrator privilege required', code: 'PLATFORM_ADMIN_REQUIRED' });
       return true;
     }

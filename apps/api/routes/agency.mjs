@@ -50,6 +50,10 @@ export async function handleAgencyRoutes(req, res, ctx) {
 
   // 2. PUT /api/agency/profile
   if (method === 'PUT' && pathname === '/api/agency/profile') {
+    if (!isAgencyAdmin) {
+      sendJson(res, 403, { error: 'Only agency owners and admins can update agency profile', code: 'FORBIDDEN' });
+      return true;
+    }
     const body = await readBody(req);
     if (body.name) agency.name = body.name.trim();
     if (body.email) agency.email = body.email.trim();

@@ -17,25 +17,16 @@ import {
   resolveChannelConnectionStatus,
   validateSavedReplyTemplate
 } from '../../../packages/platform-core/src/unified-inbox-2-0.mjs';
+import { checkActorPermission, canActorViewFinancials } from '../../../packages/platform-core/src/security/route-authz.mjs';
 
 const inboxRepo = createUnifiedInboxRepository();
 
 function checkScope(actor, requiredScope, alternativeScopes = []) {
-  if (!actor || !actor.apiKey) return true;
-  const scopes = actor.scopes || [];
-  if (scopes.includes('*') || scopes.includes('all')) return true;
-  if (scopes.includes(requiredScope)) return true;
-  return alternativeScopes.some(alt => scopes.includes(alt));
+  return checkActorPermission(actor, requiredScope, alternativeScopes);
 }
 
 function canViewFinancials(actor) {
-  if (!actor) return false;
-  if (actor.apiKey) {
-    const scopes = actor.scopes || [];
-    return scopes.includes('*') || scopes.includes('all') || scopes.includes('billing:read') || scopes.includes('payments:read');
-  }
-  const role = String(actor.user?.role || actor.role || 'owner').toLowerCase();
-  return ['owner', 'admin', 'billing', 'manager'].includes(role);
+  return canActorViewFinancials(actor);
 }
 
 export async function handleSupport2Routes({ req, res, pathname, method, ctx }) {

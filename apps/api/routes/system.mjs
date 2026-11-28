@@ -71,32 +71,41 @@ export async function handleSystemRoutes(req, res, ctx) {
     return true;
   }
 
-  // 3. Observability metrics
+  // 3. Observability metrics (tenant entity counts require platform admin auth)
   if (pathname === '/metrics') {
     const mem = process.memoryUsage();
-    const entityCounts = {};
-    for (const [key, list] of Object.entries(state.records || {})) {
-      entityCounts[key] = (list || []).length;
-    }
-    sendJson(res, 200, {
+    const actor = getActor ? await getActor(req).catch(() => null) : null;
+    const configuredAdminKey = process.env.OPERZA_ADMIN_KEY;
+    const providedKey = req.headers['x-admin-key'];
+    const hasAdminKey = Boolean(configuredAdminKey && configuredAdminKey.length >= 32 && providedKey && providedKey === configuredAdminKey);
+    const isAdmin = hasAdminKey || Boolean(actor?.isPlatformAdmin === true || actor?.user?.isPlatformAdmin === true);
+
+    const payload = {
       uptime: process.uptime(),
       memory: {
         rssMb: Math.round(mem.rss / 1024 / 1024 * 100) / 100,
         heapTotalMb: Math.round(mem.heapTotal / 1024 / 1024 * 100) / 100,
         heapUsedMb: Math.round(mem.heapUsed / 1024 / 1024 * 100) / 100
       },
-      connections: {
-        wsClients: wsClients?.size || 0
-      },
       database: {
-        engine: pgPool ? 'postgresql' : 'json_file',
-        totalUsers: (state.users || []).length,
-        totalAgencies: (state.agencies || []).length,
-        totalLocations: (state.locations || []).length,
-        records: entityCounts
+        engine: pgPool ? 'postgresql' : 'json_file'
       },
       timestamp: new Date().toISOString()
-    });
+    };
+
+    if (isAdmin) {
+      const entityCounts = {};
+      for (const [key, list] of Object.entries(state.records || {})) {
+        entityCounts[key] = (list || []).length;
+      }
+      payload.connections = { wsClients: wsClients?.size || 0 };
+      payload.database.totalUsers = (state.users || []).length;
+      payload.database.totalAgencies = (state.agencies || []).length;
+      payload.database.totalLocations = (state.locations || []).length;
+      payload.database.records = entityCounts;
+    }
+
+    sendJson(res, 200, payload);
     return true;
   }
 

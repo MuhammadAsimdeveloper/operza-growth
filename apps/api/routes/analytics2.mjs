@@ -12,6 +12,7 @@ import {
   redactExportRows
 } from '../../../packages/platform-core/src/analytics-2-0.mjs';
 import { aggregateCanonicalRevenueByCurrency } from '../../../packages/platform-core/src/cross-platform-events.mjs';
+import { checkActorPermission, resolveActorPermissions } from '../../../packages/platform-core/src/security/route-authz.mjs';
 
 const analyticsRepo = createAnalytics2Repository();
 
@@ -70,6 +71,10 @@ export async function handleAnalytics2Routes(req, res, ctx) {
   }
 
   if (method === 'GET' && subPath === '/overview') {
+    if (!checkActorPermission(actor, 'reports:read')) {
+      sendJson(res, 403, { error: 'Insufficient permissions: reports:read required', code: 'FORBIDDEN' });
+      return true;
+    }
     const from = url?.searchParams?.get('from') || null;
     const to = url?.searchParams?.get('to') || null;
     const overview = await runInTenantTx(pgPool, tenantCtx, tx => analyticsRepo.getExecutiveOverview(tx, { from, to }));
@@ -78,12 +83,16 @@ export async function handleAnalytics2Routes(req, res, ctx) {
   }
 
   if (method === 'POST' && subPath === '/query') {
+    if (!checkActorPermission(actor, 'reports:read')) {
+      sendJson(res, 403, { error: 'Insufficient permissions: reports:read required', code: 'FORBIDDEN' });
+      return true;
+    }
     const body = await readBody(req);
     try {
       const result = await runInTenantTx(pgPool, tenantCtx, tx =>
         analyticsRepo.runCustomReport(tx, {
           ...(body || {}),
-          actorPermissions: actor?.scopes || ['*']
+          actorPermissions: resolveActorPermissions(actor)
         })
       );
       sendJson(res, 200, result);

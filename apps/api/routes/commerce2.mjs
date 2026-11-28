@@ -1,6 +1,7 @@
 import { runInTenantTx } from '../../../packages/db/lib/tenant-tx.mjs';
 import { createCommerce2Repository } from '../../../packages/db/lib/commerce-2-repository.mjs';
 import { calculateOrderTotals, evaluateDunningSchedule } from '../../../packages/platform-core/src/commerce-2-0.mjs';
+import { checkActorPermission } from '../../../packages/platform-core/src/security/route-authz.mjs';
 
 const repo = createCommerce2Repository();
 
@@ -54,22 +55,38 @@ export async function handleCommerce2Routes({ req, res, pathname, method, ctx })
 
   try {
     if (method === 'GET' && pathname === '/api/commerce/v2/products') {
+      if (!checkActorPermission(actor, 'orders:read', ['billing:read'])) {
+        sendJson(res, 403, { error: 'Insufficient permissions: orders:read required', code: 'FORBIDDEN' });
+        return true;
+      }
       const data = await runInTenantTx(pgPool, tenantCtx, (tx) => repo.listProducts(tx));
       sendJson(res, 200, { data });
       return true;
     }
     if (method === 'POST' && pathname === '/api/commerce/v2/products') {
+      if (!checkActorPermission(actor, 'invoices:write', ['payments:configure'])) {
+        sendJson(res, 403, { error: 'Insufficient permissions: invoices:write required', code: 'FORBIDDEN' });
+        return true;
+      }
       const body = await readBody(req);
       const created = await runInTenantTx(pgPool, tenantCtx, (tx) => repo.createProduct(tx, body));
       sendJson(res, 201, created);
       return true;
     }
     if (method === 'GET' && pathname === '/api/commerce/v2/refunds') {
+      if (!checkActorPermission(actor, 'billing:read', ['orders:read', 'refunds:approve'])) {
+        sendJson(res, 403, { error: 'Insufficient permissions: billing:read required', code: 'FORBIDDEN' });
+        return true;
+      }
       const data = await runInTenantTx(pgPool, tenantCtx, (tx) => repo.listRefunds(tx));
       sendJson(res, 200, { data });
       return true;
     }
     if (method === 'POST' && pathname === '/api/commerce/v2/refunds') {
+      if (!checkActorPermission(actor, 'refunds:approve', ['payments:configure'])) {
+        sendJson(res, 403, { error: 'Insufficient permissions: refunds:approve required', code: 'FORBIDDEN' });
+        return true;
+      }
       const body = await readBody(req);
       const result = await runInTenantTx(pgPool, tenantCtx, (tx) =>
         repo.requestRefund(tx, { ...body, actorId: tenantCtx.actorId })
@@ -78,16 +95,28 @@ export async function handleCommerce2Routes({ req, res, pathname, method, ctx })
       return true;
     }
     if (method === 'GET' && pathname === '/api/commerce/v2/ledger/verify') {
+      if (!checkActorPermission(actor, 'billing:read', ['reports:financial:read', 'agency:billing:manage'])) {
+        sendJson(res, 403, { error: 'Insufficient permissions: billing:read required', code: 'FORBIDDEN' });
+        return true;
+      }
       const result = await runInTenantTx(pgPool, tenantCtx, (tx) => repo.verifyLedgerIntegrity(tx));
       sendJson(res, 200, result);
       return true;
     }
     if (method === 'GET' && pathname === '/api/commerce/v2/reconciliation') {
+      if (!checkActorPermission(actor, 'billing:read', ['reports:financial:read', 'agency:billing:manage'])) {
+        sendJson(res, 403, { error: 'Insufficient permissions: billing:read required', code: 'FORBIDDEN' });
+        return true;
+      }
       const report = await runInTenantTx(pgPool, tenantCtx, (tx) => repo.getReconciliationReport(tx));
       sendJson(res, 200, report);
       return true;
     }
     if (method === 'POST' && pathname === '/api/commerce/v2/subscription/transition') {
+      if (!checkActorPermission(actor, 'agency:billing:manage', ['payments:configure'])) {
+        sendJson(res, 403, { error: 'Insufficient permissions: agency:billing:manage required', code: 'FORBIDDEN' });
+        return true;
+      }
       const body = await readBody(req);
       const updated = await runInTenantTx(pgPool, tenantCtx, (tx) =>
         repo.transitionSubscription(tx, { ...body, actorId: tenantCtx.actorId })

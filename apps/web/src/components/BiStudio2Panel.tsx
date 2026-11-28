@@ -22,13 +22,18 @@ interface MetricDef {
 }
 
 interface OverviewPayload {
-  generatedAt: string;
-  freshness: string;
-  crm: { totalContacts: number };
-  sales: { totalOpportunities: number; wonOpportunities: number };
-  funnel: Array<{ name: string; count: number; stepConversionRate: number; overallConversionRate: number }>;
-  financialByCurrency: CurrencyBucket[];
-  aiUsage: { input_tokens: number; output_tokens: number; estimated_cost_microcents: number };
+  source?: string;
+  authoritative?: boolean;
+  warning?: string;
+  generatedAt?: string;
+  freshness?: string;
+  freshnessAt?: string;
+  totals?: { contacts?: number; opportunities?: number; wonOpportunities?: number };
+  crm?: { totalContacts: number };
+  sales?: { totalOpportunities: number; wonOpportunities: number };
+  funnel?: Array<{ name: string; count: number; stepConversionRate: number; overallConversionRate: number }>;
+  financialByCurrency?: CurrencyBucket[];
+  aiUsage?: { input_tokens: number; output_tokens: number; estimated_cost_microcents: number };
 }
 
 export function BiStudio2Panel() {
@@ -65,9 +70,16 @@ export function BiStudio2Panel() {
     <div style={{ border: '1px solid var(--line)', borderRadius: 12, padding: 16, marginBottom: 20, background: 'var(--surface)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
         <div>
-          <div style={{ fontWeight: 700, fontSize: 15 }}>Business Intelligence 2.0 &amp; Semantic Layer</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ fontWeight: 700, fontSize: 15 }}>Business Intelligence 2.0 &amp; Semantic Layer</div>
+            {overviewData?.authoritative === false ? (
+              <Badge tone="amber">Local Dev Fallback (Non-Authoritative)</Badge>
+            ) : (
+              <Badge tone="green">PostgreSQL Authoritative</Badge>
+            )}
+          </div>
           <div style={{ fontSize: 12, opacity: 0.75 }}>
-            Freshness: {overviewData?.freshness || 'real_time_source_query'} · Metrics Defined: {catalogData?.metrics?.length ?? 0}
+            Source: {overviewData?.source || 'postgresql'} · Freshness: {overviewData?.freshness || 'real_time_source_query'} · Metrics Defined: {catalogData?.metrics?.length ?? 0}
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
@@ -84,17 +96,23 @@ export function BiStudio2Panel() {
         </div>
       </div>
 
+      {overviewData?.authoritative === false && (
+        <div role="status" style={{ padding: '8px 12px', borderRadius: 8, background: '#fef3c7', color: '#92400e', fontSize: 12, marginBottom: 12 }}>
+          {overviewData.warning || 'Local in-memory development metrics are non-authoritative and not backed by PostgreSQL.'}
+        </div>
+      )}
+
       {tab === 'overview' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10, fontSize: 12 }}>
             <div style={{ border: '1px solid var(--line)', borderRadius: 8, padding: 10 }}>
               <div style={{ opacity: 0.7 }}>Contacts</div>
-              <strong style={{ fontSize: 18 }}>{overviewData?.crm?.totalContacts ?? 0}</strong>
+              <strong style={{ fontSize: 18 }}>{overviewData?.crm?.totalContacts ?? overviewData?.totals?.contacts ?? 0}</strong>
             </div>
             <div style={{ border: '1px solid var(--line)', borderRadius: 8, padding: 10 }}>
               <div style={{ opacity: 0.7 }}>Opportunities / Won</div>
               <strong style={{ fontSize: 18 }}>
-                {overviewData?.sales?.totalOpportunities ?? 0} / {overviewData?.sales?.wonOpportunities ?? 0}
+                {overviewData?.sales?.totalOpportunities ?? overviewData?.totals?.opportunities ?? 0} / {overviewData?.sales?.wonOpportunities ?? overviewData?.totals?.wonOpportunities ?? 0}
               </strong>
             </div>
             <div style={{ border: '1px solid var(--line)', borderRadius: 8, padding: 10 }}>
@@ -109,7 +127,7 @@ export function BiStudio2Panel() {
             <div style={{ fontSize: 12 }}>
               <strong>Currency-Separated Financials (Minor Units):</strong>
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 6 }}>
-                {overviewData?.financialByCurrency.map((f) => (
+                {(overviewData?.financialByCurrency || []).map((f) => (
                   <Badge key={f.currency} tone="green">
                     {f.currency.toUpperCase()}: Net {(f.netCollectedCents / 100).toFixed(2)} (Gross {(f.grossCollectedCents / 100).toFixed(2)}, Refund {(f.refundedCents / 100).toFixed(2)})
                   </Badge>
