@@ -1,0 +1,11 @@
+environment               = "staging"
+aws_region                = "us-east-1"
+domain_name               = "staging.operza.example.com"
+vpc_cidr                  = "10.20.0.0/16"
+db_instance_class         = "db.t4g.small"
+db_multi_az               = false
+db_backup_retention_days  = 7
+redis_node_type           = "cache.t4g.micro"
+api_desired_count         = 1
+worker_desired_count      = 1
+github_repo               = "MuhammadAsimdeveloper/operza-growth"

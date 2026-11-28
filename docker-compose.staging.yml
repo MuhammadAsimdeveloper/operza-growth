@@ -63,6 +63,8 @@ services:
       PORT: 4000
       DATABASE_URL: ${APP_DATABASE_URL:?set APP_DATABASE_URL}
       REDIS_URL: redis://redis:6379
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+      OPERZA_VAULT_KEY: ${OPERZA_VAULT_KEY:?set OPERZA_VAULT_KEY}
       TRUST_PROXY: "true"
       CLAMAV_REQUIRED: "true"
       CLAMAV_BIN: clamdscan
@@ -88,7 +90,9 @@ services:
     command: ["node", "apps/api/worker.mjs"]
     environment:
       NODE_ENV: staging
-      DATABASE_URL: ${WORKER_DATABASE_URL:?set WORKER_DATABASE_URL}
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?set WORKER_DATABASE_URL}
+      OPERZA_VAULT_KEY: ${OPERZA_VAULT_KEY:?set OPERZA_VAULT_KEY}
+      WORKFLOW_JOB_MODULE: packages/platform-core/src/trusted-handlers.mjs
       REDIS_URL: redis://redis:6379
     depends_on:
       migrate:
@@ -104,7 +108,9 @@ services:
     command: ["node", "apps/api/worker.mjs"]
     environment:
       NODE_ENV: staging
-      DATABASE_URL: ${WORKER_DATABASE_URL:?set WORKER_DATABASE_URL}
+      WORKER_DATABASE_URL: ${WORKER_DATABASE_URL:?set WORKER_DATABASE_URL}
+      OPERZA_VAULT_KEY: ${OPERZA_VAULT_KEY:?set OPERZA_VAULT_KEY}
+      WORKFLOW_JOB_MODULE: packages/platform-core/src/trusted-handlers.mjs
       REDIS_URL: redis://redis:6379
     depends_on:
       migrate:

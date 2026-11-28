@@ -1,0 +1,100 @@
+name: Operza AWS Staging Deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_staging:
+        description: 'Type STAGING to confirm controlled staging rollout'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  gate-1-source-quality:
+    name: 'Gate 1: Source Quality, Audit & Unit Tests'
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirm_staging == 'STAGING'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run typecheck
+      - run: npm --workspace=@operza/action-governance test
+      - run: npm --workspace=@operza/workflow-engine test
+      - run: npm --workspace=@operza/platform-core test
+      - run: node --test packages/ui/test/ui.test.mjs
+      - run: node scripts/validate-staging-infra.mjs
+
+  gate-2-database:
+    name: 'Gate 2: Migration & FORCE RLS Verification'
+    runs-on: ubuntu-latest
+    needs: [gate-1-source-quality]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: operza_ci_test
+          POSTGRES_USER: operza_ci_admin
+          POSTGRES_PASSWORD: ci_test_password_123
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+      - run: npm ci
+      - env:
+          MIGRATION_DATABASE_URL: postgresql://operza_ci_admin:ci_test_password_123@127.0.0.1:5432/operza_ci_test
+        run: node packages/db/scripts/migrate.mjs
+      - env:
+          OPERZA_TEST_DATABASE_URL: postgresql://operza_ci_admin:ci_test_password_123@127.0.0.1:5432/operza_ci_test
+        run: node --test packages/platform-core/test/stage-18-hardening.test.mjs
+
+  gate-3-build:
+    name: 'Gate 3: Container & Static Bundle Builds'
+    runs-on: ubuntu-latest
+    needs: [gate-2-database]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build
+      - run: npm --workspace=apps/marketing run build
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: false
+          tags: operza/api:${{ github.sha }}
+
+  gate-4-5-6-staging-deploy:
+    name: 'Gates 4-6: Manual Approval, OIDC Deploy & Smoke Tests'
+    runs-on: ubuntu-latest
+    needs: [gate-3-build]
+    environment:
+      name: staging
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS Credentials via OIDC (no static keys)
+        if: vars.AWS_DEPLOY_ENABLED == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_STAGING_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+      - name: Deployment Placeholder Guard
+        if: vars.AWS_DEPLOY_ENABLED != 'true'
+        run: |
+          echo "AWS_DEPLOY_ENABLED is not 'true'. Staging deploy skipped safely (dry-run)."

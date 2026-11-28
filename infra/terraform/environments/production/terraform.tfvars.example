@@ -1,0 +1,11 @@
+environment               = "production"
+aws_region                = "us-east-1"
+domain_name               = "operza.example.com"
+vpc_cidr                  = "10.30.0.0/16"
+db_instance_class         = "db.t4g.medium"
+db_multi_az               = true
+db_backup_retention_days  = 30
+redis_node_type           = "cache.t4g.small"
+api_desired_count         = 2
+worker_desired_count      = 2
+github_repo               = "MuhammadAsimdeveloper/operza-growth"
