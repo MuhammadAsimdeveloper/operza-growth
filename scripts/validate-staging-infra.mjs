@@ -42,11 +42,18 @@ assert.ok(!allTf.includes('ACCOUNT_ID'), 'IAM OIDC trust must not contain litera
 
 // 2. Validate GitHub Actions YAML workflows
 const wfFiles = await collectFiles(path.join(ROOT, '.github/workflows'), '.yml');
-assert.ok(wfFiles.length >= 4, `Expected >=4 workflow files, found ${wfFiles.length}`);
+assert.ok(wfFiles.length >= 5, `Expected >=5 workflow files, found ${wfFiles.length}`);
 for (const wf of wfFiles) {
   const doc = YAML.parse(await readFile(wf, 'utf8'));
   assert.ok(doc && doc.jobs, `Invalid workflow YAML: ${wf}`);
 }
+
+// 2b. Verify infra-validation.yml safety boundaries (no AWS creds, no apply, no push)
+const infraWfRaw = await readFile(path.join(ROOT, '.github/workflows/infra-validation.yml'), 'utf8');
+const infraWf = YAML.parse(infraWfRaw);
+assert.equal(infraWf.permissions?.contents, 'read', 'infra-validation.yml must restrict contents: read');
+assert.ok(!infraWf.permissions?.['id-token'], 'infra-validation.yml must NOT request id-token: write');
+assert.ok(!/configure-aws-credentials|terraform apply|push:\s*true|staging-deploy\.yml/.test(infraWfRaw), 'infra-validation.yml must never configure AWS creds, apply Terraform, push images, or call staging-deploy.yml');
 
 // 3. Validate docker-compose.staging.yml
 const compose = YAML.parse(await readFile(path.join(ROOT, 'docker-compose.staging.yml'), 'utf8'));
